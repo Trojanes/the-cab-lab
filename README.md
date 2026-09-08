@@ -2,7 +2,7 @@
 
 Cabinet CAD workspace. Metric (mm), Z up, right-handed. Electron + Three.js.
 
-Workflow: define the **space** (W × D × H) → pick a **module** on the left → drag its **box** on the floor.
+Workflow: **step 1 define the space** (Box today; Vehicle and Floor plan kinds later) → pick a **module** on the left → drag its **box** on the floor.
 The box *is* the generator's outer size. Pull its faces to change W / D / H, drag the orange bars to move
 zone boundaries, edit details in the right panel. Boards are always regenerated from `job.json`, never edited.
 
@@ -32,6 +32,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `preload.js` — exposes `window.cablab.openJob / saveJob`
 - `renderer/space.js` — scene, camera, grid, axes, room, picking helpers
 - `renderer/job.js` — `job.json` in memory, undo / redo snapshots, generator result cache
+- `renderer/spaces.js` — space kinds (`box` now) → floor polygon, height, obstacles; fit tests
+- `renderer/spaceDialog.js` — "Define the space" modal (step 1, also Edit space)
 - `renderer/modules.js` — module registry: generator bundle + envelope (W / D / H) + divider handles
 - `renderer/cabinets3d.js` — draws boards, envelope, handles from generator output
 - `renderer/interact.js` — left-button interaction: place, select, move, resize, dividers, R / F / Del / Esc

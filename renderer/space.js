@@ -94,7 +94,8 @@ export function lineSegments(positions, color) {
 const room = new THREE.Group();
 room.name = "space";
 scene.add(room);
-let currentSpace = { width: 4000, depth: 3000, height: 2400 };
+// Framing box used by views; a default until a space is defined.
+let extent = { minX: 0, minY: 0, maxX: 4000, maxY: 3000, height: 2400 };
 
 const floorMat = new THREE.MeshStandardMaterial({ color: 0x2a2e35, roughness: 0.95, metalness: 0 });
 const wallMat = new THREE.MeshStandardMaterial({
@@ -105,35 +106,51 @@ const wallMat = new THREE.MeshStandardMaterial({
   side: THREE.DoubleSide,
   depthWrite: false,
 });
+const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x55606f, roughness: 0.9, transparent: true, opacity: 0.6 });
 
-export function drawSpace(space) {
-  currentSpace = { ...space };
-  const { width: W, depth: D, height: H } = space;
+/**
+ * Draw a resolved space (see spaces.js): floor polygon, walls along the
+ * listed edges, obstacles, and the volume outline. Pass null to clear.
+ */
+export function drawSpace(resolved) {
   room.clear();
+  if (!resolved) return;
+  const { floor, height: H, obstacles, walls, bounds } = resolved;
+  extent = { ...bounds, height: H };
 
-  const floor = new THREE.Mesh(new THREE.PlaneGeometry(W, D), floorMat);
-  floor.position.set(W / 2, D / 2, 0.5);
-  room.add(floor);
+  const shape = new THREE.Shape(floor.map(([x, y]) => new THREE.Vector2(x, y)));
+  const floorMesh = new THREE.Mesh(new THREE.ShapeGeometry(shape), floorMat);
+  floorMesh.position.z = 0.5;
+  room.add(floorMesh);
 
-  // Thin slabs avoid Euler-rotation mistakes; 1 mm thick, drawn on the outside.
-  const back = new THREE.Mesh(new THREE.BoxGeometry(W, 1, H), wallMat);
-  back.position.set(W / 2, D + 0.5, H / 2);
-  room.add(back);
+  // Walls: a 1 mm slab standing on each listed floor edge, drawn just outside it.
+  const n = floor.length;
+  for (const i of walls || []) {
+    const a = floor[i % n];
+    const b = floor[(i + 1) % n];
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+    if (len < 1) continue;
+    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
+    const wall = new THREE.Mesh(new THREE.BoxGeometry(len, 1, H), wallMat);
+    // Outward normal for a CCW polygon is to the right of the edge direction.
+    const nx = Math.sin(ang);
+    const ny = -Math.cos(ang);
+    wall.position.set((a[0] + b[0]) / 2 + nx * 0.5, (a[1] + b[1]) / 2 + ny * 0.5, H / 2);
+    wall.rotation.z = ang;
+    room.add(wall);
+  }
 
-  const left = new THREE.Mesh(new THREE.BoxGeometry(1, D, H), wallMat);
-  left.position.set(-0.5, D / 2, H / 2);
-  room.add(left);
-
-  const right = new THREE.Mesh(new THREE.BoxGeometry(1, D, H), wallMat);
-  right.position.set(W + 0.5, D / 2, H / 2);
-  room.add(right);
+  for (const o of obstacles || []) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.z1 - o.z0), obstacleMat);
+    m.position.set((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, (o.z0 + o.z1) / 2);
+    room.add(m);
+  }
 
   // Outline of the space volume.
   const e = [];
-  const c = [[0, 0], [W, 0], [W, D], [0, D]];
-  for (let i = 0; i < 4; i += 1) {
-    const a = c[i];
-    const b = c[(i + 1) % 4];
+  for (let i = 0; i < n; i += 1) {
+    const a = floor[i];
+    const b = floor[(i + 1) % n];
     e.push(a[0], a[1], 0, b[0], b[1], 0);
     e.push(a[0], a[1], H, b[0], b[1], H);
     e.push(a[0], a[1], 0, a[0], a[1], H);
@@ -144,9 +161,11 @@ export function drawSpace(space) {
 // --- views ----------------------------------------------------------------
 
 export function setView(name) {
-  const { width: W, depth: D, height: H } = currentSpace;
-  const cx = W / 2;
-  const cy = D / 2;
+  const W = extent.maxX - extent.minX;
+  const D = extent.maxY - extent.minY;
+  const H = extent.height;
+  const cx = extent.minX + W / 2;
+  const cy = extent.minY + D / 2;
   const span = Math.max(W, D, H);
   // OrbitControls keeps the up vector it was built with (Z), so the top view
   // is tilted by a hair to avoid a degenerate look-at.
@@ -223,7 +242,6 @@ if (typeof ResizeObserver === "function") new ResizeObserver(resize).observe(mou
 else window.addEventListener("resize", resize);
 resize();
 
-drawSpace(currentSpace);
 setView("3d");
 
 function tick() {

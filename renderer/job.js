@@ -2,17 +2,34 @@
 // Undo/redo = whole-job snapshots. Generation results are cached per cabinet
 // and rebuilt whenever params change.
 import { getModule } from "./modules.js";
+import { resolveSpace } from "./spaces.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
 
+// A new job has no space yet: defining the space is step one.
 function newJob() {
   return {
-    version: "job.v1",
+    version: "job.v2",
     units: "mm",
-    space: { width: 4000, depth: 3000, height: 2400 },
+    origin: "front-left floor corner; X right, Y back, Z up",
+    space: null, // { kind, params } once defined
     cabinets: [],
   };
+}
+
+/** Accept job.v1 files (space as bare W/D/H). */
+function migrate(obj) {
+  if (obj.version === "job.v1") {
+    const s = obj.space || {};
+    return {
+      ...obj,
+      version: "job.v2",
+      origin: "front-left floor corner; X right, Y back, Z up",
+      space: s.width ? { kind: "box", params: { width: s.width, depth: s.depth, height: s.height } } : null,
+    };
+  }
+  return obj;
 }
 
 let job = newJob();
@@ -33,6 +50,18 @@ function emit(kind) {
 }
 
 export function getJob() { return job; }
+export function hasSpace() { return !!job.space; }
+
+let resolvedCache = null;
+let resolvedFor = null;
+/** Resolved space geometry (floor polygon, height, obstacles); null until defined. */
+export function getSpace() {
+  if (resolvedFor !== job.space) {
+    resolvedFor = job.space;
+    resolvedCache = resolveSpace(job.space);
+  }
+  return resolvedCache;
+}
 export function getSelectedId() { return selectedId; }
 export function getSelected() { return job.cabinets.find((c) => c.id === selectedId) || null; }
 export function isDirty() { return dirty; }
@@ -98,9 +127,10 @@ export function redo() {
 
 // --- mutations -------------------------------------------------------------
 
-export function setSpace(patch, { history = true } = {}) {
+/** Define or redefine the space. Cabinets are never moved; checks report any that no longer fit. */
+export function defineSpace(kind, params, { history = true } = {}) {
   if (history) pushHistory();
-  job.space = { ...job.space, ...patch };
+  job.space = { kind, params: { ...params } };
   dirty = true;
   emit("job");
 }
@@ -183,10 +213,10 @@ export function resetJob() {
 }
 
 export function loadJob(obj, path) {
-  if (!obj || obj.version !== "job.v1" || !obj.space || !Array.isArray(obj.cabinets)) {
-    throw new Error("Not a job.v1 file");
+  if (!obj || !/^job\.v[12]$/.test(obj.version || "") || !Array.isArray(obj.cabinets)) {
+    throw new Error("Not a Cab Lab job file");
   }
-  job = obj;
+  job = migrate(obj);
   selectedId = null;
   undoStack.length = 0;
   redoStack.length = 0;

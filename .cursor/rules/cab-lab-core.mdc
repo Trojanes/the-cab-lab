@@ -9,7 +9,8 @@ The Cab Lab is a cabinet CAD, not a general CAD. Follow these rules in every cha
 
 ## Single source of geometry
 
-- Everything visible in the 3D space must trace back to `job.json` (room, cabinets, later boards).
+- Everything visible in the 3D space must trace back to `job.json` (space, cabinets, later boards).
+- **Step one is defining the space.** `job.space` is `{ kind, params }` resolved by `renderer/spaces.js` into `floor` polygon + `height` + `obstacles`; the renderer and interaction only consume that resolved shape. Today `kind` is `box`; `vehicle` and `floorplan` plug in as new kinds, never as special cases in the renderer. Redefining the space never moves cabinets - checks report the ones that no longer fit.
 - Cabinet geometry comes from parametric generators (`moduleId + params` → boards). The shared TypeScript generators live in `E:\Work\Cursor Project\modules\*\generator.ts`; reuse them, never re-implement cabinet formulas in the renderer. The renderer imports them as esbuild bundles in `renderer/gen/` (`npm run build:generators`); never edit the bundles.
 - A cabinet's box (envelope) **is** its outer-size params. `renderer/modules.js` maps envelope W/D/H and divider handles onto each module's params; there is no separate envelope record in `job.json`.
 - Editing = change `job.json` / `params` / zones / board attributes, then regenerate. Undo = previous `job.json` snapshot, not a feature timeline.
@@ -24,6 +25,7 @@ The Cab Lab is a cabinet CAD, not a general CAD. Follow these rules in every cha
 
 - Internal unit is **millimetres** everywhere. Never mix metres.
 - **Z is up**, XY is the floor, right-handed. Grid: 100 mm minor, 1000 mm major.
+- **Origin is the front-left floor corner of the space**: X to the right, Y toward the back wall, Z up. Cabinet local origin is the front carcass face at floor level (fronts sit at negative local Y). Importers (vehicle bodies, floor plans) must convert into this convention.
 
 ## Scope guard
 

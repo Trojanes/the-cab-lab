@@ -2,6 +2,9 @@
 // selected cabinet's params. Every edit writes into job.js and regenerates.
 import * as job from "./job.js";
 import { getModule, fitZones, MIN_ZONE_HEIGHT } from "./modules.js";
+import { getSpaceKind } from "./spaces.js";
+import { openSpaceDialog } from "./spaceDialog.js";
+import { poseFits } from "./cabinets3d.js";
 
 const panel = document.getElementById("rightpanel");
 const drawerChecks = document.querySelector('[data-dpane="checks"]');
@@ -39,25 +42,64 @@ function section(title, children) {
 
 // --- space ---------------------------------------------------------------------
 
+/** Cabinets that no longer fit the space (after a space edit, for instance). */
+export function spaceFitIssues() {
+  const issues = [];
+  if (!job.hasSpace()) return issues;
+  for (const cab of job.getJob().cabinets) {
+    if (!poseFits(cab, cab.pose)) issues.push(`${cab.id} is outside the space or overlaps an obstacle.`);
+  }
+  return issues;
+}
+
 function renderSpace() {
-  const sp = job.getJob().space;
-  const set = (k) => (v) => job.setSpace({ [k]: Math.max(300, Math.round(v)) });
-  panel.replaceChildren(
+  const space = job.getJob().space;
+  const resolved = job.getSpace();
+  const count = job.getJob().cabinets.length;
+
+  if (!space) {
+    panel.replaceChildren(
+      el("div", { class: "panel-head" }, [
+        el("div", { class: "panel-title", text: "Space" }),
+        el("div", { class: "panel-sub", text: "not defined" }),
+      ]),
+      section("Step 1", [
+        el("div", { class: "empty small", text: "Define the space first: a box now; vehicle bodies and imported floor plans later." }),
+        el("button", { class: "tb primary wide-solid", text: "Define the space", onclick: () => openSpaceDialog() }),
+      ]),
+    );
+    drawerChecks.replaceChildren(el("div", { class: "empty", text: "No space defined." }));
+    drawerBoards.replaceChildren(el("div", { class: "empty", text: "No space defined." }));
+    return;
+  }
+
+  const kind = getSpaceKind(space.kind);
+  const issues = spaceFitIssues();
+  panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Space" }),
-      el("div", { class: "panel-sub", text: `${job.getJob().cabinets.length} cabinet(s) · nothing selected` }),
+      el("div", { class: "panel-sub", text: `${kind.label} · ${resolved.summary} · ${count} cabinet(s)` }),
     ]),
-    section("Size", [
-      numField("Width (mm)", sp.width, set("width")),
-      numField("Depth (mm)", sp.depth, set("depth")),
-      numField("Height (mm)", sp.height, set("height")),
+    section(kind.label, [
+      ...kind.fields.map((f) => el("div", { class: "kv" }, [el("span", { text: f.label }), el("b", { text: String(space.params[f.key]) })])),
+      el("button", { class: "tb wide", text: "Edit space…", onclick: () => openSpaceDialog() }),
     ]),
+    issues.length
+      ? el("div", { class: "panel-section" }, [
+          el("div", { class: "sec-title", text: "Checks" }),
+          ...issues.map((m) => el("div", { class: "msg err", text: m })),
+        ])
+      : null,
     el("div", { class: "panel-section muted" }, [
-      el("div", { class: "sec-title", text: "How to" }),
+      el("div", { class: "sec-title", text: "Next" }),
       el("div", { class: "empty small", text: "Pick a module on the left and drag a box on the floor. The box is the cabinet's outer size; pull its faces to change W / D / H, drag the orange bars to move zone boundaries." }),
     ]),
+  ].filter(Boolean));
+  drawerChecks.replaceChildren(
+    issues.length
+      ? el("div", {}, issues.map((m) => el("div", { class: "msg err", text: m })))
+      : el("div", { class: "empty", text: count ? "All cabinets fit the space. Select one to see its checks." : "Select a cabinet to see its checks." }),
   );
-  drawerChecks.replaceChildren(el("div", { class: "empty", text: "Select a cabinet to see its checks." }));
   drawerBoards.replaceChildren(el("div", { class: "empty", text: "Select a cabinet to list its boards." }));
 }
 

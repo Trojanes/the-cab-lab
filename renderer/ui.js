@@ -5,6 +5,7 @@ import { MODULES, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets } from "./cabinets3d.js";
 import { armPlacement, disarm, onModeChange, getPlacingModule } from "./interact.js";
 import { renderPanel } from "./panel.js";
+import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -92,7 +93,9 @@ const bridge = window.cablab || null;
 
 async function doNew() {
   if (job.isDirty() && !window.confirm("Discard unsaved changes?")) return;
+  disarm();
   job.resetJob();
+  openSpaceDialog();
 }
 async function doOpen() {
   if (!bridge) return console.warn("[ui] file bridge unavailable");
@@ -123,7 +126,7 @@ $$("#topbar [data-action]").forEach((btn) => {
 });
 
 window.addEventListener("keydown", (e) => {
-  if (!e.ctrlKey) return;
+  if (!e.ctrlKey || spaceDialogOpen()) return;
   const k = e.key.toLowerCase();
   const inField = e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
   if (k === "n") { e.preventDefault(); doNew(); }
@@ -149,21 +152,27 @@ rightpanel.addEventListener("focusout", () => {
   setTimeout(() => { if (panelPending && !rightpanel.contains(document.activeElement)) maybeRenderPanel(); }, 0);
 });
 
-let lastSpaceKey = "";
+let lastSpace = undefined;
 function refreshAll() {
-  const sp = job.getJob().space;
-  const key = `${sp.width}x${sp.depth}x${sp.height}`;
-  if (key !== lastSpaceKey) {
-    lastSpaceKey = key;
-    drawSpace(sp);
+  const resolved = job.getSpace();
+  if (resolved !== lastSpace) {
+    const firstDefinition = !lastSpace && resolved;
+    lastSpace = resolved;
+    drawSpace(resolved);
+    if (firstDefinition) setView($("#viewGroup .active")?.dataset.view || "3d");
   }
+  $("#emptyState").classList.toggle("hidden", job.hasSpace());
+  $$("#moduleList .rail-item[data-module]").forEach((b) => { b.disabled = !job.hasSpace(); });
   syncCabinets();
   maybeRenderPanel();
   refreshRail();
   refreshStatus();
 }
 
+$("[data-define-space]").addEventListener("click", () => openSpaceDialog());
+
 job.onChange(refreshAll);
 onModeChange(refreshRail);
 refreshAll();
 setView("3d");
+if (!job.hasSpace()) openSpaceDialog();

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { canvas, controls, rayFromClient, floorPointAt, planePointAt, closestTOnLine, frame } from "./space.js";
 import * as job from "./job.js";
 import { getModule } from "./modules.js";
-import { pickables, groupFor, envelopeBox, setHandleHover, showGhost, hideGhost } from "./cabinets3d.js";
+import { pickables, groupFor, envelopeBox, envelopeFootprint, poseFits, setHandleHover, showGhost, hideGhost } from "./cabinets3d.js";
 
 const DRAG_THRESHOLD_PX = 4;
 const MIN_DRAG_BOX_MM = 50;
@@ -32,6 +32,7 @@ export function getPlacingModule() {
 }
 
 export function armPlacement(moduleId) {
+  if (!job.hasSpace()) return;
   placing = moduleId;
   job.select(null);
   canvas.style.cursor = "crosshair";
@@ -58,32 +59,23 @@ function localAxisWorld(group, axis) {
   return v.transformDirection(group.matrixWorld).normalize();
 }
 
-/** World-space XY bounds of the cabinet envelope for the given pose. */
-function envelopeWorldAabb(cab, pose) {
-  const env = envelopeBox(cab, job.resultFor(cab.id));
-  const a = ((pose.rotZ || 0) * Math.PI) / 180;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  const corners = [[env.x0, env.y0], [env.x1, env.y0], [env.x1, env.y1], [env.x0, env.y1]];
-  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  for (const [lx, ly] of corners) {
-    const wx = pose.x + lx * c - ly * s;
-    const wy = pose.y + lx * s + ly * c;
-    minX = Math.min(minX, wx); maxX = Math.max(maxX, wx);
-    minY = Math.min(minY, wy); maxY = Math.max(maxY, wy);
-  }
-  return { minX, minY, maxX, maxY };
-}
-
-function clampPoseToSpace(cab, pose) {
-  const sp = job.getJob().space;
-  const bb = envelopeWorldAabb(cab, pose);
+/**
+ * Keep the cabinet inside the space. Fast path clamps to the floor bounds
+ * (exact for a box space); if the result still doesn't fit (concave floor,
+ * obstacles) fall back to the last pose that did.
+ */
+function clampPoseToSpace(cab, pose, fallback) {
+  const sp = job.getSpace();
+  if (!sp) return pose;
+  const bb = envelopeFootprint(cab, pose);
   let dx = 0, dy = 0;
-  if (bb.minX < 0) dx = -bb.minX;
-  else if (bb.maxX > sp.width) dx = sp.width - bb.maxX;
-  if (bb.minY < 0) dy = -bb.minY;
-  else if (bb.maxY > sp.depth) dy = sp.depth - bb.maxY;
-  return { ...pose, x: pose.x + dx, y: pose.y + dy };
+  if (bb.minX < sp.bounds.minX) dx = sp.bounds.minX - bb.minX;
+  else if (bb.maxX > sp.bounds.maxX) dx = sp.bounds.maxX - bb.maxX;
+  if (bb.minY < sp.bounds.minY) dy = sp.bounds.minY - bb.minY;
+  else if (bb.maxY > sp.bounds.maxY) dy = sp.bounds.maxY - bb.maxY;
+  const clamped = { ...pose, x: pose.x + dx, y: pose.y + dy };
+  if (poseFits(cab, clamped)) return clamped;
+  return fallback && poseFits(cab, fallback) ? fallback : clamped;
 }
 
 // --- pointer -----------------------------------------------------------------
@@ -194,7 +186,7 @@ canvas.addEventListener("pointermove", (e) => {
       x: job.snap(drag.pose0.x + (p.x - drag.p0.x)),
       y: job.snap(drag.pose0.y + (p.y - drag.p0.y)),
     };
-    pose = clampPoseToSpace(cab, pose);
+    pose = clampPoseToSpace(cab, pose, cab.pose);
     job.setPose(drag.cabId, pose, { history: false });
     return;
   }
@@ -292,8 +284,11 @@ window.addEventListener("keydown", (e) => {
       const center = new THREE.Vector3((env.x0 + env.x1) / 2, (env.y0 + env.y1) / 2, (env.z0 + env.z1) / 2).applyMatrix4(group.matrixWorld);
       frame(center, Math.hypot(env.W, env.D + env.fpt, env.H) / 2);
     } else {
-      const sp = job.getJob().space;
-      frame(new THREE.Vector3(sp.width / 2, sp.depth / 2, sp.height / 2), Math.hypot(sp.width, sp.depth, sp.height) / 2);
+      const sp = job.getSpace();
+      if (!sp) return;
+      const W = sp.bounds.maxX - sp.bounds.minX;
+      const D = sp.bounds.maxY - sp.bounds.minY;
+      frame(new THREE.Vector3(sp.bounds.minX + W / 2, sp.bounds.minY + D / 2, sp.height / 2), Math.hypot(W, D, sp.height) / 2);
     }
     return;
   }
@@ -315,6 +310,6 @@ window.addEventListener("keydown", (e) => {
       x: job.snap(wx - (cx * Math.cos(a1) - cy * Math.sin(a1))),
       y: job.snap(wy - (cx * Math.sin(a1) + cy * Math.cos(a1))),
     };
-    job.setPose(sel.id, clampPoseToSpace(sel, pose));
+    job.setPose(sel.id, clampPoseToSpace(sel, pose, sel.pose));
   }
 });

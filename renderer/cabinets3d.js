@@ -3,8 +3,9 @@
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
 import { scene } from "./space.js";
-import { getJob, getSelectedId, resultFor } from "./job.js";
+import { getJob, getSelectedId, getSpace, resultFor } from "./job.js";
 import { getModule } from "./modules.js";
+import { footprintFits } from "./spaces.js";
 
 export const HANDLE_SIZE = 44;
 
@@ -14,6 +15,7 @@ const errorMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a4034 });
 const envMat = new THREE.LineBasicMaterial({ color: 0x4f86e0 });
 const envMatIdle = new THREE.LineBasicMaterial({ color: 0x6b7784, transparent: true, opacity: 0.35 });
+const envMatBad = new THREE.LineBasicMaterial({ color: 0xd94b4b });
 const handleMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0 });
 const handleHoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 const dividerMat = new THREE.MeshBasicMaterial({ color: 0xe0a34f });
@@ -37,6 +39,31 @@ export function envelopeBox(cab, result) {
   const env = getModule(cab.moduleId).envelope(cab.params);
   const fpt = result?.params?.frontPanelThickness ?? cab.params.frontPanelThickness ?? 16;
   return { x0: 0, x1: env.W, y0: -fpt, y1: env.D, z0: 0, z1: env.H, W: env.W, D: env.D, H: env.H, fpt };
+}
+
+/** World-space footprint corners and XY bounds of the cabinet envelope for a pose. */
+export function envelopeFootprint(cab, pose) {
+  const env = envelopeBox(cab, resultFor(cab.id));
+  const a = ((pose.rotZ || 0) * Math.PI) / 180;
+  const c = Math.cos(a);
+  const s = Math.sin(a);
+  const corners = [[env.x0, env.y0], [env.x1, env.y0], [env.x1, env.y1], [env.x0, env.y1]].map(([lx, ly]) => [
+    pose.x + lx * c - ly * s,
+    pose.y + lx * s + ly * c,
+  ]);
+  const xs = corners.map((p) => p[0]);
+  const ys = corners.map((p) => p[1]);
+  return {
+    corners,
+    minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys),
+    z0: pose.z + env.z0, z1: pose.z + env.z1,
+  };
+}
+
+/** Does the cabinet fit inside the space at this pose (floor polygon, obstacles, height)? */
+export function poseFits(cab, pose) {
+  const fp = envelopeFootprint(cab, pose);
+  return footprintFits(getSpace(), fp.corners, [fp.z0, fp.z1]);
 }
 
 export function applyPose(group, pose) {
@@ -84,7 +111,8 @@ function buildGroup(cab) {
     group.add(ghost);
   }
 
-  const envLines = boxEdges(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, selected ? envMat : envMatIdle);
+  const fits = poseFits(cab, cab.pose);
+  const envLines = boxEdges(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, !fits ? envMatBad : selected ? envMat : envMatIdle);
   envLines.renderOrder = 5;
   group.add(envLines);
 

@@ -56,6 +56,11 @@
       <div id="viewport-hud">
         <span id="viewLabel">3D</span>
       </div>
+      <div id="emptyState" class="hidden">
+        <div class="empty-title">No space yet</div>
+        <div class="empty-sub">Step 1 is defining the space the cabinets live in.</div>
+        <button class="tb primary" data-define-space>Define the space</button>
+      </div>
 
       <section id="drawer" class="collapsed">
         <div class="drawer-tabs">
@@ -87,6 +92,20 @@
       <span class="st" id="stFile">Untitled</span>
     </footer>
 
+  </div>
+
+  <div id="spaceDialog" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">Define the space</div>
+      <div class="modal-sub">Origin is the front-left floor corner. X right, Y back, Z up.</div>
+      <div class="kind-list"></div>
+      <div class="kind-fields"></div>
+      <div class="kind-errors"></div>
+      <div class="modal-actions">
+        <button class="tb" data-cancel>Later</button>
+        <button class="tb primary" data-ok>Create space</button>
+      </div>
+    </div>
   </div>
 
   <script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
