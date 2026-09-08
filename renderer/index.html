@@ -1,0 +1,22 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    CSP: the inline import map below is allowed by its sha256 hash.
+    If you change the import map text (even whitespace), recompute the hash:
+      node -e "const c=require('crypto');const s=process.argv[1];console.log('sha256-'+c.createHash('sha256').update(s,'utf8').digest('base64'))" '<exact script content>'
+    or launch once and copy the hash Chromium prints in the console error.
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-QHspYcLLOKSarKa9WCONpLgp80qJjPebMyusqjGSeoo='; style-src 'self'">
+  <title>The Cab Lab</title>
+  <link rel="stylesheet" href="./style.css">
+</head>
+<body>
+  <div id="hud">mm · 网格 100 mm · Z up</div>
+  <div id="hint">左键旋转 · 右键平移 · 滚轮缩放 · F12 调试</div>
+  <script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
+  <script type="module" src="./space.js"></script>
+</body>
+</html>

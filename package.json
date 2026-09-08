@@ -1,0 +1,18 @@
+{
+  "name": "the-cab-lab",
+  "productName": "The Cab Lab",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The Cab Lab - cabinet CAD workspace (metric, Z up)",
+  "main": "main.js",
+  "scripts": {
+    "start": "node ensure-electron.js && electron .",
+    "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File create-desktop-shortcut.ps1"
+  },
+  "dependencies": {
+    "three": "^0.170.0"
+  },
+  "devDependencies": {
+    "electron": "^36.0.0"
+  }
+}

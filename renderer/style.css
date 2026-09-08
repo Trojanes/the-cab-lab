@@ -1,0 +1,29 @@
+html, body {
+  margin: 0;
+  height: 100%;
+  overflow: hidden;
+  background: #1a1c1f;
+  font-family: "Segoe UI", sans-serif;
+}
+
+#hud,
+#hint {
+  position: fixed;
+  z-index: 1;
+  color: #c8ccd2;
+  font-size: 12px;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+  user-select: none;
+}
+
+#hud {
+  left: 16px;
+  bottom: 14px;
+}
+
+#hint {
+  right: 16px;
+  bottom: 14px;
+  color: #8b9098;
+}

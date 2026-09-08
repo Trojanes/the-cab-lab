@@ -1,0 +1,34 @@
+---
+description: The Cab Lab core contract - geometry source, units, and what the 3D layer may and may not do
+alwaysApply: true
+---
+
+# The Cab Lab core contract
+
+The Cab Lab is a cabinet CAD, not a general CAD. Follow these rules in every change.
+
+## Single source of geometry
+
+- Everything visible in the 3D space must trace back to `job.json` (room, cabinets, later boards).
+- Cabinet geometry comes from parametric generators (`moduleId + params` → boards). The shared TypeScript generators live in `E:\Work\Cursor Project\modules\*\generator.ts`; reuse them, never re-implement cabinet formulas in the renderer.
+- Editing = change `job.json` / `params` / zones / board attributes, then regenerate. Undo = previous `job.json` snapshot, not a feature timeline.
+
+## 3D layer (Three.js / renderer) only displays
+
+- Draw boards as boxes / outlines from generator output. Do not build solids, booleans, sketches, or constraint solvers in the renderer.
+- Never edit mesh vertices to change a cabinet. If a size must change, change a parameter.
+- Selection, drag-move, rotate 90°, snapping to walls or neighbours are allowed; they only mutate `pose`.
+
+## Units and axes (fixed)
+
+- Internal unit is **millimetres** everywhere. Never mix metres.
+- **Z is up**, XY is the floor, right-handed. Grid: 100 mm minor, 1000 mm major.
+
+## Scope guard
+
+Do not add: physics engine, BRep/OCCT kernel, Fusion API code, CAM/toolpaths, nesting inside the renderer. Manufacturing (outlines → nesting → labels) consumes the same `boards` data downstream, outside the 3D layer.
+
+## App shell
+
+- Electron shell: `main.js` (window), `renderer/` (scene). CSP allows the inline import map only by sha256 hash - recompute the hash if the import map text changes.
+- `ensure-electron.js` repairs a missing `electron.exe`; `create-desktop-shortcut.ps1` builds `The Cab Lab.exe` + desktop shortcut. Keep both working.
