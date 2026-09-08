@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -14,9 +14,140 @@
   <link rel="stylesheet" href="./style.css">
 </head>
 <body>
-  <div id="hud">mm · 网格 100 mm · Z up</div>
-  <div id="hint">左键旋转 · 右键平移 · 滚轮缩放 · F12 调试</div>
+  <div id="app">
+
+    <header id="topbar">
+      <div class="brand">The Cab Lab</div>
+      <div class="sep"></div>
+      <div class="group">
+        <button class="tb" data-action="new" title="New job (Ctrl+N)">New</button>
+        <button class="tb" data-action="open" title="Open job (Ctrl+O)">Open</button>
+        <button class="tb" data-action="save" title="Save job (Ctrl+S)">Save</button>
+      </div>
+      <div class="sep"></div>
+      <div class="group">
+        <button class="tb" data-action="undo" title="Undo (Ctrl+Z)" disabled>Undo</button>
+        <button class="tb" data-action="redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
+      </div>
+      <div class="sep"></div>
+      <div class="group" id="viewGroup">
+        <span class="label">View</span>
+        <button class="tb seg active" data-view="3d">3D</button>
+        <button class="tb seg" data-view="top">Top</button>
+        <button class="tb seg" data-view="front">Front</button>
+      </div>
+      <div class="spacer"></div>
+      <div class="group">
+        <button class="tb" data-action="settings" title="Settings">Settings</button>
+      </div>
+    </header>
+
+    <aside id="leftrail">
+      <div class="rail-title">Place</div>
+      <button class="rail-item active" data-place="room">
+        <span class="rail-name">Room</span>
+        <span class="rail-sub">walls &amp; floor</span>
+      </button>
+      <div class="rail-title">Cabinets</div>
+      <button class="rail-item" data-place="general_tall" disabled>
+        <span class="rail-name">Tall</span>
+        <span class="rail-sub">general tall</span>
+      </button>
+      <button class="rail-item" data-place="overhead" disabled>
+        <span class="rail-name">Overhead</span>
+        <span class="rail-sub">wall cabinet</span>
+      </button>
+      <button class="rail-item" data-place="kitchen" disabled>
+        <span class="rail-name">Base</span>
+        <span class="rail-sub">kitchen run</span>
+      </button>
+      <button class="rail-item" data-place="lounge" disabled>
+        <span class="rail-name">Lounge</span>
+        <span class="rail-sub">L / I layouts</span>
+      </button>
+      <button class="rail-item" data-place="small" disabled>
+        <span class="rail-name">Small</span>
+        <span class="rail-sub">simple box</span>
+      </button>
+      <div class="rail-foot">Cabinets unlock once a room exists.</div>
+    </aside>
+
+    <main id="center">
+      <div id="viewport"></div>
+      <div id="viewport-hud">
+        <span id="viewLabel">3D</span>
+      </div>
+
+      <section id="drawer" class="collapsed">
+        <div class="drawer-tabs">
+          <button class="dtab active" data-dtab="checks">Checks</button>
+          <button class="dtab" data-dtab="boards">Boards</button>
+          <button class="dtab" data-dtab="elevation">Elevation</button>
+          <div class="spacer"></div>
+          <button class="dtoggle" id="drawerToggle" title="Show / hide">▴</button>
+        </div>
+        <div class="drawer-body">
+          <div class="dpane active" data-dpane="checks">
+            <div class="empty">No checks yet. Validation appears here once a cabinet is generated.</div>
+          </div>
+          <div class="dpane" data-dpane="boards">
+            <div class="empty">No boards yet. The board table lists every panel of the selected cabinet.</div>
+          </div>
+          <div class="dpane" data-dpane="elevation">
+            <div class="empty">No elevation yet. Zone editing for the selected cabinet lives here.</div>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <aside id="rightpanel">
+      <div class="panel-head">
+        <div class="panel-title" id="propTitle">Room</div>
+        <div class="panel-sub" id="propSub">Nothing selected — showing room</div>
+      </div>
+
+      <div class="panel-section">
+        <div class="sec-title">Size</div>
+        <label class="field"><span>Width (mm)</span><input type="number" value="4000" step="10" disabled></label>
+        <label class="field"><span>Depth (mm)</span><input type="number" value="3000" step="10" disabled></label>
+        <label class="field"><span>Height (mm)</span><input type="number" value="2400" step="10" disabled></label>
+      </div>
+
+      <div class="panel-section">
+        <div class="sec-title">Defaults</div>
+        <label class="field"><span>Carcass thickness</span><input type="number" value="16" step="0.5" disabled></label>
+        <label class="field"><span>Front thickness</span><input type="number" value="16" step="0.5" disabled></label>
+        <label class="field"><span>Carcass colour</span><input type="text" value="White Stipple" disabled></label>
+      </div>
+
+      <div class="panel-section muted">
+        <div class="sec-title">Selection</div>
+        <div class="empty small">Click a cabinet, zone or board in the space to edit it here.</div>
+      </div>
+
+      <div class="panel-foot">
+        <span class="tag">mock</span>
+        <span>Fields are static until the room is wired to job.json.</span>
+      </div>
+    </aside>
+
+    <footer id="statusbar">
+      <span class="st">mm</span>
+      <span class="dot"></span>
+      <span class="st">grid 100 mm</span>
+      <span class="dot"></span>
+      <span class="st">Z up</span>
+      <span class="spacer"></span>
+      <span class="st" id="stSelection">Selection: —</span>
+      <span class="dot"></span>
+      <span class="st" id="stCursor">X — Y —</span>
+      <span class="dot"></span>
+      <span class="st" id="stFile">Untitled · unsaved</span>
+    </footer>
+
+  </div>
+
   <script type="importmap">{"imports":{"three":"../node_modules/three/build/three.module.js","three/addons/":"../node_modules/three/examples/jsm/"}}</script>
-  <script type="module" src="./space.js"></script>
+  <script type="module" src="./ui.js"></script>
 </body>
 </html>

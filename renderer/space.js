@@ -14,9 +14,10 @@ const camera = new THREE.PerspectiveCamera(50, 1, 10, 100000);
 camera.up.set(0, 0, 1);
 camera.position.set(4200, -4800, 2800);
 
+const mount = document.getElementById("viewport") || document.body;
 const renderer = new THREE.WebGLRenderer({ antialias: true });
 renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-document.body.appendChild(renderer.domElement);
+mount.appendChild(renderer.domElement);
 
 const controls = new OrbitControls(camera, renderer.domElement);
 controls.target.set(0, 0, 0);
@@ -93,15 +94,50 @@ function lineSegments(positions, color) {
 }
 
 function resize() {
-  const w = window.innerWidth;
-  const h = window.innerHeight;
+  const w = mount.clientWidth || window.innerWidth;
+  const h = mount.clientHeight || window.innerHeight;
   camera.aspect = w / Math.max(h, 1);
   camera.updateProjectionMatrix();
   renderer.setSize(w, h);
 }
 
-window.addEventListener("resize", resize);
+if (typeof ResizeObserver === "function") {
+  new ResizeObserver(resize).observe(mount);
+} else {
+  window.addEventListener("resize", resize);
+}
 resize();
+
+// Named views. Camera stays perspective for now; Top/Front only move it.
+const VIEWS = {
+  "3d": { pos: [4200, -4800, 2800], up: [0, 0, 1] },
+  top: { pos: [0, 0, 8000], up: [0, 1, 0] },
+  front: { pos: [0, -8000, 1200], up: [0, 0, 1] },
+};
+
+export function setView(name) {
+  const v = VIEWS[name] || VIEWS["3d"];
+  camera.up.set(v.up[0], v.up[1], v.up[2]);
+  camera.position.set(v.pos[0], v.pos[1], v.pos[2]);
+  controls.target.set(0, 0, name === "front" ? 1200 : 0);
+  controls.update();
+}
+
+// Floor-plane cursor readout for the status bar. Returns null when the ray
+// misses the XY plane (looking at the horizon).
+const floorPlane = new THREE.Plane(new THREE.Vector3(0, 0, 1), 0);
+const raycaster = new THREE.Raycaster();
+const ndc = new THREE.Vector2();
+const hit = new THREE.Vector3();
+
+export function floorPointAt(clientX, clientY) {
+  const r = renderer.domElement.getBoundingClientRect();
+  ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
+  raycaster.setFromCamera(ndc, camera);
+  return raycaster.ray.intersectPlane(floorPlane, hit) ? { x: hit.x, y: hit.y } : null;
+}
+
+export const canvas = renderer.domElement;
 
 function tick() {
   controls.update();
