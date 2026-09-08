@@ -1,11 +1,54 @@
-// UI shell wiring. Static mock: buttons switch panels and views only;
-// nothing here touches job data yet.
-import { setView, floorPointAt, canvas } from "./space.js";
+// Shell wiring: top bar, module rail, drawer, status bar, file actions.
+import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
+import * as job from "./job.js";
+import { MODULES, PLANNED_MODULES } from "./modules.js";
+import { syncCabinets } from "./cabinets3d.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule } from "./interact.js";
+import { renderPanel } from "./panel.js";
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
-// --- top bar: view segment -------------------------------------------------
+// --- module rail ---------------------------------------------------------------
+const list = $("#moduleList");
+for (const mod of Object.values(MODULES)) {
+  const btn = document.createElement("button");
+  btn.className = "rail-item";
+  btn.dataset.module = mod.id;
+  btn.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span>`;
+  $(".rail-name", btn).textContent = mod.label;
+  $(".rail-sub", btn).textContent = mod.sub;
+  btn.addEventListener("click", () => {
+    if (getPlacingModule() === mod.id) disarm();
+    else armPlacement(mod.id);
+  });
+  list.append(btn);
+}
+for (const mod of PLANNED_MODULES) {
+  const btn = document.createElement("button");
+  btn.className = "rail-item";
+  btn.disabled = true;
+  btn.title = "Not wired yet";
+  btn.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span>`;
+  $(".rail-name", btn).textContent = mod.label;
+  $(".rail-sub", btn).textContent = mod.sub;
+  list.append(btn);
+}
+$("[data-space]").addEventListener("click", () => {
+  disarm();
+  job.select(null);
+});
+
+function refreshRail() {
+  const placing = getPlacingModule();
+  const sel = job.getSelected();
+  $$("#leftrail .rail-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.module ? b.dataset.module === placing : (!placing && !sel && b.hasAttribute("data-space")));
+  });
+  $("#modeHint").textContent = placing ? `Placing ${MODULES[placing].label} — drag a box on the floor, Esc to cancel` : "";
+}
+
+// --- view buttons ---------------------------------------------------------------
 $$("#viewGroup [data-view]").forEach((btn) => {
   btn.addEventListener("click", () => {
     $$("#viewGroup [data-view]").forEach((b) => b.classList.toggle("active", b === btn));
@@ -14,25 +57,7 @@ $$("#viewGroup [data-view]").forEach((btn) => {
   });
 });
 
-// --- top bar: actions (mock) ----------------------------------------------
-$$("#topbar [data-action]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    console.info("[ui] action:", btn.dataset.action, "(not wired)");
-  });
-});
-
-// --- left rail ---------------------------------------------------------------
-$$("#leftrail .rail-item").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    $$("#leftrail .rail-item").forEach((b) => b.classList.toggle("active", b === btn));
-    const name = $(".rail-name", btn).textContent;
-    $("#propTitle").textContent = name;
-    $("#propSub").textContent = name === "Room" ? "Nothing selected — showing room" : "Placing " + name;
-    $("#stSelection").textContent = "Selection: " + (name === "Room" ? "—" : name);
-  });
-});
-
-// --- bottom drawer -----------------------------------------------------------
+// --- drawer ---------------------------------------------------------------------
 const drawer = $("#drawer");
 $("#drawerToggle").addEventListener("click", () => drawer.classList.toggle("collapsed"));
 $$("#drawer .dtab").forEach((tab) => {
@@ -43,23 +68,102 @@ $$("#drawer .dtab").forEach((tab) => {
   });
 });
 
-// --- status bar: cursor on floor ---------------------------------------------
+// --- status bar -------------------------------------------------------------------
 const stCursor = $("#stCursor");
 canvas.addEventListener("pointermove", (e) => {
   const p = floorPointAt(e.clientX, e.clientY);
   stCursor.textContent = p ? `X ${Math.round(p.x)}  Y ${Math.round(p.y)}` : "X — Y —";
 });
-canvas.addEventListener("pointerleave", () => {
-  stCursor.textContent = "X — Y —";
+canvas.addEventListener("pointerleave", () => { stCursor.textContent = "X — Y —"; });
+
+function refreshStatus() {
+  const sel = job.getSelected();
+  $("#stSelection").textContent = sel ? `Selection: ${sel.id} (${MODULES[sel.moduleId].label})` : "Selection: —";
+  const path = job.getFilePath();
+  const name = path ? path.split(/[\\/]/).pop() : "Untitled";
+  $("#stFile").textContent = job.isDirty() ? `${name} · unsaved` : name;
+  document.title = `${job.isDirty() ? "• " : ""}${name} — The Cab Lab`;
+  $('[data-action="undo"]').disabled = !job.canUndo();
+  $('[data-action="redo"]').disabled = !job.canRedo();
+}
+
+// --- file actions -------------------------------------------------------------------
+const bridge = window.cablab || null;
+
+async function doNew() {
+  if (job.isDirty() && !window.confirm("Discard unsaved changes?")) return;
+  job.resetJob();
+}
+async function doOpen() {
+  if (!bridge) return console.warn("[ui] file bridge unavailable");
+  if (job.isDirty() && !window.confirm("Discard unsaved changes?")) return;
+  const res = await bridge.openJob();
+  if (!res) return;
+  try {
+    job.loadJob(JSON.parse(res.text), res.path);
+  } catch (err) {
+    window.alert(`Could not open: ${err.message}`);
+  }
+}
+async function doSave(forceDialog = false) {
+  if (!bridge) return console.warn("[ui] file bridge unavailable");
+  const path = await bridge.saveJob(forceDialog ? null : job.getFilePath(), job.serialize());
+  if (path) job.markSaved(path);
+}
+
+const ACTIONS = {
+  new: doNew,
+  open: doOpen,
+  save: () => doSave(false),
+  undo: () => job.undo(),
+  redo: () => job.redo(),
+};
+$$("#topbar [data-action]").forEach((btn) => {
+  btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());
 });
 
-// --- keyboard shortcuts (mock targets) ---------------------------------------
 window.addEventListener("keydown", (e) => {
   if (!e.ctrlKey) return;
-  const map = { n: "new", o: "open", s: "save", z: "undo", y: "redo" };
-  const action = map[e.key.toLowerCase()];
-  if (action) {
-    e.preventDefault();
-    console.info("[ui] shortcut:", action, "(not wired)");
-  }
+  const k = e.key.toLowerCase();
+  const inField = e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
+  if (k === "n") { e.preventDefault(); doNew(); }
+  else if (k === "o") { e.preventDefault(); doOpen(); }
+  else if (k === "s") { e.preventDefault(); doSave(e.shiftKey); }
+  else if (k === "z" && !inField) { e.preventDefault(); job.undo(); }
+  else if (k === "y" && !inField) { e.preventDefault(); job.redo(); }
 });
+
+// --- sync --------------------------------------------------------------------------
+let panelPending = false;
+const rightpanel = $("#rightpanel");
+function maybeRenderPanel() {
+  if (rightpanel.contains(document.activeElement)) {
+    panelPending = true;
+    return;
+  }
+  panelPending = false;
+  renderPanel();
+}
+rightpanel.addEventListener("focusout", () => {
+  // Wait for focus to settle, then re-render if a job change was skipped.
+  setTimeout(() => { if (panelPending && !rightpanel.contains(document.activeElement)) maybeRenderPanel(); }, 0);
+});
+
+let lastSpaceKey = "";
+function refreshAll() {
+  const sp = job.getJob().space;
+  const key = `${sp.width}x${sp.depth}x${sp.height}`;
+  if (key !== lastSpaceKey) {
+    lastSpaceKey = key;
+    drawSpace(sp);
+  }
+  syncCabinets();
+  maybeRenderPanel();
+  refreshRail();
+  refreshStatus();
+}
+
+job.onChange(refreshAll);
+onModeChange(refreshRail);
+refreshAll();
+setView("3d");

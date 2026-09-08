@@ -272,6 +272,55 @@ button:disabled { cursor: default; opacity: 0.45; }
 
 .empty { color: var(--text-3); }
 .empty.small { font-size: 11px; }
+.empty.ok { color: var(--ok); }
+
+#topbar .hint { color: var(--accent); font-size: 11px; }
+
+.tb.wide { width: 100%; margin-top: 4px; border: 1px dashed var(--line-strong); color: var(--text-2); }
+.tb.wide:hover { color: var(--text); border-color: var(--accent); }
+.tb.danger { color: var(--err); }
+.tb.danger:hover { background: rgba(217, 75, 75, 0.15); }
+
+.zone-list { display: flex; flex-direction: column; gap: 4px; }
+.zone-row {
+  display: grid;
+  grid-template-columns: 16px 1fr 64px 20px;
+  align-items: center;
+  gap: 6px;
+}
+.zone-idx { color: var(--text-3); font-size: 11px; text-align: right; }
+.zone-row select,
+.zone-row input {
+  height: 24px;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font: inherit;
+  min-width: 0;
+}
+.zone-row input { text-align: right; }
+.zone-row select:focus,
+.zone-row input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+button.icon {
+  width: 20px;
+  height: 20px;
+  border-radius: var(--radius);
+  color: var(--text-3);
+  font-size: 14px;
+  line-height: 1;
+}
+button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err); }
+
+.msg { padding: 4px 6px; margin-bottom: 4px; border-radius: var(--radius); font-size: 11px; }
+.msg.err { background: rgba(217, 75, 75, 0.15); color: #f0a0a0; }
+.msg.warn { background: rgba(224, 163, 79, 0.15); color: #f0cf9a; }
+
+table.grid { border-collapse: collapse; width: 100%; font-size: 11px; }
+table.grid th, table.grid td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+table.grid th { color: var(--text-3); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
+table.grid td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
 
 /* ---------- status bar ---------- */
 

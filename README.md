@@ -2,7 +2,12 @@
 
 Cabinet CAD workspace. Metric (mm), Z up, right-handed. Electron + Three.js.
 
-Current state: blank space — floor grid (100 mm minor / 1000 mm major), XYZ axes, orbit camera. No cabinets yet.
+Workflow: define the **space** (W × D × H) → pick a **module** on the left → drag its **box** on the floor.
+The box *is* the generator's outer size. Pull its faces to change W / D / H, drag the orange bars to move
+zone boundaries, edit details in the right panel. Boards are always regenerated from `job.json`, never edited.
+
+Current state: Small cabinet wired end to end (place, move, rotate, resize, zones, checks, board table, save / load, undo).
+Other modules are listed but not wired yet.
 
 ## Run
 
@@ -18,14 +23,30 @@ After that, use the **The Cab Lab** desktop shortcut, or:
 npm start
 ```
 
+`npm start` also rebuilds `renderer/gen/*.js` from the shared generators. The bundles are committed so the
+desktop shortcut works without a build step; run `npm run build:generators` after changing a generator.
+
 ## Layout
 
-- `main.js` — Electron window
-- `renderer/` — scene (`space.js`), page, styles
+- `main.js` — Electron window, open / save dialogs (IPC)
+- `preload.js` — exposes `window.cablab.openJob / saveJob`
+- `renderer/space.js` — scene, camera, grid, axes, room, picking helpers
+- `renderer/job.js` — `job.json` in memory, undo / redo snapshots, generator result cache
+- `renderer/modules.js` — module registry: generator bundle + envelope (W / D / H) + divider handles
+- `renderer/cabinets3d.js` — draws boards, envelope, handles from generator output
+- `renderer/interact.js` — left-button interaction: place, select, move, resize, dividers, R / F / Del / Esc
+- `renderer/panel.js` — right panel (space or selected cabinet) and drawer tables
+- `renderer/ui.js` — shell wiring
+- `renderer/gen/` — generated ESM bundles of `../modules/*/generator.ts` (do not edit)
+- `build-generators.js` — esbuild script producing `renderer/gen`
 - `ensure-electron.js` — repairs a missing `electron.exe`
 - `create-desktop-shortcut.ps1` — builds `The Cab Lab.exe` + desktop shortcut (`npm run shortcut`)
-- `.cursor/rules/cab-lab-core.mdc` — project contract (single geometry source, units, what the 3D layer may do)
+- `.cursor/rules/cab-lab-core.mdc` — project contract
 
 ## Controls
 
-Left drag rotate · right drag pan · wheel zoom · F12 dev tools
+- Hold wheel: orbit · right-drag: pan · scroll: zoom
+- Left click: select · left-drag on a cabinet: move (snaps 10 mm, stays inside the space)
+- Blue cubes: pull W / D / H · orange bars: zone boundaries
+- `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
+- `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools

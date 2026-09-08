@@ -6,13 +6,15 @@
   "description": "The Cab Lab - cabinet CAD workspace (metric, Z up)",
   "main": "main.js",
   "scripts": {
-    "start": "node ensure-electron.js && electron .",
+    "start": "node ensure-electron.js && node build-generators.js && electron .",
+    "build:generators": "node build-generators.js",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File create-desktop-shortcut.ps1"
   },
   "dependencies": {
     "three": "^0.170.0"
   },
   "devDependencies": {
-    "electron": "^36.0.0"
+    "electron": "^36.0.0",
+    "esbuild": "^0.28.2"
   }
 }

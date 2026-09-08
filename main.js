@@ -1,5 +1,28 @@
-const { app, BrowserWindow } = require("electron");
+const { app, BrowserWindow, ipcMain, dialog } = require("electron");
 const path = require("path");
+const fs = require("fs");
+
+const JOB_FILTERS = [{ name: "Cab Lab job", extensions: ["json"] }];
+
+ipcMain.handle("job:open", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const res = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: JOB_FILTERS });
+  if (res.canceled || !res.filePaths.length) return null;
+  const filePath = res.filePaths[0];
+  return { path: filePath, text: fs.readFileSync(filePath, "utf8") };
+});
+
+ipcMain.handle("job:save", async (event, filePath, text) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  let target = filePath;
+  if (!target) {
+    const res = await dialog.showSaveDialog(win, { defaultPath: "job.json", filters: JOB_FILTERS });
+    if (res.canceled || !res.filePath) return null;
+    target = res.filePath;
+  }
+  fs.writeFileSync(target, text, "utf8");
+  return target;
+});
 
 function createWindow() {
   const win = new BrowserWindow({

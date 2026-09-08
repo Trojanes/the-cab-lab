@@ -10,7 +10,8 @@ The Cab Lab is a cabinet CAD, not a general CAD. Follow these rules in every cha
 ## Single source of geometry
 
 - Everything visible in the 3D space must trace back to `job.json` (room, cabinets, later boards).
-- Cabinet geometry comes from parametric generators (`moduleId + params` → boards). The shared TypeScript generators live in `E:\Work\Cursor Project\modules\*\generator.ts`; reuse them, never re-implement cabinet formulas in the renderer.
+- Cabinet geometry comes from parametric generators (`moduleId + params` → boards). The shared TypeScript generators live in `E:\Work\Cursor Project\modules\*\generator.ts`; reuse them, never re-implement cabinet formulas in the renderer. The renderer imports them as esbuild bundles in `renderer/gen/` (`npm run build:generators`); never edit the bundles.
+- A cabinet's box (envelope) **is** its outer-size params. `renderer/modules.js` maps envelope W/D/H and divider handles onto each module's params; there is no separate envelope record in `job.json`.
 - Editing = change `job.json` / `params` / zones / board attributes, then regenerate. Undo = previous `job.json` snapshot, not a feature timeline.
 
 ## 3D layer (Three.js / renderer) only displays
