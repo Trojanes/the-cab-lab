@@ -98,11 +98,11 @@ function cursorPoint(clientX, clientY, z) {
  *   otherwise                   → grid on the anchor's plane
  */
 function rubberCursor(e) {
-  const z = rubber.anchor.z;
   const snap = nearestSnap(e.clientX, e.clientY);
   if (snap) {
     rubber.lastPoint = snap;
     rubber.inference = null;
+    rubber.planeZ = snap.z; // the working plane follows the last height we touched
     return { x: snap.x, y: snap.y, z: snap.z, feature: true };
   }
 
@@ -115,6 +115,7 @@ function rubberCursor(e) {
     // ceiling edge still spans the box up to the ceiling.
     if (near && near.dir === dir) {
       const pt = pointOnLine(e.clientX, e.clientY, from, dir);
+      rubber.planeZ = pt.z;
       return { ...pt, feature: false, inference: rubber.inference };
     }
     rubber.inference = null;
@@ -125,13 +126,17 @@ function rubberCursor(e) {
     if (near) {
       rubber.inference = { from, dir: near.dir };
       const pt = pointOnLine(e.clientX, e.clientY, from, near.dir);
+      rubber.planeZ = pt.z;
       return { ...pt, feature: false, inference: rubber.inference };
     }
   }
 
+  // Free cursor: grid on the current working plane (anchor height until a
+  // feature point or inference line moved it, e.g. up to the ceiling).
+  const z = rubber.planeZ;
   const g = planePointAt(e.clientX, e.clientY, new THREE.Plane(new THREE.Vector3(0, 0, 1), -z));
   if (!g) return null;
-  return { x: job.snap(g.x), y: job.snap(g.y), z, feature: false };
+  return { x: job.snap(g.x), y: job.snap(g.y), z, feature: false, plane: true };
 }
 
 /** Current rubber box as a min-corner AABB. */
@@ -201,6 +206,7 @@ function beginRubber(anchor) {
     anchorPoint: { x: anchor.x, y: anchor.y, z: anchor.z, dirs: anchor.dirs || [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]] },
     lastPoint: null,
     inference: null,
+    planeZ: anchor.z,
     growDown: sp ? anchor.z >= sp.height - 1 : false,
   };
   dimBox.classList.remove("hidden");
@@ -281,7 +287,7 @@ canvas.addEventListener("pointermove", (e) => {
     }
     const p = rubberCursor(e);
     if (!p) return;
-    rubber.target = { x: p.x, y: p.y, z: p.feature || p.inference ? p.z : null };
+    rubber.target = { x: p.x, y: p.y, z: p.z };
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
     if (p.inference) showInference(p.inference.from, p, p.inference.dir);
