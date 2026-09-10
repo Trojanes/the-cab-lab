@@ -479,33 +479,32 @@ function beginFace(p) {
 }
 
 /**
- * Corner anchors: while the cursor is still near the corner, the working face
- * follows the face under the cursor (among those the corner lies on); once
- * the cursor is clearly away, the face is locked for this rectangle.
+ * Corner anchors: the click only sets the point. The working face follows
+ * the cursor among the faces that meet there until the opposite corner is
+ * clicked — along an edge (one face, or the side of a shared edge you lean
+ * toward), otherwise the candidate the ray hits.
  */
 function chooseFace(e) {
   if (!rb.candidates) return;
   const a = toClient(rb.anchor.x, rb.anchor.y, rb.anchor.z);
   const away = Math.hypot(e.clientX - a.x, e.clientY - a.y);
-  // Which candidate is the cursor drawing on?
-  //  1. Moving along one of the corner's edges (axis inference) names the faces
-  //     that contain that edge: up a wall from a floor corner can only be the wall.
-  //     Works from either side of a see-through wall.
-  //  2. Otherwise the candidate whose face the cursor ray crosses, front side first.
-  if (away < 6) return; // still on the corner: keep the default
+  if (away < 6) return;
   const ray = rayFromClient(e.clientX, e.clientY);
-  let pool = rb.candidates.filter((f) => faceVisible(f, ray));
+  const pool = rb.candidates.filter((f) => faceVisible(f, ray));
+  if (!pool.length) return;
+
+  let face = null;
   const inf = nearestInference(e.clientX, e.clientY, rb.ctx.anchorPoint, { band: INFER_RELEASE_PX * uiScale() });
-  let ambiguous = false;
   if (inf) {
     const along = pool.filter((f) => Math.abs(inf.dir[AXES.indexOf(f.axis)]) < 1e-6);
-    if (along.length) pool = along;
-    // On an edge shared by two faces (floor + a cabinet's front): either is right,
-    // so keep the current face and wait for the cursor to leave the edge.
-    ambiguous = pool.length > 1;
+    if (along.length === 1) face = along[0];
+    else if (along.length > 1) {
+      face = faceBesideEdge(e.clientX, e.clientY, a, inf.dir, along)
+        || along.find((f) => f.axis === rb.plane.axis && f.value === rb.plane.value && f.dir === rb.plane.dir)
+        || preferDrawable(along);
+    }
   }
-  let face = pool.length === 1 ? pool[0] : null;
-  if (!face && !ambiguous) {
+  if (!face) {
     let bestT = Infinity;
     let bestFront = false;
     let bestRoom = -1;
@@ -521,23 +520,42 @@ function chooseFace(e) {
       if (better) { face = f; bestT = h.t; bestFront = front; bestRoom = room; }
     }
   }
-  // Coincident faces (cabinet top = ceiling): keep / switch to the one with room to pull.
-  if (ambiguous) {
-    const drawable = preferDrawable(pool);
-    if (drawable && extrudeRoom(rb.plane) <= 1 && extrudeRoom(drawable) > 1) face = drawable;
-    else if (pool.some((f) => f.axis === rb.plane.axis && f.value === rb.plane.value && f.dir === rb.plane.dir)) face = null;
+  if (face && pool.filter((f) => f.axis === face.axis && f.value === face.value).length > 1) {
+    face = preferDrawable(pool.filter((f) => f.axis === face.axis && f.value === face.value)) || face;
   }
-  if (face && (face.axis !== rb.plane.axis || face.dir !== rb.plane.dir)) {
-    rb.plane = planeOf(face);
-    rb.ctx.plane = { axis: face.axis, value: face.value, label: face.label };
-    rb.ctx.inference = null;
-    rb.ctx.lastPoint = null;
-    rb.locked = { ...rb.presetLocks };
-    rb.locked[DIM_OF[face.axis]] = null;
-    showFaceHint(face);
-    log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label } });
+  if (!face || (face.axis === rb.plane.axis && face.value === rb.plane.value && face.dir === rb.plane.dir)) return;
+  rb.plane = planeOf(face);
+  rb.ctx.plane = { axis: face.axis, value: face.value, label: face.label };
+  rb.ctx.inference = null;
+  rb.ctx.lastPoint = null;
+  rb.locked = { ...rb.presetLocks };
+  rb.locked[DIM_OF[face.axis]] = null;
+  showFaceHint(face);
+  log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label } });
+}
+
+/** Which of `faces` (sharing an edge through the anchor along `dir`) the cursor sits on. */
+function faceBesideEdge(cx, cy, a, dir, faces) {
+  const edgeAxis = dir[0] ? "x" : dir[1] ? "y" : "z";
+  let best = null;
+  let bestSep = 0;
+  for (const f of faces) {
+    const into = inPlaneAxes(f.axis).find((ax) => ax !== edgeAxis);
+    if (!into) continue;
+    const mid = (f.ext[into][0] + f.ext[into][1]) / 2;
+    const sign = mid >= rb.anchor[into] ? 1 : -1;
+    const probe = { ...rb.anchor, [into]: rb.anchor[into] + sign * 400 };
+    const end = { ...rb.anchor, [edgeAxis]: rb.anchor[edgeAxis] + (dir[AXES.indexOf(edgeAxis)] >= 0 ? 400 : -400) };
+    const p = toClient(probe.x, probe.y, probe.z);
+    const b = toClient(end.x, end.y, end.z);
+    if (p.behind || b.behind) continue;
+    const edgeSide = (b.x - a.x) * (p.y - a.y) - (b.y - a.y) * (p.x - a.x);
+    const curSide = (b.x - a.x) * (cy - a.y) - (b.y - a.y) * (cx - a.x);
+    if (edgeSide * curSide <= 0) continue;
+    const sep = Math.abs(curSide) / (Math.hypot(b.x - a.x, b.y - a.y) || 1);
+    if (sep > bestSep) { bestSep = sep; best = f; }
   }
-  if (away > 40 * uiScale() && face && !ambiguous) rb.candidates = null; // locked
+  return bestSep > 4 ? best : null;
 }
 
 function beginExtrude(e) {

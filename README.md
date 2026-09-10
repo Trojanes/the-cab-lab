@@ -53,8 +53,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
 - Placing, three steps (SketchUp-style): pick a module → hover shows the face under the cursor (floor, ceiling, any
   wall, any face of a cabinet; blue sheet) → click a corner or grid point on it → draw a flat, zero-thickness rectangle
-  on that face and click the opposite corner (a corner anchor takes the face whose edge you move along first — up from a
-  floor corner means the wall) → pull the rectangle off the face, one way only (away from the wall / floor / cabinet —
+  on that face and click the opposite corner (a corner is shared by up to three faces: drag onto the floor, a side
+  wall, or the other wall — the face is not locked until the second click) → pull the rectangle off the face, one way only (away from the wall / floor / cabinet —
   it can't be pulled into them) and click. Side walls are only selectable from the **room inside**; the wall facing the
   camera is ignored until you orbit to its inner face. Floor and ceiling stay pickable from either side. A cabinet top
   flush with the ceiling counts as the ceiling (pull down into the room). Only the two in-plane sizes are typed in
