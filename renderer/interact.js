@@ -15,6 +15,7 @@ import {
   showGhost, hideGhost, showSnapMarker, hideSnapMarker, showInference, hideInference,
 } from "./cabinets3d.js";
 import { nearestSnap, nearestInference, pointOnLine, toClient, INFER_RELEASE_PX } from "./snap.js";
+import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
 
@@ -48,14 +49,17 @@ export function getPlacingModule() {
 }
 
 export function armPlacement(moduleId) {
-  if (!job.hasSpace()) return;
+  if (!job.hasSpace()) { log("place.arm.blocked", { moduleId, reason: "no space" }); return; }
   placing = moduleId;
   rubber = null;
+  log("place.arm", { moduleId });
   job.select(null);
   canvas.style.cursor = "crosshair";
   emitMode();
 }
 export function disarm() {
+  if (placing) log("place.disarm", { moduleId: placing, wasRubber: !!rubber });
+  clearTrace();
   placing = null;
   rubber = null;
   hideGhost();
@@ -211,6 +215,8 @@ function beginRubber(anchor) {
   };
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked");
+  clearTrace();
+  log("place.anchor", { moduleId: placing, anchor: { x: anchor.x, y: anchor.y, z: anchor.z }, feature: !!anchor.feature, growDown: rubber.growDown });
   updateRubber();
   emitMode();
 }
@@ -219,6 +225,16 @@ function finishRubber() {
   const mod = getModule(placing);
   const b = rubberBox();
   const fpt = FRONT_THICKNESS_DEFAULT;
+  flushTrace("place.trace");
+  log("place.finish", {
+    moduleId: placing,
+    anchor: rubber.anchor,
+    target: rubber.target,
+    locked: rubber.locked,
+    planeZ: rubber.planeZ,
+    inference: rubber.inference ? { from: { x: rubber.inference.from.x, y: rubber.inference.from.y, z: rubber.inference.from.z }, dir: rubber.inference.dir } : null,
+    box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H },
+  });
   // Cabinet local origin is the front carcass face; the rubber box includes the fronts.
   const cab = job.addCabinet(
     placing,
@@ -226,7 +242,10 @@ function finishRubber() {
     { W: b.W, D: Math.max(mod.minSize.D, b.D - fpt), H: b.H },
   );
   disarm();
-  if (!poseFits(cab, cab.pose)) console.warn("[place]", cab.id, "does not fit the space; see Checks");
+  if (!poseFits(cab, cab.pose)) {
+    log("place.unfit", { id: cab.id, pose: cab.pose });
+    console.warn("[place]", cab.id, "does not fit the space; see Checks");
+  }
 }
 
 // --- pointer -----------------------------------------------------------------
@@ -268,6 +287,7 @@ canvas.addEventListener("pointerdown", (e) => {
     };
     controls.enabled = false;
     canvas.setPointerCapture(e.pointerId);
+    log("handle.start", { id: cabId, handle: handle.type, index: handle.index, envelope: getModule(cab.moduleId).envelope(cab.params) });
     emitMode();
     return;
   }
@@ -288,6 +308,13 @@ canvas.addEventListener("pointermove", (e) => {
     const p = rubberCursor(e);
     if (!p) return;
     rubber.target = { x: p.x, y: p.y, z: p.z };
+    traceSample({
+      cx: Math.round(e.clientX), cy: Math.round(e.clientY),
+      x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z),
+      kind: p.feature ? "feature" : p.inference ? "inference" : "plane",
+      dir: p.inference ? p.inference.dir : undefined,
+      shift: e.shiftKey || undefined,
+    });
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
     if (p.inference) showInference(p.inference.from, p, p.inference.dir);
@@ -348,7 +375,14 @@ function endDrag(e) {
   drag = null;
   controls.enabled = true;
   try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
-  job.commitSnapshot(d.before);
+  const changed = job.commitSnapshot(d.before);
+  const cab = job.getJob().cabinets.find((c) => c.id === d.cabId);
+  log("handle.end", {
+    id: d.cabId, handle: d.handle.type, index: d.handle.index, changed,
+    envelope: cab ? getModule(cab.moduleId).envelope(cab.params) : null,
+    zones: cab && cab.params.zones ? cab.params.zones.map((z) => z.height) : undefined,
+    pose: cab ? cab.pose : null,
+  });
   emitMode();
 }
 canvas.addEventListener("pointerup", endDrag);
@@ -389,6 +423,7 @@ for (const k of DIM_ORDER) {
     const mod = getModule(placing);
     const min = k === "D" ? mod.minSize.D + FRONT_THICKNESS_DEFAULT : mod.minSize[k];
     rubber.locked[k] = Number.isFinite(v) && v >= min ? v : null;
+    log("place.typein", { dim: k, value: input.value, locked: rubber.locked[k] });
     updateRubber();
   });
   input.addEventListener("keydown", (e) => {
@@ -408,6 +443,8 @@ for (const k of DIM_ORDER) {
 }
 
 function cancelRubber() {
+  flushTrace("place.trace");
+  log("place.cancel", { moduleId: placing, anchor: rubber && rubber.anchor, target: rubber && rubber.target });
   rubber = null;
   hideGhost();
   hideInference();
@@ -453,8 +490,10 @@ window.addEventListener("keydown", (e) => {
   }
   if (!sel) return;
   if (e.key === "Delete" || e.key === "Backspace") {
+    log("key.delete", { id: sel.id });
     job.removeCabinet(sel.id);
   } else if (e.key === "r" || e.key === "R") {
+    log("key.rotate", { id: sel.id, from: sel.pose.rotZ || 0 });
     // Rotate 90° about the envelope centre.
     const env = envelopeBox(sel, job.resultFor(sel.id));
     const cx = (env.x0 + env.x1) / 2;

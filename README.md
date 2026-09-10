@@ -58,3 +58,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Blue cubes: pull W / D / H · orange bars: zone boundaries
 - `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools
+- `Ctrl+Shift+L` open the usage log folder
+
+## Usage log
+
+Every action and every system decision is appended to `logs/usage.jsonl` (git-ignored), one JSON object per line: module armed, anchor point, the last 60 cursor resolutions of a placement (feature / inference / plane, with the world point), typed dimensions, final box, handle drags (envelope before → after), panel edits, space definition, file operations, undo/redo, generator validation errors and uncaught errors (which also write `logs/crash-<time>.json` with the whole job). `logs/latest.json` holds the last action and last error. When something goes wrong, the log is what to read first — see `.cursor/rules/cab-lab-usage-log.mdc`.

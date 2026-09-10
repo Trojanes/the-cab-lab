@@ -6,6 +6,9 @@ import { syncCabinets } from "./cabinets3d.js";
 import { armPlacement, disarm, onModeChange, getPlacingModule, getMode } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
+import { log, attachJob } from "./log.js";
+
+attachJob(job);
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
@@ -57,6 +60,7 @@ $$("#viewGroup [data-view]").forEach((btn) => {
   btn.addEventListener("click", () => {
     $$("#viewGroup [data-view]").forEach((b) => b.classList.toggle("active", b === btn));
     setView(btn.dataset.view);
+    log("view", { view: btn.dataset.view });
     $("#viewLabel").textContent = btn.textContent;
   });
 });
@@ -108,6 +112,7 @@ async function doOpen() {
   try {
     job.loadJob(JSON.parse(res.text), res.path);
   } catch (err) {
+    log("file.open.failed", { path: res.path, message: err.message });
     window.alert(`Could not open: ${err.message}`);
   }
 }
@@ -132,7 +137,8 @@ window.addEventListener("keydown", (e) => {
   if (!e.ctrlKey || spaceDialogOpen()) return;
   const k = e.key.toLowerCase();
   const inField = e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName);
-  if (k === "n") { e.preventDefault(); doNew(); }
+  if (k === "l" && e.shiftKey) { e.preventDefault(); log("logs.open"); bridge?.openLogs?.(); }
+  else if (k === "n") { e.preventDefault(); doNew(); }
   else if (k === "o") { e.preventDefault(); doOpen(); }
   else if (k === "s") { e.preventDefault(); doSave(e.shiftKey); }
   else if (k === "z" && !inField) { e.preventDefault(); job.undo(); }

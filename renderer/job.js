@@ -3,6 +3,7 @@
 // and rebuilt whenever params change.
 import { getModule } from "./modules.js";
 import { resolveSpace } from "./spaces.js";
+import { log } from "./log.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
@@ -73,7 +74,9 @@ export function resultFor(id) {
   if (!results.has(id)) {
     const cab = job.cabinets.find((c) => c.id === id);
     if (!cab) return null;
-    results.set(id, getModule(cab.moduleId).generate(cab.params));
+    const result = getModule(cab.moduleId).generate(cab.params);
+    results.set(id, result);
+    if (result?.validation?.errors?.length) log("generator.errors", { id, moduleId: cab.moduleId, errors: result.validation.errors, params: cab.params });
   }
   return results.get(id);
 }
@@ -107,6 +110,7 @@ export function commitSnapshot(before) {
 
 export function undo() {
   if (!undoStack.length) return;
+  log("undo", { depth: undoStack.length });
   redoStack.push(JSON.stringify(job));
   job = JSON.parse(undoStack.pop());
   invalidate();
@@ -117,6 +121,7 @@ export function undo() {
 
 export function redo() {
   if (!redoStack.length) return;
+  log("redo", { depth: redoStack.length });
   undoStack.push(JSON.stringify(job));
   job = JSON.parse(redoStack.pop());
   invalidate();
@@ -131,6 +136,7 @@ export function redo() {
 export function defineSpace(kind, params, { history = true } = {}) {
   if (history) pushHistory();
   job.space = { kind, params: { ...params } };
+  log("space.define", { spaceKind: kind, params: job.space.params, cabinets: job.cabinets.length });
   dirty = true;
   emit("job");
 }
@@ -156,6 +162,7 @@ export function addCabinet(moduleId, pose, size) {
   };
   job.cabinets.push(cab);
   selectedId = cab.id;
+  log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params });
   dirty = true;
   emit("job");
   return cab;
@@ -165,6 +172,7 @@ export function removeCabinet(id) {
   const i = job.cabinets.findIndex((c) => c.id === id);
   if (i < 0) return;
   pushHistory();
+  log("cabinet.remove", { id, moduleId: job.cabinets[i].moduleId });
   job.cabinets.splice(i, 1);
   invalidate(id);
   if (selectedId === id) selectedId = null;
@@ -184,24 +192,32 @@ export function updateCabinet(id, fn) {
 }
 
 export function setParams(id, params, { history = true } = {}) {
-  if (history) pushHistory();
+  if (history) {
+    pushHistory();
+    log("cabinet.params", { id, params });
+  }
   updateCabinet(id, (cab) => { cab.params = params; });
 }
 
 export function setPose(id, pose, { history = true } = {}) {
-  if (history) pushHistory();
+  if (history) {
+    pushHistory();
+    log("cabinet.pose", { id, pose });
+  }
   updateCabinet(id, (cab) => { cab.pose = { ...cab.pose, ...pose }; });
 }
 
 export function select(id) {
   if (selectedId === id) return;
   selectedId = id;
+  log("select", { id });
   emit("selection");
 }
 
 // --- file -----------------------------------------------------------------
 
 export function resetJob() {
+  log("file.new", { hadCabinets: job.cabinets.length, dirty });
   job = newJob();
   selectedId = null;
   undoStack.length = 0;
@@ -217,6 +233,7 @@ export function loadJob(obj, path) {
     throw new Error("Not a Cab Lab job file");
   }
   job = migrate(obj);
+  log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space });
   selectedId = null;
   undoStack.length = 0;
   redoStack.length = 0;
@@ -231,6 +248,7 @@ export function serialize() {
 }
 
 export function markSaved(path) {
+  log("file.save", { path: path || filePath, cabinets: job.cabinets.length });
   dirty = false;
   if (path) filePath = path;
   emit("file");

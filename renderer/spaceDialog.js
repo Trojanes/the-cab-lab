@@ -2,6 +2,7 @@
 // wired; Vehicle and Floor plan are placeholders) and the kind's fields.
 import * as job from "./job.js";
 import { SPACE_KINDS, PLANNED_SPACE_KINDS, getSpaceKind } from "./spaces.js";
+import { log } from "./log.js";
 
 const overlay = document.getElementById("spaceDialog");
 const kindList = overlay.querySelector(".kind-list");
@@ -89,10 +90,12 @@ export function openSpaceDialog() {
   cancelBtn.textContent = mode === "edit" ? "Cancel" : "Later";
   renderKinds();
   renderFields();
+  log("space.dialog.open", { mode, spaceKind: currentKind, values });
   overlay.classList.remove("hidden");
 }
 
 export function close() {
+  if (isOpen()) log("space.dialog.close", { mode, spaceKind: currentKind, values, errors: getSpaceKind(currentKind).validate(values) });
   overlay.classList.add("hidden");
 }
 

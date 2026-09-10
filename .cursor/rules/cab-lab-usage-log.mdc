@@ -1,0 +1,33 @@
+---
+description: Read The Cab Lab usage log before asking the user to re-describe a problem
+alwaysApply: true
+---
+
+# Cab Lab usage log (read before guessing)
+
+When the user reports something that went wrong in The Cab Lab (box placed at the wrong place, wrong size, inference not engaging, handle drag misbehaving, crash, file not opening…), **read the log first**; do not ask them to re-describe coordinates or steps.
+
+## Files (all under `the-cab-lab/logs/`, git-ignored)
+
+1. `latest.json` — last action and last error of the current session. Start here.
+2. `usage.jsonl` — append-only event stream, one JSON object per line (`seq`, `t`, `kind`, …). Read the last ~50 lines; the event the user is talking about is normally the last `place.finish` / `handle.end` / `error`.
+3. `crash-<time>.json` — full `job.json` + cursor trace written on `window.error` / unhandled rejection.
+
+`Ctrl+Shift+L` in the app opens this folder.
+
+## Event kinds
+
+- `session.start` — version, viewport.
+- `place.arm` / `place.anchor` / `place.typein` / `place.trace` / `place.finish` / `place.cancel` / `place.unfit` — one box placement. `place.finish` carries `anchor`, `target`, `locked` (typed dims), `planeZ`, active `inference` (from point + dir) and the final `box` (x0/y0/z0/W/D/H). `place.trace` is the last 60 cursor samples before finish/cancel: `cx/cy` client px, `x/y/z` resolved world mm, `kind` = `feature` | `inference` | `plane`, `dir`, `shift`.
+- `cabinet.add` / `cabinet.remove` / `cabinet.params` / `cabinet.pose` / `select` / `key.delete` / `key.rotate`.
+- `handle.start` / `handle.end` — W/D/H face or `divider` drags with envelope before/after, zones and pose.
+- `space.dialog.open` / `space.dialog.close` / `space.define`.
+- `file.new` / `file.open` / `file.open.failed` / `file.save`, `undo` / `redo`, `view`.
+- `generator.errors` — generator `validation.errors` for a cabinet.
+- `error` / `console.error` — with stack.
+
+## Rules
+
+- Quote the relevant entries (seq + kind + the numbers) when explaining a cause.
+- If the files are missing or the last entry is older than the user's report, say so; do not invent events.
+- Log payloads are plain JSON; never contain Three.js objects.
