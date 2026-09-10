@@ -93,14 +93,21 @@ function cursorPoint(clientX, clientY, z) {
 function rubberBox() {
   const mod = getModule(placing);
   const { anchor, target, locked } = rubber;
-  const W = locked.W ?? Math.max(mod.minSize.W, Math.abs(target.x - anchor.x));
-  const D = locked.D ?? Math.max(mod.minSize.D + FRONT_THICKNESS_DEFAULT, Math.abs(target.y - anchor.y));
-  const H = locked.H ?? mod.defaultSize.H;
   // The box always lies between the anchor and the cursor. A typed (locked)
   // dimension keeps its length but still grows toward the cursor's side.
   const sx = target.x >= anchor.x ? 1 : -1;
   const sy = target.y >= anchor.y ? 1 : -1;
   const sz = rubber.growDown ? -1 : 1;
+  let W = locked.W ?? Math.max(mod.minSize.W, Math.abs(target.x - anchor.x));
+  let D = locked.D ?? Math.max(mod.minSize.D + FRONT_THICKNESS_DEFAULT, Math.abs(target.y - anchor.y));
+  let H = locked.H ?? mod.defaultSize.H;
+  // The box never leaves the space: stop each dimension at the boundary on its growth side.
+  const sp = job.getSpace();
+  if (sp) {
+    W = Math.min(W, sx > 0 ? sp.bounds.maxX - anchor.x : anchor.x - sp.bounds.minX);
+    D = Math.min(D, sy > 0 ? sp.bounds.maxY - anchor.y : anchor.y - sp.bounds.minY);
+    H = Math.min(H, sz > 0 ? sp.height - anchor.z : anchor.z);
+  }
   return {
     x0: sx > 0 ? anchor.x : anchor.x - W,
     y0: sy > 0 ? anchor.y : anchor.y - D,
@@ -248,21 +255,27 @@ function handleDragMove(e) {
   const env0 = mod.envelope(drag.params0);
   const h = drag.handle;
 
+  // Resize handles stop at the space boundary: only apply a candidate that still fits.
+  const applyIfFits = (params, pose) => {
+    if (!poseFits({ ...cab, params, pose }, pose)) return;
+    job.updateCabinet(drag.cabId, (c) => { c.params = params; c.pose = pose; });
+  };
+
   if (h.type === "W") {
     const W = Math.max(mod.minSize.W, job.snap(env0.W + delta));
-    job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { W }), { history: false });
+    applyIfFits(mod.setEnvelope(drag.params0, { W }), cab.pose);
   } else if (h.type === "D") {
     // Front face is pulled; keep the back (local y = D) where it is.
     const D = Math.max(mod.minSize.D, job.snap(env0.D - delta));
     const shift = env0.D - D;
     const yDir = drag.dir;
-    job.updateCabinet(drag.cabId, (c) => {
-      c.params = mod.setEnvelope(drag.params0, { D });
-      c.pose = { ...drag.pose0, x: drag.pose0.x + yDir.x * shift, y: drag.pose0.y + yDir.y * shift };
-    });
+    applyIfFits(
+      mod.setEnvelope(drag.params0, { D }),
+      { ...drag.pose0, x: drag.pose0.x + yDir.x * shift, y: drag.pose0.y + yDir.y * shift },
+    );
   } else if (h.type === "H") {
     const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
-    job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { H }), { history: false });
+    applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
   } else if (h.type === "divider") {
     job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, h.pos + delta), { history: false });
   }
