@@ -27,6 +27,7 @@ import { showTip, hideTip } from "./hud.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
+const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
 
 let placing = null; // moduleId while armed
 let rb = null; // placement in progress (footprint / height step)
@@ -117,9 +118,12 @@ function cursorPoint(clientX, clientY, z, { exclude = null } = {}) {
   if (snap) return { x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, tip: [`Corner · ${describePoint(snap)}`] };
   const p = planePointAt(clientX, clientY, new THREE.Plane(new THREE.Vector3(0, 0, 1), -z));
   if (!p) return null;
-  const x = job.snap(p.x);
-  const y = job.snap(p.y);
-  return { x, y, z, feature: false, tip: [`${z > 0 ? `Plane ${Math.round(z)}` : "Floor"} · ${x}, ${y}`] };
+  // Grid points are read inside the space: a box (or a grab point) never starts outside it.
+  const sp = job.getSpace();
+  const x = job.snap(sp ? Math.min(sp.bounds.maxX, Math.max(sp.bounds.minX, p.x)) : p.x);
+  const y = job.snap(sp ? Math.min(sp.bounds.maxY, Math.max(sp.bounds.minY, p.y)) : p.y);
+  const outside = sp && (Math.abs(x - p.x) > 5 || Math.abs(y - p.y) > 5);
+  return { x, y, z, feature: false, tip: [`${z > 0 ? `Plane ${Math.round(z)}` : "Floor"} · ${x}, ${y}${outside ? " (edge of space)" : ""}`] };
 }
 
 /**
@@ -161,17 +165,25 @@ function resolveCursor(e, ctx) {
 
   // Keep the current inference while the cursor stays near its line (or Shift is held).
   if (ctx.inference) {
-    const { from, dir } = ctx.inference;
+    const inf = ctx.inference;
+    const { from, dir } = inf;
     const near = shift ? { dir, distPx: 0 } : nearestInference(cx, cy, from, { band: INFER_RELEASE_PX * uiScale(), planar: ctx.planar });
     if (near && near.dir === dir) {
       const pt = pointOnLine(cx, cy, from, dir);
-      if (shift || near.distPx <= band) ctx.inference.at = pt;
+      if (shift || near.distPx <= band) {
+        inf.at = pt;
+        // Dwell: the point only becomes a future inference source if the cursor
+        // rests on it (SketchUp's hover-to-encourage), never by passing through.
+        const now = performance.now();
+        if (!inf.dwell || Math.hypot(cx - inf.dwell.cx, cy - inf.dwell.cy) > 4) inf.dwell = { cx, cy, t: now };
+        inf.dwelt = now - inf.dwell.t >= DWELL_MS;
+      }
       if (!ctx.planar) ctx.planeZ = pt.z;
-      return finishOnLine(from, dir, pt, shift ? "Shift: locked to edge" : null);
+      return finishOnLine(from, dir, pt, shift ? "Shift: locked to edge" : inf.dwelt ? "Point kept for the next edge" : null);
     }
-    // Leaving the line: where we left it becomes the next inference source, so
-    // a third edge can start from the end of the second one.
-    if (ctx.inference.at) ctx.lastPoint = { ...ctx.inference.at, dirs: AXIS_DIRS, sources: ["edge"] };
+    // Leaving the line: a point the cursor rested on becomes the next source,
+    // so a third edge can start from the end of the second one.
+    if (inf.at && inf.dwelt) ctx.lastPoint = { ...inf.at, dirs: AXIS_DIRS, sources: ["edge"] };
     ctx.inference = null;
   }
   // Pick up a new inference from the last touched point or the anchor.
@@ -237,17 +249,32 @@ function roomFrom(anchor) {
 function placementBox() {
   const mod = getModule(placing);
   const min = minDims(mod);
-  const { anchor, corner, locked, planeZ } = rb;
-  const sx = corner.x >= anchor.x ? 1 : -1;
-  const sy = corner.y >= anchor.y ? 1 : -1;
+  const { anchor, locked, planeZ } = rb;
   const room = roomFrom(anchor);
   const clamped = {};
+  // The corner is read inside the space. A side with no room (anchor on a
+  // wall, cursor beyond it) never wins: the box grows toward the interior.
+  const sp = job.getSpace();
+  const corner = sp
+    ? { x: Math.min(sp.bounds.maxX, Math.max(sp.bounds.minX, rb.corner.x)), y: Math.min(sp.bounds.maxY, Math.max(sp.bounds.minY, rb.corner.y)) }
+    : rb.corner;
+  const side = (c, a, roomPos, roomNeg, need) => {
+    if (c > a + 0.5 && roomPos >= need) return 1;
+    if (c < a - 0.5 && roomNeg >= need) return -1;
+    return roomPos >= roomNeg ? 1 : -1;
+  };
+  const sx = side(corner.x, anchor.x, room.xPos, room.xNeg, min.W);
+  const sy = side(corner.y, anchor.y, room.yPos, room.yNeg, min.D);
+  // Sizes come from the clamped corner, so a cursor beyond a wall stops the box
+  // at that wall instead of mirroring it to the other side of the anchor.
   let W = locked.W ?? Math.max(min.W, Math.abs(corner.x - anchor.x));
   let D = locked.D ?? Math.max(min.D, Math.abs(corner.y - anchor.y));
   const roomW = sx > 0 ? room.xPos : room.xNeg;
   const roomD = sy > 0 ? room.yPos : room.yNeg;
-  if (W > roomW) { W = roomW; clamped.W = sx > 0 ? "right wall" : "left wall"; }
-  if (D > roomD) { D = roomD; clamped.D = sy > 0 ? "back wall" : "front edge"; }
+  const hitX = rb.corner.x !== corner.x ? (rb.corner.x < anchor.x ? -1 : 1) : sx;
+  const hitY = rb.corner.y !== corner.y ? (rb.corner.y < anchor.y ? -1 : 1) : sy;
+  if (W > roomW || rb.corner.x !== corner.x) { W = Math.min(W, roomW); clamped.W = hitX > 0 ? "right wall" : "left wall"; }
+  if (D > roomD || rb.corner.y !== corner.y) { D = Math.min(D, roomD); clamped.D = hitY > 0 ? "back wall" : "front edge"; }
 
   const dirH = rb.h ? rb.h.dir : defaultHeightDir(planeZ);
   let H = locked.H ?? (rb.h ? rb.h.H : getPreset(placing).H);
@@ -347,6 +374,8 @@ function beginHeight(e) {
 function heightCursor(e) {
   const { corner, planeZ } = rb;
   const h = rb.h;
+  // Looking straight down, the vertical axis degenerates on screen: keep the current H.
+  if (Math.abs(rayFromClient(e.clientX, e.clientY).direction.z) > 0.985) return { tip: ["Orbit to a side view to pull the height, or type H"] };
   const snap = nearestHeightAlign(e.clientX, e.clientY, corner.x, corner.y);
   if (snap && Math.abs(snap.z - planeZ) > 0.5) {
     h.H = Math.abs(snap.z - planeZ);
@@ -506,13 +535,25 @@ function overlaps(cab, pose) {
 function updateMove(tipAt) {
   const { pose, delta, clamped } = movePose();
   move.clamped = clamped;
-  job.updateCabinet(move.id, (c) => { c.pose = pose; });
+  const cab = job.getJob().cabinets.find((c) => c.id === move.id);
+  if (cab.pose.x !== pose.x || cab.pose.y !== pose.y || cab.pose.z !== pose.z) job.updateCabinet(move.id, (c) => { c.pose = pose; });
   const vals = { W: delta.x, D: delta.y, H: delta.z };
   for (const k of DIM_ORDER) {
     if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(vals[k]);
     dimLabels[k].classList.toggle("locked", move.locked[k] != null);
   }
-  const cab = job.getJob().cabinets.find((c) => c.id === move.id);
+  placeMoveLabels(cab, pose);
+  if (tipAt) {
+    const lines = [...(tipAt.tip || []), `ΔX ${Math.round(delta.x)}  ΔY ${Math.round(delta.y)}  ΔZ ${Math.round(delta.z)}`];
+    for (const c of clamped) lines.push(`Stopped at ${c}`);
+    const ov = overlaps(cab, pose);
+    if (ov.length) lines.push(`Overlaps ${ov.join(", ")}`);
+    if (tipAt.ctrlKey) lines.push("Ctrl: copy");
+    showTip(tipAt.clientX, tipAt.clientY, lines, clamped.length || ov.length ? "warn" : "");
+  }
+}
+
+function placeMoveLabels(cab, pose) {
   const fp = envelopeFootprint(cab, pose);
   const r = canvas.getBoundingClientRect();
   const put = (k, x, y, z, dx, dy) => {
@@ -524,14 +565,6 @@ function updateMove(tipAt) {
   put("W", (fp.minX + fp.maxX) / 2, fp.minY, fp.z0, 0, 22);
   put("D", fp.maxX, (fp.minY + fp.maxY) / 2, fp.z0, 54, 0);
   put("H", fp.maxX, fp.minY, (fp.z0 + fp.z1) / 2, 54, -22);
-  if (tipAt) {
-    const lines = [...(tipAt.tip || []), `ΔX ${Math.round(delta.x)}  ΔY ${Math.round(delta.y)}  ΔZ ${Math.round(delta.z)}`];
-    for (const c of clamped) lines.push(`Stopped at ${c}`);
-    const ov = overlaps(cab, pose);
-    if (ov.length) lines.push(`Overlaps ${ov.join(", ")}`);
-    if (tipAt.ctrlKey) lines.push("Ctrl: copy");
-    showTip(tipAt.clientX, tipAt.clientY, lines, clamped.length || ov.length ? "warn" : "");
-  }
 }
 
 function finishMove(copy) {
@@ -813,7 +846,10 @@ function cursorFor(handle) {
 (function tickDims() {
   if (rb) positionDimInputs(placementBox());
   else if (retype) updateRetype();
-  else if (move && move.step === "drop") updateMove(null);
+  else if (move && move.step === "drop") {
+    const cab = job.getJob().cabinets.find((c) => c.id === move.id);
+    if (cab) placeMoveLabels(cab, cab.pose); // labels only; no job writes per frame
+  }
   requestAnimationFrame(tickDims);
 })();
 

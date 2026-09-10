@@ -58,7 +58,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
   (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.
 - Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line),
-  a third edge can start where you left the second · vertical faces of walls and cabinets act as guide lines
+  rest on a point of the line for ~0.4 s ("Point kept for the next edge") and a third edge can start from it ·
+  vertical faces of walls and cabinets act as guide lines
   ("Flush with cab-1 side", orange dashes) · the height step snaps to tops, bottoms, the ceiling · hold `Shift` to keep
   the current line. The cursor tooltip always says which rule is active and which dimension was stopped by a wall.
 - The box never leaves the space: footprint, height, Move and resize handles stop at the boundary (outline turns orange)
