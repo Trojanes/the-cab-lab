@@ -140,10 +140,14 @@ function rubberBox() {
   // dimension keeps its length but still grows toward the cursor's side.
   const sx = target.x >= anchor.x ? 1 : -1;
   const sy = target.y >= anchor.y ? 1 : -1;
-  const sz = rubber.growDown ? -1 : 1;
+  // A feature point at another height makes the box span anchor→point in Z
+  // too; grid / inference targets lie on the anchor's plane and keep the
+  // default height (growing down from a ceiling anchor).
+  const dz = target.z != null ? target.z - anchor.z : 0;
+  const sz = Math.abs(dz) > 0.5 ? Math.sign(dz) : rubber.growDown ? -1 : 1;
   let W = locked.W ?? Math.max(mod.minSize.W, Math.abs(target.x - anchor.x));
   let D = locked.D ?? Math.max(mod.minSize.D + FRONT_THICKNESS_DEFAULT, Math.abs(target.y - anchor.y));
-  let H = locked.H ?? mod.defaultSize.H;
+  let H = locked.H ?? (Math.abs(dz) > 0.5 ? Math.max(mod.minSize.H, Math.abs(dz)) : mod.defaultSize.H);
   // The box never leaves the space: stop each dimension at the boundary on its growth side.
   const sp = job.getSpace();
   if (sp) {
@@ -275,7 +279,7 @@ canvas.addEventListener("pointermove", (e) => {
     }
     const p = rubberCursor(e);
     if (!p) return;
-    rubber.target = { x: p.x, y: p.y };
+    rubber.target = { x: p.x, y: p.y, z: p.feature ? p.z : null };
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
     if (p.inference) showInference(p.inference.from, p, p.inference.dir);
