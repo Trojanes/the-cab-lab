@@ -15,7 +15,7 @@ function key(x, y, z) {
   return `${Math.round(x * 10)}|${Math.round(y * 10)}|${Math.round(z * 10)}`;
 }
 
-const AXIS_DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
+export const AXIS_DIRS = [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0], [0, 0, 1], [0, 0, -1]];
 
 function unit(dx, dy, dz) {
   const l = Math.hypot(dx, dy, dz) || 1;
@@ -100,10 +100,11 @@ function screenDistToLine(clientX, clientY, from, dir, lengthMm = 300) {
 }
 
 /**
- * Among the edge directions of `from` that lie in the XY plane, the one whose
- * line passes within `band` px of the cursor. Returns { dir, distPx } or null.
+ * Among the edge directions of `from` (vertical ones included, so a box can be
+ * pulled down from a ceiling edge), the one whose line passes within `band` px
+ * of the cursor. Returns { dir, distPx } or null.
  */
-export function nearestInference(clientX, clientY, from, { band = INFER_BAND_PX, planar = true } = {}) {
+export function nearestInference(clientX, clientY, from, { band = INFER_BAND_PX, planar = false } = {}) {
   if (!from) return null;
   let best = null;
   for (const dir of from.dirs || []) {

@@ -14,7 +14,7 @@ import {
   pickables, groupFor, envelopeBox, poseFits, setHandleHover,
   showGhost, hideGhost, showSnapMarker, hideSnapMarker, showInference, hideInference,
 } from "./cabinets3d.js";
-import { nearestSnap, nearestInference, pointOnLine, toClient, INFER_RELEASE_PX } from "./snap.js";
+import { nearestSnap, nearestInference, pointOnLine, toClient, INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS } from "./snap.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
@@ -119,17 +119,24 @@ function rubberCursor(e) {
     // ceiling edge still spans the box up to the ceiling.
     if (near && near.dir === dir) {
       const pt = pointOnLine(e.clientX, e.clientY, from, dir);
+      // Remember where we are on the line only while the cursor is really on
+      // it; samples in the release margin already drift off the edge.
+      if (shift || near.distPx <= INFER_BAND_PX) rubber.inference.at = pt;
       rubber.planeZ = pt.z;
       return { ...pt, feature: false, inference: rubber.inference };
     }
+    // Leaving the line: where we left it becomes the next inference source, so
+    // a third edge (e.g. straight down from a point on a ceiling line) can
+    // start from the end of the second one.
+    if (rubber.inference.at) rubber.lastPoint = { ...rubber.inference.at, dirs: AXIS_DIRS };
     rubber.inference = null;
   }
   // Pick up a new inference from the last touched point or the anchor.
   for (const from of [rubber.lastPoint, rubber.anchorPoint]) {
     const near = nearestInference(e.clientX, e.clientY, from);
     if (near) {
-      rubber.inference = { from, dir: near.dir };
       const pt = pointOnLine(e.clientX, e.clientY, from, near.dir);
+      rubber.inference = { from, dir: near.dir, at: pt };
       rubber.planeZ = pt.z;
       return { ...pt, feature: false, inference: rubber.inference };
     }
