@@ -18,7 +18,9 @@ When the user reports something that went wrong in The Cab Lab (box placed at th
 ## Event kinds
 
 - `session.start` — version, viewport.
-- `place.arm` / `place.anchor` / `place.typein` / `place.trace` / `place.finish` / `place.cancel` / `place.unfit` — one box placement. `place.finish` carries `anchor`, `target`, `locked` (typed dims), `planeZ`, active `inference` (from point + dir) and the final `box` (x0/y0/z0/W/D/H). `place.trace` is the last 60 cursor samples before finish/cancel: `cx/cy` client px, `x/y/z` resolved world mm, `kind` = `feature` | `inference` | `plane`, `dir`, `shift`.
+- `place.arm` / `place.anchor` / `place.corner` / `place.typein` / `place.trace` / `place.finish` / `place.repeat` / `place.cancel` / `place.unfit` — one box placement in three steps (anchor → opposite corner on the anchor's plane → height). `place.finish` carries `how` (click / enter / click.lockedH / repeat), `anchor`, `corner`, `locked` (typed dims), `planeZ`, `height` (dir, snap label, touched), `clamped` (dims stopped by the space) and the final `box` (x0/y0/z0/W/D/H). `place.trace` is the last 60 cursor samples: `cx/cy` client px, `x/y/z` resolved world mm, `kind` = `feature` | `inference` | `align` | `plane` | `height` | `height.snap`, `dir`, `shift`.
+- `move.start` / `move.grab` / `move.typein` / `move.trace` / `move.finish` / `move.copy` / `move.cancel` — the Move command (grab point → target point, ΔX/ΔY/ΔZ, clamped list).
+- `retype.start` / `retype.typein` / `retype.end` / `retype.cancel` — digits re-sizing the last created box while still armed.
 - `cabinet.add` / `cabinet.remove` / `cabinet.params` / `cabinet.pose` / `select` / `key.delete` / `key.rotate`.
 - `handle.start` / `handle.end` — W/D/H face or `divider` drags with envelope before/after, zones and pose.
 - `space.dialog.open` / `space.dialog.close` / `space.define`.

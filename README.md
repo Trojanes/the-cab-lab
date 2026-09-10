@@ -36,8 +36,10 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/spaceDialog.js` — "Define the space" modal (step 1, also Edit space)
 - `renderer/modules.js` — module registry: generator bundle + envelope (W / D / H) + divider handles
 - `renderer/cabinets3d.js` — draws boards, envelope, handles from generator output
-- `renderer/snap.js` — feature points (space + cabinet corners) and nearest-point lookup
-- `renderer/interact.js` — left-button interaction: point-to-point placement with type-ins, select, resize, dividers, R / F / Del / Esc
+- `renderer/snap.js` — feature points (space + cabinet corners), face planes for alignment, edge / height inference
+- `renderer/interact.js` — left-button interaction: three-step placement, Move command, type-ins, select, resize, dividers, keys
+- `renderer/presets.js` — per-module starting sizes (preset H today; a settings UI will edit them)
+- `renderer/hud.js` — cursor tooltip
 - `renderer/panel.js` — right panel (space or selected cabinet) and drawer tables
 - `renderer/ui.js` — shell wiring
 - `renderer/gen/` — generated ESM bundles of `../modules/*/generator.ts` (do not edit)
@@ -49,14 +51,21 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 ## Controls
 
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
-- Placing: pick a module → hover shows a snap sphere on space / cabinet corners (else 10 mm grid) → click to anchor →
-  move to size → `Tab` cycles W / D / H type-ins (typed values lock) → click or `Enter` creates · `Esc` restarts
-- Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line);
-  the anchor's own axes infer too · hold `Shift` to keep the current inference line
-- The box never leaves the space: rubber band and resize handles stop at the boundary
-- Left click: select. There is no drag-to-move (moving will be a dedicated command); use the X / Y fields for now
+- Placing, three steps (SketchUp-style): pick a module → click a corner (space / cabinet corner or 10 mm grid; this sets
+  the working plane) → draw the footprint on that plane and click the opposite corner → pull the height and click.
+  `Enter` at any step creates with the preset height. After creating you stay armed; `Shift+click` repeats the last
+  size at a new corner; typing digits re-sizes the box you just made. `Esc` restarts / stops.
+- Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
+  (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.
+- Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line),
+  a third edge can start where you left the second · vertical faces of walls and cabinets act as guide lines
+  ("Flush with cab-1 side", orange dashes) · the height step snaps to tops, bottoms, the ceiling · hold `Shift` to keep
+  the current line. The cursor tooltip always says which rule is active and which dimension was stopped by a wall.
+- The box never leaves the space: footprint, height, Move and resize handles stop at the boundary (outline turns orange)
+- Move (`M` or the Move button): click a grab point, then a target point; `Tab` types ΔX / ΔY / ΔZ; `Ctrl+click` copies.
+  There is no drag-to-move.
 - Blue cubes: pull W / D / H · orange bars: zone boundaries
-- `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
+- `M` move · `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools
 - `Ctrl+Shift+L` open the usage log folder
 

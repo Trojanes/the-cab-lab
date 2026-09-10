@@ -3,7 +3,7 @@ import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
 import * as job from "./job.js";
 import { MODULES, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets } from "./cabinets3d.js";
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 import { log, attachJob } from "./log.js";
@@ -50,9 +50,14 @@ function refreshRail() {
     b.classList.toggle("active", b.dataset.module ? b.dataset.module === placing : (!placing && !sel && b.hasAttribute("data-space")));
   });
   const mode = getMode();
-  $("#modeHint").textContent = mode === "rubber"
-    ? "Move to size the box · Tab to type W / D / H · click or Enter to create · Esc to restart"
-    : placing ? `Placing ${MODULES[placing].label} — click a corner or a grid point to start · Esc to cancel` : "";
+  const HINTS = {
+    armed: placing ? `Placing ${MODULES[placing].label} — click a corner to start · Shift+click repeats the last size · digits re-size the last box · Esc to stop` : "",
+    footprint: "Draw the footprint · Tab / digits type W D H · click the opposite corner · Enter creates with the preset height",
+    height: "Pull the height · snaps to tops, bottoms and the ceiling · click or Enter to create · Esc to restart",
+    "move.grab": "Move — click the point to grab (a corner of the cabinet works best) · Esc to cancel",
+    "move.drop": "Move — click the target point · Tab types ΔX ΔY ΔZ · Ctrl+click copies · Esc to cancel",
+  };
+  $("#modeHint").textContent = HINTS[mode] || "";
 }
 
 // --- view buttons ---------------------------------------------------------------
@@ -93,6 +98,8 @@ function refreshStatus() {
   document.title = `${job.isDirty() ? "• " : ""}${name} — The Cab Lab`;
   $('[data-action="undo"]').disabled = !job.canUndo();
   $('[data-action="redo"]').disabled = !job.canRedo();
+  $('[data-action="move"]').disabled = !sel;
+  $('[data-action="move"]').classList.toggle("active", getMode().startsWith("move"));
 }
 
 // --- file actions -------------------------------------------------------------------
@@ -128,6 +135,7 @@ const ACTIONS = {
   save: () => doSave(false),
   undo: () => job.undo(),
   redo: () => job.redo(),
+  move: () => startMove(),
 };
 $$("#topbar [data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());
@@ -181,7 +189,7 @@ function refreshAll() {
 $("[data-define-space]").addEventListener("click", () => openSpaceDialog());
 
 job.onChange(refreshAll);
-onModeChange(refreshRail);
+onModeChange(() => { refreshRail(); refreshStatus(); });
 refreshAll();
 setView("3d");
 if (!job.hasSpace()) openSpaceDialog();

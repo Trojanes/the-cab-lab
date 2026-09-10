@@ -195,13 +195,44 @@ const ghostEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxG
 ghostEdges.visible = false;
 scene.add(ghostEdges);
 
-/** Axis-aligned preview box from min corner (x0, y0, z0). */
-export function showGhost(x0, y0, z0, W, D, H) {
+/** Axis-aligned preview box from min corner (x0, y0, z0). `clamped` turns the outline orange. */
+export function showGhost(x0, y0, z0, W, D, H, { clamped = false } = {}) {
   for (const m of [ghost, ghostEdges]) {
     m.visible = true;
     m.scale.set(Math.max(W, 1), Math.max(D, 1), Math.max(H, 1));
     m.position.set(x0 + W / 2, y0 + D / 2, z0 + H / 2);
   }
+  ghostEdges.material.color.setHex(clamped ? 0xf0a050 : 0x4f86e0);
+}
+
+/** Alignment lines: a face of the space / another cabinet the cursor is flush with. */
+const alignMat = new THREE.LineDashedMaterial({ color: 0xf0c070, dashSize: 30, gapSize: 20, depthTest: false, transparent: true, opacity: 0.9 });
+const alignLines = [];
+for (let i = 0; i < 2; i += 1) {
+  const g = new THREE.BufferGeometry();
+  g.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+  const l = new THREE.Line(g, alignMat);
+  l.visible = false;
+  l.renderOrder = 28;
+  scene.add(l);
+  alignLines.push(l);
+}
+/** `segs` = up to two [{x,y,z},{x,y,z}] pairs. */
+export function showAlignLines(segs) {
+  alignLines.forEach((l, i) => {
+    const s = segs[i];
+    l.visible = !!s;
+    if (!s) return;
+    const pos = l.geometry.attributes.position;
+    pos.setXYZ(0, s[0].x, s[0].y, s[0].z);
+    pos.setXYZ(1, s[1].x, s[1].y, s[1].z);
+    pos.needsUpdate = true;
+    l.geometry.computeBoundingSphere();
+    l.computeLineDistances();
+  });
+}
+export function hideAlignLines() {
+  for (const l of alignLines) l.visible = false;
 }
 export function hideGhost() {
   ghost.visible = false;
