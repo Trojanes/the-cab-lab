@@ -92,12 +92,14 @@ function cursorPoint(clientX, clientY, z) {
 /** Current rubber box as a min-corner AABB. */
 function rubberBox() {
   const mod = getModule(placing);
-  const { anchor, target, locked, dir } = rubber;
+  const { anchor, target, locked } = rubber;
   const W = locked.W ?? Math.max(mod.minSize.W, Math.abs(target.x - anchor.x));
   const D = locked.D ?? Math.max(mod.minSize.D + FRONT_THICKNESS_DEFAULT, Math.abs(target.y - anchor.y));
   const H = locked.H ?? mod.defaultSize.H;
-  const sx = dir.x || (target.x >= anchor.x ? 1 : -1);
-  const sy = dir.y || (target.y >= anchor.y ? 1 : -1);
+  // The box always lies between the anchor and the cursor. A typed (locked)
+  // dimension keeps its length but still grows toward the cursor's side.
+  const sx = target.x >= anchor.x ? 1 : -1;
+  const sy = target.y >= anchor.y ? 1 : -1;
   const sz = rubber.growDown ? -1 : 1;
   return {
     x0: sx > 0 ? anchor.x : anchor.x - W,
@@ -139,7 +141,6 @@ function beginRubber(anchor) {
     anchor,
     target: { x: anchor.x, y: anchor.y },
     locked: { W: null, D: null, H: null },
-    dir: { x: 0, y: 0 }, // fixed once the mouse commits to a side
     growDown: sp ? anchor.z >= sp.height - 1 : false,
   };
   dimBox.classList.remove("hidden");
@@ -221,9 +222,6 @@ canvas.addEventListener("pointermove", (e) => {
     const p = cursorPoint(e.clientX, e.clientY, rubber.anchor.z);
     if (!p) return;
     rubber.target = { x: p.x, y: p.y };
-    // Commit to a growth direction once the cursor is clearly off the anchor.
-    if (!rubber.dir.x && Math.abs(p.x - rubber.anchor.x) >= 20) rubber.dir.x = p.x > rubber.anchor.x ? 1 : -1;
-    if (!rubber.dir.y && Math.abs(p.y - rubber.anchor.y) >= 20) rubber.dir.y = p.y > rubber.anchor.y ? 1 : -1;
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
     updateRubber();
