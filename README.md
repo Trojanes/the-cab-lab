@@ -67,7 +67,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   vertical faces of walls and cabinets act as guide lines
   ("Flush with cab-1 side", orange dashes) · the extrude step snaps to faces and corners along the normal · hold `Shift` to keep
   the current line. The cursor tooltip always says which rule is active and which dimension was stopped by a wall.
-- The box never leaves the space: rectangle, extrusion, Move and resize handles stop at the boundary (outline turns orange)
+- The box never leaves the space or enters another cabinet: rectangle and extrusion stop at walls and at existing boxes
+  (outline turns orange, tooltip names what stopped it, e.g. `H stopped at cab-2`); Move and resize handles stop at the boundary
 - Move (`M` or the Move button): click a grab point, then a target point; `Tab` types ΔX / ΔY / ΔZ; `Ctrl+click` copies.
   There is no drag-to-move.
 - Blue cubes: pull W / D / H · orange bars: zone boundaries

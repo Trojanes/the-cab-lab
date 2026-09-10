@@ -350,6 +350,11 @@ function placementBox() {
   sign[n] = s;
   max[kn] = roomN;
 
+  // Other cabinets are solid: the rectangle and the extrusion stop at them.
+  // While drawing the rectangle its two sizes are clamped; once it is clicked only the pull is.
+  const blocked = stopAtCabinets(anchor, size, sign, n, rb.step === "face" ? inPlaneAxes(n) : [n]);
+  for (const a of AXES) if (blocked[a]) { size[a] = blocked[a].size; clamped[DIM_OF[a]] = blocked[a].id; max[DIM_OF[a]] = Math.min(max[DIM_OF[a]], blocked[a].size); }
+
   const min0 = {};
   for (const a of AXES) min0[a] = sign[a] > 0 ? anchor[a] : anchor[a] - size[a];
   return {
@@ -359,7 +364,44 @@ function placementBox() {
   };
 }
 
+/**
+ * Clamp a box growing from `anchor` (sizes per axis, growth signs) so it does
+ * not enter any existing cabinet envelope, along the axes in `order`. A zero
+ * extrusion is treated as a 1 mm slab on the pull side, so a footprint cannot
+ * be drawn under a cabinet standing on the same face.
+ * Returns { [axis]: { size, id } } for the axes that were stopped.
+ */
+function stopAtCabinets(anchor, size, sign, n, order) {
+  const boxes = job.getJob().cabinets.map((c) => {
+    const fp = envelopeFootprint(c, c.pose);
+    return { id: c.id, x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+  });
+  if (!boxes.length) return {};
+  const cur = { ...size };
+  const range = (a) => {
+    const len = a === n ? Math.max(cur[a], 1) : cur[a];
+    return sign[a] > 0 ? [anchor[a], anchor[a] + len] : [anchor[a] - len, anchor[a]];
+  };
+  const overlap = (r, s) => r[0] < s[1] - 0.5 && r[1] > s[0] + 0.5;
+  const out = {};
+  for (const a of order) {
+    const others = AXES.filter((o) => o !== a);
+    for (const b of boxes) {
+      if (!others.every((o) => overlap(range(o), b[o]))) continue;
+      // Distance from the anchor to the cabinet's near face along the growth side.
+      let room = null;
+      if (sign[a] > 0 && b[a][0] >= anchor[a] - 0.5) room = Math.max(0, b[a][0] - anchor[a]);
+      else if (sign[a] < 0 && b[a][1] <= anchor[a] + 0.5) room = Math.max(0, anchor[a] - b[a][1]);
+      if (room == null || room >= cur[a]) continue;
+      cur[a] = room;
+      out[a] = { size: room, id: b.id };
+    }
+  }
+  return out;
+}
+
 function updatePlacement(tipAt) {
+  if (tipAt) rb.lastClient = { x: tipAt.clientX, y: tipAt.clientY };
   const b = placementBox();
   const clampedKeys = Object.keys(b.clamped);
   const n = rb.plane.axis;
@@ -450,24 +492,31 @@ function chooseFace(e) {
   //     that contain that edge: up a wall from a floor corner can only be the wall.
   //     Works from either side of a see-through wall.
   //  2. Otherwise the candidate whose face the cursor ray crosses, front side first.
+  if (away < 6) return; // still on the corner: keep the default
   const ray = rayFromClient(e.clientX, e.clientY);
   let pool = rb.candidates.filter((f) => faceVisible(f, ray));
-  const inf = away >= 6 ? nearestInference(e.clientX, e.clientY, rb.ctx.anchorPoint, { band: INFER_RELEASE_PX * uiScale() }) : null;
+  const inf = nearestInference(e.clientX, e.clientY, rb.ctx.anchorPoint, { band: INFER_RELEASE_PX * uiScale() });
+  let ambiguous = false;
   if (inf) {
     const along = pool.filter((f) => Math.abs(inf.dir[AXES.indexOf(f.axis)]) < 1e-6);
     if (along.length) pool = along;
+    // On an edge shared by two faces (floor + a cabinet's front): either is right,
+    // so keep the current face and wait for the cursor to leave the edge.
+    ambiguous = pool.length > 1;
   }
   let face = pool.length === 1 ? pool[0] : null;
-  let bestT = Infinity;
-  let bestFront = false;
-  if (!face) {
+  if (!face && !ambiguous) {
+    let bestT = Infinity;
+    let bestFront = false;
     for (const f of pool) {
-      const h = rayHitFace(ray, f, 25);
+      const h = rayHitFace(ray, f, 5);
       if (!h) continue;
       const front = -ray.direction[f.axis] * f.dir > 0;
-      if ((front && !bestFront) || (front === bestFront && h.t < bestT)) { face = f; bestT = h.t; bestFront = front; }
+      const better = (front && !bestFront) || (front === bestFront && h.t < bestT - 0.5);
+      if (better) { face = f; bestT = h.t; bestFront = front; }
     }
   }
+  if (ambiguous && pool.some((f) => f.axis === rb.plane.axis && f.value === rb.plane.value)) face = null; // keep current
   if (face && face.axis !== rb.plane.axis) {
     rb.plane = planeOf(face);
     rb.ctx.plane = { axis: face.axis, value: face.value, label: face.label };
@@ -478,12 +527,16 @@ function chooseFace(e) {
     showFaceHint(face);
     log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label } });
   }
-  if (away > 40 * uiScale() && face) rb.candidates = null; // locked
+  if (away > 40 * uiScale() && face && !ambiguous) rb.candidates = null; // locked
 }
 
 function beginExtrude(e) {
-  const { corner, plane } = rb;
+  const { plane } = rb;
   const n = plane.axis;
+  // Bake the rectangle as drawn (clamped by walls and cabinets): the pull starts from its real corner.
+  const b0 = placementBox();
+  for (const a of inPlaneAxes(n)) rb.corner[a] = rb.anchor[a] + b0.sign[a] * b0.size[a];
+  const corner = rb.corner;
   const dirV = axisVector(n, plane.dir);
   rb.step = "extrude";
   rb.ext = {
@@ -573,7 +626,12 @@ function finishPlacement(how) {
   }
   const b = placementBox();
   const min = minSizes(getModule(placing));
-  if (b[kn] < min[kn]) { log("place.blocked", { reason: "no room along normal", box: b }); return; }
+  const small = DIM_ORDER.filter((k) => b[k] < min[k]);
+  if (small.length) {
+    log("place.blocked", { reason: "below minimum size", dims: small, clamped: b.clamped, box: b });
+    showTip(rb.lastClient ? rb.lastClient.x : 0, rb.lastClient ? rb.lastClient.y : 0, [`No room: ${small.map((k) => `${k} ${Math.round(b[k])} < ${min[k]}`).join(", ")}`], "warn");
+    return;
+  }
   createFromBox(b, how);
 }
 
