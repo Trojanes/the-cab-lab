@@ -53,7 +53,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
 - Placing, three steps (SketchUp-style): pick a module → hover shows the face under the cursor (floor, ceiling, any
   wall, any face of a cabinet; blue sheet) → click a corner or grid point on it → draw a flat, zero-thickness rectangle
-  on that face and click the opposite corner (a corner anchor takes the face you draw over) → pull the rectangle off the
+  on that face and click the opposite corner (a corner anchor takes the face whose edge you move along first — up from a
+  floor corner means the wall; walls are see-through, so this also works for the wall nearest the camera) → pull the rectangle off the
   face, one way only (away from the wall / floor / cabinet — it can't be pulled into them) and click. Only the two
   in-plane sizes are typed in step 2; `Enter` creates with the preset size along the face normal (H on floors, D on
   front/back walls, W on side walls). Boxes are axis-aligned; front / side orientation is not assigned yet. After

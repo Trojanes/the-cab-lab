@@ -22,7 +22,7 @@ import {
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
-  pickFace, faceAtPoint, facesAtPoint, facePlanes, inPlaneAxes, axisVector, AXES,
+  pickFace, facesAtPoint, facePlanes, faceVisible, rayHitFace, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
@@ -149,7 +149,7 @@ function cursorPoint(clientX, clientY, { exclude = null } = {}) {
     const face = faces.find((f) => f.axis === "z") || faces[0] || floorFace(); // footprints first
     return {
       x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces,
-      tip: [`Corner · ${describePoint(snap, exclude)}`, faces.length > 1 ? `On ${faces.map((f) => f.label.toLowerCase()).join(" / ")} — move onto the face to draw on` : face ? `On ${face.label.toLowerCase()}` : null],
+      tip: [`Corner · ${describePoint(snap, exclude)}`, faces.length > 1 ? `On ${faces.map((f) => f.label.toLowerCase()).join(" / ")} — move along an edge of the face to draw on` : face ? `On ${face.label.toLowerCase()}` : null],
     };
   }
   const hit = pickFace(clientX, clientY, { exclude });
@@ -445,22 +445,28 @@ function chooseFace(e) {
   if (!rb.candidates) return;
   const a = toClient(rb.anchor.x, rb.anchor.y, rb.anchor.z);
   const away = Math.hypot(e.clientX - a.x, e.clientY - a.y);
-  // The candidate whose face the cursor ray actually crosses (nearest first), with some slack at its edges.
+  // Which candidate is the cursor drawing on?
+  //  1. Moving along one of the corner's edges (axis inference) names the faces
+  //     that contain that edge: up a wall from a floor corner can only be the wall.
+  //     Works from either side of a see-through wall.
+  //  2. Otherwise the candidate whose face the cursor ray crosses, front side first.
   const ray = rayFromClient(e.clientX, e.clientY);
-  let face = null;
+  let pool = rb.candidates.filter((f) => faceVisible(f, ray));
+  const inf = away >= 6 ? nearestInference(e.clientX, e.clientY, rb.ctx.anchorPoint, { band: INFER_RELEASE_PX * uiScale() }) : null;
+  if (inf) {
+    const along = pool.filter((f) => Math.abs(inf.dir[AXES.indexOf(f.axis)]) < 1e-6);
+    if (along.length) pool = along;
+  }
+  let face = pool.length === 1 ? pool[0] : null;
   let bestT = Infinity;
-  for (const f of rb.candidates) {
-    const d = ray.direction[f.axis];
-    if (Math.abs(d) < 1e-9 || d * f.dir >= 0) continue;
-    const t = (f.value - ray.origin[f.axis]) / d;
-    if (t <= 0 || t >= bestT) continue;
-    const [u, v] = inPlaneAxes(f.axis);
-    const pu = ray.origin[u] + ray.direction[u] * t;
-    const pv = ray.origin[v] + ray.direction[v] * t;
-    const slack = 25;
-    if (pu < f.ext[u][0] - slack || pu > f.ext[u][1] + slack || pv < f.ext[v][0] - slack || pv > f.ext[v][1] + slack) continue;
-    face = f;
-    bestT = t;
+  let bestFront = false;
+  if (!face) {
+    for (const f of pool) {
+      const h = rayHitFace(ray, f, 25);
+      if (!h) continue;
+      const front = -ray.direction[f.axis] * f.dir > 0;
+      if ((front && !bestFront) || (front === bestFront && h.t < bestT)) { face = f; bestT = h.t; bestFront = front; }
+    }
   }
   if (face && face.axis !== rb.plane.axis) {
     rb.plane = planeOf(face);

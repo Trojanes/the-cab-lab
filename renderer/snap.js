@@ -144,35 +144,54 @@ function rayHitPlane(ray, axis, value) {
 }
 
 /**
- * The face under the cursor: nearest pickable face whose visible side (the
- * `dir` side) faces the camera. Returns { face, point } or null.
+ * Can this face be drawn on from the camera's side of it? Cabinet faces only
+ * from their front; the space is a see-through wireframe, so its walls, floor
+ * and ceiling also from behind (the near wall in the default view).
+ */
+export function faceVisible(f, ray) {
+  const facing = -ray.direction[f.axis] * f.dir; // > 0 when we see its front
+  return facing > 0 || f.source === "space";
+}
+function faceFront(f, ray) {
+  return -ray.direction[f.axis] * f.dir > 0;
+}
+
+/** Ray hit on face `f` within its extents (with `slack` mm), or null. */
+export function rayHitFace(ray, f, slack = 0.5) {
+  const h = rayHitPlane(ray, f.axis, f.value);
+  if (!h) return null;
+  const [u, v] = inPlaneAxes(f.axis);
+  if (h[u] < f.ext[u][0] - slack || h[u] > f.ext[u][1] + slack || h[v] < f.ext[v][0] - slack || h[v] > f.ext[v][1] + slack) return null;
+  return h;
+}
+
+/**
+ * The face under the cursor: nearest pickable face seen from its front; if
+ * none, the nearest space face seen from behind. Returns { face, point } or null.
  */
 export function pickFace(clientX, clientY, { exclude = null } = {}) {
   const ray = rayFromClient(clientX, clientY);
-  let best = null;
+  let front = null;
+  let back = null;
   for (const f of facePlanes()) {
-    if (!f.pickable || f.source === exclude) continue;
-    if (ray.direction[f.axis] * f.dir >= 0) continue; // looking at its back
-    const h = rayHitPlane(ray, f.axis, f.value);
+    if (!f.pickable || f.source === exclude || !faceVisible(f, ray)) continue;
+    const h = rayHitFace(ray, f);
     if (!h) continue;
-    const [u, v] = inPlaneAxes(f.axis);
-    if (h[u] < f.ext[u][0] - 0.5 || h[u] > f.ext[u][1] + 0.5 || h[v] < f.ext[v][0] - 0.5 || h[v] > f.ext[v][1] + 0.5) continue;
-    if (!best || h.t < best.point.t) best = { face: f, point: h };
+    if (faceFront(f, ray)) { if (!front || h.t < front.point.t) front = { face: f, point: h }; }
+    else if (!back || h.t < back.point.t) back = { face: f, point: h };
   }
-  return best;
+  return front || back;
 }
 
-/** Pickable faces a point lies on whose front we can see, most facing the camera first. */
+/** Pickable faces a point lies on that can be drawn on from here, most facing the camera first. */
 export function facesAtPoint(p, clientX, clientY) {
   const ray = rayFromClient(clientX, clientY);
   const out = [];
   for (const f of facePlanes()) {
-    if (!f.pickable || Math.abs(p[f.axis] - f.value) > 0.5) continue;
+    if (!f.pickable || Math.abs(p[f.axis] - f.value) > 0.5 || !faceVisible(f, ray)) continue;
     const [u, v] = inPlaneAxes(f.axis);
     if (p[u] < f.ext[u][0] - 0.5 || p[u] > f.ext[u][1] + 0.5 || p[v] < f.ext[v][0] - 0.5 || p[v] > f.ext[v][1] + 0.5) continue;
-    const facing = -ray.direction[f.axis] * f.dir; // > 0 when we see its front
-    if (facing <= 0) continue;
-    out.push({ face: f, facing });
+    out.push({ face: f, facing: -ray.direction[f.axis] * f.dir });
   }
   out.sort((a, b) => b.facing - a.facing);
   return out.map((o) => o.face);
