@@ -215,18 +215,25 @@ export function pickFace(clientX, clientY, { exclude = null } = {}) {
   return front || back;
 }
 
+/** Every pickable face the point lies on, ignoring the camera. Used so a
+ *  corner keeps all three faces; visibility is re-checked each move. */
+export function facesOnPoint(p) {
+  const out = [];
+  for (const f of facePlanes()) {
+    if (!f.pickable || Math.abs(p[f.axis] - f.value) > 0.5) continue;
+    const [u, v] = inPlaneAxes(f.axis);
+    if (p[u] < f.ext[u][0] - 0.5 || p[u] > f.ext[u][1] + 0.5 || p[v] < f.ext[v][0] - 0.5 || p[v] > f.ext[v][1] + 0.5) continue;
+    out.push(f);
+  }
+  return out;
+}
+
 /** Pickable faces a point lies on that can be drawn on from here, most facing the camera first. */
 export function facesAtPoint(p, clientX, clientY) {
   const ray = rayFromClient(clientX, clientY);
-  const out = [];
-  for (const f of facePlanes()) {
-    if (!f.pickable || Math.abs(p[f.axis] - f.value) > 0.5 || !faceVisible(f, ray)) continue;
-    const [u, v] = inPlaneAxes(f.axis);
-    if (p[u] < f.ext[u][0] - 0.5 || p[u] > f.ext[u][1] + 0.5 || p[v] < f.ext[v][0] - 0.5 || p[v] > f.ext[v][1] + 0.5) continue;
-    out.push({ face: f, facing: -ray.direction[f.axis] * f.dir });
-  }
-  out.sort((a, b) => b.facing - a.facing);
-  return out.map((o) => o.face);
+  return facesOnPoint(p)
+    .filter((f) => faceVisible(f, ray))
+    .sort((a, b) => (-ray.direction[b.axis] * b.dir) - (-ray.direction[a.axis] * a.dir));
 }
 export function faceAtPoint(p, clientX, clientY) {
   return facesAtPoint(p, clientX, clientY)[0] || null;

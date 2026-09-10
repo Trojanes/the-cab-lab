@@ -22,7 +22,7 @@ import {
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
-  pickFace, facesAtPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, extrudeRoom, inPlaneAxes, axisVector, AXES,
+  pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, extrudeRoom, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
@@ -145,11 +145,13 @@ function cursorPoint(clientX, clientY, { exclude = null } = {}) {
   const snap = nearestSnap(clientX, clientY, { exclude });
   if (snap) {
     // A corner lies on several faces: the face drawn over decides later (see beginFace).
-    const faces = facesAtPoint(snap, clientX, clientY);
-    const face = preferDrawable(faces) || floorFace();
+    const all = facesOnPoint(snap);
+    const visible = facesAtPoint(snap, clientX, clientY);
+    const face = preferDrawable(visible) || preferDrawable(all) || floorFace();
+    const hidden = all.length - visible.length;
     return {
-      x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces,
-      tip: [`Corner · ${describePoint(snap, exclude)}`, faces.length > 1 ? `On ${faces.map((f) => f.label.toLowerCase()).join(" / ")} — move along an edge of the face to draw on` : face ? `On ${face.label.toLowerCase()}` : null],
+      x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces: all,
+      tip: [`Corner · ${describePoint(snap, exclude)}`, all.length > 1 ? `On ${all.map((f) => f.label.toLowerCase()).join(" / ")}${hidden ? " — orbit to draw on a hidden wall" : " — move onto the face to draw on"}` : face ? `On ${face.label.toLowerCase()}` : null],
     };
   }
   const hit = pickFace(clientX, clientY, { exclude });
@@ -453,7 +455,7 @@ function beginFace(p) {
     step: "face",
     plane,
     // A corner anchor keeps its candidate faces until the cursor is clearly on one of them.
-    candidates: p.faces && p.faces.length > 1 ? p.faces : null,
+    candidates: (p.faces && p.faces.length > 1) ? p.faces : null,
     anchorClient: null,
     anchor: { x: p.x, y: p.y, z: p.z },
     corner: { x: p.x, y: p.y, z: p.z },
