@@ -3,7 +3,7 @@ import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
 import * as job from "./job.js";
 import { MODULES, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets } from "./cabinets3d.js";
-import { armPlacement, disarm, onModeChange, getPlacingModule } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 
@@ -46,7 +46,10 @@ function refreshRail() {
   $$("#leftrail .rail-item").forEach((b) => {
     b.classList.toggle("active", b.dataset.module ? b.dataset.module === placing : (!placing && !sel && b.hasAttribute("data-space")));
   });
-  $("#modeHint").textContent = placing ? `Placing ${MODULES[placing].label} — drag a box on the floor, Esc to cancel` : "";
+  const mode = getMode();
+  $("#modeHint").textContent = mode === "rubber"
+    ? "Move to size the box · Tab to type W / D / H · click or Enter to create · Esc to restart"
+    : placing ? `Placing ${MODULES[placing].label} — click a corner or a grid point to start · Esc to cancel` : "";
 }
 
 // --- view buttons ---------------------------------------------------------------

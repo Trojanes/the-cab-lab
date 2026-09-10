@@ -48,13 +48,18 @@
       </button>
       <div class="rail-title">Modules</div>
       <div id="moduleList"></div>
-      <div class="rail-foot">Pick a module, then drag its box on the floor.<br>Esc cancel · R rotate · F frame · Del remove</div>
+      <div class="rail-foot">Pick a module, click a corner to start its box, click again to finish.<br>Tab types sizes · Esc cancel · R rotate · F frame · Del remove</div>
     </aside>
 
     <main id="center">
       <div id="viewport"></div>
       <div id="viewport-hud">
         <span id="viewLabel">3D</span>
+      </div>
+      <div id="dimInputs" class="hidden">
+        <label data-dim="W"><span>W</span><input type="number" step="10" min="1" tabindex="-1"></label>
+        <label data-dim="D"><span>D</span><input type="number" step="10" min="1" tabindex="-1"></label>
+        <label data-dim="H"><span>H</span><input type="number" step="10" min="1" tabindex="-1"></label>
       </div>
       <div id="emptyState" class="hidden">
         <div class="empty-title">No space yet</div>

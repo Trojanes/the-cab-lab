@@ -92,7 +92,7 @@ function renderSpace() {
       : null,
     el("div", { class: "panel-section muted" }, [
       el("div", { class: "sec-title", text: "Next" }),
-      el("div", { class: "empty small", text: "Pick a module on the left and drag a box on the floor. The box is the cabinet's outer size; pull its faces to change W / D / H, drag the orange bars to move zone boundaries." }),
+      el("div", { class: "empty small", text: "Pick a module on the left, click a corner of the space (or of another cabinet) to start its box, size it with the mouse or Tab-typed numbers, click again to create. Pull the blue faces to change W / D / H, drag the orange bars to move zone boundaries." }),
     ]),
   ].filter(Boolean));
   drawerChecks.replaceChildren(

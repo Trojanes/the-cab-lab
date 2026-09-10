@@ -36,7 +36,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/spaceDialog.js` — "Define the space" modal (step 1, also Edit space)
 - `renderer/modules.js` — module registry: generator bundle + envelope (W / D / H) + divider handles
 - `renderer/cabinets3d.js` — draws boards, envelope, handles from generator output
-- `renderer/interact.js` — left-button interaction: place, select, move, resize, dividers, R / F / Del / Esc
+- `renderer/snap.js` — feature points (space + cabinet corners) and nearest-point lookup
+- `renderer/interact.js` — left-button interaction: point-to-point placement with type-ins, select, resize, dividers, R / F / Del / Esc
 - `renderer/panel.js` — right panel (space or selected cabinet) and drawer tables
 - `renderer/ui.js` — shell wiring
 - `renderer/gen/` — generated ESM bundles of `../modules/*/generator.ts` (do not edit)
@@ -48,7 +49,9 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 ## Controls
 
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
-- Left click: select · left-drag on a cabinet: move (snaps 10 mm, stays inside the space)
+- Placing: pick a module → hover shows a snap sphere on space / cabinet corners (else 10 mm grid) → click to anchor →
+  move to size → `Tab` cycles W / D / H type-ins (typed values lock) → click or `Enter` creates · `Esc` restarts
+- Left click: select. There is no drag-to-move (moving will be a dedicated command); use the X / Y fields for now
 - Blue cubes: pull W / D / H · orange bars: zone boundaries
 - `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools

@@ -2,7 +2,7 @@
 // wireframe, and (when selected) resize / divider handles. Nothing here
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
-import { scene } from "./space.js";
+import { scene, camera } from "./space.js";
 import { getJob, getSelectedId, getSpace, resultFor } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits } from "./spaces.js";
@@ -191,11 +191,40 @@ const ghost = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), ghostMat);
 ghost.visible = false;
 scene.add(ghost);
 
-export function showGhost(x0, y0, W, D, H) {
-  ghost.visible = true;
-  ghost.scale.set(Math.max(W, 1), Math.max(D, 1), Math.max(H, 1));
-  ghost.position.set(x0 + W / 2, y0 + D / 2, H / 2);
+const ghostEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x4f86e0 }));
+ghostEdges.visible = false;
+scene.add(ghostEdges);
+
+/** Axis-aligned preview box from min corner (x0, y0, z0). */
+export function showGhost(x0, y0, z0, W, D, H) {
+  for (const m of [ghost, ghostEdges]) {
+    m.visible = true;
+    m.scale.set(Math.max(W, 1), Math.max(D, 1), Math.max(H, 1));
+    m.position.set(x0 + W / 2, y0 + D / 2, z0 + H / 2);
+  }
 }
 export function hideGhost() {
   ghost.visible = false;
+  ghostEdges.visible = false;
+}
+
+/** Snap marker: a small sphere on the hovered feature point (or a dim one on a grid point). */
+const snapMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+const gridMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0, depthTest: false, transparent: true, opacity: 0.6 });
+const snapMarker = new THREE.Mesh(new THREE.SphereGeometry(1, 16, 12), snapMat);
+snapMarker.visible = false;
+snapMarker.renderOrder = 30;
+scene.add(snapMarker);
+
+export function showSnapMarker(x, y, z, { feature = true } = {}) {
+  snapMarker.visible = true;
+  snapMarker.material = feature ? snapMat : gridMat;
+  snapMarker.position.set(x, y, z);
+  // Keep the marker a roughly constant screen size.
+  const dist = snapMarker.position.distanceTo(camera.position);
+  const r = Math.max(6, dist * 0.004) * (feature ? 1 : 0.6);
+  snapMarker.scale.setScalar(r);
+}
+export function hideSnapMarker() {
+  snapMarker.visible = false;
 }

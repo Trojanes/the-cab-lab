@@ -1,19 +1,34 @@
-// Left-button interaction in the viewport: place a module box, select,
-// move, pull envelope faces, drag zone dividers. Every drag writes pose or
-// params through job.js and lets the generator redraw.
+// Left-button interaction in the viewport.
+//
+//   idle   click board → select · click empty → deselect · press handle → drag W/D/H or divider
+//   armed  (module picked) hover snaps to feature points · click → anchor
+//   rubber mouse sets W/D from the anchor · Tab cycles W/D/H type-ins · click or Enter → create
+//
+// There is no drag-to-move: moving will be a dedicated command. Every edit
+// writes pose or params through job.js and lets the generator redraw.
 import * as THREE from "three";
-import { canvas, controls, rayFromClient, floorPointAt, planePointAt, closestTOnLine, frame } from "./space.js";
+import { canvas, controls, rayFromClient, planePointAt, closestTOnLine, frame } from "./space.js";
 import * as job from "./job.js";
 import { getModule } from "./modules.js";
-import { pickables, groupFor, envelopeBox, envelopeFootprint, poseFits, setHandleHover, showGhost, hideGhost } from "./cabinets3d.js";
+import {
+  pickables, groupFor, envelopeBox, poseFits, setHandleHover,
+  showGhost, hideGhost, showSnapMarker, hideSnapMarker,
+} from "./cabinets3d.js";
+import { nearestSnap, toClient } from "./snap.js";
 
-const DRAG_THRESHOLD_PX = 4;
-const MIN_DRAG_BOX_MM = 50;
+const FRONT_THICKNESS_DEFAULT = 16;
 
-let placing = null; // moduleId while a module is armed
+let placing = null; // moduleId while armed / rubber
+let rubber = null; // { anchor:{x,y,z}, target:{x,y}, locked:{W,D,H}, growDown }
 let hoverHandle = null;
-let drag = null;
+let drag = null; // handle drag
+let hoverSnap = null;
 const modeListeners = new Set();
+
+const dimBox = document.getElementById("dimInputs");
+const dimInputs = { W: dimBox.querySelector('[data-dim="W"] input'), D: dimBox.querySelector('[data-dim="D"] input'), H: dimBox.querySelector('[data-dim="H"] input') };
+const dimLabels = { W: dimBox.querySelector('[data-dim="W"]'), D: dimBox.querySelector('[data-dim="D"]'), H: dimBox.querySelector('[data-dim="H"]') };
+const DIM_ORDER = ["W", "D", "H"];
 
 export function onModeChange(fn) {
   modeListeners.add(fn);
@@ -23,8 +38,9 @@ function emitMode() {
   for (const fn of modeListeners) fn(getMode());
 }
 export function getMode() {
-  if (drag) return drag.kind;
-  if (placing) return "placing";
+  if (drag) return "handle";
+  if (rubber) return "rubber";
+  if (placing) return "armed";
   return "idle";
 }
 export function getPlacingModule() {
@@ -34,13 +50,17 @@ export function getPlacingModule() {
 export function armPlacement(moduleId) {
   if (!job.hasSpace()) return;
   placing = moduleId;
+  rubber = null;
   job.select(null);
   canvas.style.cursor = "crosshair";
   emitMode();
 }
 export function disarm() {
   placing = null;
+  rubber = null;
   hideGhost();
+  hideSnapMarker();
+  dimBox.classList.add("hidden");
   canvas.style.cursor = "";
   emitMode();
 }
@@ -49,7 +69,6 @@ function pick(clientX, clientY) {
   const ray = rayFromClient(clientX, clientY);
   const rc = new THREE.Raycaster(ray.origin, ray.direction);
   const hits = rc.intersectObjects(pickables(), false);
-  // Handles win over boards regardless of depth order.
   const handle = hits.find((h) => h.object.userData.kind === "handle");
   return handle || hits[0] || null;
 }
@@ -59,34 +78,102 @@ function localAxisWorld(group, axis) {
   return v.transformDirection(group.matrixWorld).normalize();
 }
 
-/**
- * Keep the cabinet inside the space. Fast path clamps to the floor bounds
- * (exact for a box space); if the result still doesn't fit (concave floor,
- * obstacles) fall back to the last pose that did.
- */
-function clampPoseToSpace(cab, pose, fallback) {
+// --- placement geometry ------------------------------------------------------
+
+/** Cursor → world point: a feature point if one is near, else the grid on plane z. */
+function cursorPoint(clientX, clientY, z) {
+  const snap = nearestSnap(clientX, clientY);
+  if (snap) return { x: snap.x, y: snap.y, z: snap.z, feature: true };
+  const p = planePointAt(clientX, clientY, new THREE.Plane(new THREE.Vector3(0, 0, 1), -z));
+  if (!p) return null;
+  return { x: job.snap(p.x), y: job.snap(p.y), z, feature: false };
+}
+
+/** Current rubber box as a min-corner AABB. */
+function rubberBox() {
+  const mod = getModule(placing);
+  const { anchor, target, locked, dir } = rubber;
+  const W = locked.W ?? Math.max(mod.minSize.W, Math.abs(target.x - anchor.x));
+  const D = locked.D ?? Math.max(mod.minSize.D + FRONT_THICKNESS_DEFAULT, Math.abs(target.y - anchor.y));
+  const H = locked.H ?? mod.defaultSize.H;
+  const sx = dir.x || (target.x >= anchor.x ? 1 : -1);
+  const sy = dir.y || (target.y >= anchor.y ? 1 : -1);
+  const sz = rubber.growDown ? -1 : 1;
+  return {
+    x0: sx > 0 ? anchor.x : anchor.x - W,
+    y0: sy > 0 ? anchor.y : anchor.y - D,
+    z0: sz > 0 ? anchor.z : anchor.z - H,
+    W, D, H, sx, sy,
+  };
+}
+
+function updateRubber() {
+  const b = rubberBox();
+  showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H);
+  for (const k of DIM_ORDER) {
+    if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(b[k]);
+    dimLabels[k].classList.toggle("locked", rubber.locked[k] != null);
+  }
+  positionDimInputs(b);
+}
+
+/** Put each type-in next to the middle of its edge. */
+function positionDimInputs(b) {
+  const r = canvas.getBoundingClientRect();
+  // Screen offsets push the three labels off their edges so they don't stack.
+  const place = (k, x, y, z, dx, dy) => {
+    const c = toClient(x, y, z);
+    dimLabels[k].style.left = `${c.x - r.left + dx}px`;
+    dimLabels[k].style.top = `${c.y - r.top + dy}px`;
+    dimLabels[k].style.display = c.behind ? "none" : "";
+  };
+  const yFront = b.y0; // edges on the near (−Y) side read best from the default camera
+  place("W", b.x0 + b.W / 2, yFront, b.z0, 0, 22);
+  place("D", b.x0 + b.W, b.y0 + b.D / 2, b.z0, 54, 0);
+  place("H", b.x0 + b.W, yFront, b.z0 + b.H / 2, 54, -22);
+}
+
+function beginRubber(anchor) {
   const sp = job.getSpace();
-  if (!sp) return pose;
-  const bb = envelopeFootprint(cab, pose);
-  let dx = 0, dy = 0;
-  if (bb.minX < sp.bounds.minX) dx = sp.bounds.minX - bb.minX;
-  else if (bb.maxX > sp.bounds.maxX) dx = sp.bounds.maxX - bb.maxX;
-  if (bb.minY < sp.bounds.minY) dy = sp.bounds.minY - bb.minY;
-  else if (bb.maxY > sp.bounds.maxY) dy = sp.bounds.maxY - bb.maxY;
-  const clamped = { ...pose, x: pose.x + dx, y: pose.y + dy };
-  if (poseFits(cab, clamped)) return clamped;
-  return fallback && poseFits(cab, fallback) ? fallback : clamped;
+  rubber = {
+    anchor,
+    target: { x: anchor.x, y: anchor.y },
+    locked: { W: null, D: null, H: null },
+    dir: { x: 0, y: 0 }, // fixed once the mouse commits to a side
+    growDown: sp ? anchor.z >= sp.height - 1 : false,
+  };
+  dimBox.classList.remove("hidden");
+  for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked");
+  updateRubber();
+  emitMode();
+}
+
+function finishRubber() {
+  const mod = getModule(placing);
+  const b = rubberBox();
+  const fpt = FRONT_THICKNESS_DEFAULT;
+  // Cabinet local origin is the front carcass face; the rubber box includes the fronts.
+  const cab = job.addCabinet(
+    placing,
+    { x: b.x0, y: b.y0 + fpt, z: b.z0, rotZ: 0 },
+    { W: b.W, D: Math.max(mod.minSize.D, b.D - fpt), H: b.H },
+  );
+  disarm();
+  if (!poseFits(cab, cab.pose)) console.warn("[place]", cab.id, "does not fit the space; see Checks");
 }
 
 // --- pointer -----------------------------------------------------------------
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
+
   if (placing) {
-    const p = floorPointAt(e.clientX, e.clientY);
-    if (!p) return;
-    drag = { kind: "place", start: { x: job.snap(p.x), y: job.snap(p.y) }, cur: null };
-    canvas.setPointerCapture(e.pointerId);
+    if (!rubber) {
+      const p = cursorPoint(e.clientX, e.clientY, 0);
+      if (p) beginRubber(p);
+    } else {
+      finishRubber();
+    }
     return;
   }
 
@@ -104,14 +191,9 @@ canvas.addEventListener("pointerdown", (e) => {
     const axis = handle.type === "W" ? "x" : handle.type === "D" ? "y" : "z";
     const dir = localAxisWorld(group, axis);
     const origin = hit.object.getWorldPosition(new THREE.Vector3());
-    const t0 = closestTOnLine(e.clientX, e.clientY, origin, dir);
     drag = {
-      kind: "handle",
-      cabId,
-      handle,
-      dir,
-      origin,
-      t0,
+      cabId, handle, dir, origin,
+      t0: closestTOnLine(e.clientX, e.clientY, origin, dir),
       before: job.snapshot(),
       params0: cab.params,
       pose0: { ...cab.pose },
@@ -123,104 +205,70 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  // Board: select, and maybe start moving.
   job.select(cabId);
-  const plane = new THREE.Plane(new THREE.Vector3(0, 0, 1), -cab.pose.z);
-  const p0 = planePointAt(e.clientX, e.clientY, plane);
-  drag = {
-    kind: "move",
-    cabId,
-    plane,
-    p0,
-    pose0: { ...cab.pose },
-    startPx: { x: e.clientX, y: e.clientY },
-    moved: false,
-    before: job.snapshot(),
-  };
-  canvas.setPointerCapture(e.pointerId);
 });
 
 canvas.addEventListener("pointermove", (e) => {
-  if (!drag) {
-    // Hover feedback on handles.
-    const hit = job.getSelectedId() ? pick(e.clientX, e.clientY) : null;
-    const h = hit && hit.object.userData.kind === "handle" ? hit.object : null;
-    if (h !== hoverHandle) {
-      setHandleHover(hoverHandle, false);
-      setHandleHover(h, true);
-      hoverHandle = h;
-    }
-    if (!placing) canvas.style.cursor = h ? cursorFor(h.userData.handle) : hit ? "move" : "";
-    return;
-  }
+  if (drag) return handleDragMove(e);
 
-  if (drag.kind === "place") {
-    const p = floorPointAt(e.clientX, e.clientY);
+  if (placing) {
+    if (!rubber) {
+      const p = cursorPoint(e.clientX, e.clientY, 0);
+      if (p) showSnapMarker(p.x, p.y, p.z, { feature: p.feature });
+      else hideSnapMarker();
+      return;
+    }
+    const p = cursorPoint(e.clientX, e.clientY, rubber.anchor.z);
     if (!p) return;
-    drag.cur = { x: job.snap(p.x), y: job.snap(p.y) };
-    const mod = getModule(placing);
-    const W = Math.abs(drag.cur.x - drag.start.x);
-    const D = Math.abs(drag.cur.y - drag.start.y);
-    const small = W < MIN_DRAG_BOX_MM || D < MIN_DRAG_BOX_MM;
-    const x0 = small ? drag.start.x : Math.min(drag.start.x, drag.cur.x);
-    const y0 = small ? drag.start.y : Math.min(drag.start.y, drag.cur.y);
-    showGhost(x0, y0, small ? mod.defaultSize.W : W, small ? mod.defaultSize.D : D, mod.defaultSize.H);
+    rubber.target = { x: p.x, y: p.y };
+    // Commit to a growth direction once the cursor is clearly off the anchor.
+    if (!rubber.dir.x && Math.abs(p.x - rubber.anchor.x) >= 20) rubber.dir.x = p.x > rubber.anchor.x ? 1 : -1;
+    if (!rubber.dir.y && Math.abs(p.y - rubber.anchor.y) >= 20) rubber.dir.y = p.y > rubber.anchor.y ? 1 : -1;
+    if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
+    else hideSnapMarker();
+    updateRubber();
     return;
   }
 
-  if (drag.kind === "move") {
-    if (!drag.moved) {
-      const dx = e.clientX - drag.startPx.x;
-      const dy = e.clientY - drag.startPx.y;
-      if (Math.hypot(dx, dy) < DRAG_THRESHOLD_PX) return;
-      drag.moved = true;
-      controls.enabled = false;
-      emitMode();
-    }
-    const p = planePointAt(e.clientX, e.clientY, drag.plane);
-    if (!p || !drag.p0) return;
-    const cab = job.getJob().cabinets.find((c) => c.id === drag.cabId);
-    if (!cab) return;
-    let pose = {
-      ...drag.pose0,
-      x: job.snap(drag.pose0.x + (p.x - drag.p0.x)),
-      y: job.snap(drag.pose0.y + (p.y - drag.p0.y)),
-    };
-    pose = clampPoseToSpace(cab, pose, cab.pose);
-    job.setPose(drag.cabId, pose, { history: false });
-    return;
+  // Idle: hover feedback on handles.
+  const hit = job.getSelectedId() ? pick(e.clientX, e.clientY) : null;
+  const h = hit && hit.object.userData.kind === "handle" ? hit.object : null;
+  if (h !== hoverHandle) {
+    setHandleHover(hoverHandle, false);
+    setHandleHover(h, true);
+    hoverHandle = h;
   }
-
-  if (drag.kind === "handle") {
-    const t = closestTOnLine(e.clientX, e.clientY, drag.origin, drag.dir);
-    const delta = t - drag.t0;
-    const cab = job.getJob().cabinets.find((c) => c.id === drag.cabId);
-    if (!cab) return;
-    const mod = getModule(cab.moduleId);
-    const env0 = mod.envelope(drag.params0);
-    const h = drag.handle;
-
-    if (h.type === "W") {
-      const W = Math.max(mod.minSize.W, job.snap(env0.W + delta));
-      job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { W }), { history: false });
-    } else if (h.type === "D") {
-      // Front face is pulled; keep the back (local y = D) where it is.
-      const D = Math.max(mod.minSize.D, job.snap(env0.D - delta));
-      const shift = env0.D - D;
-      const yDir = drag.dir; // local +Y in world
-      job.updateCabinet(drag.cabId, (c) => {
-        c.params = mod.setEnvelope(drag.params0, { D });
-        c.pose = { ...drag.pose0, x: drag.pose0.x + yDir.x * shift, y: drag.pose0.y + yDir.y * shift };
-      });
-    } else if (h.type === "H") {
-      const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
-      job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { H }), { history: false });
-    } else if (h.type === "divider") {
-      const pos = h.pos + delta;
-      job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, pos), { history: false });
-    }
-  }
+  canvas.style.cursor = h ? cursorFor(h.userData.handle) : hit ? "pointer" : "";
 });
+
+function handleDragMove(e) {
+  const t = closestTOnLine(e.clientX, e.clientY, drag.origin, drag.dir);
+  const delta = t - drag.t0;
+  const cab = job.getJob().cabinets.find((c) => c.id === drag.cabId);
+  if (!cab) return;
+  const mod = getModule(cab.moduleId);
+  const env0 = mod.envelope(drag.params0);
+  const h = drag.handle;
+
+  if (h.type === "W") {
+    const W = Math.max(mod.minSize.W, job.snap(env0.W + delta));
+    job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { W }), { history: false });
+  } else if (h.type === "D") {
+    // Front face is pulled; keep the back (local y = D) where it is.
+    const D = Math.max(mod.minSize.D, job.snap(env0.D - delta));
+    const shift = env0.D - D;
+    const yDir = drag.dir;
+    job.updateCabinet(drag.cabId, (c) => {
+      c.params = mod.setEnvelope(drag.params0, { D });
+      c.pose = { ...drag.pose0, x: drag.pose0.x + yDir.x * shift, y: drag.pose0.y + yDir.y * shift };
+    });
+  } else if (h.type === "H") {
+    const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
+    job.setParams(drag.cabId, mod.setEnvelope(drag.params0, { H }), { history: false });
+  } else if (h.type === "divider") {
+    job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, h.pos + delta), { history: false });
+  }
+}
 
 function endDrag(e) {
   if (!drag) return;
@@ -228,38 +276,15 @@ function endDrag(e) {
   drag = null;
   controls.enabled = true;
   try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
-
-  if (d.kind === "place") {
-    hideGhost();
-    const mod = getModule(placing);
-    const cur = d.cur || d.start;
-    let W = Math.abs(cur.x - d.start.x);
-    let D = Math.abs(cur.y - d.start.y);
-    let x0 = Math.min(d.start.x, cur.x);
-    let y0 = Math.min(d.start.y, cur.y);
-    if (W < MIN_DRAG_BOX_MM || D < MIN_DRAG_BOX_MM) {
-      W = mod.defaultSize.W;
-      D = mod.defaultSize.D;
-      x0 = d.start.x;
-      y0 = d.start.y;
-    }
-    W = Math.max(mod.minSize.W, W);
-    D = Math.max(mod.minSize.D, D);
-    const fpt = 16;
-    // Local origin is the front carcass face (y = 0); the dragged box includes the fronts.
-    const cab = job.addCabinet(placing, { x: x0, y: y0 + fpt, z: 0, rotZ: 0 }, { W, D: D - fpt, H: mod.defaultSize.H });
-    job.setPose(cab.id, clampPoseToSpace(cab, cab.pose), { history: false });
-    disarm();
-    return;
-  }
-
-  if (d.kind === "move" || d.kind === "handle") {
-    job.commitSnapshot(d.before);
-  }
+  job.commitSnapshot(d.before);
   emitMode();
 }
 canvas.addEventListener("pointerup", endDrag);
 canvas.addEventListener("pointercancel", endDrag);
+
+canvas.addEventListener("pointerleave", () => {
+  if (placing && !rubber) hideSnapMarker();
+});
 
 function cursorFor(handle) {
   if (!handle) return "";
@@ -267,15 +292,76 @@ function cursorFor(handle) {
   return "ew-resize";
 }
 
-// --- keyboard ----------------------------------------------------------------
+// Keep type-ins glued to the box while the camera moves.
+(function tickDims() {
+  if (rubber) positionDimInputs(rubberBox());
+  requestAnimationFrame(tickDims);
+})();
+
+// --- dimension type-ins --------------------------------------------------------
+
+function focusDim(k) {
+  for (const kk of DIM_ORDER) dimLabels[kk].classList.toggle("focused", kk === k);
+  dimInputs[k].focus();
+  dimInputs[k].select();
+}
+function focusedDim() {
+  return DIM_ORDER.find((k) => document.activeElement === dimInputs[k]) || null;
+}
+
+for (const k of DIM_ORDER) {
+  const input = dimInputs[k];
+  input.addEventListener("input", () => {
+    if (!rubber) return;
+    const v = Number(input.value);
+    const mod = getModule(placing);
+    const min = k === "D" ? mod.minSize.D + FRONT_THICKNESS_DEFAULT : mod.minSize[k];
+    rubber.locked[k] = Number.isFinite(v) && v >= min ? v : null;
+    updateRubber();
+  });
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const i = DIM_ORDER.indexOf(k);
+      focusDim(DIM_ORDER[(i + (e.shiftKey ? DIM_ORDER.length - 1 : 1)) % DIM_ORDER.length]);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (rubber) finishRubber();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      cancelRubber();
+    }
+    e.stopPropagation();
+  });
+}
+
+function cancelRubber() {
+  rubber = null;
+  hideGhost();
+  dimBox.classList.add("hidden");
+  canvas.focus?.();
+  emitMode();
+}
+
+// --- keyboard ------------------------------------------------------------------
 
 window.addEventListener("keydown", (e) => {
   if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+
+  if (rubber) {
+    if (e.key === "Tab") { e.preventDefault(); focusDim(focusedDim() || "W"); return; }
+    if (e.key === "Enter") { e.preventDefault(); finishRubber(); return; }
+    if (e.key === "Escape") { cancelRubber(); return; }
+    // Typing a digit jumps straight into the W field.
+    if (/^[0-9.]$/.test(e.key)) { focusDim("W"); dimInputs.W.value = ""; return; }
+    return;
+  }
   if (e.key === "Escape") {
     if (placing) disarm();
     else job.select(null);
     return;
   }
+
   const sel = job.getSelected();
   if (e.key === "f" || e.key === "F") {
     if (sel) {
@@ -304,12 +390,11 @@ window.addEventListener("keydown", (e) => {
     const a1 = a0 + Math.PI / 2;
     const wx = sel.pose.x + cx * Math.cos(a0) - cy * Math.sin(a0);
     const wy = sel.pose.y + cx * Math.sin(a0) + cy * Math.cos(a0);
-    const pose = {
+    job.setPose(sel.id, {
       ...sel.pose,
-      rotZ: (((sel.pose.rotZ || 0) + 90) % 360),
+      rotZ: ((sel.pose.rotZ || 0) + 90) % 360,
       x: job.snap(wx - (cx * Math.cos(a1) - cy * Math.sin(a1))),
       y: job.snap(wy - (cx * Math.sin(a1) + cy * Math.cos(a1))),
-    };
-    job.setPose(sel.id, clampPoseToSpace(sel, pose, sel.pose));
+    });
   }
 });
