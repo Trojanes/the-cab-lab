@@ -111,9 +111,11 @@ function rubberCursor(e) {
   if (rubber.inference) {
     const { from, dir } = rubber.inference;
     const near = shift ? { dir } : nearestInference(e.clientX, e.clientY, from, { band: INFER_RELEASE_PX });
+    // Points on an inference line keep the line's height, so sliding along a
+    // ceiling edge still spans the box up to the ceiling.
     if (near && near.dir === dir) {
       const pt = pointOnLine(e.clientX, e.clientY, from, dir);
-      return { ...pt, z, feature: false, inference: rubber.inference };
+      return { ...pt, feature: false, inference: rubber.inference };
     }
     rubber.inference = null;
   }
@@ -123,7 +125,7 @@ function rubberCursor(e) {
     if (near) {
       rubber.inference = { from, dir: near.dir };
       const pt = pointOnLine(e.clientX, e.clientY, from, near.dir);
-      return { ...pt, z, feature: false, inference: rubber.inference };
+      return { ...pt, feature: false, inference: rubber.inference };
     }
   }
 
@@ -279,7 +281,7 @@ canvas.addEventListener("pointermove", (e) => {
     }
     const p = rubberCursor(e);
     if (!p) return;
-    rubber.target = { x: p.x, y: p.y, z: p.feature ? p.z : null };
+    rubber.target = { x: p.x, y: p.y, z: p.feature || p.inference ? p.z : null };
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
     if (p.inference) showInference(p.inference.from, p, p.inference.dir);
