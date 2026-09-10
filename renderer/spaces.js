@@ -12,15 +12,17 @@ const box = {
   id: "box",
   label: "Box",
   sub: "W × D × H room",
-  defaults: () => ({ width: 4000, depth: 3000, height: 2400 }),
+  defaults: () => ({ width: 4000, depth: 3000, height: 2400, walls: [0, 1, 2, 3] }),
   fields: [
     { key: "width", label: "Width (mm)", min: 300 },
     { key: "depth", label: "Depth (mm)", min: 300 },
     { key: "height", label: "Height (mm)", min: 300 },
+    { key: "walls", type: "walls", label: "Walls" },
   ],
   validate(p) {
     const errors = [];
     for (const f of this.fields) {
+      if (f.type === "walls") continue;
       const v = Number(p[f.key]);
       if (!Number.isFinite(v) || v < f.min) errors.push(`${f.label} must be at least ${f.min}.`);
     }
@@ -36,8 +38,8 @@ const box = {
       height: H,
       obstacles: [],
       bounds: { minX: 0, minY: 0, maxX: W, maxY: D },
-      // Which floor edges get a wall drawn. Front edge (index 0) stays open.
-      walls: [1, 2, 3],
+      // Floor edges that get a wall: 0 front, 1 right, 2 back, 3 left.
+      walls: Array.isArray(p.walls) ? p.walls.map(Number).filter((i) => i >= 0 && i <= 3) : [0, 1, 2, 3],
       summary: `${W} × ${D} × ${H} mm`,
     };
   },

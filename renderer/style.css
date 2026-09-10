@@ -385,6 +385,10 @@ button:disabled { cursor: default; opacity: 0.45; }
   color: var(--text-3); border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 5px;
 }
 .kind-fields .field { grid-template-columns: 1fr 140px; }
+.kind-fields .field:has(.wall-toggles) { grid-template-columns: 1fr; }
+.wall-toggles { display: flex; flex-wrap: wrap; gap: 8px 12px; margin-top: 4px; }
+.wall-toggle { display: flex; align-items: center; gap: 5px; color: var(--text-2); cursor: pointer; }
+.wall-toggle input { accent-color: var(--accent); }
 .kind-errors { min-height: 4px; margin-top: 4px; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
 

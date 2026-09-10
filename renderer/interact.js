@@ -22,7 +22,7 @@ import {
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
-  pickFace, facesAtPoint, facePlanes, faceVisible, rayHitFace, inPlaneAxes, axisVector, AXES,
+  pickFace, facesAtPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, extrudeRoom, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
@@ -146,7 +146,7 @@ function cursorPoint(clientX, clientY, { exclude = null } = {}) {
   if (snap) {
     // A corner lies on several faces: the face drawn over decides later (see beginFace).
     const faces = facesAtPoint(snap, clientX, clientY);
-    const face = faces.find((f) => f.axis === "z") || faces[0] || floorFace(); // footprints first
+    const face = preferDrawable(faces) || floorFace();
     return {
       x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces,
       tip: [`Corner · ${describePoint(snap, exclude)}`, faces.length > 1 ? `On ${faces.map((f) => f.label.toLowerCase()).join(" / ")} — move along an edge of the face to draw on` : face ? `On ${face.label.toLowerCase()}` : null],
@@ -297,7 +297,7 @@ function roomFrom(p) {
     z: { pos: sp.height - p.z, neg: p.z },
   };
 }
-const WALL_NAME = { x: ["left wall", "right wall"], y: ["front edge", "back wall"], z: ["floor", "ceiling"] };
+const WALL_NAME = { x: ["left wall", "right wall"], y: ["front wall", "back wall"], z: ["floor", "ceiling"] };
 
 /**
  * Current placement box as a min-corner AABB. The two in-plane sizes come
@@ -508,16 +508,26 @@ function chooseFace(e) {
   if (!face && !ambiguous) {
     let bestT = Infinity;
     let bestFront = false;
+    let bestRoom = -1;
     for (const f of pool) {
       const h = rayHitFace(ray, f, 5);
       if (!h) continue;
       const front = -ray.direction[f.axis] * f.dir > 0;
-      const better = (front && !bestFront) || (front === bestFront && h.t < bestT - 0.5);
-      if (better) { face = f; bestT = h.t; bestFront = front; }
+      const room = extrudeRoom(f);
+      const sameHit = Math.abs(h.t - bestT) < 0.5;
+      const better = (sameHit && room > bestRoom + 1)
+        || (front && !bestFront && !sameHit)
+        || (front === bestFront && h.t < bestT - 0.5);
+      if (better) { face = f; bestT = h.t; bestFront = front; bestRoom = room; }
     }
   }
-  if (ambiguous && pool.some((f) => f.axis === rb.plane.axis && f.value === rb.plane.value)) face = null; // keep current
-  if (face && face.axis !== rb.plane.axis) {
+  // Coincident faces (cabinet top = ceiling): keep / switch to the one with room to pull.
+  if (ambiguous) {
+    const drawable = preferDrawable(pool);
+    if (drawable && extrudeRoom(rb.plane) <= 1 && extrudeRoom(drawable) > 1) face = drawable;
+    else if (pool.some((f) => f.axis === rb.plane.axis && f.value === rb.plane.value && f.dir === rb.plane.dir)) face = null;
+  }
+  if (face && (face.axis !== rb.plane.axis || face.dir !== rb.plane.dir)) {
     rb.plane = planeOf(face);
     rb.ctx.plane = { axis: face.axis, value: face.value, label: face.label };
     rb.ctx.inference = null;
@@ -712,7 +722,7 @@ function movePose() {
     const b = sp.bounds;
     if (fp.minX < b.minX) { pose.x += b.minX - fp.minX; clamped.push("left wall"); }
     if (fp.maxX > b.maxX) { pose.x -= fp.maxX - b.maxX; clamped.push("right wall"); }
-    if (fp.minY < b.minY) { pose.y += b.minY - fp.minY; clamped.push("front edge"); }
+    if (fp.minY < b.minY) { pose.y += b.minY - fp.minY; clamped.push("front wall"); }
     if (fp.maxY > b.maxY) { pose.y -= fp.maxY - b.maxY; clamped.push("back wall"); }
     if (fp.z0 < 0) { pose.z -= fp.z0; clamped.push("floor"); }
     if (fp.z1 > sp.height) { pose.z -= fp.z1 - sp.height; clamped.push("ceiling"); }

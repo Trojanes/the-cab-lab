@@ -54,12 +54,15 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Placing, three steps (SketchUp-style): pick a module → hover shows the face under the cursor (floor, ceiling, any
   wall, any face of a cabinet; blue sheet) → click a corner or grid point on it → draw a flat, zero-thickness rectangle
   on that face and click the opposite corner (a corner anchor takes the face whose edge you move along first — up from a
-  floor corner means the wall; walls are see-through, so this also works for the wall nearest the camera) → pull the rectangle off the
-  face, one way only (away from the wall / floor / cabinet — it can't be pulled into them) and click. Only the two
-  in-plane sizes are typed in step 2; `Enter` creates with the preset size along the face normal (H on floors, D on
-  front/back walls, W on side walls). Boxes are axis-aligned; front / side orientation is not assigned yet. After
-  creating you stay armed; `Shift+click` repeats the last size at a new corner; typing digits re-sizes the box you just
-  made. `Esc` restarts / stops.
+  floor corner means the wall) → pull the rectangle off the face, one way only (away from the wall / floor / cabinet —
+  it can't be pulled into them) and click. Side walls are only selectable from the **room inside**; the wall facing the
+  camera is ignored until you orbit to its inner face. Floor and ceiling stay pickable from either side. A cabinet top
+  flush with the ceiling counts as the ceiling (pull down into the room). Only the two in-plane sizes are typed in
+  step 2; `Enter` creates with the preset size along the face normal (H on floors, D on front/back walls, W on side
+  walls). Boxes are axis-aligned; front / side orientation is not assigned yet. After creating you stay armed;
+  `Shift+click` repeats the last size at a new corner; typing digits re-sizes the box you just made. `Esc` restarts /
+  stops.
+- Space dialog: Front / Right / Back / Left wall checkboxes (all on by default).
 - Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
   (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.
 - Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line),

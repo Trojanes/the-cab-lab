@@ -110,7 +110,7 @@ function buildPlanes() {
     // Box floor edges: 0 front (minY), 1 right (maxX), 2 back (maxY), 3 left (minX).
     face("x", b.minX, +1, "space", "Left wall", ext, walls.has(3));
     face("x", b.maxX, -1, "space", "Right wall", ext, walls.has(1));
-    face("y", b.minY, +1, "space", "Front edge", ext, walls.has(0));
+    face("y", b.minY, +1, "space", "Front wall", ext, walls.has(0));
     face("y", b.maxY, -1, "space", "Back wall", ext, walls.has(2));
     face("z", 0, +1, "space", "Floor", ext);
     face("z", sp.height, -1, "space", "Ceiling", ext);
@@ -143,14 +143,41 @@ function rayHitPlane(ray, axis, value) {
   return { t, x: ray.origin.x + ray.direction.x * t, y: ray.origin.y + ray.direction.y * t, z: ray.origin.z + ray.direction.z * t };
 }
 
+/** Millimetres left if a box is pulled off this face along `dir`. */
+export function extrudeRoom(f) {
+  const sp = getSpace();
+  if (!sp) return Infinity;
+  const b = sp.bounds;
+  if (f.axis === "x") return f.dir > 0 ? b.maxX - f.value : f.value - b.minX;
+  if (f.axis === "y") return f.dir > 0 ? b.maxY - f.value : f.value - b.minY;
+  return f.dir > 0 ? sp.height - f.value : f.value;
+}
+
 /**
- * Can this face be drawn on from the camera's side of it? Cabinet faces only
- * from their front; the space is a see-through wireframe, so its walls, floor
- * and ceiling also from behind (the near wall in the default view).
+ * Among coincident / candidate faces, keep the one that can actually be
+ * pulled into the room. A cabinet top flush with the ceiling has 0 room up;
+ * the ceiling itself has the full height down.
+ */
+export function preferDrawable(faces) {
+  if (!faces || !faces.length) return null;
+  const scored = faces.map((f) => ({ f, room: extrudeRoom(f) }));
+  const withRoom = scored.filter((s) => s.room > 1);
+  const pool = withRoom.length ? withRoom : scored;
+  const z = pool.filter((s) => s.f.axis === "z");
+  const pick = (z.length ? z : pool).sort((a, b) => b.room - a.room || (b.f.source === "space" ? 1 : 0) - (a.f.source === "space" ? 1 : 0));
+  return pick[0].f;
+}
+
+/**
+ * Can this face be drawn on from the camera's side of it?
+ * Side walls (and cabinet faces) only from their front — the wall facing the
+ * camera is not selectable; orbit to see its room-side. Floor and ceiling
+ * stay pickable from either side.
  */
 export function faceVisible(f, ray) {
   const facing = -ray.direction[f.axis] * f.dir; // > 0 when we see its front
-  return facing > 0 || f.source === "space";
+  if (facing > 0) return true;
+  return f.source === "space" && f.axis === "z";
 }
 function faceFront(f, ray) {
   return -ray.direction[f.axis] * f.dir > 0;
@@ -167,7 +194,8 @@ export function rayHitFace(ray, f, slack = 0.5) {
 
 /**
  * The face under the cursor: nearest pickable face seen from its front; if
- * none, the nearest space face seen from behind. Returns { face, point } or null.
+ * none, the nearest floor/ceiling seen from behind. Side walls have no
+ * back-side fallback. Returns { face, point } or null.
  */
 export function pickFace(clientX, clientY, { exclude = null } = {}) {
   const ray = rayFromClient(clientX, clientY);
@@ -179,6 +207,10 @@ export function pickFace(clientX, clientY, { exclude = null } = {}) {
     if (!h) continue;
     if (faceFront(f, ray)) { if (!front || h.t < front.point.t) front = { face: f, point: h }; }
     else if (!back || h.t < back.point.t) back = { face: f, point: h };
+  }
+  // Same plane, opposite sides (cabinet top vs ceiling): take the one with room.
+  if (front && back && Math.abs(front.point.t - back.point.t) < 0.5) {
+    return extrudeRoom(front.face) >= extrudeRoom(back.face) ? front : back;
   }
   return front || back;
 }

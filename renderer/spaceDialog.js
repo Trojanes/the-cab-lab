@@ -52,6 +52,29 @@ function renderFields() {
     label.className = "field";
     const span = document.createElement("span");
     span.textContent = f.label;
+    if (f.type === "walls") {
+      if (!Array.isArray(values.walls)) values.walls = [0, 1, 2, 3];
+      const names = ["Front", "Right", "Back", "Left"];
+      const row = document.createElement("div");
+      row.className = "wall-toggles";
+      names.forEach((name, i) => {
+        const t = document.createElement("label");
+        t.className = "wall-toggle";
+        const cb = document.createElement("input");
+        cb.type = "checkbox";
+        cb.checked = values.walls.includes(i);
+        cb.addEventListener("change", () => {
+          const set = new Set(values.walls);
+          if (cb.checked) set.add(i); else set.delete(i);
+          values.walls = [...set].sort((a, b) => a - b);
+        });
+        t.append(cb, document.createTextNode(name));
+        row.append(t);
+      });
+      label.append(span, row);
+      fieldsEl.append(label);
+      return;
+    }
     const input = document.createElement("input");
     input.type = "number";
     input.step = 10;
