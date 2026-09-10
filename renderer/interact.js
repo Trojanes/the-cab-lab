@@ -12,9 +12,9 @@ import * as job from "./job.js";
 import { getModule } from "./modules.js";
 import {
   pickables, groupFor, envelopeBox, poseFits, setHandleHover,
-  showGhost, hideGhost, showSnapMarker, hideSnapMarker,
+  showGhost, hideGhost, showSnapMarker, hideSnapMarker, showInference, hideInference,
 } from "./cabinets3d.js";
-import { nearestSnap, toClient } from "./snap.js";
+import { nearestSnap, nearestInference, pointOnLine, toClient, INFER_RELEASE_PX } from "./snap.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
 
@@ -60,6 +60,7 @@ export function disarm() {
   rubber = null;
   hideGhost();
   hideSnapMarker();
+  hideInference();
   dimBox.classList.add("hidden");
   canvas.style.cursor = "";
   emitMode();
@@ -83,10 +84,52 @@ function localAxisWorld(group, axis) {
 /** Cursor → world point: a feature point if one is near, else the grid on plane z. */
 function cursorPoint(clientX, clientY, z) {
   const snap = nearestSnap(clientX, clientY);
-  if (snap) return { x: snap.x, y: snap.y, z: snap.z, feature: true };
+  if (snap) return { x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs };
   const p = planePointAt(clientX, clientY, new THREE.Plane(new THREE.Vector3(0, 0, 1), -z));
   if (!p) return null;
   return { x: job.snap(p.x), y: job.snap(p.y), z, feature: false };
+}
+
+/**
+ * Cursor during rubber-banding, with inference:
+ *   on a feature point          → that point (and remember it as the inference source)
+ *   near an edge of the last    → slide along that edge (one coordinate pinned);
+ *   touched point / the anchor    Shift keeps the current edge no matter where the cursor goes
+ *   otherwise                   → grid on the anchor's plane
+ */
+function rubberCursor(e) {
+  const z = rubber.anchor.z;
+  const snap = nearestSnap(e.clientX, e.clientY);
+  if (snap) {
+    rubber.lastPoint = snap;
+    rubber.inference = null;
+    return { x: snap.x, y: snap.y, z: snap.z, feature: true };
+  }
+
+  const shift = e.shiftKey;
+  // Keep the current inference while the cursor stays near its line (or Shift is held).
+  if (rubber.inference) {
+    const { from, dir } = rubber.inference;
+    const near = shift ? { dir } : nearestInference(e.clientX, e.clientY, from, { band: INFER_RELEASE_PX });
+    if (near && near.dir === dir) {
+      const pt = pointOnLine(e.clientX, e.clientY, from, dir);
+      return { ...pt, z, feature: false, inference: rubber.inference };
+    }
+    rubber.inference = null;
+  }
+  // Pick up a new inference from the last touched point or the anchor.
+  for (const from of [rubber.lastPoint, rubber.anchorPoint]) {
+    const near = nearestInference(e.clientX, e.clientY, from);
+    if (near) {
+      rubber.inference = { from, dir: near.dir };
+      const pt = pointOnLine(e.clientX, e.clientY, from, near.dir);
+      return { ...pt, z, feature: false, inference: rubber.inference };
+    }
+  }
+
+  const g = planePointAt(e.clientX, e.clientY, new THREE.Plane(new THREE.Vector3(0, 0, 1), -z));
+  if (!g) return null;
+  return { x: job.snap(g.x), y: job.snap(g.y), z, feature: false };
 }
 
 /** Current rubber box as a min-corner AABB. */
@@ -148,6 +191,10 @@ function beginRubber(anchor) {
     anchor,
     target: { x: anchor.x, y: anchor.y },
     locked: { W: null, D: null, H: null },
+    // Inference sources: the anchor itself (axis edges) and the last feature point touched.
+    anchorPoint: { x: anchor.x, y: anchor.y, z: anchor.z, dirs: anchor.dirs || [[1, 0, 0], [-1, 0, 0], [0, 1, 0], [0, -1, 0]] },
+    lastPoint: null,
+    inference: null,
     growDown: sp ? anchor.z >= sp.height - 1 : false,
   };
   dimBox.classList.remove("hidden");
@@ -226,11 +273,13 @@ canvas.addEventListener("pointermove", (e) => {
       else hideSnapMarker();
       return;
     }
-    const p = cursorPoint(e.clientX, e.clientY, rubber.anchor.z);
+    const p = rubberCursor(e);
     if (!p) return;
     rubber.target = { x: p.x, y: p.y };
     if (p.feature) showSnapMarker(p.x, p.y, p.z, { feature: true });
     else hideSnapMarker();
+    if (p.inference) showInference(p.inference.from, p, p.inference.dir);
+    else hideInference();
     updateRubber();
     return;
   }
@@ -349,6 +398,7 @@ for (const k of DIM_ORDER) {
 function cancelRubber() {
   rubber = null;
   hideGhost();
+  hideInference();
   dimBox.classList.add("hidden");
   canvas.focus?.();
   emitMode();

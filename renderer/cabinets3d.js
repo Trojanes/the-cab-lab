@@ -228,3 +228,46 @@ export function showSnapMarker(x, y, z, { feature = true } = {}) {
 export function hideSnapMarker() {
   snapMarker.visible = false;
 }
+
+/** Inference line: dashed, coloured by axis, from a feature point to the cursor target. */
+const inferGeo = new THREE.BufferGeometry();
+inferGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+const inferMat = new THREE.LineDashedMaterial({ color: 0xffffff, dashSize: 40, gapSize: 25, depthTest: false });
+const inferLine = new THREE.Line(inferGeo, inferMat);
+inferLine.visible = false;
+inferLine.renderOrder = 29;
+scene.add(inferLine);
+const onLineMat = new THREE.MeshBasicMaterial({ color: 0xffffff, depthTest: false });
+const onLineMarker = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), onLineMat);
+onLineMarker.visible = false;
+onLineMarker.renderOrder = 30;
+scene.add(onLineMarker);
+
+// Brighter than the axes so a 1 px dashed line reads against the grid.
+function axisColor(dir) {
+  if (Math.abs(dir[0]) > 0.9) return 0xff7070;
+  if (Math.abs(dir[1]) > 0.9) return 0x7cf09c;
+  if (Math.abs(dir[2]) > 0.9) return 0x7fb0ff;
+  return 0xf0c070;
+}
+
+export function showInference(from, to, dir) {
+  const pos = inferGeo.attributes.position;
+  pos.setXYZ(0, from.x, from.y, from.z);
+  pos.setXYZ(1, to.x, to.y, to.z);
+  pos.needsUpdate = true;
+  inferGeo.computeBoundingSphere();
+  inferLine.computeLineDistances();
+  const color = axisColor(dir);
+  inferMat.color.setHex(color);
+  onLineMat.color.setHex(color);
+  inferLine.visible = true;
+  onLineMarker.visible = true;
+  onLineMarker.position.set(to.x, to.y, to.z);
+  const dist = onLineMarker.position.distanceTo(camera.position);
+  onLineMarker.scale.setScalar(Math.max(8, dist * 0.005));
+}
+export function hideInference() {
+  inferLine.visible = false;
+  onLineMarker.visible = false;
+}

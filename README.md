@@ -51,6 +51,9 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
 - Placing: pick a module → hover shows a snap sphere on space / cabinet corners (else 10 mm grid) → click to anchor →
   move to size → `Tab` cycles W / D / H type-ins (typed values lock) → click or `Enter` creates · `Esc` restarts
+- Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line);
+  the anchor's own axes infer too · hold `Shift` to keep the current inference line
+- The box never leaves the space: rubber band and resize handles stop at the boundary
 - Left click: select. There is no drag-to-move (moving will be a dedicated command); use the X / Y fields for now
 - Blue cubes: pull W / D / H · orange bars: zone boundaries
 - `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
