@@ -51,18 +51,22 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 ## Controls
 
 - Hold wheel: orbit · right-drag: pan · scroll: zoom
-- Placing, three steps (SketchUp-style): pick a module → click a corner (space / cabinet corner or 10 mm grid; this sets
-  the working plane) → draw the footprint on that plane and click the opposite corner → pull the height and click.
-  `Enter` at any step creates with the preset height. After creating you stay armed; `Shift+click` repeats the last
-  size at a new corner; typing digits re-sizes the box you just made. `Esc` restarts / stops.
+- Placing, three steps (SketchUp-style): pick a module → hover shows the face under the cursor (floor, ceiling, any
+  wall, any face of a cabinet; blue sheet) → click a corner or grid point on it → draw a flat, zero-thickness rectangle
+  on that face and click the opposite corner (a corner anchor takes the face you draw over) → pull the rectangle off the
+  face, one way only (away from the wall / floor / cabinet — it can't be pulled into them) and click. Only the two
+  in-plane sizes are typed in step 2; `Enter` creates with the preset size along the face normal (H on floors, D on
+  front/back walls, W on side walls). Boxes are axis-aligned; front / side orientation is not assigned yet. After
+  creating you stay armed; `Shift+click` repeats the last size at a new corner; typing digits re-sizes the box you just
+  made. `Esc` restarts / stops.
 - Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
   (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.
 - Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line),
   rest on a point of the line for ~0.4 s ("Point kept for the next edge") and a third edge can start from it ·
   vertical faces of walls and cabinets act as guide lines
-  ("Flush with cab-1 side", orange dashes) · the height step snaps to tops, bottoms, the ceiling · hold `Shift` to keep
+  ("Flush with cab-1 side", orange dashes) · the extrude step snaps to faces and corners along the normal · hold `Shift` to keep
   the current line. The cursor tooltip always says which rule is active and which dimension was stopped by a wall.
-- The box never leaves the space: footprint, height, Move and resize handles stop at the boundary (outline turns orange)
+- The box never leaves the space: rectangle, extrusion, Move and resize handles stop at the boundary (outline turns orange)
 - Move (`M` or the Move button): click a grab point, then a target point; `Tab` types ΔX / ΔY / ΔZ; `Ctrl+click` copies.
   There is no drag-to-move.
 - Blue cubes: pull W / D / H · orange bars: zone boundaries

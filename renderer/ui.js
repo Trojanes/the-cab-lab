@@ -52,8 +52,8 @@ function refreshRail() {
   const mode = getMode();
   const HINTS = {
     armed: placing ? `Placing ${MODULES[placing].label} — click a corner to start · Shift+click repeats the last size · digits re-size the last box · Esc to stop` : "",
-    footprint: "Draw the footprint · Tab / digits type W D H · click the opposite corner · Enter creates with the preset height",
-    height: "Pull the height · snaps to tops, bottoms and the ceiling · click or Enter to create · Esc to restart",
+    face: "Draw the rectangle on this face · Tab / digits type its two sizes · click the opposite corner · Enter creates with the preset depth",
+    extrude: "Pull the rectangle off the face (one way only) · snaps to faces and corners · click or Enter to create · Esc to restart",
     "move.grab": "Move — click the point to grab (a corner of the cabinet works best) · Esc to cancel",
     "move.drop": "Move — click the target point · Tab types ΔX ΔY ΔZ · Ctrl+click copies · Esc to cancel",
   };

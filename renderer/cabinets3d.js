@@ -205,6 +205,28 @@ export function showGhost(x0, y0, z0, W, D, H, { clamped = false } = {}) {
   ghostEdges.material.color.setHex(clamped ? 0xf0a050 : 0x4f86e0);
 }
 
+/** Working-face hint: a translucent sheet over the face the box will be drawn on. */
+const faceHint = new THREE.Mesh(
+  new THREE.BoxGeometry(1, 1, 1),
+  new THREE.MeshBasicMaterial({ color: 0x4f86e0, transparent: true, opacity: 0.08, depthWrite: false, side: THREE.DoubleSide }),
+);
+faceHint.visible = false;
+faceHint.renderOrder = 5;
+scene.add(faceHint);
+/** `face` = { axis, value, ext:{x,y,z} } from snap.js. */
+export function showFaceHint(face) {
+  const e = face.ext;
+  const size = { x: e.x[1] - e.x[0], y: e.y[1] - e.y[0], z: e.z[1] - e.z[0] };
+  size[face.axis] = 2;
+  faceHint.visible = true;
+  faceHint.scale.set(Math.max(size.x, 1), Math.max(size.y, 1), Math.max(size.z, 1));
+  faceHint.position.set((e.x[0] + e.x[1]) / 2, (e.y[0] + e.y[1]) / 2, (e.z[0] + e.z[1]) / 2);
+  faceHint.position[face.axis] = face.value;
+}
+export function hideFaceHint() {
+  faceHint.visible = false;
+}
+
 /** Alignment lines: a face of the space / another cabinet the cursor is flush with. */
 const alignMat = new THREE.LineDashedMaterial({ color: 0xf0c070, dashSize: 30, gapSize: 20, depthTest: false, transparent: true, opacity: 0.9 });
 const alignLines = [];

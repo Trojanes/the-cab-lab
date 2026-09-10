@@ -2,7 +2,7 @@
 // corners of every cabinet envelope (world space, coincident points merged).
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
-import { camera, canvas, closestTOnLine } from "./space.js";
+import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, onChange, snap } from "./job.js";
 import { envelopeFootprint } from "./cabinets3d.js";
 
@@ -81,35 +81,49 @@ export function snapPoints() {
   return points;
 }
 
+export const AXES = ["x", "y", "z"];
+/** The two axes lying in a plane whose normal is `axis`. */
+export function inPlaneAxes(axis) {
+  return AXES.filter((a) => a !== axis);
+}
+export function axisVector(axis, sign = 1) {
+  return [axis === "x" ? sign : 0, axis === "y" ? sign : 0, axis === "z" ? sign : 0];
+}
+
 /**
- * Axis-aligned faces of the space and of every cabinet envelope, for
- * alignment inference ("flush with the front of cab-1", "at the ceiling").
- * { axis:"x"|"y"|"z", value, source, label, u:[min,max], v:[min,max] } where
- * u/v are the face's extents along the two other axes (x,y order, then z).
+ * Axis-aligned faces of the space and of every cabinet envelope. Used for
+ * alignment guides ("flush with cab-1 side"), for picking the working plane
+ * a box is drawn on, and for extrusion targets ("up to the ceiling").
+ *   { axis, value, dir, source, label, ext:{x:[..],y:[..],z:[..]}, pickable }
+ * `dir` (±1) is the direction that leaves the solid the face belongs to: away
+ * from a wall into the room, off a cabinet's top, etc. Boxes drawn on the face
+ * may only be pulled that way.
  */
 function buildPlanes() {
   const out = [];
+  const face = (axis, value, dir, source, label, ext, pickable = true) => out.push({ axis, value, dir, source, label, ext: { ...ext, [axis]: [value, value] }, pickable });
   const sp = getSpace();
   if (sp) {
     const b = sp.bounds;
-    out.push({ axis: "x", value: b.minX, source: "space", label: "Left wall", u: [b.minY, b.maxY], v: [0, sp.height] });
-    out.push({ axis: "x", value: b.maxX, source: "space", label: "Right wall", u: [b.minY, b.maxY], v: [0, sp.height] });
-    out.push({ axis: "y", value: b.minY, source: "space", label: "Front edge", u: [b.minX, b.maxX], v: [0, sp.height] });
-    out.push({ axis: "y", value: b.maxY, source: "space", label: "Back wall", u: [b.minX, b.maxX], v: [0, sp.height] });
-    out.push({ axis: "z", value: 0, source: "space", label: "Floor", u: [b.minX, b.maxX], v: [b.minY, b.maxY] });
-    out.push({ axis: "z", value: sp.height, source: "space", label: "Ceiling", u: [b.minX, b.maxX], v: [b.minY, b.maxY] });
+    const walls = new Set(sp.walls || []);
+    const ext = { x: [b.minX, b.maxX], y: [b.minY, b.maxY], z: [0, sp.height] };
+    // Box floor edges: 0 front (minY), 1 right (maxX), 2 back (maxY), 3 left (minX).
+    face("x", b.minX, +1, "space", "Left wall", ext, walls.has(3));
+    face("x", b.maxX, -1, "space", "Right wall", ext, walls.has(1));
+    face("y", b.minY, +1, "space", "Front edge", ext, walls.has(0));
+    face("y", b.maxY, -1, "space", "Back wall", ext, walls.has(2));
+    face("z", 0, +1, "space", "Floor", ext);
+    face("z", sp.height, -1, "space", "Ceiling", ext);
   }
   for (const cab of getJob().cabinets) {
     const fp = envelopeFootprint(cab, cab.pose);
-    const rot = ((cab.pose.rotZ || 0) % 180 + 180) % 180;
-    const sideX = rot === 0 ? "side" : "front/back";
-    const sideY = rot === 0 ? "front/back" : "side";
-    out.push({ axis: "x", value: fp.minX, source: cab.id, label: `${cab.id} ${sideX}`, u: [fp.minY, fp.maxY], v: [fp.z0, fp.z1] });
-    out.push({ axis: "x", value: fp.maxX, source: cab.id, label: `${cab.id} ${sideX}`, u: [fp.minY, fp.maxY], v: [fp.z0, fp.z1] });
-    out.push({ axis: "y", value: fp.minY, source: cab.id, label: `${cab.id} ${sideY}`, u: [fp.minX, fp.maxX], v: [fp.z0, fp.z1] });
-    out.push({ axis: "y", value: fp.maxY, source: cab.id, label: `${cab.id} ${sideY}`, u: [fp.minX, fp.maxX], v: [fp.z0, fp.z1] });
-    out.push({ axis: "z", value: fp.z0, source: cab.id, label: `${cab.id} bottom`, u: [fp.minX, fp.maxX], v: [fp.minY, fp.maxY] });
-    out.push({ axis: "z", value: fp.z1, source: cab.id, label: `${cab.id} top`, u: [fp.minX, fp.maxX], v: [fp.minY, fp.maxY] });
+    const ext = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+    face("x", fp.minX, -1, cab.id, `${cab.id} left side`, ext);
+    face("x", fp.maxX, +1, cab.id, `${cab.id} right side`, ext);
+    face("y", fp.minY, -1, cab.id, `${cab.id} front face`, ext);
+    face("y", fp.maxY, +1, cab.id, `${cab.id} back face`, ext);
+    face("z", fp.z0, -1, cab.id, `${cab.id} bottom`, ext);
+    face("z", fp.z1, +1, cab.id, `${cab.id} top`, ext);
   }
   return out;
 }
@@ -117,6 +131,54 @@ function buildPlanes() {
 export function facePlanes() {
   if (!planes) planes = buildPlanes();
   return planes;
+}
+
+/** Ray ∩ plane (axis = value); returns the point or null. */
+function rayHitPlane(ray, axis, value) {
+  const o = ray.origin[axis];
+  const d = ray.direction[axis];
+  if (Math.abs(d) < 1e-9) return null;
+  const t = (value - o) / d;
+  if (t <= 0) return null;
+  return { t, x: ray.origin.x + ray.direction.x * t, y: ray.origin.y + ray.direction.y * t, z: ray.origin.z + ray.direction.z * t };
+}
+
+/**
+ * The face under the cursor: nearest pickable face whose visible side (the
+ * `dir` side) faces the camera. Returns { face, point } or null.
+ */
+export function pickFace(clientX, clientY, { exclude = null } = {}) {
+  const ray = rayFromClient(clientX, clientY);
+  let best = null;
+  for (const f of facePlanes()) {
+    if (!f.pickable || f.source === exclude) continue;
+    if (ray.direction[f.axis] * f.dir >= 0) continue; // looking at its back
+    const h = rayHitPlane(ray, f.axis, f.value);
+    if (!h) continue;
+    const [u, v] = inPlaneAxes(f.axis);
+    if (h[u] < f.ext[u][0] - 0.5 || h[u] > f.ext[u][1] + 0.5 || h[v] < f.ext[v][0] - 0.5 || h[v] > f.ext[v][1] + 0.5) continue;
+    if (!best || h.t < best.point.t) best = { face: f, point: h };
+  }
+  return best;
+}
+
+/** Pickable faces a point lies on whose front we can see, most facing the camera first. */
+export function facesAtPoint(p, clientX, clientY) {
+  const ray = rayFromClient(clientX, clientY);
+  const out = [];
+  for (const f of facePlanes()) {
+    if (!f.pickable || Math.abs(p[f.axis] - f.value) > 0.5) continue;
+    const [u, v] = inPlaneAxes(f.axis);
+    if (p[u] < f.ext[u][0] - 0.5 || p[u] > f.ext[u][1] + 0.5 || p[v] < f.ext[v][0] - 0.5 || p[v] > f.ext[v][1] + 0.5) continue;
+    const facing = -ray.direction[f.axis] * f.dir; // > 0 when we see its front
+    if (facing <= 0) continue;
+    out.push({ face: f, facing });
+  }
+  out.sort((a, b) => b.facing - a.facing);
+  return out.map((o) => o.face);
+}
+export function faceAtPoint(p, clientX, clientY) {
+  return facesAtPoint(p, clientX, clientY)[0] || null;
 }
 
 /** Screen distance from the cursor to the 3D segment a→b (both {x,y,z}). */
@@ -132,48 +194,54 @@ function screenDistToSegment(clientX, clientY, a3, b3) {
 }
 
 /**
- * Alignment on a horizontal working plane: vertical faces (x = c or y = c)
- * cut the plane in a line; if the cursor is within `band` px of such a line,
- * that coordinate is pinned. Returns { x?: {value, plane}, y?: {value, plane} }.
+ * Alignment on a working plane {axis, value}: faces perpendicular to it cut it
+ * in a guide line; if the cursor is within `band` px of such a line, the
+ * coordinate along the face's axis is pinned.
+ * Returns { [faceAxis]: { value, plane, distPx } } for up to two in-plane axes.
  * `exclude` skips faces of one cabinet (the one being moved).
  */
-export function nearestFaceAlign(clientX, clientY, planeZ, { band = INFER_BAND_PX * uiScale(), exclude = null } = {}) {
+export function nearestFaceAlign(clientX, clientY, plane, { band = INFER_BAND_PX * uiScale(), exclude = null } = {}) {
   const out = {};
-  for (const pl of facePlanes()) {
-    if (pl.axis === "z" || pl.source === exclude) continue;
-    // A face only aligns at heights it actually spans (with a little slack).
-    if (planeZ < pl.v[0] - 1 || planeZ > pl.v[1] + 1) continue;
-    // The face is extended across the whole space, like a guide line.
-    const [a, b] = faceGuide(pl, planeZ);
+  for (const f of facePlanes()) {
+    if (f.axis === plane.axis || f.source === exclude) continue;
+    // A face only aligns where it actually spans the working plane (with a little slack).
+    const span = f.ext[plane.axis];
+    if (plane.value < span[0] - 1 || plane.value > span[1] + 1) continue;
+    const [a, b] = faceGuide(f, plane);
     const d = screenDistToSegment(clientX, clientY, a, b);
-    if (d <= band && (!out[pl.axis] || d < out[pl.axis].distPx)) out[pl.axis] = { value: pl.value, plane: pl, distPx: d };
+    if (d <= band && (!out[f.axis] || d < out[f.axis].distPx)) out[f.axis] = { value: f.value, plane: f, distPx: d };
   }
   return out;
 }
 
-/** The guide line of a vertical face on plane z, spanning the whole space (or the face if no space). */
-export function faceGuide(pl, z) {
+/** Guide line where face `f` crosses the working plane, spanning the whole space. */
+export function faceGuide(f, plane) {
+  const third = AXES.find((a) => a !== f.axis && a !== plane.axis);
   const sp = getSpace();
-  const ext = sp ? (pl.axis === "x" ? [sp.bounds.minY, sp.bounds.maxY] : [sp.bounds.minX, sp.bounds.maxX]) : pl.u;
-  return pl.axis === "x"
-    ? [{ x: pl.value, y: ext[0], z }, { x: pl.value, y: ext[1], z }]
-    : [{ x: ext[0], y: pl.value, z }, { x: ext[1], y: pl.value, z }];
+  const ext = sp
+    ? (third === "x" ? [sp.bounds.minX, sp.bounds.maxX] : third === "y" ? [sp.bounds.minY, sp.bounds.maxY] : [0, sp.height])
+    : f.ext[third];
+  const base = { [f.axis]: f.value, [plane.axis]: plane.value };
+  return [{ ...base, [third]: ext[0] }, { ...base, [third]: ext[1] }];
 }
 
 /**
- * Height candidates along the vertical line through (x, y): horizontal faces
- * and feature points. Returns { z, label, distPx } for the nearest within `band`.
+ * Extrusion targets along `axis` through point `p`, on the `dir` side only:
+ * faces with that normal and feature-point coordinates. Nearest within `band`
+ * on screen → { value, label, distPx } or null.
  */
-export function nearestHeightAlign(clientX, clientY, x, y, { band = INFER_BAND_PX * uiScale(), exclude = null } = {}) {
+export function nearestAxisAlign(clientX, clientY, p, axis, dir, { band = INFER_BAND_PX * uiScale(), exclude = null } = {}) {
   let best = null;
-  const consider = (z, label) => {
-    const c = toClient(x, y, z);
+  const consider = (value, label) => {
+    if ((value - p[axis]) * dir < 0.5) return;
+    const q = { ...p, [axis]: value };
+    const c = toClient(q.x, q.y, q.z);
     if (c.behind) return;
     const d = Math.hypot(c.x - clientX, c.y - clientY);
-    if (d <= band && (!best || d < best.distPx)) best = { z, label, distPx: d };
+    if (d <= band && (!best || d < best.distPx)) best = { value, label, distPx: d };
   };
-  for (const pl of facePlanes()) if (pl.axis === "z" && pl.source !== exclude) consider(pl.value, pl.label);
-  for (const p of snapPoints()) if (!(exclude && p.sources.every((s) => s === exclude))) consider(p.z, `Height of ${describePoint(p)}`);
+  for (const f of facePlanes()) if (f.axis === axis && f.source !== exclude) consider(f.value, f.label);
+  for (const pt of snapPoints()) if (!(exclude && pt.sources.every((s) => s === exclude))) consider(pt[axis], `${axis.toUpperCase()} of ${describePoint(pt)}`);
   return best;
 }
 
@@ -215,11 +283,12 @@ function screenDistToLine(clientX, clientY, from, dir, lengthMm = 300) {
  * pulled down from a ceiling edge), the one whose line passes within `band` px
  * of the cursor. Returns { dir, distPx } or null.
  */
-export function nearestInference(clientX, clientY, from, { band = INFER_BAND_PX * uiScale(), planar = false } = {}) {
+export function nearestInference(clientX, clientY, from, { band = INFER_BAND_PX * uiScale(), planeAxis = null } = {}) {
   if (!from) return null;
+  const ai = planeAxis ? AXES.indexOf(planeAxis) : -1;
   let best = null;
   for (const dir of from.dirs || []) {
-    if (planar && Math.abs(dir[2]) > 1e-6) continue;
+    if (ai >= 0 && Math.abs(dir[ai]) > 1e-6) continue; // only edges lying in the working plane
     const d = screenDistToLine(clientX, clientY, from, dir);
     if (d <= band && (!best || d < best.distPx)) best = { dir, distPx: d };
   }
