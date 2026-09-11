@@ -1,6 +1,6 @@
-// Generated from ../modules/smallCabinet/generator.ts - do not edit.
+// Generated from generators/smallCabinet/generator.ts - do not edit.
 
-// ../modules/smallCabinet/frontPanelCalculator.ts
+// generators/smallCabinet/frontPanelCalculator.ts
 function round1(value) {
   return Math.round(value * 10) / 10;
 }
@@ -47,7 +47,7 @@ function frontPanelIsValid(bounds, eps = 1e-6) {
   return bounds.x1 - bounds.x0 > eps && bounds.z1 - bounds.z0 > eps;
 }
 
-// ../modules/smallCabinet/shelfJoinery.ts
+// generators/smallCabinet/shelfJoinery.ts
 var SHELF_TONGUE_DEPTH_FRACTION = 1 / 3;
 var GROOVE_LENGTH_OVERSIZE = 5;
 var GROOVE_THICKNESS_OVERSIZE = 0.5;
@@ -325,7 +325,7 @@ function applyBackJoinery(board, panelThickness) {
   return buildBackJoineryFeatures(spec);
 }
 
-// ../modules/smallCabinet/generator.ts
+// generators/smallCabinet/generator.ts
 var DEFAULT_CPT = 16;
 var DEFAULT_FPT = 16;
 var DEFAULT_CLEARANCE = 2.5;

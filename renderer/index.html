@@ -30,19 +30,45 @@
         <button class="tb" data-action="redo" title="Redo (Ctrl+Y)" disabled>Redo</button>
       </div>
       <div class="sep"></div>
-      <div class="group">
-        <button class="tb" data-action="move" title="Move selection point to point (M) · Ctrl+click to copy" disabled>Move</button>
-      </div>
-      <div class="sep"></div>
       <div class="group" id="viewGroup">
         <span class="label">View</span>
         <button class="tb seg active" data-view="3d">3D</button>
         <button class="tb seg" data-view="top">Top</button>
         <button class="tb seg" data-view="front">Front</button>
+        <button class="tb seg" data-view="side">Side</button>
       </div>
       <div class="spacer"></div>
       <div class="group hint" id="modeHint"></div>
     </header>
+
+    <div id="cmdbar">
+      <button class="tb icon" data-action="move" title="Move (M) — click a grab point, then a target · Ctrl+click copies" disabled aria-label="Move">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path d="M8 1.5 V14.5 M1.5 8 H14.5"/>
+          <path d="M8 1.5 L6 3.5 M8 1.5 L10 3.5"/>
+          <path d="M8 14.5 L6 12.5 M8 14.5 L10 12.5"/>
+          <path d="M1.5 8 L3.5 6 M1.5 8 L3.5 10"/>
+          <path d="M14.5 8 L12.5 6 M14.5 8 L12.5 10"/>
+        </svg>
+      </button>
+      <button class="tb icon" data-action="orient" title="Face (O) — click a side; doors face that way · Enter confirms · Esc restores" disabled aria-label="Face">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 5.5 L8 3 L13 5.5 V12 L8 14.5 L3 12 Z"/>
+          <path d="M3 5.5 L8 8 L13 5.5 M8 8 V14.5"/>
+          <path d="M3 5.5 L8 8 V14.5 L3 12 Z" fill="currentColor" opacity="0.35" stroke="none"/>
+          <path d="M1 10 L3.2 9.2"/>
+          <path d="M3.2 9.2 L2.1 8.4 M3.2 9.2 L2.4 10.4"/>
+        </svg>
+      </button>
+      <button class="tb icon" data-action="plane" title="Plane (P) — click a face, offset a parallel plane · intersections become snap points" disabled aria-label="Plane">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path d="M3 3.5 L13 3.5"/>
+          <path d="M3 12.5 L13 12.5"/>
+          <path d="M8 3.5 V12.5"/>
+          <path d="M8 7.2 L6.6 8.2 M8 7.2 L9.4 8.2"/>
+        </svg>
+      </button>
+    </div>
 
     <aside id="leftrail">
       <div class="rail-title">Space</div>
@@ -52,7 +78,7 @@
       </button>
       <div class="rail-title">Modules</div>
       <div id="moduleList"></div>
-      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · R rotate · F frame · Del remove · Esc cancel</div>
+      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face. Overhead starts on a ceiling edge.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · O face · R rotate · F frame · Del remove · Esc cancel</div>
     </aside>
 
     <main id="center">
@@ -110,6 +136,7 @@
       <div class="modal-sub">Origin is the front-left floor corner. X right, Y back, Z up.</div>
       <div class="kind-list"></div>
       <div class="kind-fields"></div>
+      <div class="materials-fields"></div>
       <div class="kind-errors"></div>
       <div class="modal-actions">
         <button class="tb" data-cancel>Later</button>

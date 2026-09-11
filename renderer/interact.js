@@ -5,6 +5,8 @@
 //   face       a zero-thickness rectangle is drawn on that face (floor, ceiling, wall, cabinet face) · click → corner
 //   extrude    the rectangle is pulled along the face normal, away from the solid only · click / Enter → create
 //   move       (M) click a grab point, then a target point; ΔX/ΔY/ΔZ type-ins; Ctrl+click copies
+//   orient     (O / Face) click a side of a cabinet → its doors face that way (pending, orange);
+//              click elsewhere or Enter confirms · Esc restores
 //
 // At every step Tab / a digit opens the type-ins (W D H or ΔX ΔY ΔZ). Values may
 // be expressions: 1110 · +50 · -20 · *2 · /2 · max · 1110,560,720 (comma fills the next fields).
@@ -17,15 +19,16 @@ import { getModule } from "./modules.js";
 import { getPreset } from "./presets.js";
 import {
   pickables, groupFor, envelopeBox, envelopeFootprint, poseFits, setHandleHover,
-  showGhost, hideGhost, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
-  showFaceHint, hideFaceHint,
+  showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
+  showFaceHint, hideFaceHint, flashFaceHint,
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
-  pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, extrudeRoom, inPlaneAxes, axisVector, AXES,
+  pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, drawableOn, extrudeRoom, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
+import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
@@ -36,7 +39,11 @@ const AXIS_OF = { W: "x", D: "y", H: "z" };
 let placing = null; // moduleId while armed
 let rb = null; // placement in progress (face / extrude step)
 let move = null; // move command
+let orient = null; // Face command: { id, pose0, before, pending: face | null }
 let retype = null; // keyboard re-size of the last created cabinet
+let nose = null; // nose placement (Bedroom): { moduleId, step: ready | drag, editId, D, t0, locked, snapLabel, clamped }
+let bed = null; // bed box placement: { moduleId, step: width | depth, editId, W, D, H, locked: {W, D}, snapLabel, clamped }
+let cplane = null; // construction plane: { step: pick | offset, face, offset, locked, snapLabel, clamped }
 let lastSize = null; // { moduleId, W, D, H } of the last created box
 let lastCreated = null; // cabinet id that digits re-type while still armed
 let hoverHandle = null;
@@ -59,19 +66,29 @@ function emitMode() {
 export function getMode() {
   if (drag) return "handle";
   if (move) return move.step === "grab" ? "move.grab" : "move.drop";
+  if (orient) return orient.pending ? "orient.pending" : "orient.pick";
+  if (nose) return nose.step === "ready" ? "nose.ready" : "nose.drag";
+  if (bed) return `bedbox.${bed.step}`;
+  if (cplane) return cplane.step === "pick" ? "plane.pick" : "plane.offset";
   if (rb) return rb.step;
   if (placing) return "armed";
   return "idle";
 }
 export function getPlacingModule() {
-  return placing;
+  return placing || (nose ? nose.moduleId : null) || (bed ? bed.moduleId : null);
 }
 
 // --- arm / disarm ----------------------------------------------------------------
 
 export function armPlacement(moduleId) {
   if (!job.hasSpace()) { log("place.arm.blocked", { moduleId, reason: "no space" }); return; }
+  if (getModule(moduleId).placement === "nose") { startNose(moduleId); return; }
+  if (getModule(moduleId).placement === "bedBox") { startBedBox(moduleId); return; }
   cancelMove();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  cancelPlane();
   endRetype(false);
   placing = moduleId;
   rb = null;
@@ -82,6 +99,9 @@ export function armPlacement(moduleId) {
   emitMode();
 }
 export function disarm() {
+  if (nose) { cancelNose(); return; }
+  if (bed) { cancelBedBox(); return; }
+  if (cplane) { cancelPlane(); return; }
   if (placing) log("place.disarm", { moduleId: placing, step: rb && rb.step });
   clearTrace();
   endRetype(false);
@@ -98,8 +118,10 @@ function clearPreview() {
   hideInference();
   hideAlignLines();
   hideFaceHint();
+  hideCPlanePreview();
   hideTip();
   dimBox.classList.add("hidden");
+  if (document.activeElement && dimBox.contains(document.activeElement)) document.activeElement.blur();
 }
 
 function pick(clientX, clientY) {
@@ -127,7 +149,7 @@ function clampToSpace(p) {
   if (!sp) return { ...p, outside: false };
   const x = Math.min(sp.bounds.maxX, Math.max(sp.bounds.minX, p.x));
   const y = Math.min(sp.bounds.maxY, Math.max(sp.bounds.minY, p.y));
-  const z = Math.min(sp.height, Math.max(0, p.z));
+  const z = Math.min(clearHeightAt(sp, x, y), Math.max(0, p.z));
   return { x, y, z, outside: Math.abs(x - p.x) > 5 || Math.abs(y - p.y) > 5 || Math.abs(z - p.z) > 5 };
 }
 
@@ -142,12 +164,25 @@ function floorFace() {
  * Returns { x, y, z, feature, face, tip } or null.
  */
 function cursorPoint(clientX, clientY, { exclude = null } = {}) {
+  if (ceilingMode()) {
+    // Overhead: the anchor is a feature point on a ceiling ∩ wall line, nothing else.
+    const snap = nearestSnap(clientX, clientY, { exclude, filter: onCeilingLine });
+    if (!snap) return { none: true, tip: ["Overhead starts on a ceiling edge", "Click a corner where a wall meets the ceiling (or an overhead's top corner there)"] };
+    const all = allowedCeilingFaces(snap, facesOnPoint(snap));
+    const visible = facesAtPoint(snap, clientX, clientY).filter((f) => all.includes(f));
+    const face = preferDrawable(visible) || ceilingFace() || preferDrawable(all);
+    const walls = wallsAt(snap).map((w) => w.label.toLowerCase()).join(" / ");
+    return {
+      x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces: all,
+      tip: [`Ceiling edge · ${describePoint(snap, exclude)} · ${walls}`, all.length > 1 ? `On ${all.map((f) => f.label.toLowerCase()).join(" / ")} — move onto the face to draw on` : face ? `On ${face.label.toLowerCase()}` : null],
+    };
+  }
   const snap = nearestSnap(clientX, clientY, { exclude });
   if (snap) {
     // A corner lies on several faces: the face drawn over decides later (see beginFace).
     const all = facesOnPoint(snap);
     const visible = facesAtPoint(snap, clientX, clientY);
-    const face = preferDrawable(visible) || preferDrawable(all) || floorFace();
+    const face = drawableOn(preferDrawable(visible) || preferDrawable(all) || floorFace());
     const hidden = all.length - visible.length;
     return {
       x: snap.x, y: snap.y, z: snap.z, feature: true, dirs: snap.dirs, face, faces: all,
@@ -155,7 +190,7 @@ function cursorPoint(clientX, clientY, { exclude = null } = {}) {
     };
   }
   const hit = pickFace(clientX, clientY, { exclude });
-  const face = hit ? hit.face : floorFace();
+  const face = drawableOn(hit ? hit.face : floorFace());
   const raw = hit ? hit.point : planePointAt(clientX, clientY, threePlane("z", 0));
   if (!raw) return null;
   const c = clampToSpace(raw);
@@ -275,17 +310,110 @@ function drawResolved(p) {
 
 // --- placement ------------------------------------------------------------------
 
-/** Minimum box size along each world axis for the module (D includes the fronts). */
-function minSizes(mod) {
-  return { W: mod.minSize.W, D: mod.minSize.D + FRONT_THICKNESS_DEFAULT, H: mod.minSize.H };
+/**
+ * Which module dimension (W / D / H) lies along each world axis while a box is
+ * drawn. Normally x→W, y→D (the doors face −Y until `defaultSide` decides);
+ * a ceiling-hung module knows its back wall early, so W follows the wall.
+ */
+function currentTerm() {
+  return (rb && rb.term) || DIM_OF;
+}
+/** Minimum box size along each world axis (keys W/D/H = x/y/z; the depth includes the fronts). */
+function minSizes(mod, term = currentTerm()) {
+  const out = {};
+  for (const a of AXES) out[DIM_OF[a]] = mod.minSize[term[a]] + (term[a] === "D" ? FRONT_THICKNESS_DEFAULT : 0);
+  return out;
 }
 /** Preset box size along a world axis, falling back to the module default. */
-function presetSize(moduleId, axis) {
-  const k = DIM_OF[axis];
+function presetSize(moduleId, axis, term = currentTerm()) {
+  const k = term[axis];
   const p = getPreset(moduleId)[k];
   if (p != null) return p;
   const d = getModule(moduleId).defaultSize;
   return k === "D" ? d.D + FRONT_THICKNESS_DEFAULT : d[k];
+}
+
+// --- ceiling-hung placement (Overhead) ------------------------------------------------
+//
+// The anchor is a feature point on a ceiling ∩ wall line; that wall is the
+// cabinet's back, W runs along it, the doors face the room and the top stays
+// on the ceiling (the box can only grow down). Three faces may hold the 2D
+// rectangle: the ceiling (W×D, pull H down), the back wall (W×H, pull D into
+// the room) or a face perpendicular to the wall — the adjacent wall at a corner
+// or a neighbour's side (D×H, pull W along the wall).
+
+function ceilingMode() {
+  return !!placing && getModule(placing).placement === "ceiling";
+}
+function ceilingFace() {
+  return facePlanes().find((f) => f.source === "space" && f.axis === "z" && f.dir < 0) || null;
+}
+/** Walls of the space the point lies on: { axis, value, dir (into the room), label }. */
+function wallsAt(p) {
+  const sp = job.getSpace();
+  if (!sp) return [];
+  const b = sp.bounds;
+  const walls = new Set(sp.walls || []);
+  const out = [];
+  if (walls.has(3) && Math.abs(p.x - b.minX) < 0.5) out.push({ axis: "x", value: b.minX, dir: 1, label: "Left wall" });
+  if (walls.has(1) && Math.abs(p.x - b.maxX) < 0.5) out.push({ axis: "x", value: b.maxX, dir: -1, label: "Right wall" });
+  if (walls.has(0) && Math.abs(p.y - b.minY) < 0.5) out.push({ axis: "y", value: b.minY, dir: 1, label: "Front wall" });
+  if (walls.has(2) && Math.abs(p.y - b.maxY) < 0.5) out.push({ axis: "y", value: b.maxY, dir: -1, label: "Back wall" });
+  return out;
+}
+/** On the flat ceiling and on at least one wall. */
+function onCeilingLine(p) {
+  const sp = job.getSpace();
+  if (!sp || Math.abs(p.z - sp.height) > 0.5) return false;
+  if (p.y < (sp.flatFromY ?? sp.bounds.minY) - 0.5) return false;
+  return wallsAt(p).length > 0;
+}
+/** Faces through a ceiling-line anchor that an overhead box may be drawn on (see above). */
+function allowedCeilingFaces(anchor, faces) {
+  const walls = wallsAt(anchor);
+  const out = [];
+  for (const f of faces) {
+    if (f.axis === "z") { if (f.source === "space" && f.dir < 0) out.push(f); continue; }
+    if (walls.some((w) => w.axis === f.axis && Math.abs(w.value - f.value) < 0.5 && w.dir === f.dir)) { out.push(f); continue; } // the back wall
+    if (walls.some((w) => w.axis !== f.axis)) out.push(f); // perpendicular: side wall at a corner, a neighbour's side
+  }
+  const ceil = ceilingFace();
+  if (ceil && !out.includes(ceil)) out.push(ceil);
+  return out;
+}
+/**
+ * The back wall for a box drawn from `walls` on `plane`. One wall at the
+ * anchor: that wall. A face perpendicular to the only wall (a neighbour's
+ * side): that wall. At a corner (two walls) the box decides once it exists:
+ * W runs along the wall its longer horizontal edge follows; until then the
+ * wall being drawn on counts as the back (front view). Null when unknown yet.
+ */
+function backWallFor(walls, plane, b = null) {
+  if (!walls.length) return null;
+  if (walls.length === 1) return walls[0];
+  if (b) {
+    const along = (w) => (w.axis === "y" ? b.W : b.D);
+    return walls.slice().sort((p, q) => along(q) - along(p))[0];
+  }
+  if (plane && plane.axis !== "z") return walls.find((w) => w.axis === plane.axis && Math.abs(w.value - plane.value) < 0.5) || null;
+  return null;
+}
+/** Module dimension along each world axis once the back wall is known (W along it, D through it). */
+function termFor(wall) {
+  if (!wall) return DIM_OF;
+  return { x: wall.axis === "x" ? "D" : "W", y: wall.axis === "y" ? "D" : "W", z: "H" };
+}
+function applyCeilingTerm() {
+  if (!rb || !ceilingMode()) return;
+  const wall = backWallFor(rb.walls, rb.plane);
+  rb.term = termFor(wall);
+  rb.backWall = wall;
+  setDimNames(DIM_ORDER.map((k) => rb.term[AXIS_OF[k]]));
+}
+/** Door side of a finished overhead box: away from its back wall. */
+function ceilingSide(b, walls, plane) {
+  const wall = backWallFor(walls, plane, b) || walls[0];
+  return wall ? { axis: wall.axis, dir: wall.dir, wall: wall.label } : defaultSide(b);
 }
 
 /** Room from a point to the space boundary along each axis, both ways. */
@@ -296,8 +424,27 @@ function roomFrom(p) {
   return {
     x: { pos: sp.bounds.maxX - p.x, neg: p.x - sp.bounds.minX },
     y: { pos: sp.bounds.maxY - p.y, neg: p.y - sp.bounds.minY },
-    z: { pos: sp.height - p.z, neg: p.z },
+    z: { pos: clearHeightAt(sp, p.x, p.y) - p.z, neg: p.z },
   };
+}
+
+/**
+ * The roof may be lower over part of a box than at its anchor (the nose of a
+ * vehicle): shrink H so the top stays under the roof over the whole footprint.
+ * Mutates size / clamped / max; returns the roof height used.
+ */
+function clampToRoof(sp, anchor, size, sign, clamped, max) {
+  if (!sp) return Infinity;
+  const y0 = sign.y > 0 ? anchor.y : anchor.y - size.y;
+  const y1 = y0 + size.y;
+  const roof = minClearHeight(sp, y0, y1);
+  if (sign.z > 0) {
+    const room = Math.max(0, roof - anchor.z);
+    if (size.z > room + 0.01) { size.z = room; clamped.H = roofName(sp, y0, y1); }
+    if (max.H != null) max.H = Math.min(max.H, room);
+  }
+  if (clamped.H === "ceiling") clamped.H = roofName(sp, y0, y1);
+  return roof;
 }
 const WALL_NAME = { x: ["left wall", "right wall"], y: ["front wall", "back wall"], z: ["floor", "ceiling"] };
 
@@ -356,6 +503,7 @@ function placementBox() {
   // While drawing the rectangle its two sizes are clamped; once it is clicked only the pull is.
   const blocked = stopAtCabinets(anchor, size, sign, n, rb.step === "face" ? inPlaneAxes(n) : [n]);
   for (const a of AXES) if (blocked[a]) { size[a] = blocked[a].size; clamped[DIM_OF[a]] = blocked[a].id; max[DIM_OF[a]] = Math.min(max[DIM_OF[a]], blocked[a].size); }
+  clampToRoof(sp, anchor, size, sign, clamped, max);
 
   const min0 = {};
   for (const a of AXES) min0[a] = sign[a] > 0 ? anchor[a] : anchor[a] - size[a];
@@ -419,8 +567,10 @@ function updatePlacement(tipAt) {
     const lines = [...(tipAt.tip || [])];
     for (const k of clampedKeys) lines.push(`${k} stopped at ${b.clamped[k]}`);
     for (const k of DIM_ORDER) if (rb.locked[k] != null) lines.push(`${k} locked ${Math.round(rb.locked[k])}`);
-    if (rb.step === "face") lines.push(`Enter: create with ${DIM_OF[n]} ${Math.round(presetSize(placing, n))} (preset)`);
-    else if (rb.ext && rb.ext.len <= 0 && rb.locked[DIM_OF[n]] == null) lines.push(`Pull ${DIM_OF[n]} ${rb.plane.dir > 0 ? "+" : "−"}${n.toUpperCase()} · Enter uses preset ${Math.round(presetSize(placing, n))}`);
+    const term = currentTerm();
+    if (rb.backWall) lines.push(`Back on the ${rb.backWall.label.toLowerCase()} · W along it · doors toward the room`);
+    if (rb.step === "face") lines.push(`Enter: create with ${term[n]} ${Math.round(presetSize(placing, n))} (preset)`);
+    else if (rb.ext && rb.ext.len <= 0 && rb.locked[DIM_OF[n]] == null) lines.push(`Pull ${term[n]} ${rb.plane.dir > 0 ? "+" : "−"}${n.toUpperCase()} · Enter uses preset ${Math.round(presetSize(placing, n))}`);
     showTip(tipAt.clientX, tipAt.clientY, lines, clampedKeys.length || (tipAt.tone === "warn") ? "warn" : Object.values(rb.locked).some((v) => v != null) ? "lock" : "");
   }
 }
@@ -448,7 +598,8 @@ function planeOf(face) {
 }
 
 function beginFace(p) {
-  const face = p.face || floorFace();
+  const ceiling = ceilingMode();
+  const face = ceiling ? (p.face || ceilingFace()) : drawableOn(p.face || floorFace());
   const preset = getPreset(placing);
   const plane = planeOf(face);
   rb = {
@@ -456,6 +607,9 @@ function beginFace(p) {
     plane,
     // A corner anchor keeps its candidate faces until the cursor is clearly on one of them.
     candidates: (p.faces && p.faces.length > 1) ? p.faces : null,
+    walls: ceiling ? wallsAt(p) : [],
+    term: null,
+    backWall: null,
     anchorClient: null,
     anchor: { x: p.x, y: p.y, z: p.z },
     corner: { x: p.x, y: p.y, z: p.z },
@@ -471,11 +625,18 @@ function beginFace(p) {
   if (rb.locked[DIM_OF[plane.axis]] != null) rb.locked[DIM_OF[plane.axis]] = null; // extrusion is drawn, not preset-locked
   rb.presetLocks = { ...rb.locked };
   setDimNames(["W", "D", "H"]);
+  if (ceiling) {
+    // Presets are in module terms; re-key them to the world axes once the wall is known.
+    applyCeilingTerm();
+    rb.locked = { W: null, D: null, H: null };
+    for (const a of AXES) if (a !== plane.axis && rb.term[a] !== "H") rb.locked[DIM_OF[a]] = preset[rb.term[a]] ?? null;
+    rb.presetLocks = { ...rb.locked };
+  }
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked");
   showFaceHint(face);
   clearTrace();
-  log("place.anchor", { moduleId: placing, anchor: rb.anchor, feature: !!p.feature, plane: { axis: plane.axis, value: plane.value, dir: plane.dir, label: plane.label } });
+  log("place.anchor", { moduleId: placing, anchor: rb.anchor, feature: !!p.feature, plane: { axis: plane.axis, value: plane.value, dir: plane.dir, label: plane.label }, walls: ceiling ? rb.walls.map((w) => w.label) : undefined, term: rb.term || undefined });
   updatePlacement(null);
   emitMode();
 }
@@ -525,15 +686,24 @@ function chooseFace(e) {
   if (face && pool.filter((f) => f.axis === face.axis && f.value === face.value).length > 1) {
     face = preferDrawable(pool.filter((f) => f.axis === face.axis && f.value === face.value)) || face;
   }
+  if (face && !ceilingMode()) face = drawableOn(face);
   if (!face || (face.axis === rb.plane.axis && face.value === rb.plane.value && face.dir === rb.plane.dir)) return;
   rb.plane = planeOf(face);
   rb.ctx.plane = { axis: face.axis, value: face.value, label: face.label };
   rb.ctx.inference = null;
   rb.ctx.lastPoint = null;
-  rb.locked = { ...rb.presetLocks };
-  rb.locked[DIM_OF[face.axis]] = null;
+  if (ceilingMode()) {
+    applyCeilingTerm();
+    const preset = getPreset(placing);
+    rb.locked = { W: null, D: null, H: null };
+    for (const a of AXES) if (a !== face.axis && rb.term[a] !== "H") rb.locked[DIM_OF[a]] = preset[rb.term[a]] ?? null;
+    rb.presetLocks = { ...rb.locked };
+  } else {
+    rb.locked = { ...rb.presetLocks };
+    rb.locked[DIM_OF[face.axis]] = null;
+  }
   showFaceHint(face);
-  log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label } });
+  log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label }, term: rb.term || undefined });
 }
 
 /** Which of `faces` (sharing an edge through the anchor along `dir`) the cursor sits on. */
@@ -561,6 +731,11 @@ function faceBesideEdge(cx, cy, a, dir, faces) {
 }
 
 function beginExtrude(e) {
+  const drawn = ceilingMode() ? rb.plane : drawableOn(rb.plane);
+  if (drawn.dir !== rb.plane.dir || drawn.label !== rb.plane.label) {
+    rb.plane = planeOf(drawn);
+    rb.ctx.plane = { axis: drawn.axis, value: drawn.value, label: drawn.label };
+  }
   const { plane } = rb;
   const n = plane.axis;
   // Bake the rectangle as drawn (clamped by walls and cabinets): the pull starts from its real corner.
@@ -587,7 +762,7 @@ function extrudeCursor(e) {
   const dirV = axisVector(n, plane.dir);
   const ray = rayFromClient(e.clientX, e.clientY);
   // Looking straight along the axis it degenerates on screen: keep the current value.
-  if (Math.abs(ray.direction[n]) > 0.985) return { tip: [`Orbit to see the ${n.toUpperCase()} axis, or type ${DIM_OF[n]}`] };
+  if (Math.abs(ray.direction[n]) > 0.985) return { tip: [`Orbit to see the ${n.toUpperCase()} axis, or type ${currentTerm()[n]}`] };
 
   const snap = nearestAxisAlign(e.clientX, e.clientY, corner, n, plane.dir);
   if (snap) {
@@ -606,25 +781,26 @@ function extrudeCursor(e) {
     return { tip: [`Can't pull into ${plane.label.toLowerCase()}`], tone: "warn" };
   }
   ext.len = job.snap(travel);
-  return { tip: [`${DIM_OF[n]} ${Math.round(ext.len)} ${plane.dir > 0 ? "+" : "−"}${n.toUpperCase()}`] };
+  return { tip: [`${currentTerm()[n]} ${Math.round(ext.len)} ${plane.dir > 0 ? "+" : "−"}${n.toUpperCase()}`] };
 }
 
-function createFromBox(b, how) {
+function createFromBox(b, how, side = defaultSide(b)) {
   const mod = getModule(placing);
-  const fpt = FRONT_THICKNESS_DEFAULT;
   flushTrace("place.trace");
+  // The box is the envelope; the door side decides which edge is W and where the origin (front carcass face) sits.
+  const fit = fitBoxFacing(b, side, FRONT_THICKNESS_DEFAULT);
   log("place.finish", {
     moduleId: placing, how,
     anchor: rb ? rb.anchor : null, corner: rb ? rb.corner : null, locked: rb ? rb.locked : null,
     plane: rb ? { axis: rb.plane.axis, value: rb.plane.value, dir: rb.plane.dir, label: rb.plane.label } : null,
     extrude: rb && rb.ext ? { len: rb.ext.len, label: rb.ext.label } : null,
     clamped: b.clamped, box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H },
+    side: { axis: side.axis, dir: side.dir }, wall: side.wall, size: { W: fit.W, D: fit.D, H: fit.H }, pose: fit.pose,
   });
-  // Cabinet local origin is the front carcass face; the box includes the fronts.
   const cab = job.addCabinet(
     placing,
-    { x: b.x0, y: b.y0 + fpt, z: b.z0, rotZ: 0 },
-    { W: b.W, D: Math.max(mod.minSize.D, b.D - fpt), H: b.H },
+    fit.pose,
+    { W: fit.W, D: Math.max(mod.minSize.D, fit.D), H: fit.H },
   );
   lastSize = { moduleId: placing, W: b.W, D: b.D, H: b.H };
   lastCreated = cab.id;
@@ -655,14 +831,17 @@ function finishPlacement(how) {
     how += ".preset";
   }
   const b = placementBox();
-  const min = minSizes(getModule(placing));
-  const small = DIM_ORDER.filter((k) => b[k] < min[k]);
+  // Minimums in module terms: W/D depend on which side gets the doors.
+  const mod = getModule(placing);
+  const side = ceilingMode() ? ceilingSide(b, rb.walls, rb.plane) : defaultSide(b);
+  const fit = fitBoxFacing(b, side, FRONT_THICKNESS_DEFAULT);
+  const small = DIM_ORDER.filter((k) => fit[k] < mod.minSize[k]);
   if (small.length) {
-    log("place.blocked", { reason: "below minimum size", dims: small, clamped: b.clamped, box: b });
-    showTip(rb.lastClient ? rb.lastClient.x : 0, rb.lastClient ? rb.lastClient.y : 0, [`No room: ${small.map((k) => `${k} ${Math.round(b[k])} < ${min[k]}`).join(", ")}`], "warn");
+    log("place.blocked", { reason: "below minimum size", dims: small, clamped: b.clamped, box: b, fit });
+    showTip(rb.lastClient ? rb.lastClient.x : 0, rb.lastClient ? rb.lastClient.y : 0, [`No room: ${small.map((k) => `${k} ${Math.round(fit[k])} < ${mod.minSize[k]}`).join(", ")}`], "warn");
     return;
   }
-  createFromBox(b, how);
+  createFromBox(b, how, side);
 }
 
 /** Shift+click: repeat the last size at this anchor, growing toward the side with room. */
@@ -675,12 +854,16 @@ function repeatLastSize(anchor) {
   const sz = pickSide("z", lastSize.H);
   const W = Math.min(lastSize.W, sx > 0 ? room.x.pos : room.x.neg);
   const D = Math.min(lastSize.D, sy > 0 ? room.y.pos : room.y.neg);
-  const H = Math.min(lastSize.H, sz > 0 ? room.z.pos : room.z.neg);
-  log("place.repeat", { moduleId: placing, anchor: { x: anchor.x, y: anchor.y, z: anchor.z }, size: lastSize });
-  createFromBox({
+  const size = { x: W, y: D, z: Math.min(lastSize.H, sz > 0 ? room.z.pos : room.z.neg) };
+  const clamped = {};
+  clampToRoof(job.getSpace(), anchor, size, { x: sx, y: sy, z: sz }, clamped, {});
+  const H = size.z;
+  log("place.repeat", { moduleId: placing, anchor: { x: anchor.x, y: anchor.y, z: anchor.z }, size: lastSize, clamped });
+  const b = {
     x0: sx > 0 ? anchor.x : anchor.x - W, y0: sy > 0 ? anchor.y : anchor.y - D, z0: sz > 0 ? anchor.z : anchor.z - H,
-    W, D, H, clamped: {},
-  }, "repeat");
+    W, D, H, clamped,
+  };
+  createFromBox(b, "repeat", ceilingMode() ? ceilingSide(b, wallsAt(anchor), null) : defaultSide(b));
   return true;
 }
 
@@ -694,12 +877,490 @@ function cancelPlacement() {
   emitMode();
 }
 
+// --- nose placement (Bedroom) ----------------------------------------------------------
+//
+// The module fills the vehicle's nose: front = nose cross-section, width = van
+// width, height = roof; only the depth from the nose is chosen.
+//   ready   the module is picked → the slab is already shown at the preset depth
+//   drag    one click → the room-side face follows the cursor along +Y (snaps to
+//           roof vertices / seam / cabinet faces); "From front" type-in
+//   click / Enter → create (or re-size the existing one), Esc → cancel
+
+function noseLength() {
+  const sp = job.getSpace();
+  return sp ? sp.bounds.maxY - sp.bounds.minY : Infinity;
+}
+function noseMid() {
+  const sp = job.getSpace();
+  return { x: (sp.bounds.minX + sp.bounds.maxX) / 2, y: 0, z: 0 };
+}
+function noseT(e) {
+  const m = noseMid();
+  return closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(m.x, 0, 0), new THREE.Vector3(0, 1, 0));
+}
+function noseBox() {
+  const sp = job.getSpace();
+  return { x0: sp.bounds.minX, y0: 0, z0: 0, W: sp.bounds.maxX - sp.bounds.minX, D: nose.D, H: Math.round(maxClearHeight(sp, 0, nose.D) * 10) / 10 };
+}
+
+export function startNose(moduleId) {
+  const sp = job.getSpace();
+  if (!sp) return;
+  const mod = getModule(moduleId);
+  cancelMove();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  cancelPlane();
+  endRetype(false);
+  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  // One per vehicle: picking the module again edits the existing slab's depth.
+  const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
+  const D = existing
+    ? mod.envelope(existing.params).D
+    : Math.max(mod.minSize.D, Math.min(noseLength(), presetSize(moduleId, "y")));
+  nose = { moduleId, step: "ready", editId: existing ? existing.id : null, D, t0: 0, locked: null, snapLabel: null, clamped: null, lastClient: null };
+  job.select(existing ? existing.id : null);
+  canvas.style.cursor = "crosshair";
+  showNoseGhost(sp, D);
+  log("nose.arm", { moduleId, editId: nose.editId, depth: D, preset: presetSize(moduleId, "y") });
+  emitMode();
+}
+
+function noseBegin(e) {
+  nose.step = "drag";
+  nose.t0 = e ? noseT(e) - nose.D : 0; // relative: the face starts where it is and follows the cursor
+  setDimNames(["W", "From front", "H"]);
+  dimBox.classList.remove("hidden");
+  for (const k of DIM_ORDER) {
+    dimLabels[k].classList.remove("focused", "locked");
+    dimLabels[k].classList.toggle("hidden", k !== "D");
+  }
+  log("nose.drag", { moduleId: nose.moduleId, editId: nose.editId, depth: nose.D });
+  updateNose(e);
+  emitMode();
+}
+
+/** Depth for the cursor (or the lock): snapped, clamped to the space and stopped by other cabinets. */
+function noseDepth(e) {
+  const mod = getModule(nose.moduleId);
+  const min = mod.minSize.D;
+  const L = noseLength();
+  let D;
+  let label = null;
+  let clamped = null;
+  if (nose.locked != null) D = nose.locked;
+  else if (e) {
+    const snap = nearestAxisAlign(e.clientX, e.clientY, noseMid(), "y", +1, { exclude: nose.editId });
+    if (snap) { D = snap.value; label = snap.label; } else D = job.snap(noseT(e) - nose.t0);
+  } else D = nose.D;
+  if (D > L) { D = L; clamped = "back wall"; }
+  if (D < min) { D = min; clamped = `minimum ${min}`; }
+  // Other cabinets in the nose stop the room-side face (not the ones glued to the body — they move with it).
+  for (const c of job.getJob().cabinets) {
+    if (c.id === nose.editId || getModule(c.moduleId).attachesTo === nose.moduleId) continue;
+    const fp = envelopeFootprint(c, c.pose);
+    if (fp.minY < D - 0.5 && fp.minY >= min) { D = job.snap(fp.minY); clamped = c.id; label = null; }
+  }
+  nose.D = D;
+  nose.snapLabel = label;
+  nose.clamped = clamped;
+}
+
+function updateNose(e) {
+  if (e) nose.lastClient = { x: e.clientX, y: e.clientY };
+  noseDepth(e);
+  const sp = job.getSpace();
+  showNoseGhost(sp, nose.D, { clamped: !!nose.clamped });
+  if (document.activeElement !== dimInputs.D) dimInputs.D.value = Math.round(nose.D);
+  dimLabels.D.classList.toggle("locked", nose.locked != null);
+  positionDimInputs(noseBox());
+  if (e) {
+    const b = noseBox();
+    const lines = [`From front ${Math.round(nose.D)} · roof ${Math.round(b.H)} at the room face`];
+    if (nose.snapLabel) lines.push(nose.snapLabel);
+    if (nose.clamped) lines.push(`Stopped at ${nose.clamped}`);
+    if (nose.locked != null) lines.push(`Locked ${Math.round(nose.locked)}`);
+    lines.push(nose.editId ? "Click or Enter to apply · Esc keeps the old depth" : "Click or Enter to create · Esc cancels");
+    showTip(e.clientX, e.clientY, lines, nose.clamped ? "warn" : nose.locked != null ? "lock" : "");
+  }
+}
+
+function noseHover(e) {
+  nose.lastClient = { x: e.clientX, y: e.clientY };
+  const b = noseBox();
+  showTip(e.clientX, e.clientY, [
+    nose.editId ? `${nose.editId} · from front ${Math.round(nose.D)}` : `Bedroom · from front ${Math.round(nose.D)} (preset)`,
+    `Nose ${Math.round(b.W)} wide · roof ${Math.round(b.H)} at the room face`,
+    `Click to drag the depth · Enter ${nose.editId ? "keeps it" : "creates it"} · Esc cancels`,
+  ]);
+}
+
+function finishNose(how) {
+  if (!nose) return;
+  const n = nose;
+  const sp = job.getSpace();
+  const mod = getModule(n.moduleId);
+  noseDepth(null);
+  const b = noseBox();
+  // Room-side face is the cabinet front: rotZ 180 puts local −Y (fronts) toward the room and local Y toward the nose.
+  const pose = { x: sp.bounds.maxX, y: b.D, z: 0, rotZ: 180 };
+  nose = null;
+  let id = n.editId;
+  let changed = true;
+  if (id) {
+    const before = job.snapshot();
+    job.updateCabinet(id, (c) => { c.params = mod.setEnvelope(c.params, { D: b.D }); c.pose = pose; });
+    changed = job.commitSnapshot(before);
+  } else {
+    id = job.addCabinet(n.moduleId, pose, { W: b.W, D: b.D, H: b.H }).id;
+  }
+  const cab = job.getJob().cabinets.find((c) => c.id === id);
+  log("nose.finish", { moduleId: n.moduleId, id, how, depth: b.D, locked: n.locked, snap: n.snapLabel, clamped: n.clamped, edited: !!n.editId, changed, pose, envelope: cab ? mod.envelope(cab.params) : null, roofProfile: cab ? cab.params.roofProfile : null });
+  clearPreview();
+  canvas.style.cursor = "";
+  job.select(id);
+  emitMode();
+}
+
+export function cancelNose() {
+  if (!nose) return;
+  const n = nose;
+  nose = null;
+  log("nose.cancel", { moduleId: n.moduleId, editId: n.editId, step: n.step, depth: n.D });
+  clearPreview();
+  canvas.style.cursor = "";
+  emitMode();
+}
+
+// --- construction plane ----------------------------------------------------------------
+//
+// Click a wall or cabinet face, offset a parallel plane into the room, click /
+// Enter to leave it. The plane is infinite (axis = value); what you see is
+// plane ∩ space. Its outline vertices are feature points for placement.
+
+const PLANE_MIN = 10;
+
+function planeMid(face) {
+  const e = face.ext;
+  const p = { x: (e.x[0] + e.x[1]) / 2, y: (e.y[0] + e.y[1]) / 2, z: (e.z[0] + e.z[1]) / 2 };
+  p[face.axis] = face.value;
+  return p;
+}
+function planeValue() {
+  return cplane.face.value + cplane.face.dir * cplane.offset;
+}
+function planeBox() {
+  const slice = slicePlane(job.getSpace(), cplane.face.axis, planeValue());
+  if (!slice) return { x0: 0, y0: 0, z0: 0, W: 1, D: 1, H: 1 };
+  const e = slice.ext;
+  return { x0: e.x[0], y0: e.y[0], z0: e.z[0], W: Math.max(e.x[1] - e.x[0], 1), D: Math.max(e.y[1] - e.y[0], 1), H: Math.max(e.z[1] - e.z[0], 1) };
+}
+
+export function startPlane() {
+  if (cplane) { cancelPlane(); return; }
+  if (!job.hasSpace()) { log("plane.blocked", { reason: "no space" }); return; }
+  cancelMove();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  endRetype(false);
+  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  cplane = { step: "pick", face: null, offset: 0, locked: null, snapLabel: null, clamped: null };
+  canvas.style.cursor = "crosshair";
+  log("plane.arm");
+  emitMode();
+}
+
+function planeHoverPick(e) {
+  const hit = pickFace(e.clientX, e.clientY);
+  if (!hit) { hideFaceHint(); hideTip(); return; }
+  showFaceHint(hit.face);
+  const room = extrudeRoom(hit.face);
+  showTip(e.clientX, e.clientY, [
+    hit.face.label,
+    room < PLANE_MIN ? "No room to offset this way" : `Click, then pull ${DIM_OF[hit.face.axis]} ${hit.face.dir > 0 ? "+" : "−"}${hit.face.axis.toUpperCase()}`,
+    "Esc cancels",
+  ], room < PLANE_MIN ? "warn" : "");
+}
+
+function planeBeginOffset(face) {
+  const room = extrudeRoom(face);
+  if (room < PLANE_MIN) { log("plane.blocked", { reason: "no room", face: face.label, room }); return; }
+  cplane.step = "offset";
+  cplane.face = { axis: face.axis, value: face.value, dir: face.dir, ext: face.ext, label: face.label, source: face.source };
+  cplane.offset = job.snap(Math.min(100, room));
+  cplane.locked = null;
+  setDimNames(["Offset", "D", "H"]);
+  dimBox.classList.remove("hidden");
+  for (const k of DIM_ORDER) {
+    dimLabels[k].classList.remove("focused", "locked");
+    dimLabels[k].classList.toggle("hidden", k !== "W");
+  }
+  hideFaceHint();
+  log("plane.face", { axis: face.axis, value: face.value, dir: face.dir, label: face.label, source: face.source, room });
+  updatePlane(null);
+  emitMode();
+}
+
+function planeReadOffset(e) {
+  const face = cplane.face;
+  const max = extrudeRoom(face);
+  let off;
+  let label = null;
+  let clamped = null;
+  if (cplane.locked != null) off = cplane.locked;
+  else if (e) {
+    const mid = planeMid(face);
+    const snap = nearestAxisAlign(e.clientX, e.clientY, mid, face.axis, face.dir);
+    if (snap) { off = (snap.value - face.value) * face.dir; label = snap.label; }
+    else {
+      const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(mid.x, mid.y, mid.z), new THREE.Vector3(...axisVector(face.axis, face.dir)));
+      off = job.snap(t);
+    }
+  } else off = cplane.offset;
+  if (off > max) { off = job.snap(Math.floor(max / 10) * 10) || max; clamped = "space"; }
+  if (off < PLANE_MIN) { off = PLANE_MIN; clamped = `minimum ${PLANE_MIN}`; }
+  cplane.offset = off;
+  cplane.snapLabel = label;
+  cplane.clamped = clamped;
+}
+
+function updatePlane(e) {
+  if (!cplane || cplane.step !== "offset") return;
+  planeReadOffset(e);
+  const v = planeValue();
+  showCPlanePreview(cplane.face.axis, v, { clamped: !!cplane.clamped });
+  if (document.activeElement !== dimInputs.W) dimInputs.W.value = Math.round(cplane.offset);
+  dimLabels.W.classList.toggle("locked", cplane.locked != null);
+  positionDimInputs(planeBox());
+  if (!e) return;
+  showTip(e.clientX, e.clientY, [
+    `${cplane.face.label} + ${Math.round(cplane.offset)} → ${cplane.face.axis.toUpperCase()} ${Math.round(v)}`,
+    cplane.snapLabel,
+    cplane.clamped ? `Stopped at ${cplane.clamped}` : null,
+    "Click or Enter to place · Esc cancels",
+  ], cplane.clamped ? "warn" : cplane.locked != null ? "lock" : "");
+}
+
+function finishPlane(how) {
+  if (!cplane || cplane.step !== "offset") return;
+  planeReadOffset(null);
+  const p = cplane;
+  const value = p.face.value + p.face.dir * p.offset;
+  cplane = null;
+  const rec = job.addPlane({
+    axis: p.face.axis, value, dir: p.face.dir, offset: p.offset,
+    from: { source: p.face.source, axis: p.face.axis, value: p.face.value, label: p.face.label },
+  });
+  log("plane.finish", { how, id: rec.id, axis: rec.axis, value: rec.value, offset: rec.offset, locked: p.locked, snap: p.snapLabel, clamped: p.clamped, from: rec.from });
+  clearPreview();
+  canvas.style.cursor = "";
+  emitMode();
+}
+
+export function cancelPlane() {
+  if (!cplane) return;
+  const p = cplane;
+  cplane = null;
+  log("plane.cancel", { step: p.step, offset: p.offset, face: p.face && p.face.label });
+  clearPreview();
+  canvas.style.cursor = "";
+  emitMode();
+}
+
+// --- bed box placement ---------------------------------------------------------------------
+//
+// Attached to the Bedroom body: against its room-side face, centred on the
+// van, symmetric about the centre line, height = tunnel boot (420 for now).
+//   width   a 2D line on the floor along the body face; width = 2 × distance
+//           from the centre line to the cursor
+//   depth   one click locks the width → the box rises: depth follows the
+//           cursor into the room (snaps to cabinet faces / back wall)
+//   click / Enter → create (or re-size the existing one), Esc → cancel all
+
+const BEDBOX_LINE_D = 10; // thickness of the 2D width line on the floor
+
+function bedBody() {
+  return job.getJob().cabinets.find((c) => c.moduleId === "bedroom") || null;
+}
+function bedFrame() {
+  const sp = job.getSpace();
+  const body = bedBody();
+  if (!sp || !body) return null;
+  const bodyD = getModule(body.moduleId).envelope(body.params).D;
+  return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id };
+}
+function bedT(e, axis) {
+  const f = bedFrame();
+  const dir = axis === "x" ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
+  return closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(f.cx, f.y, 0), dir); // t = signed distance from (cx, bodyD)
+}
+function bedBoxBox() {
+  const f = bedFrame();
+  const D = bed.step === "width" ? BEDBOX_LINE_D : bed.D;
+  return { x0: f.cx - bed.W / 2, y0: f.y, z0: 0, W: bed.W, D, H: bed.H, max: { W: f.maxW, D: f.maxD, H: bed.H } };
+}
+
+export function startBedBox(moduleId) {
+  const mod = getModule(moduleId);
+  const f = bedFrame();
+  if (!f) { log("bedbox.blocked", { moduleId, reason: "no body" }); return; }
+  cancelMove();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  cancelPlane();
+  endRetype(false);
+  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
+  const env = existing ? mod.envelope(existing.params) : null;
+  bed = {
+    moduleId, step: "width", editId: existing ? existing.id : null,
+    W: env ? env.W : mod.minSize.W, D: env ? env.D : mod.minSize.D, H: env ? env.H : mod.defaultSize.H,
+    locked: { W: null, D: null }, snapLabel: null, clamped: null, lastClient: null,
+  };
+  job.select(existing ? existing.id : null);
+  canvas.style.cursor = "crosshair";
+  setDimNames(["W", "D", "H"]);
+  dimBox.classList.remove("hidden");
+  for (const k of DIM_ORDER) {
+    dimLabels[k].classList.remove("focused", "locked");
+    dimLabels[k].classList.toggle("hidden", k !== "W");
+  }
+  drawBedBox(null);
+  log("bedbox.arm", { moduleId, editId: bed.editId, bodyId: f.bodyId, bodyDepth: f.y, W: bed.W, D: bed.D, H: bed.H });
+  emitMode();
+}
+
+/** Width for the cursor (or the lock): 2 × distance from the centre line, snapped, within the van. */
+function bedWidth(e) {
+  const mod = getModule(bed.moduleId);
+  const f = bedFrame();
+  let W;
+  if (bed.locked.W != null) W = bed.locked.W;
+  else if (e) W = job.snap(2 * Math.abs(bedT(e, "x")));
+  else W = bed.W;
+  bed.clamped = null;
+  if (W > f.maxW) { W = f.maxW; bed.clamped = "side walls"; }
+  if (W < mod.minSize.W) { W = mod.minSize.W; bed.clamped = `minimum ${mod.minSize.W}`; }
+  bed.W = W;
+}
+
+/** Depth for the cursor (or the lock): snapped, clamped to the space, stopped by other cabinets in the bed's lane. */
+function bedDepth(e) {
+  const mod = getModule(bed.moduleId);
+  const f = bedFrame();
+  let D;
+  let label = null;
+  let clamped = null;
+  if (bed.locked.D != null) D = bed.locked.D;
+  else if (e) {
+    const snap = nearestAxisAlign(e.clientX, e.clientY, { x: f.cx, y: f.y, z: 0 }, "y", +1, { exclude: bed.editId });
+    if (snap) { D = snap.value - f.y; label = snap.label; } else D = job.snap(bedT(e, "y"));
+  } else D = bed.D;
+  if (D > f.maxD) { D = f.maxD; clamped = "back wall"; }
+  if (D < mod.minSize.D) { D = mod.minSize.D; clamped = `minimum ${mod.minSize.D}`; }
+  const x0 = f.cx - bed.W / 2;
+  const x1 = f.cx + bed.W / 2;
+  for (const c of job.getJob().cabinets) {
+    if (c.id === bed.editId || c.id === f.bodyId) continue;
+    const fp = envelopeFootprint(c, c.pose);
+    if (fp.maxX <= x0 + 0.5 || fp.minX >= x1 - 0.5 || fp.z0 >= bed.H - 0.5) continue; // not in the bed's lane
+    const room = fp.minY - f.y;
+    if (room >= mod.minSize.D && room < D - 0.5) { D = Math.floor(room / 10) * 10; clamped = c.id; label = null; }
+  }
+  bed.D = D;
+  bed.snapLabel = label;
+  bed.clamped = clamped;
+}
+
+function drawBedBox(e) {
+  const b = bedBoxBox();
+  if (bed.step === "width") {
+    // 2D: a W × H rectangle standing on the body face, no depth yet.
+    hideGhost();
+    showWidthRect(b.x0, b.x0 + b.W, b.y0, b.H, { clamped: !!bed.clamped });
+  } else {
+    hideWidthRect();
+    showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: !!bed.clamped });
+  }
+  for (const k of ["W", "D"]) {
+    if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(bed[k]);
+    dimLabels[k].classList.toggle("locked", bed.locked[k] != null || (k === "W" && bed.step === "depth"));
+  }
+  positionDimInputs({ ...b, D: bed.step === "width" ? 0 : b.D });
+  if (!e) return;
+  const lines = bed.step === "width"
+    ? [`W ${Math.round(bed.W)} · centred on the van`, bed.clamped ? `Stopped at ${bed.clamped}` : null, "Click to lock the width · Esc cancels"]
+    : [`D ${Math.round(bed.D)} from the body · H ${Math.round(bed.H)}`, bed.snapLabel, bed.clamped ? `Stopped at ${bed.clamped}` : null, bed.editId ? "Click or Enter to apply · Esc cancels" : "Click or Enter to create · Esc cancels"];
+  showTip(e.clientX, e.clientY, lines, bed.clamped ? "warn" : bed.locked.W != null || bed.locked.D != null ? "lock" : "");
+}
+
+function updateBedBox(e) {
+  if (e) bed.lastClient = { x: e.clientX, y: e.clientY };
+  if (bed.step === "width") bedWidth(e); else bedDepth(e);
+  drawBedBox(e);
+}
+
+/** Width step → depth step (click or Enter with a width). */
+function bedLockWidth(how) {
+  bedWidth(null);
+  bed.step = "depth";
+  dimLabels.D.classList.remove("hidden");
+  dimLabels.W.classList.add("locked");
+  if (document.activeElement === dimInputs.W) focusDim("D");
+  log("bedbox.width", { moduleId: bed.moduleId, editId: bed.editId, how, W: bed.W, locked: bed.locked.W, clamped: bed.clamped });
+  bed.clamped = null;
+  drawBedBox(null);
+  emitMode();
+}
+
+function finishBedBox(how) {
+  if (!bed) return;
+  const b = bed;
+  const mod = getModule(b.moduleId);
+  bedDepth(null);
+  const f = bedFrame();
+  const pose = { x: f.cx + b.W / 2, y: f.y + b.D, z: 0, rotZ: 180 };
+  bed = null;
+  let id = b.editId;
+  let changed = true;
+  if (id) {
+    const before = job.snapshot();
+    job.updateCabinet(id, (c) => { c.params = mod.setEnvelope(c.params, { W: b.W, D: b.D, H: b.H }); c.pose = pose; });
+    changed = job.commitSnapshot(before);
+  } else {
+    id = job.addCabinet(b.moduleId, pose, { W: b.W, D: b.D, H: b.H }).id;
+  }
+  const cab = job.getJob().cabinets.find((c) => c.id === id);
+  log("bedbox.finish", { moduleId: b.moduleId, id, how, bodyId: f.bodyId, W: b.W, D: b.D, H: b.H, locked: b.locked, snap: b.snapLabel, clamped: b.clamped, edited: !!b.editId, changed, pose: cab ? cab.pose : pose, envelope: cab ? mod.envelope(cab.params) : null });
+  clearPreview();
+  canvas.style.cursor = "";
+  job.select(id);
+  emitMode();
+}
+
+export function cancelBedBox() {
+  if (!bed) return;
+  const b = bed;
+  bed = null;
+  log("bedbox.cancel", { moduleId: b.moduleId, editId: b.editId, step: b.step, W: b.W, D: b.D });
+  clearPreview();
+  canvas.style.cursor = "";
+  emitMode();
+}
+
 // --- move command -----------------------------------------------------------------
 
 export function startMove(id = job.getSelectedId()) {
   const cab = id && job.getJob().cabinets.find((c) => c.id === id);
   if (!cab) return;
   if (placing) disarm();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  cancelPlane();
   endRetype(false);
   move = { id, step: "grab", pose0: { ...cab.pose }, before: job.snapshot(), grab: null, locked: { W: null, D: null, H: null }, ctx: null, target: null, clamped: [] };
   job.select(id);
@@ -732,9 +1393,16 @@ function movePose() {
   const delta = {
     x: move.locked.W ?? job.snap(t.x - move.grab.x),
     y: move.locked.D ?? job.snap(t.y - move.grab.y),
-    z: move.locked.H ?? job.snap(t.z - move.grab.z),
+    // A ceiling-hung module keeps its height: it slides along the ceiling only.
+    z: getModule(cab.moduleId).placement === "ceiling" ? 0 : (move.locked.H ?? job.snap(t.z - move.grab.z)),
   };
-  const pose = { ...move.pose0, x: move.pose0.x + delta.x, y: move.pose0.y + delta.y, z: move.pose0.z + delta.z };
+  const { pose, clamped } = clampPoseToSpace(cab, { ...move.pose0, x: move.pose0.x + delta.x, y: move.pose0.y + delta.y, z: move.pose0.z + delta.z });
+  return { pose, delta: { x: pose.x - move.pose0.x, y: pose.y - move.pose0.y, z: pose.z - move.pose0.z }, clamped };
+}
+
+/** Shift a pose back inside the space bounds; names the boundaries that stopped it. */
+function clampPoseToSpace(cab, pose0) {
+  const pose = { ...pose0 };
   const clamped = [];
   const sp = job.getSpace();
   if (sp) {
@@ -745,9 +1413,12 @@ function movePose() {
     if (fp.minY < b.minY) { pose.y += b.minY - fp.minY; clamped.push("front wall"); }
     if (fp.maxY > b.maxY) { pose.y -= fp.maxY - b.maxY; clamped.push("back wall"); }
     if (fp.z0 < 0) { pose.z -= fp.z0; clamped.push("floor"); }
-    if (fp.z1 > sp.height) { pose.z -= fp.z1 - sp.height; clamped.push("ceiling"); }
+    // The roof over the new footprint (after the XY shifts above), not one flat height.
+    const fp2 = envelopeFootprint(cab, pose);
+    const roof = minClearHeight(sp, fp2.minY, fp2.maxY);
+    if (fp2.z1 > roof) { pose.z -= fp2.z1 - roof; clamped.push(roofName(sp, fp2.minY, fp2.maxY)); }
   }
-  return { pose, delta: { x: pose.x - move.pose0.x, y: pose.y - move.pose0.y, z: pose.z - move.pose0.z }, clamped };
+  return { pose, clamped };
 }
 
 function overlaps(cab, pose) {
@@ -819,6 +1490,254 @@ export function cancelMove() {
   emitMode();
 }
 
+// --- orientation ---------------------------------------------------------------------
+//
+// A box (world AABB) plus a door side (which vertical side the fronts are on)
+// fixes everything: W is the horizontal edge along the door side, D the edge
+// through it (minus the fronts), H the height; rotZ turns the generator's −Y
+// onto that side and the origin lands on the matching box corner. The box
+// itself never moves — changing the door side swaps W/D, not the footprint.
+
+const SIDES = [{ axis: "y", dir: -1 }, { axis: "y", dir: 1 }, { axis: "x", dir: 1 }, { axis: "x", dir: -1 }];
+
+/** rotZ (deg) that turns the fronts (local −Y) toward the world direction `axis` ± `dir`. */
+export function rotZFacing(axis, dir) {
+  if (axis === "y") return dir > 0 ? 180 : 0;
+  return dir > 0 ? 90 : 270;
+}
+/** Inverse: which world side the fronts of a cabinet with this rotZ are on. */
+export function sideOfRotZ(rotZ) {
+  const r = (((rotZ || 0) % 360) + 360) % 360;
+  return r === 180 ? { axis: "y", dir: 1 } : r === 90 ? { axis: "x", dir: 1 } : r === 270 ? { axis: "x", dir: -1 } : { axis: "y", dir: -1 };
+}
+export function sideLabel(side) {
+  return `${side.dir > 0 ? "+" : "−"}${side.axis.toUpperCase()}`;
+}
+
+/**
+ * Pose and module size for a world box `{x0,y0,z0,W,D,H}` (W/D/H along X/Y/Z)
+ * whose doors are on `side`. `fpt` = front panel thickness kept inside the box.
+ * Returns { pose, W, D, H } in module terms.
+ */
+export function fitBoxFacing(b, side, fpt = FRONT_THICKNESS_DEFAULT) {
+  const x1 = b.x0 + b.W;
+  const y1 = b.y0 + b.D;
+  const along = side.axis === "y" ? b.W : b.D; // door-side edge → W
+  const through = side.axis === "y" ? b.D : b.W; // edge through the doors → D + fronts
+  const rotZ = rotZFacing(side.axis, side.dir);
+  let x;
+  let y;
+  if (rotZ === 0) { x = b.x0; y = b.y0 + fpt; }
+  else if (rotZ === 180) { x = x1; y = y1 - fpt; }
+  else if (rotZ === 90) { x = x1 - fpt; y = b.y0; }
+  else { x = b.x0 + fpt; y = y1; }
+  return { pose: { x, y, z: b.z0, rotZ }, W: along, D: through - fpt, H: b.H };
+}
+
+/** Is this side of the box flush against a wall or another cabinet (so doors could not open)? */
+function sideBlocked(b, side, excludeId = null) {
+  const lo = { x: b.x0, y: b.y0, z: b.z0 };
+  const hi = { x: b.x0 + b.W, y: b.y0 + b.D, z: b.z0 + b.H };
+  const at = side.dir > 0 ? hi[side.axis] : lo[side.axis];
+  const sp = job.getSpace();
+  if (sp) {
+    const bound = side.axis === "x" ? (side.dir > 0 ? sp.bounds.maxX : sp.bounds.minX) : (side.dir > 0 ? sp.bounds.maxY : sp.bounds.minY);
+    const wallIdx = side.axis === "y" ? (side.dir > 0 ? 2 : 0) : (side.dir > 0 ? 1 : 3);
+    if (Math.abs(at - bound) < 0.5 && (sp.walls || []).includes(wallIdx)) return true;
+  }
+  const others = AXES.filter((a) => a !== side.axis);
+  for (const c of job.getJob().cabinets) {
+    if (c.id === excludeId) continue;
+    const fp = envelopeFootprint(c, c.pose);
+    const o = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+    const near = side.dir > 0 ? o[side.axis][0] : o[side.axis][1];
+    if (Math.abs(near - at) > 0.5) continue;
+    if (others.every((a) => lo[a] < o[a][1] - 0.5 && hi[a] > o[a][0] + 0.5)) return true;
+  }
+  return false;
+}
+
+/**
+ * Door side for a new box: never against a wall or a neighbour; a blocked
+ * side puts the doors opposite; otherwise the long horizontal edge is the
+ * door edge (W), facing the middle of the room (ties: front, −Y).
+ */
+export function defaultSide(b, excludeId = null) {
+  const free = SIDES.filter((s) => !sideBlocked(b, s, excludeId));
+  if (!free.length) return SIDES[0];
+  const sp = job.getSpace();
+  const cx = b.x0 + b.W / 2;
+  const cy = b.y0 + b.D / 2;
+  const towardRoom = (s) => {
+    if (!sp) return 0;
+    const lo = s.axis === "x" ? sp.bounds.minX : sp.bounds.minY;
+    const hi = s.axis === "x" ? sp.bounds.maxX : sp.bounds.maxY;
+    const c = s.axis === "x" ? cx : cy;
+    const off = (c - (lo + hi) / 2) / Math.max(hi - lo, 1);
+    if (Math.abs(off) < 0.25) return 0; // the middle half of the room is a tie → front
+    return -Math.sign(off) * s.dir; // 1 facing the room centre, −1 facing away
+  };
+  const edge = (s) => (s.axis === "y" ? b.W : b.D); // W if this side holds the doors
+  const opposite = (s) => SIDES.find((t) => t.axis === s.axis && t.dir === -s.dir);
+  const blockedOpp = SIDES.filter((s) => sideBlocked(b, s, excludeId)).map(opposite).filter((s) => free.includes(s));
+  const pool = blockedOpp.length ? blockedOpp : free;
+  const score = (s) => edge(s) * 4 + towardRoom(s) * 2 + (s.axis === "y" && s.dir < 0 ? 1 : 0) - (s.axis === "x" && s.dir < 0 ? 0.5 : 0);
+  return pool.slice().sort((a, c) => score(c) - score(a))[0];
+}
+
+/** Pose with rotZ = `rotZ`, rotated about the envelope centre so the cabinet stays where it is. */
+function poseRotatedTo(cab, rotZ) {
+  const env = envelopeBox(cab, job.resultFor(cab.id));
+  const cx = (env.x0 + env.x1) / 2;
+  const cy = (env.y0 + env.y1) / 2;
+  const a0 = ((cab.pose.rotZ || 0) * Math.PI) / 180;
+  const a1 = (rotZ * Math.PI) / 180;
+  const wx = cab.pose.x + cx * Math.cos(a0) - cy * Math.sin(a0);
+  const wy = cab.pose.y + cx * Math.sin(a0) + cy * Math.cos(a0);
+  return {
+    ...cab.pose,
+    rotZ: ((rotZ % 360) + 360) % 360,
+    x: job.snap(wx - (cx * Math.cos(a1) - cy * Math.sin(a1))),
+    y: job.snap(wy - (cx * Math.sin(a1) + cy * Math.cos(a1))),
+  };
+}
+
+/** Nearest vertical envelope face of a cabinet (or of `onlyId`) under the cursor, seen from outside. */
+function pickSideFace(clientX, clientY, onlyId = null) {
+  const ray = rayFromClient(clientX, clientY);
+  let best = null;
+  for (const f of facePlanes()) {
+    if (f.source === "space" || f.axis === "z" || (onlyId && f.source !== onlyId)) continue;
+    if (!onlyId) {
+      const cab = job.getJob().cabinets.find((c) => c.id === f.source);
+      if (cab && getModule(cab.moduleId).noOrient) continue;
+    }
+    if (-ray.direction[f.axis] * f.dir <= 0) continue; // back side of the face
+    const h = rayHitFace(ray, f, 1);
+    if (h && (!best || h.t < best.t)) best = { face: f, t: h.t };
+  }
+  return best ? best.face : null;
+}
+
+/** Face command: click a side of a cabinet; its doors move to that side (pending) until confirmed. The box never moves. */
+export function startOrient(id = job.getSelectedId()) {
+  if (placing) disarm();
+  cancelMove();
+  cancelNose();
+  cancelBedBox();
+  cancelPlane();
+  endRetype(false);
+  const cab = id && job.getJob().cabinets.find((c) => c.id === id);
+  if (!cab && !job.getJob().cabinets.length) return;
+  if (cab && getModule(cab.moduleId).noOrient) {
+    // Ceiling-hung modules have one possible door side (toward the room): nothing to choose.
+    log("orient.blocked", { id: cab.id, reason: "module has a fixed door side", moduleId: cab.moduleId });
+    return;
+  }
+  orient = { id: cab ? cab.id : null, pose0: cab ? { ...cab.pose } : null, params0: cab ? cab.params : null, before: job.snapshot(), pending: null };
+  if (cab) job.select(cab.id);
+  canvas.style.cursor = "crosshair";
+  log("orient.start", { id: orient.id, pose: orient.pose0, side: cab ? sideOfRotZ(cab.pose.rotZ) : null });
+  emitMode();
+}
+
+/** World AABB of a cabinet's envelope as a placement-style box. */
+function envelopeAsBox(cab) {
+  const fp = envelopeFootprint(cab, cab.pose);
+  return { x0: fp.minX, y0: fp.minY, z0: fp.z0, W: fp.maxX - fp.minX, D: fp.maxY - fp.minY, H: fp.z1 - fp.z0 };
+}
+
+/** What the cabinet becomes with its doors on `side`, or the reason it can't. */
+function orientFit(cab, side) {
+  const mod = getModule(cab.moduleId);
+  const fpt = envelopeBox(cab, job.resultFor(cab.id)).fpt;
+  const fit = fitBoxFacing(envelopeAsBox(cab), side, fpt);
+  const small = ["W", "D"].filter((k) => fit[k] < mod.minSize[k]);
+  return { ...fit, small, blocked: sideBlocked(envelopeAsBox(cab), side, cab.id) };
+}
+
+/** The pending side as it sits on the (already rotated) envelope, for the orange hint. */
+function pendingFace() {
+  if (!orient || !orient.pending) return null;
+  const p = orient.pending;
+  return facePlanes().find((f) => f.source === orient.id && f.axis === p.axis && f.dir === p.dir) || null;
+}
+
+function orientHover(e) {
+  const f = pickSideFace(e.clientX, e.clientY, orient.id);
+  const pend = pendingFace();
+  if (f) showFaceHint(f, { tone: pend && f.axis === pend.axis && f.dir === pend.dir ? "pending" : "" });
+  else if (pend) showFaceHint(pend, { tone: "pending" });
+  else hideFaceHint();
+  const lines = [];
+  let tone = pend ? "lock" : "";
+  if (f) {
+    const cab = job.getJob().cabinets.find((c) => c.id === f.source);
+    const fit = orientFit(cab, f);
+    lines.push(`${f.label} → doors on ${sideLabel(f)} · W ${Math.round(fit.W)} D ${Math.round(fit.D)}`);
+    if (fit.blocked) { lines.push("Against a wall / neighbour — doors can't open here"); tone = "warn"; }
+    else if (fit.small.length) { lines.push(`Too small: ${fit.small.map((k) => `${k} ${Math.round(fit[k])} < ${getModule(cab.moduleId).minSize[k]}`).join(", ")}`); tone = "warn"; }
+  } else lines.push(orient.id ? `Click a side of ${orient.id}` : "Click a side of a cabinet");
+  if (pend) lines.push("Click elsewhere or Enter to confirm · Esc restores");
+  showTip(e.clientX, e.clientY, lines, tone);
+}
+
+function orientClick(e) {
+  const f = pickSideFace(e.clientX, e.clientY, orient.id);
+  if (!f) { finishOrient("click"); return; }
+  if (!orient.id) {
+    const cab = job.getJob().cabinets.find((c) => c.id === f.source);
+    orient.id = cab.id;
+    orient.pose0 = { ...cab.pose };
+    orient.params0 = cab.params;
+    job.select(cab.id);
+  }
+  const cab = job.getJob().cabinets.find((c) => c.id === orient.id);
+  const side = { axis: f.axis, dir: f.dir };
+  const fit = orientFit(cab, side);
+  if (fit.blocked || fit.small.length) {
+    log("orient.blocked", { id: cab.id, face: { ...side, label: f.label }, blocked: fit.blocked, small: fit.small, fit: { W: fit.W, D: fit.D } });
+    orientHover(e);
+    return;
+  }
+  const mod = getModule(cab.moduleId);
+  const s0 = sideOfRotZ(orient.pose0.rotZ);
+  const back = s0.axis === side.axis && s0.dir === side.dir;
+  // The box stays put: W/D swap and the origin moves to the corner the doors now start from.
+  const params = back ? orient.params0 : mod.setEnvelope(orient.params0, { W: fit.W, D: fit.D });
+  const pose = back ? { ...orient.pose0 } : fit.pose;
+  orient.pending = { ...side, label: f.label };
+  job.updateCabinet(cab.id, (c) => { c.params = params; c.pose = pose; });
+  log("orient.pending", { id: cab.id, face: orient.pending, from: { pose: orient.pose0, envelope: mod.envelope(orient.params0) }, to: { pose, envelope: mod.envelope(params) } });
+  orientHover(e);
+  emitMode();
+}
+
+function finishOrient(how) {
+  if (!orient) return;
+  const o = orient;
+  const done = pendingFace(); // before orient is cleared
+  orient = null;
+  const cab = o.id && job.getJob().cabinets.find((c) => c.id === o.id);
+  const changed = o.pending ? job.commitSnapshot(o.before) : false;
+  log("orient.end", { id: o.id, how, face: o.pending, from: o.pose0, to: cab ? cab.pose : null, envelope: cab ? getModule(cab.moduleId).envelope(cab.params) : null, changed });
+  clearPreview();
+  if (done) flashFaceHint(done);
+  canvas.style.cursor = "";
+  emitMode();
+}
+
+export function cancelOrient() {
+  if (!orient) return;
+  const o = orient;
+  orient = null;
+  if (o.id && o.pending) job.updateCabinet(o.id, (c) => { c.params = o.params0; c.pose = { ...o.pose0 }; });
+  log("orient.cancel", { id: o.id, pending: o.pending });
+  clearPreview();
+  canvas.style.cursor = "";
+  emitMode();
+}
+
 // --- re-type the last created box ---------------------------------------------------
 
 function beginRetype() {
@@ -876,6 +1795,28 @@ canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   if (retype) endRetype(true);
 
+  if (orient) { orientClick(e); return; }
+
+  if (cplane) {
+    if (cplane.step === "pick") {
+      const hit = pickFace(e.clientX, e.clientY);
+      if (hit) planeBeginOffset(hit.face);
+    } else finishPlane("click");
+    return;
+  }
+
+  if (nose) {
+    if (nose.step === "ready") noseBegin(e);
+    else finishNose("click");
+    return;
+  }
+
+  if (bed) {
+    if (bed.step === "width") { bedWidth(e); bedLockWidth("click"); }
+    else finishBedBox("click");
+    return;
+  }
+
   if (move) {
     if (move.step === "grab") {
       const p = cursorPoint(e.clientX, e.clientY);
@@ -890,6 +1831,7 @@ canvas.addEventListener("pointerdown", (e) => {
     if (!rb) {
       const p = cursorPoint(e.clientX, e.clientY);
       if (!p) return;
+      if (p.none) { log("place.blocked", { moduleId: placing, reason: "not on a ceiling edge" }); return; }
       if (e.shiftKey && repeatLastSize(p)) return;
       beginFace(p);
     } else if (rb.step === "face") {
@@ -908,13 +1850,14 @@ canvas.addEventListener("pointerdown", (e) => {
     job.select(null);
     return;
   }
-  const { kind, cabId, handle } = hit.object.userData;
+  const { kind, cabId, handle, planeId } = hit.object.userData;
+  if (kind === "cplane") { job.select(planeId); return; }
   const cab = job.getJob().cabinets.find((c) => c.id === cabId);
   if (!cab) return;
 
   if (kind === "handle") {
     const group = groupFor(cabId);
-    const axis = handle.type === "W" ? "x" : handle.type === "D" ? "y" : "z";
+    const axis = handle.type === "W" ? "x" : handle.type === "D" ? "y" : handle.type === "divider" ? (handle.axis || "z") : "z";
     const dir = localAxisWorld(group, axis);
     const origin = hit.object.getWorldPosition(new THREE.Vector3());
     drag = {
@@ -938,6 +1881,7 @@ canvas.addEventListener("pointerdown", (e) => {
 function hoverArmed(e, prefix) {
   const p = cursorPoint(e.clientX, e.clientY);
   if (!p) { hideSnapMarker(); hideFaceHint(); hideTip(); return; }
+  if (p.none) { hideSnapMarker(); hideFaceHint(); showTip(e.clientX, e.clientY, p.tip, "warn"); return; }
   showSnapMarker(p.x, p.y, p.z, { feature: p.feature });
   if (p.face) showFaceHint(p.face); else hideFaceHint();
   const lines = [...(prefix ? [prefix] : []), ...p.tip];
@@ -947,6 +1891,12 @@ function hoverArmed(e, prefix) {
 
 canvas.addEventListener("pointermove", (e) => {
   if (drag) return handleDragMove(e);
+
+  if (orient) return orientHover(e);
+  if (cplane) return cplane.step === "pick" ? planeHoverPick(e) : updatePlane(e);
+
+  if (nose) return nose.step === "ready" ? noseHover(e) : updateNose(e);
+  if (bed) return updateBedBox(e);
 
   if (move) {
     if (move.step === "grab") return hoverArmed(e, "Grab point");
@@ -1017,8 +1967,14 @@ function handleDragMove(e) {
       { ...drag.pose0, x: drag.pose0.x + yDir.x * shift, y: drag.pose0.y + yDir.y * shift },
     );
   } else if (h.type === "H") {
-    const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
-    applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
+    if (mod.growsDown) {
+      // Top glued to the ceiling: the bottom is pulled; a lower bottom = a taller box.
+      const H = Math.max(mod.minSize.H, job.snap(env0.H - delta));
+      applyIfFits(mod.setEnvelope(drag.params0, { H }), { ...drag.pose0, z: drag.pose0.z + (env0.H - H) });
+    } else {
+      const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
+      applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
+    }
   } else if (h.type === "divider") {
     job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, h.pos + delta), { history: false });
   }
@@ -1037,7 +1993,7 @@ function endDrag(e) {
   log("handle.end", {
     id: d.cabId, handle: d.handle.type, index: d.handle.index, changed,
     envelope: cab ? getModule(cab.moduleId).envelope(cab.params) : null,
-    zones: cab && cab.params.zones ? cab.params.zones.map((z) => z.height) : undefined,
+    zones: cab && cab.params.zones ? cab.params.zones.map((z) => z.height ?? z.width) : undefined,
     pose: cab ? cab.pose : null,
   });
   hideTip();
@@ -1048,17 +2004,23 @@ canvas.addEventListener("pointercancel", endDrag);
 
 canvas.addEventListener("pointerleave", () => {
   if ((placing && !rb) || (move && move.step === "grab")) { hideSnapMarker(); hideFaceHint(); hideTip(); }
+  if (orient) { const pend = pendingFace(); if (pend) showFaceHint(pend, { tone: "pending" }); else hideFaceHint(); hideTip(); }
+  if (nose || bed || cplane) hideTip();
 });
 
 function cursorFor(handle) {
   if (!handle) return "";
-  if (handle.type === "divider" || handle.type === "H") return "ns-resize";
+  if (handle.type === "divider") return handle.axis === "x" ? "ew-resize" : "ns-resize";
+  if (handle.type === "H") return "ns-resize";
   return "ew-resize";
 }
 
 // Keep type-ins glued to the box while the camera moves.
 (function tickDims() {
   if (rb) positionDimInputs(placementBox());
+  else if (nose && nose.step === "drag") positionDimInputs(noseBox());
+  else if (bed) drawBedBox(null);
+  else if (cplane && cplane.step === "offset") positionDimInputs(planeBox());
   else if (retype) updateRetype();
   else if (move && move.step === "drop") {
     const cab = job.getJob().cabinets.find((c) => c.id === move.id);
@@ -1079,6 +2041,9 @@ function focusedDim() {
 }
 /** Dims that are open for typing right now (the face step hides the normal-axis one). */
 function typableDims() {
+  if (cplane) return ["W"];
+  if (nose) return ["D"];
+  if (bed) return bed.step === "width" ? ["W"] : ["W", "D"];
   if (rb && rb.step === "face") return DIM_ORDER.filter((k) => AXIS_OF[k] !== rb.plane.axis);
   return DIM_ORDER;
 }
@@ -1110,18 +2075,41 @@ export function evalDim(text, current, max) {
 
 function currentDim(k) {
   if (rb) return placementBox()[k];
+  if (cplane) return k === "W" ? cplane.offset : 0;
+  if (nose) return k === "D" ? nose.D : 0;
+  if (bed) return bed[k] ?? 0;
   if (move && move.step === "drop") { const d = movePose().delta; return { W: d.x, D: d.y, H: d.z }[k]; }
   if (retype) return retypeBox()[k];
   return 0;
 }
 function maxDim(k) {
   if (rb) return placementBox().max[k];
+  if (cplane) return cplane.face ? extrudeRoom(cplane.face) : null;
+  if (nose) return k === "D" ? noseLength() : null;
+  if (bed) return bedBoxBox().max[k] ?? null;
   return null;
 }
 
 /** Apply a typed value to whichever command owns the type-ins. */
 function setTyped(k, v) {
-  if (rb) {
+  if (cplane && cplane.step === "offset") {
+    if (k !== "W") return;
+    cplane.locked = v != null && v >= PLANE_MIN ? v : null;
+    log("plane.typein", { value: dimInputs.W.value, locked: cplane.locked });
+    updatePlane(null);
+  } else if (bed) {
+    if (k !== "W" && k !== "D") return;
+    const min = getModule(bed.moduleId).minSize[k];
+    bed.locked[k] = v != null && v >= min ? v : null;
+    log("bedbox.typein", { dim: k, value: dimInputs[k].value, locked: bed.locked[k], step: bed.step });
+    if (k === "W") bedWidth(null); else if (bed.step === "depth") bedDepth(null);
+    drawBedBox(null);
+  } else if (nose) {
+    if (k !== "D") return;
+    nose.locked = v != null && v >= getModule(nose.moduleId).minSize.D ? v : null;
+    log("nose.typein", { value: dimInputs.D.value, locked: nose.locked });
+    if (nose.step === "drag") updateNose(null);
+  } else if (rb) {
     const min = minSizes(getModule(placing))[k];
     rb.locked[k] = v != null && v >= min ? v : null;
     log("place.typein", { dim: k, value: dimInputs[k].value, locked: rb.locked[k] });
@@ -1164,12 +2152,18 @@ for (const k of DIM_ORDER) {
     } else if (e.key === "Enter") {
       e.preventDefault();
       commitDim(k);
-      if (rb) finishPlacement("enter");
+      if (nose) finishNose("enter");
+      else if (cplane) { if (cplane.step === "offset") finishPlane("enter"); }
+      else if (bed) { if (bed.step === "width") bedLockWidth("enter"); else finishBedBox("enter"); }
+      else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else if (retype) endRetype(true);
     } else if (e.key === "Escape") {
       e.preventDefault();
-      if (rb) cancelPlacement();
+      if (nose) cancelNose();
+      else if (cplane) cancelPlane();
+      else if (bed) cancelBedBox();
+      else if (rb) cancelPlacement();
       else if (move) cancelMove();
       else if (retype) endRetype(false);
     }
@@ -1181,19 +2175,46 @@ for (const k of DIM_ORDER) {
 
 window.addEventListener("keydown", (e) => {
   if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
-  const typing = rb || (move && move.step === "drop") || retype;
+  if (orient) {
+    if (e.key === "Enter") { e.preventDefault(); finishOrient("enter"); }
+    else if (e.key === "Escape") cancelOrient();
+    return;
+  }
+  if (cplane && cplane.step === "pick") {
+    if (e.key === "Escape") { cancelPlane(); return; }
+    return;
+  }
+  if (nose && nose.step === "ready") {
+    // Preset depth is already shown: Enter takes it, a digit opens the depth type-in.
+    if (e.key === "Enter") { e.preventDefault(); finishNose("enter"); return; }
+    if (e.key === "Escape") { cancelNose(); return; }
+    if (/^[0-9.+\-*/]$/.test(e.key)) {
+      noseBegin(null);
+      nose.locked = nose.D; updateNose(null);
+      focusDim("D"); dimInputs.D.value = "";
+      return;
+    }
+    return;
+  }
+  const typing = rb || (move && move.step === "drop") || retype || nose || bed || (cplane && cplane.step === "offset");
 
   if (typing) {
     if (e.key === "Tab") { e.preventDefault(); focusDim(focusedDim() || typableDims()[0]); return; }
     if (e.key === "Enter") {
       e.preventDefault();
-      if (rb) finishPlacement("enter");
+      if (nose) finishNose("enter");
+      else if (cplane) finishPlane("enter");
+      else if (bed) { if (bed.step === "width") bedLockWidth("enter"); else finishBedBox("enter"); }
+      else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else endRetype(true);
       return;
     }
     if (e.key === "Escape") {
-      if (rb) cancelPlacement();
+      if (nose) cancelNose();
+      else if (cplane) cancelPlane();
+      else if (bed) cancelBedBox();
+      else if (rb) cancelPlacement();
       else if (move) cancelMove();
       else endRetype(false);
       return;
@@ -1204,6 +2225,7 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (move) cancelMove();
+    else if (cplane) cancelPlane();
     else if (placing) disarm();
     else job.select(null);
     return;
@@ -1211,6 +2233,15 @@ window.addEventListener("keydown", (e) => {
   // Armed with a fresh box: digits re-type its size.
   if (placing && lastCreated && !e.ctrlKey && /^[0-9.+\-*/]$/.test(e.key)) {
     if (beginRetype()) { focusDim("W"); dimInputs.W.value = ""; }
+    return;
+  }
+
+  if ((e.key === "p" || e.key === "P") && !e.ctrlKey) { startPlane(); return; }
+
+  const pl = job.getSelectedPlane();
+  if (pl && (e.key === "Delete" || e.key === "Backspace")) {
+    log("key.delete", { id: pl.id });
+    job.removePlane(pl.id);
     return;
   }
 
@@ -1237,20 +2268,11 @@ window.addEventListener("keydown", (e) => {
     log("key.delete", { id: sel.id });
     job.removeCabinet(sel.id);
   } else if (e.key === "r" || e.key === "R") {
+    if (getModule(sel.moduleId).noOrient) { log("key.rotate", { id: sel.id, blocked: "module has a fixed door side" }); return; }
     log("key.rotate", { id: sel.id, from: sel.pose.rotZ || 0 });
     // Rotate 90° about the envelope centre.
-    const env = envelopeBox(sel, job.resultFor(sel.id));
-    const cx = (env.x0 + env.x1) / 2;
-    const cy = (env.y0 + env.y1) / 2;
-    const a0 = ((sel.pose.rotZ || 0) * Math.PI) / 180;
-    const a1 = a0 + Math.PI / 2;
-    const wx = sel.pose.x + cx * Math.cos(a0) - cy * Math.sin(a0);
-    const wy = sel.pose.y + cx * Math.sin(a0) + cy * Math.cos(a0);
-    job.setPose(sel.id, {
-      ...sel.pose,
-      rotZ: ((sel.pose.rotZ || 0) + 90) % 360,
-      x: job.snap(wx - (cx * Math.cos(a1) - cy * Math.sin(a1))),
-      y: job.snap(wy - (cx * Math.sin(a1) + cy * Math.cos(a1))),
-    });
+    job.setPose(sel.id, poseRotatedTo(sel, (sel.pose.rotZ || 0) + 90));
+  } else if (e.key === "o" || e.key === "O") {
+    startOrient(sel.id);
   }
 });

@@ -3,6 +3,42 @@ const path = require("path");
 const fs = require("fs");
 
 const JOB_FILTERS = [{ name: "Cab Lab job", extensions: ["json"] }];
+const DXF_FILTERS = [{ name: "DXF drawing", extensions: ["dxf"] }];
+
+// --- user settings -------------------------------------------------------------
+// <userData>/settings.json: user defaults (e.g. the Vehicle space the dialog
+// starts with). Written atomically (tmp + rename) the moment the user saves a
+// default, so a crash or a kill never loses it or leaves half a file.
+const SETTINGS_FILE = () => path.join(app.getPath("userData"), "settings.json");
+
+ipcMain.handle("settings:read", () => {
+  try {
+    return { path: SETTINGS_FILE(), text: fs.readFileSync(SETTINGS_FILE(), "utf8") };
+  } catch (err) {
+    return { path: SETTINGS_FILE(), text: null, missing: err && err.code === "ENOENT", error: err && err.code !== "ENOENT" ? err.message : null };
+  }
+});
+ipcMain.handle("settings:write", (_event, text) => {
+  const file = SETTINGS_FILE();
+  const tmp = `${file}.tmp`;
+  try {
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    fs.writeFileSync(tmp, String(text), "utf8");
+    fs.renameSync(tmp, file);
+    return { ok: true, path: file };
+  } catch (err) {
+    try { fs.unlinkSync(tmp); } catch (_) { /* nothing to clean */ }
+    return { ok: false, path: file, error: err.message };
+  }
+});
+
+ipcMain.handle("dxf:open", async (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const res = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: DXF_FILTERS });
+  if (res.canceled || !res.filePaths.length) return null;
+  const filePath = res.filePaths[0];
+  return { path: filePath, text: fs.readFileSync(filePath, "utf8") };
+});
 
 // --- usage log ---------------------------------------------------------------
 // logs/usage.jsonl   append-only, rotated at 5 MB to usage.1.jsonl

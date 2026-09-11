@@ -1,11 +1,12 @@
 // Shell wiring: top bar, module rail, drawer, status bar, file actions.
 import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
 import * as job from "./job.js";
-import { MODULES, PLANNED_MODULES } from "./modules.js";
-import { syncCabinets } from "./cabinets3d.js";
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove } from "./interact.js";
+import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
+import { syncCabinets, syncPlanes } from "./cabinets3d.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove, startOrient, startPlane } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
+import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
 
 attachJob(job);
@@ -15,29 +16,83 @@ const $$ = (sel, root = document) => Array.from(root.querySelectorAll(sel));
 
 // --- module rail ---------------------------------------------------------------
 const list = $("#moduleList");
-for (const mod of Object.values(MODULES)) {
+const rail = $("#leftrail");
+const grouped = new Set(MODULE_GROUPS.flatMap((g) => g.items.map((i) => i.moduleId).filter(Boolean)));
+
+function moduleButton(mod, label = mod.label, sub = mod.sub) {
   const btn = document.createElement("button");
   btn.className = "rail-item";
   btn.dataset.module = mod.id;
+  if (mod.requires) btn.dataset.requires = mod.requires;
   btn.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span>`;
-  $(".rail-name", btn).textContent = mod.label;
-  $(".rail-sub", btn).textContent = mod.sub;
+  $(".rail-name", btn).textContent = label;
+  $(".rail-sub", btn).textContent = sub;
   btn.addEventListener("click", () => {
     if (getPlacingModule() === mod.id) disarm();
     else armPlacement(mod.id);
   });
-  list.append(btn);
+  return btn;
 }
-for (const mod of PLANNED_MODULES) {
+function plannedButton(label, sub) {
   const btn = document.createElement("button");
   btn.className = "rail-item";
   btn.disabled = true;
   btn.title = "Not wired yet";
   btn.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span>`;
-  $(".rail-name", btn).textContent = mod.label;
-  $(".rail-sub", btn).textContent = mod.sub;
-  list.append(btn);
+  $(".rail-name", btn).textContent = label;
+  $(".rail-sub", btn).textContent = sub;
+  return btn;
 }
+
+for (const mod of Object.values(MODULES)) {
+  if (!grouped.has(mod.id)) list.append(moduleButton(mod));
+}
+
+// Groups: one rail entry; hovering it opens a flyout of sub-modules beside the rail.
+let openFlyout = null;
+function closeFlyout() {
+  if (!openFlyout) return;
+  openFlyout.classList.add("hidden");
+  openFlyout.parentElement.classList.remove("open");
+  openFlyout = null;
+}
+for (const group of MODULE_GROUPS) {
+  const wrap = document.createElement("div");
+  wrap.className = "rail-group";
+  wrap.dataset.group = group.id;
+  const head = document.createElement("button");
+  head.className = "rail-item rail-group-head";
+  head.dataset.group = group.id;
+  head.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span><span class="rail-caret">›</span>`;
+  $(".rail-name", head).textContent = group.label;
+  $(".rail-sub", head).textContent = group.sub;
+  const fly = document.createElement("div");
+  fly.className = "rail-flyout hidden";
+  fly.append(Object.assign(document.createElement("div"), { className: "rail-title", textContent: group.label }));
+  for (const item of group.items) {
+    if (item.moduleId && MODULES[item.moduleId]) fly.append(moduleButton(MODULES[item.moduleId], item.label, item.sub));
+    else fly.append(plannedButton(item.label, item.sub));
+  }
+  const open = () => {
+    if (openFlyout && openFlyout !== fly) closeFlyout();
+    const r = head.getBoundingClientRect();
+    const rr = rail.getBoundingClientRect();
+    fly.style.left = `${rr.right}px`;
+    fly.style.top = `${r.top}px`;
+    fly.classList.remove("hidden");
+    wrap.classList.add("open");
+    openFlyout = fly;
+    log("rail.group.open", { group: group.id });
+  };
+  wrap.addEventListener("mouseenter", open);
+  wrap.addEventListener("mouseleave", closeFlyout);
+  head.addEventListener("click", () => (openFlyout === fly ? closeFlyout() : open()));
+  wrap.append(head, fly);
+  list.append(wrap);
+}
+window.addEventListener("resize", closeFlyout);
+rail.addEventListener("scroll", closeFlyout);
+for (const mod of PLANNED_MODULES) list.append(plannedButton(mod.label, mod.sub));
 $("[data-space]").addEventListener("click", () => {
   disarm();
   job.select(null);
@@ -47,15 +102,38 @@ function refreshRail() {
   const placing = getPlacingModule();
   const sel = job.getSelected();
   $$("#leftrail .rail-item").forEach((b) => {
+    if (b.dataset.requires) {
+      // Attached modules wait for the cabinet they attach to (Bed Box needs the Bedroom body).
+      const has = job.getJob().cabinets.some((c) => c.moduleId === b.dataset.requires);
+      b.disabled = !has;
+      b.title = has ? "" : `Place the ${MODULES[b.dataset.requires].label} body first`;
+    }
+    if (b.dataset.group) {
+      const group = MODULE_GROUPS.find((g) => g.id === b.dataset.group);
+      b.classList.toggle("active", !!placing && group.items.some((i) => i.moduleId === placing));
+      return;
+    }
     b.classList.toggle("active", b.dataset.module ? b.dataset.module === placing : (!placing && !sel && b.hasAttribute("data-space")));
   });
   const mode = getMode();
   const HINTS = {
-    armed: placing ? `Placing ${MODULES[placing].label} — click a corner to start · Shift+click repeats the last size · digits re-size the last box · Esc to stop` : "",
+    armed: placing
+      ? MODULES[placing].placement === "ceiling"
+        ? `Placing ${MODULES[placing].label} — click a corner where a wall meets the ceiling · W runs along that wall · draw on the ceiling, the wall or a side face · Esc to stop`
+        : `Placing ${MODULES[placing].label} — click a corner to start · Shift+click repeats the last size · digits re-size the last box · Esc to stop`
+      : "",
     face: "Draw the rectangle on this face · Tab / digits type its two sizes · click the opposite corner · Enter creates with the preset depth",
     extrude: "Pull the rectangle off the face (one way only) · snaps to faces and corners · click or Enter to create · Esc to restart",
     "move.grab": "Move — click the point to grab (a corner of the cabinet works best) · Esc to cancel",
     "move.drop": "Move — click the target point · Tab types ΔX ΔY ΔZ · Ctrl+click copies · Esc to cancel",
+    "orient.pick": "Face — click a side of the cabinet; its doors will face that way · Esc to cancel",
+    "orient.pending": "Face — orange side is pending · click another side to change · click elsewhere or Enter to confirm · Esc restores",
+    "nose.ready": "Bedroom fills the nose at the preset depth — click to drag its room-side face · Enter takes it as shown · digits type the depth · Esc cancels",
+    "nose.drag": "Drag the room-side face along the van · snaps to roof breaks, the seam and cabinet faces · type “From front” · click or Enter to create · Esc cancels",
+    "bedbox.width": "Bed Box — width: move sideways, the line grows symmetrically from the centre line · type W · click or Enter to lock · Esc cancels",
+    "bedbox.depth": "Bed Box — length: pull into the room from the body face · snaps to cabinet faces · type D · click or Enter to create · Esc cancels",
+    "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
+    "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
   };
   $("#modeHint").textContent = HINTS[mode] || "";
 }
@@ -100,6 +178,17 @@ function refreshStatus() {
   $('[data-action="redo"]').disabled = !job.canRedo();
   $('[data-action="move"]').disabled = !sel;
   $('[data-action="move"]').classList.toggle("active", getMode().startsWith("move"));
+  // Face: not for modules with a fixed door side (an overhead's doors always face the room).
+  const orientable = job.getJob().cabinets.some((c) => !MODULES[c.moduleId].noOrient);
+  $('[data-action="orient"]').disabled = sel ? !!MODULES[sel.moduleId].noOrient : !orientable;
+  $('[data-action="orient"]').title = sel && MODULES[sel.moduleId].noOrient
+    ? `Face — ${MODULES[sel.moduleId].label} has one door side (toward the room)`
+    : "Face (O) — click a side; doors face that way · Enter confirms · Esc restores";
+  $('[data-action="orient"]').classList.toggle("active", getMode().startsWith("orient"));
+  $('[data-action="plane"]').disabled = !job.hasSpace();
+  $('[data-action="plane"]').classList.toggle("active", getMode().startsWith("plane"));
+  const pl = job.getSelectedPlane();
+  if (pl) $("#stSelection").textContent = `Selection: ${pl.id} (Plane)`;
 }
 
 // --- file actions -------------------------------------------------------------------
@@ -136,8 +225,10 @@ const ACTIONS = {
   undo: () => job.undo(),
   redo: () => job.redo(),
   move: () => startMove(),
+  orient: () => startOrient(),
+  plane: () => startPlane(),
 };
-$$("#topbar [data-action]").forEach((btn) => {
+$$("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());
 });
 
@@ -181,6 +272,7 @@ function refreshAll() {
   $("#emptyState").classList.toggle("hidden", job.hasSpace());
   $$("#moduleList .rail-item[data-module]").forEach((b) => { b.disabled = !job.hasSpace(); });
   syncCabinets();
+  syncPlanes();
   maybeRenderPanel();
   refreshRail();
   refreshStatus();
@@ -192,4 +284,6 @@ job.onChange(refreshAll);
 onModeChange(() => { refreshRail(); refreshStatus(); });
 refreshAll();
 setView("3d");
+// User defaults (settings.json) must be in memory before the dialog offers them.
+await loadSettings();
 if (!job.hasSpace()) openSpaceDialog();

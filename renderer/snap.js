@@ -3,8 +3,9 @@
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
 import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
-import { getJob, getSpace, onChange, snap } from "./job.js";
+import { getJob, getSpace, getPlanes, onChange, snap } from "./job.js";
 import { envelopeFootprint } from "./cabinets3d.js";
+import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
 
 export const SNAP_RADIUS_PX = 14;
 
@@ -55,7 +56,18 @@ function build() {
       const [nx, ny] = sp.floor[(i + 1) % n];
       const dirs = [unit(px - x, py - y, 0), unit(nx - x, ny - y, 0)];
       add(x, y, 0, "space", [...dirs, [0, 0, 1]]);
-      add(x, y, sp.height, "space", [...dirs, [0, 0, -1]]);
+      add(x, y, clearHeightAt(sp, x, y), "space", [...dirs, [0, 0, -1]]);
+    }
+    // Roof vertices (where the slope changes) on both side walls, with the roof edge directions.
+    const pr = sp.profile || [];
+    for (let i = 0; i < pr.length; i += 1) {
+      const [y, z] = pr[i];
+      if (y <= sp.bounds.minY + 1e-6 || y >= sp.bounds.maxY - 1e-6) continue;
+      const dirs = [[1, 0, 0], [-1, 0, 0], [0, 0, -1]];
+      if (i > 0) dirs.push(unit(0, pr[i - 1][0] - y, pr[i - 1][1] - z));
+      if (i < pr.length - 1) dirs.push(unit(0, pr[i + 1][0] - y, pr[i + 1][1] - z));
+      add(sp.bounds.minX, y, z, "space", dirs);
+      add(sp.bounds.maxX, y, z, "space", dirs);
     }
     for (const o of sp.obstacles || []) {
       for (const x of [o.x0, o.x1]) for (const y of [o.y0, o.y1]) for (const z of [o.z0, o.z1]) add(x, y, z, "obstacle", AXIS_DIRS);
@@ -71,6 +83,18 @@ function build() {
     for (const [x, y] of fp.corners) {
       add(x, y, fp.z0, cab.id, [...dirs, [0, 0, 1]]);
       add(x, y, fp.z1, cab.id, [...dirs, [0, 0, -1]]);
+    }
+  }
+  // Construction planes: their outline vertices (plane ∩ walls / roof / floor).
+  for (const pl of getPlanes()) {
+    const slice = slicePlane(sp, pl.axis, pl.value);
+    if (!slice) continue;
+    const n = slice.outline.length;
+    for (let i = 0; i < n; i += 1) {
+      const a = slice.outline[i];
+      const prev = slice.outline[(i + n - 1) % n];
+      const next = slice.outline[(i + 1) % n];
+      add(a.x, a.y, a.z, pl.id, [unit(prev.x - a.x, prev.y - a.y, prev.z - a.z), unit(next.x - a.x, next.y - a.y, next.z - a.z)]);
     }
   }
   return Array.from(map.values());
@@ -110,10 +134,13 @@ function buildPlanes() {
     // Box floor edges: 0 front (minY), 1 right (maxX), 2 back (maxY), 3 left (minX).
     face("x", b.minX, +1, "space", "Left wall", ext, walls.has(3));
     face("x", b.maxX, -1, "space", "Right wall", ext, walls.has(1));
-    face("y", b.minY, +1, "space", "Front wall", ext, walls.has(0));
+    // The front wall is only as tall as the roof is there (the nose of a vehicle).
+    face("y", b.minY, +1, "space", "Front wall", { ...ext, z: [0, clearHeightAt(sp, b.minX, b.minY)] }, walls.has(0));
     face("y", b.maxY, -1, "space", "Back wall", ext, walls.has(2));
     face("z", 0, +1, "space", "Floor", ext);
-    face("z", sp.height, -1, "space", "Ceiling", ext);
+    // The flat ceiling is pickable; a sloped roof is not a working plane (it still stops boxes).
+    const flatFrom = sp.flatFromY ?? b.minY;
+    if (b.maxY - flatFrom > 1) face("z", sp.height, -1, "space", "Ceiling", { ...ext, y: [flatFrom, b.maxY] });
   }
   for (const cab of getJob().cabinets) {
     const fp = envelopeFootprint(cab, cab.pose);
@@ -124,6 +151,11 @@ function buildPlanes() {
     face("y", fp.maxY, +1, cab.id, `${cab.id} back face`, ext);
     face("z", fp.z0, -1, cab.id, `${cab.id} bottom`, ext);
     face("z", fp.z1, +1, cab.id, `${cab.id} top`, ext);
+  }
+  for (const pl of getPlanes()) {
+    const slice = slicePlane(sp, pl.axis, pl.value);
+    if (!slice) continue;
+    face(pl.axis, pl.value, pl.dir, pl.id, pl.from?.label ? `Offset ${Math.round(pl.offset)} from ${pl.from.label}` : pl.id, slice.ext);
   }
   return out;
 }
@@ -150,7 +182,10 @@ export function extrudeRoom(f) {
   const b = sp.bounds;
   if (f.axis === "x") return f.dir > 0 ? b.maxX - f.value : f.value - b.minX;
   if (f.axis === "y") return f.dir > 0 ? b.maxY - f.value : f.value - b.minY;
-  return f.dir > 0 ? sp.height - f.value : f.value;
+  // Up: to the roof, which may be lower over part of the face (a top under the nose).
+  // A bare plane (rb.plane has no ext) spans the whole space.
+  const ys = f.ext && f.ext.y ? f.ext.y : [b.minY, b.maxY];
+  return f.dir > 0 ? minClearHeight(sp, ys[0], ys[1]) - f.value : f.value;
 }
 
 /**
@@ -166,6 +201,26 @@ export function preferDrawable(faces) {
   const z = pool.filter((s) => s.f.axis === "z");
   const pick = (z.length ? z : pool).sort((a, b) => b.room - a.room || (b.f.source === "space" ? 1 : 0) - (a.f.source === "space" ? 1 : 0));
   return pick[0].f;
+}
+
+/**
+ * If this face has no outward room, pull the other way on the same plane when
+ * that way is into the space. Typical case: a cabinet front flush with the
+ * front wall (`dir` out of the room, 0 mm) — switch to the wall's inward dir.
+ * Axis and value never change. A cabinet that already has room keeps its dir
+ * (do not flip a box sitting in the middle of the room). An empty wall that
+ * is not pickable from this camera is not introduced here.
+ */
+export function drawableOn(face) {
+  if (!face || extrudeRoom(face) > 1) return face;
+  const same = facePlanes().filter((f) => (
+    f.source === "space" && f.pickable
+    && f.axis === face.axis && Math.abs(f.value - face.value) < 0.5
+    && extrudeRoom(f) > 1
+  ));
+  if (same[0]) return same[0];
+  const flipped = { ...face, dir: -face.dir };
+  return extrudeRoom(flipped) > 1 ? flipped : face;
 }
 
 /**
@@ -363,13 +418,15 @@ export function pointOnLine(clientX, clientY, from, dir) {
 
 /**
  * Nearest feature point to the cursor within SNAP_RADIUS_PX, or null.
- * `exclude` skips points that came only from the given cabinet id.
+ * `exclude` skips points that came only from the given cabinet id;
+ * `filter(p)` keeps only some points (a ceiling-hung module starts on a ceiling edge).
  */
-export function nearestSnap(clientX, clientY, { exclude = null, maxPx = SNAP_RADIUS_PX * uiScale() } = {}) {
+export function nearestSnap(clientX, clientY, { exclude = null, maxPx = SNAP_RADIUS_PX * uiScale(), filter = null } = {}) {
   let best = null;
   let bestD = maxPx;
   for (const p of snapPoints()) {
     if (exclude && p.sources.every((s) => s === exclude)) continue;
+    if (filter && !filter(p)) continue;
     const c = toClient(p.x, p.y, p.z);
     if (c.behind) continue;
     const d = Math.hypot(c.x - clientX, c.y - clientY);

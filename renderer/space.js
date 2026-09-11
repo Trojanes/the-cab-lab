@@ -107,10 +107,76 @@ const wallMat = new THREE.MeshStandardMaterial({
   depthWrite: false,
 });
 const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x55606f, roughness: 0.9, transparent: true, opacity: 0.6 });
+const roofMat = new THREE.MeshStandardMaterial({
+  color: 0x46526a,
+  roughness: 0.9,
+  transparent: true,
+  opacity: 0.22,
+  side: THREE.DoubleSide,
+  depthWrite: false,
+});
+
+/** Roof height at y from the resolved profile (piecewise linear, constant across X). */
+function roofZ(resolved, y) {
+  const pr = resolved.profile;
+  if (!pr || pr.length < 2) return resolved.height;
+  if (y <= pr[0][0]) return pr[0][1];
+  for (let i = 0; i < pr.length - 1; i += 1) {
+    const [y0, z0] = pr[i];
+    const [y1, z1] = pr[i + 1];
+    if (y <= y1 + 1e-9) return y1 - y0 < 1e-9 ? Math.min(z0, z1) : z0 + ((z1 - z0) * (y - y0)) / (y1 - y0);
+  }
+  return pr[pr.length - 1][1];
+}
+
+/**
+ * Top edge of a wall standing on floor edge a→b as [[u, z], ...] with u along
+ * the edge: flat for edges across the van (X), following the roof profile for
+ * edges along it (Y).
+ */
+function wallTop(resolved, a, b) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const alongY = Math.abs(b[0] - a[0]) < 1e-6;
+  if (!alongY) {
+    const z = roofZ(resolved, a[1]);
+    return [[0, z], [len, z]];
+  }
+  const dir = Math.sign(b[1] - a[1]);
+  const top = [[0, roofZ(resolved, a[1])]];
+  const inside = (resolved.profile || []).filter(([y]) => (y - a[1]) * dir > 1e-6 && (b[1] - y) * dir > 1e-6);
+  if (dir < 0) inside.reverse();
+  for (const [y, z] of inside) top.push([Math.abs(y - a[1]), z]);
+  top.push([len, roofZ(resolved, b[1])]);
+  return top;
+}
+
+/** A vertical polygon standing on floor edge a→b (1 mm outside it), closed by `top`. */
+function wallMesh(a, b, top, offset = 0.5) {
+  const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
+  const ux = (b[0] - a[0]) / len;
+  const uy = (b[1] - a[1]) / len;
+  // Outward normal for a CCW polygon is to the right of the edge direction.
+  const nx = uy;
+  const ny = -ux;
+  const poly2 = [[0, 0], [len, 0], ...top.slice().reverse()];
+  const tris = THREE.ShapeUtils.triangulateShape(poly2.map(([u, z]) => new THREE.Vector2(u, z)), []);
+  const pos = [];
+  for (const t of tris) {
+    for (const idx of t) {
+      const [u, z] = poly2[idx];
+      pos.push(a[0] + ux * u + nx * offset, a[1] + uy * u + ny * offset, z);
+    }
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.computeVertexNormals();
+  return new THREE.Mesh(geo, wallMat);
+}
 
 /**
  * Draw a resolved space (see spaces.js): floor polygon, walls along the
- * listed edges, obstacles, and the volume outline. Pass null to clear.
+ * listed edges (their tops follow the roof profile), the sloped roof panels,
+ * obstacles, and the volume outline. Pass null to clear.
  */
 export function drawSpace(resolved) {
   room.clear();
@@ -123,21 +189,30 @@ export function drawSpace(resolved) {
   floorMesh.position.z = 0.5;
   room.add(floorMesh);
 
-  // Walls: a 1 mm slab standing on each listed floor edge, drawn just outside it.
   const n = floor.length;
   for (const i of walls || []) {
     const a = floor[i % n];
     const b = floor[(i + 1) % n];
-    const len = Math.hypot(b[0] - a[0], b[1] - a[1]);
-    if (len < 1) continue;
-    const ang = Math.atan2(b[1] - a[1], b[0] - a[0]);
-    const wall = new THREE.Mesh(new THREE.BoxGeometry(len, 1, H), wallMat);
-    // Outward normal for a CCW polygon is to the right of the edge direction.
-    const nx = Math.sin(ang);
-    const ny = -Math.cos(ang);
-    wall.position.set((a[0] + b[0]) / 2 + nx * 0.5, (a[1] + b[1]) / 2 + ny * 0.5, H / 2);
-    wall.rotation.z = ang;
-    room.add(wall);
+    if (Math.hypot(b[0] - a[0], b[1] - a[1]) < 1) continue;
+    room.add(wallMesh(a, b, wallTop(resolved, a, b)));
+  }
+
+  // Sloped roof: one panel per profile segment that is not the flat ceiling.
+  const pr = resolved.profile || [[bounds.minY, H], [bounds.maxY, H]];
+  const roofPos = [];
+  for (let i = 0; i < pr.length - 1; i += 1) {
+    const [y0, z0] = pr[i];
+    const [y1, z1] = pr[i + 1];
+    if (y1 - y0 < 1e-6 || (Math.abs(z0 - H) < 0.01 && Math.abs(z1 - H) < 0.01)) continue;
+    const x0 = bounds.minX;
+    const x1 = bounds.maxX;
+    roofPos.push(x0, y0, z0, x1, y0, z0, x1, y1, z1, x0, y0, z0, x1, y1, z1, x0, y1, z1);
+  }
+  if (roofPos.length) {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(roofPos, 3));
+    geo.computeVertexNormals();
+    room.add(new THREE.Mesh(geo, roofMat));
   }
 
   for (const o of obstacles || []) {
@@ -146,15 +221,23 @@ export function drawSpace(resolved) {
     room.add(m);
   }
 
-  // Outline of the space volume.
+  // Outline of the space volume: floor edges, verticals up to the roof, roof edges along the profile.
   const e = [];
   for (let i = 0; i < n; i += 1) {
     const a = floor[i];
     const b = floor[(i + 1) % n];
     e.push(a[0], a[1], 0, b[0], b[1], 0);
-    e.push(a[0], a[1], H, b[0], b[1], H);
-    e.push(a[0], a[1], 0, a[0], a[1], H);
+    e.push(a[0], a[1], 0, a[0], a[1], roofZ(resolved, a[1]));
+    const top = wallTop(resolved, a, b);
+    const len = Math.hypot(b[0] - a[0], b[1] - a[1]) || 1;
+    for (let k = 0; k < top.length - 1; k += 1) {
+      const p = top[k];
+      const q = top[k + 1];
+      e.push(a[0] + ((b[0] - a[0]) * p[0]) / len, a[1] + ((b[1] - a[1]) * p[0]) / len, p[1], a[0] + ((b[0] - a[0]) * q[0]) / len, a[1] + ((b[1] - a[1]) * q[0]) / len, q[1]);
+    }
   }
+  // Cross lines at every roof vertex so the slope reads from any angle.
+  for (const [y, z] of pr) if (y > bounds.minY + 1e-6 && y < bounds.maxY - 1e-6) e.push(bounds.minX, y, z, bounds.maxX, y, z);
   room.add(lineSegments(e, 0x6b7784));
 }
 
@@ -174,6 +257,10 @@ export function setView(name) {
     controls.target.set(cx, cy, 0);
   } else if (name === "front") {
     camera.position.set(cx, -span * 1.6, H / 2);
+    controls.target.set(cx, cy, H / 2);
+  } else if (name === "side") {
+    // From the left (−X), looking across the van: the roof profile reads as drawn.
+    camera.position.set(cx - span * 1.6, cy, H / 2);
     controls.target.set(cx, cy, H / 2);
   } else {
     camera.position.set(cx + span * 0.9, -span * 1.25, span * 0.85);

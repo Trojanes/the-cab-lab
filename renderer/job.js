@@ -4,18 +4,23 @@
 import { getModule } from "./modules.js";
 import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
+import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
 
 // A new job has no space yet: defining the space is step one.
 function newJob() {
+  const materials = defaultMaterials();
   return {
     version: "job.v2",
     units: "mm",
     origin: "front-left floor corner; X right, Y back, Z up",
     space: null, // { kind, params } once defined
+    finish: materials.finish, // carcass White Stipple; door { series, mode, colors }
+    stock: materials.stock, // carcass / partition / door thicknesses
     cabinets: [],
+    planes: [], // construction planes: { id, axis, value, dir, offset, from }
   };
 }
 
@@ -23,13 +28,17 @@ function newJob() {
 function migrate(obj) {
   if (obj.version === "job.v1") {
     const s = obj.space || {};
-    return {
+    obj = {
       ...obj,
       version: "job.v2",
       origin: "front-left floor corner; X right, Y back, Z up",
       space: s.width ? { kind: "box", params: { width: s.width, depth: s.depth, height: s.height } } : null,
+      planes: Array.isArray(obj.planes) ? obj.planes : [],
     };
   }
+  if (!Array.isArray(obj.planes)) obj.planes = [];
+  obj.finish = normalizeFinish(obj.finish);
+  obj.stock = normalizeStock(obj.stock);
   return obj;
 }
 
@@ -65,6 +74,12 @@ export function getSpace() {
 }
 export function getSelectedId() { return selectedId; }
 export function getSelected() { return job.cabinets.find((c) => c.id === selectedId) || null; }
+export function getFinish() { return job.finish; }
+export function getStock() { return job.stock; }
+export function getMaterials() { return { finish: job.finish, stock: job.stock }; }
+export function getPlanes() { return job.planes || []; }
+export function getPlane(id) { return (job.planes || []).find((p) => p.id === id) || null; }
+export function getSelectedPlane() { return getPlane(selectedId); }
 export function isDirty() { return dirty; }
 export function getFilePath() { return filePath; }
 export function canUndo() { return undoStack.length > 0; }
@@ -114,7 +129,7 @@ export function undo() {
   redoStack.push(JSON.stringify(job));
   job = JSON.parse(undoStack.pop());
   invalidate();
-  if (selectedId && !job.cabinets.some((c) => c.id === selectedId)) selectedId = null;
+  if (selectedId && !job.cabinets.some((c) => c.id === selectedId) && !(job.planes || []).some((p) => p.id === selectedId)) selectedId = null;
   dirty = true;
   emit("job");
 }
@@ -125,20 +140,79 @@ export function redo() {
   undoStack.push(JSON.stringify(job));
   job = JSON.parse(redoStack.pop());
   invalidate();
-  if (selectedId && !job.cabinets.some((c) => c.id === selectedId)) selectedId = null;
+  if (selectedId && !job.cabinets.some((c) => c.id === selectedId) && !(job.planes || []).some((p) => p.id === selectedId)) selectedId = null;
   dirty = true;
   emit("job");
 }
 
 // --- mutations -------------------------------------------------------------
 
+/**
+ * Modules bound to the space (the bedroom follows the roof) re-read it here:
+ * `withSpace(params, resolved, pose)` returns new params or the same object.
+ */
+function bindToSpace(cab) {
+  const mod = getModule(cab.moduleId);
+  if (!mod.withSpace) return false;
+  const next = mod.withSpace(cab.params, getSpace(), cab.pose);
+  if (next === cab.params) return false;
+  cab.params = next;
+  invalidate(cab.id);
+  return true;
+}
+/**
+ * Modules attached to another cabinet (the bed box follows the bedroom body)
+ * re-read it here: `attach(params, pose, { cabinets, resolved })` returns
+ * { params, pose } (same objects when nothing changed) or null.
+ */
+function bindToJob(cab) {
+  const mod = getModule(cab.moduleId);
+  if (!mod.attach) return false;
+  const next = mod.attach(cab.params, cab.pose, { cabinets: job.cabinets, resolved: getSpace() });
+  if (!next) return false;
+  let changed = false;
+  if (next.params !== cab.params) { cab.params = next.params; invalidate(cab.id); changed = true; }
+  if (next.pose !== cab.pose) { cab.pose = next.pose; changed = true; }
+  return changed;
+}
+function bindAllToSpace() {
+  for (const cab of job.cabinets) bindToSpace(cab);
+  for (const cab of job.cabinets) bindToJob(cab);
+}
+function bindAttached() {
+  for (const cab of job.cabinets) bindToJob(cab);
+}
+
 /** Define or redefine the space. Cabinets are never moved; checks report any that no longer fit. */
-export function defineSpace(kind, params, { history = true } = {}) {
+export function defineSpace(kind, params, { history = true, finish, stock } = {}) {
   if (history) pushHistory();
   job.space = { kind, params: { ...params } };
-  log("space.define", { spaceKind: kind, params: job.space.params, cabinets: job.cabinets.length });
+  if (finish) job.finish = normalizeFinish(finish);
+  if (stock) job.stock = normalizeStock(stock);
+  bindAllToSpace();
+  log("space.define", {
+    spaceKind: kind,
+    params: job.space.params,
+    finish: job.finish,
+    stock: job.stock,
+    cabinets: job.cabinets.length,
+  });
   dirty = true;
   emit("job");
+}
+
+/** Replace the job catalogue. Existing cabinets keep the thicknesses they already copied. */
+export function setMaterials(finish, stock, { history = true } = {}) {
+  const nextFinish = normalizeFinish(finish);
+  const nextStock = normalizeStock(stock);
+  if (JSON.stringify(nextFinish) === JSON.stringify(job.finish) && JSON.stringify(nextStock) === JSON.stringify(job.stock)) return false;
+  if (history) pushHistory();
+  job.finish = nextFinish;
+  job.stock = nextStock;
+  log("materials.set", { finish: job.finish, stock: job.stock });
+  dirty = true;
+  emit("job");
+  return true;
 }
 
 let nextIdCounter = 1;
@@ -158,14 +232,49 @@ export function addCabinet(moduleId, pose, size) {
     id: makeId(),
     moduleId,
     pose: { x: 0, y: 0, z: 0, rotZ: 0, ...pose },
-    params: mod.defaults(s.W, s.D, s.H),
+    params: mod.defaults(s.W, s.D, s.H, { finish: job.finish, stock: job.stock }),
   };
+  bindToSpace(cab);
   job.cabinets.push(cab);
+  bindAttached();
   selectedId = cab.id;
   log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params });
   dirty = true;
   emit("job");
   return cab;
+}
+
+let nextPlaneCounter = 1;
+function makePlaneId() {
+  let id;
+  do {
+    id = `plane-${nextPlaneCounter++}`;
+  } while ((job.planes || []).some((p) => p.id === id));
+  return id;
+}
+
+/** A construction plane: axis-aligned, world-fixed, offset from a picked face. */
+export function addPlane({ axis, value, dir, offset, from }) {
+  pushHistory();
+  if (!Array.isArray(job.planes)) job.planes = [];
+  const plane = { id: makePlaneId(), axis, value, dir, offset, from: from || null };
+  job.planes.push(plane);
+  selectedId = plane.id;
+  log("plane.add", plane);
+  dirty = true;
+  emit("job");
+  return plane;
+}
+
+export function removePlane(id) {
+  const i = (job.planes || []).findIndex((p) => p.id === id);
+  if (i < 0) return;
+  pushHistory();
+  log("plane.remove", { id });
+  job.planes.splice(i, 1);
+  if (selectedId === id) selectedId = null;
+  dirty = true;
+  emit("job");
 }
 
 export function removeCabinet(id) {
@@ -187,6 +296,8 @@ export function updateCabinet(id, fn) {
   const before = cab.params;
   fn(cab);
   if (cab.params !== before) invalidate(id);
+  bindToSpace(cab);
+  bindAttached();
   dirty = true;
   emit("job");
 }
@@ -233,11 +344,12 @@ export function loadJob(obj, path) {
     throw new Error("Not a Cab Lab job file");
   }
   job = migrate(obj);
-  log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space });
+  log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space, finish: job.finish, stock: job.stock });
   selectedId = null;
   undoStack.length = 0;
   redoStack.length = 0;
   invalidate();
+  bindAllToSpace();
   dirty = false;
   filePath = path || null;
   emit("job");

@@ -12,7 +12,8 @@ export function getPreset(moduleId) {
   const o = overrides.get(moduleId) || {};
   return {
     W: o.W ?? null, // width is almost always drawn
-    D: o.D ?? null, // depth: preset once the settings UI exists
+    // Depth: preset once the settings UI exists; nose modules start with their default depth.
+    D: o.D ?? (mod.placement === "nose" ? mod.defaultSize.D : null),
     H: o.H ?? mod.defaultSize.H,
   };
 }
