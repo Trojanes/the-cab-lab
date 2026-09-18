@@ -47,9 +47,16 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/hud.js` — cursor tooltip
 - `renderer/panel.js` — right panel (space or selected cabinet) and drawer tables
 - `renderer/ui.js` — shell wiring
+- `renderer/boardGeom.js` — board solids from generator output (outline extrusion or box); shared by the app and the bench
+- `renderer/benchMenu.js` — right-click on a rail module / placed cabinet → opens the generator bench
+- `renderer/bench/` — the generator bench window (see below)
 - `generators/` — Cab Lab's own cabinet generators (TypeScript). Independent of the Fusion plugin.
+- `generators/_lib/dim.ts` — `dim()` provenance: every board face / outline point records its formula and named terms
+- `generators/_lib/pins.ts` — pins: expected values per preset, checked by the generator tests
+- `generators/<module>/rules.json` + `rules.ts` — rule constants (data + typed wrapper); `presets.json` — golden presets + pins
 - `renderer/gen/` — generated ESM bundles of `generators/*/generator.ts` (do not edit)
-- `build-generators.js` — esbuild script producing `renderer/gen`
+- `build-generators.js` — esbuild script producing `renderer/gen` (`node build-generators.js <name>` builds one)
+- `scripts/pin-presets.ts` — check or re-seed a module's pins from the current output
 - `ensure-electron.js` — repairs a missing `electron.exe`
 - `create-desktop-shortcut.ps1` — builds `The Cab Lab.exe` + desktop shortcut (`npm run shortcut`)
 - `.cursor/rules/cab-lab-core.mdc` — project contract
@@ -156,6 +163,34 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `M` move · `O` face · `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools
 - `Ctrl+Shift+L` open the usage log folder
+
+## Generator bench
+
+A second window for the people who write generators (`docs/bench-spec.md`). Right-click a module on the rail →
+**Generator rules…**, or right-click a placed cabinet → **Open in bench with these params**; `CABLAB_BENCH=1 npm start`
+opens it at launch. One tab per generator + preset; `+` opens another generator.
+
+- **L2 · assembly**: the generator's boards in 3D with the app's camera (wheel-drag orbit, right-drag pan). Click a board
+  for its six faces, a small sphere for an outline / corner / hinge point, a joint dot for a declared contact. Every value
+  shows `value = formula` and its named terms — <span>param</span> (what the preset gave), **rule** (from `rules.json`,
+  with its doc), *ref* (another recorded quantity; click to follow) or a local value. Toolbar: views, explode, frame,
+  `⋯` (opacity, X/Y/Z section, what is drawn). Bottom: **Boards** and one **Audit** list (errors, warnings, declared
+  joints vs measured AABB gap, undeclared plate overlaps, pin diffs — worst first); the status bar shows the counts.
+  `[` / `]` hide the parameter pane / the bottom drawer; parameters are folded behind a size summary (presets are the
+  usual entry point). **Preset ▾** holds save / save-as / pin all / reports folder.
+- **L3 · board**: right-click a board → **Edit board…**: the board flattened in its profile plane, every point labelled,
+  board-local / cabinet frames, the dependency tree of each coordinate, and a *Try a formula* box that re-evaluates one
+  value with the same terms (dashed marker; nothing else moves until the code changes).
+- **Rules**: the left pane lists `rules.json` (● = used in this run). Change a value → say why → the bench writes the
+  file, logs `bench.rule.set` (old, new, reason, affected keys), rebuilds the bundle and reloads.
+- **Pins**: *Pin board* / *Pin all* write the current numbers into the preset; `generator.test.ts` asserts them
+  (`node --experimental-strip-types generators/overheadCabinet/generator.test.ts`). Pinned = protected.
+- **Report…**: writes `logs/bench/<time>-<module>.md` with the selection, its provenance chain, the tried formula and
+  your note; the agent reads it instead of a verbal description.
+
+Only the Overhead generator carries provenance today; a generator joins the bench when it uses `dim()` for its faces and
+points and ships a `presets.json`. Fusion-copy generators are not connected until they follow the OHC architecture
+(`boardFrame: "final"`, boards only). `CABLAB_BENCH_SNAP=<file.png>` screenshots the bench and quits (for checks).
 
 ## Usage log
 

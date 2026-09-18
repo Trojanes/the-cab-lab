@@ -8,6 +8,7 @@ import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
+import { railContext } from "./benchMenu.js";
 
 attachJob(job);
 
@@ -31,6 +32,7 @@ function moduleButton(mod, label = mod.label, sub = mod.sub) {
     if (getPlacingModule() === mod.id) disarm();
     else armPlacement(mod.id);
   });
+  railContext(btn, mod.id);
   return btn;
 }
 function plannedButton(label, sub) {

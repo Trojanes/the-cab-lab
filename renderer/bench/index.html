@@ -1,0 +1,150 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <!--
+    Generator bench (docs/bench-spec.md). Same CSP rule as the app: the inline
+    import map is allowed by its sha256 hash — recompute it if the map changes:
+      node -e "const c=require('crypto');console.log('sha256-'+c.createHash('sha256').update(process.argv[1],'utf8').digest('base64'))" '<exact script content>'
+  -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'sha256-p2wJOWN8rB9YvERkPNjvIDxkJTxs+fOHzf3zG8iFAQc='; style-src 'self'">
+  <title>The Cab Lab — Generator bench</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="stylesheet" href="./bench.css">
+</head>
+<body>
+  <div id="bench">
+
+    <header id="btop">
+      <button class="tb icon" id="leftToggle" title="Parameters &amp; rules pane ([)">☰</button>
+      <div id="tabs" class="tabs"></div>
+      <button class="tb icon" id="tabAdd" title="Open another generator">+</button>
+      <div class="sep"></div>
+      <select id="presetSel" title="Preset"></select>
+      <button class="tb" id="presetMenu" title="Save preset · Pin all · Reports folder">Preset ▾</button>
+      <div class="spacer"></div>
+      <div id="crumb" class="crumb"></div>
+      <div class="spacer"></div>
+      <button class="tb" id="btnReport" title="Write a report for the agent (logs/bench)">Report…</button>
+    </header>
+
+    <aside id="bleft">
+      <button class="pane-title fold-head" id="paramsFold" title="Show / hide the parameters">
+        <span class="fold-caret">▸</span> Parameters <span class="muted" id="paramsSummary"></span>
+      </button>
+      <div id="paramsForm" class="params hidden"></div>
+      <div class="pane-title">Rules <span class="muted" id="rulesFile"></span></div>
+      <div id="rulesList" class="rules"></div>
+    </aside>
+
+    <main id="bcenter">
+      <div id="viewport"></div>
+      <div id="viewport-hud">
+        <span id="viewLabel">3D</span>
+      </div>
+      <div id="cursorTip" class="hidden"></div>
+      <div id="dimInputs" class="hidden"></div>
+
+      <div id="board2d" class="hidden">
+        <div class="b2d-head">
+          <button class="tb" id="b2dBack" title="Back to the assembly">‹ Assembly</button>
+          <span id="b2dTitle" class="b2d-title"></span>
+          <span class="spacer"></span>
+          <label class="field-inline">Frame
+            <select id="b2dFrame">
+              <option value="local">board-local</option>
+              <option value="cabinet">cabinet</option>
+            </select>
+          </label>
+          <label class="field-inline"><input type="checkbox" id="b2dLabels" checked> labels</label>
+          <label class="field-inline"><input type="checkbox" id="b2dInset" checked> 3D inset</label>
+        </div>
+        <div id="b2dSvg" class="b2d-svg"></div>
+      </div>
+
+      <div id="tools" class="tools">
+        <div class="group seg-group" id="viewGroup">
+          <button class="tb seg active" data-view="3d">3D</button>
+          <button class="tb seg" data-view="top">Top</button>
+          <button class="tb seg" data-view="front">Front</button>
+          <button class="tb seg" data-view="side">Side</button>
+        </div>
+        <label class="field-inline" title="Pull boards apart along their offset from the cabinet centre">Explode
+          <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
+        </label>
+        <button class="tb" id="btnFrame" title="Frame the cabinet (F)">Frame</button>
+        <button class="tb" id="moreToggle" title="Opacity · section · what is drawn">⋯</button>
+        <span class="spacer"></span>
+        <button class="tb icon" id="bottomToggle" title="Boards &amp; audit (])">▾</button>
+        <div id="morePop" class="pop hidden">
+          <label class="field-inline">Opacity <input type="range" id="opacity" min="0.15" max="1" step="0.05" value="1"></label>
+          <label class="field-inline">Cut X <input type="range" id="cutX" min="0" max="1" step="0.01" value="1"></label>
+          <label class="field-inline">Cut Y <input type="range" id="cutY" min="0" max="1" step="0.01" value="1"></label>
+          <label class="field-inline">Cut Z <input type="range" id="cutZ" min="0" max="1" step="0.01" value="1"></label>
+          <label class="field-inline"><input type="checkbox" id="showJoints" checked> joints</label>
+          <label class="field-inline"><input type="checkbox" id="showPoints" checked> points</label>
+        </div>
+      </div>
+
+      <section id="bottom">
+        <div class="drawer-tabs">
+          <button class="dtab active" data-dtab="boards">Boards</button>
+          <button class="dtab" data-dtab="audit">Audit <span class="badge" id="auditBadge"></span></button>
+        </div>
+        <div class="drawer-body">
+          <div class="dpane active" data-dpane="boards"></div>
+          <div class="dpane" data-dpane="audit"></div>
+        </div>
+      </section>
+    </main>
+
+    <aside id="bright">
+      <div id="selPanel" class="selpanel"></div>
+    </aside>
+
+    <footer id="bstatus">
+      <span class="st">mm · Z up · cabinet frame</span>
+      <span class="dot"></span>
+      <span class="st" id="stInfo">—</span>
+      <span class="dot"></span>
+      <span class="st badge-row" id="stBadges"></span>
+      <span class="spacer"></span>
+      <span class="st" id="stHint">Wheel-drag orbit · right-drag pan · click a board / point / joint · right-click a board → Edit board · [ ] panes · F frame · Esc back</span>
+    </footer>
+
+  </div>
+
+  <div id="ctxMenu" class="ctx hidden"></div>
+
+  <div id="reportDialog" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">Report for the agent</div>
+      <div class="modal-sub" id="reportSub"></div>
+      <textarea id="reportNote" rows="5" placeholder="What is wrong, and what should it be? e.g. T3.z1 should sit on D1.cut.frontZ0 — the -1 seat is wrong for style 2."></textarea>
+      <div class="kind-errors" id="reportErr"></div>
+      <div class="modal-actions">
+        <button class="tb" data-cancel>Cancel</button>
+        <button class="tb primary" data-ok>Write report</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="ruleDialog" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">Change a rule</div>
+      <div class="modal-sub" id="ruleSub"></div>
+      <div id="ruleAffected" class="rule-affected"></div>
+      <textarea id="ruleReason" rows="3" placeholder="Why? One sentence the agent can learn from."></textarea>
+      <div class="kind-errors" id="ruleErr"></div>
+      <div class="modal-actions">
+        <button class="tb" data-cancel>Cancel</button>
+        <button class="tb primary" data-ok>Write rules.json &amp; rebuild</button>
+      </div>
+    </div>
+  </div>
+
+  <script type="importmap">{"imports":{"three":"../../node_modules/three/build/three.module.js","three/addons/":"../../node_modules/three/examples/jsm/"}}</script>
+  <script type="module" src="./bench.js"></script>
+</body>
+</html>

@@ -4,6 +4,10 @@ import {
   generateOHCSvgPreview,
   generateOverheadCabinet,
 } from "./generator.ts";
+import { checkPins, countPins, type PresetsFile } from "../_lib/pins.ts";
+import presetsRaw from "./presets.json" with { type: "json" };
+
+const presets = presetsRaw as PresetsFile;
 
 const baseParams = {
   style: "style_1",
@@ -157,58 +161,81 @@ function testDividerZBaseSitsOnBottomPanelTop() {
   assert.equal(divider.x1 - divider.x0, 15);
 }
 
+/**
+ * Every number a board carries is pinned in presets.json (seeded from the
+ * reviewed output, refined from the bench). This replaces the hand-written
+ * box() asserts: pinned = protected, and a failure names the face or point.
+ */
+function testPresetPinsHold() {
+  assert.equal(presets.module, "overheadCabinet");
+  assert.ok(presets.presets.length >= 4, "expected the four reviewed presets");
+  for (const preset of presets.presets) {
+    const result = generateOverheadCabinet(preset.params as never);
+    assert.deepEqual(result.validation.errors, [], `${preset.id}: validation errors`);
+    assert.ok(countPins(preset.pins) > 0, `${preset.id}: no pins — run scripts/pin-presets.ts`);
+    const mismatches = checkPins(result, preset.pins);
+    assert.deepEqual(
+      mismatches,
+      [],
+      `${preset.id}: ${mismatches.length} pinned value(s) differ:\n${mismatches.slice(0, 12).map((m) => `  ${m.path}: expected ${m.expected} got ${m.actual}`).join("\n")}`,
+    );
+  }
+}
+
 function testBoardsAreEmittedInFinalAssembledPose() {
-  // W1200 D350 H400, CPT 15, FPT 16, TCH 40, clearance 2.5.
-  const result = generateOverheadCabinet({
-    cabinetWidth: 1200,
-    cabinetDepth: 350,
-    cabinetHeight: 400,
-    featureWidth: 15,
-    frontPanelThickness: 16,
-    topClearanceHeight: 40,
-    clearance: 2.5,
-    zones: [
-      { id: "zone-1", type: "up_flap", width: 600 },
-      { id: "zone-2", type: "up_flap", width: 600 },
-    ],
-  });
+  // Structure only; the numbers live in presets.json (default-1200-2).
+  const preset = presets.presets.find((p) => p.id === "default-1200-2")!;
+  const result = generateOverheadCabinet(preset.params as never);
   assert.deepEqual(result.validation.errors, []);
+  assert.equal(result.debug.boardFrame, "final");
   const byId = new Map(result.boards.map((board) => [board.id, board]));
-  const box = (id: string) => {
-    const board = byId.get(id)!;
-    return [board.y0, board.y1, board.z0, board.z1];
-  };
-  assert.deepEqual(box("BP"), [0, 350, 0, 15]);
-  assert.deepEqual(box("D0"), [0, 350, 15, 400]);
-  // T1/T2 seat TCH-1 behind the front face, flush with the top.
-  assert.deepEqual(box("T1"), [39, 55, 360, 400]);
-  assert.deepEqual(box("T2"), [55, 70, 360, 400]);
-  // T3 lies in the divider front step: 90 deep, top at H-TCH-1.
-  assert.deepEqual(box("T3"), [0, 90, 344, 359]);
   assert.equal(byId.get("T3")?.profilePlane, "XY");
-  // T4 is a vertical XZ plate on the divider rear notches.
   const t4 = byId.get("T4")!;
-  assert.deepEqual(box("T4"), [317.5, 332.5, 350, 400]);
   assert.equal(t4.profilePlane, "XZ");
   assert.equal(t4.thicknessAxis, "Y");
   assert.ok((t4.profileVector as Array<{ x: number; z: number }>).every((point) => Number.isFinite(point.x) && Number.isFinite(point.z)));
-  assert.equal(Math.max(...(t4.profileVector as Array<{ z: number }>).map((point) => point.z)), 50);
-  // Doors hang 30 below the carcass and stop 1 under T1.
-  assert.deepEqual(box("FP0"), [-16, 0, -30, 359]);
-  // Divider front step (y 0..80 at z 344..360) hosts T3; rear notch hosts T4.
+  // Divider outlines are board-local with the origin on the BP top face.
   const divider = byId.get("D1")!;
-  const profile = divider.cutProfileVector!.map(({ y, z }) => [y, divider.z0 + z]);
-  assert.deepEqual(profile.slice(5, 14), [
-    [350, 15],
-    [350, 365],
-    [334, 365],
-    [334, 400],
-    [70, 400],
-    [70, 360],
-    [80, 360],
-    [80, 344],
-    [0, 344],
-  ]);
+  assert.equal(divider.z0, result.params.featureWidth);
+  assert.ok(divider.cutProfileVector!.some(({ z }) => z < 0), "tongue dips below the outline origin");
+}
+
+function testProvenanceCoversEveryFaceAndPoint() {
+  const preset = presets.presets.find((p) => p.id === "golden-2000-3")!;
+  const result = generateOverheadCabinet(preset.params as never);
+  const prov = result.debug.provenance!;
+  const entries = prov.entries;
+  for (const board of result.boards) {
+    for (const face of ["x0", "x1", "y0", "y1", "z0", "z1"] as const) {
+      const e = entries[`${board.id}.${face}`];
+      assert.ok(e, `${board.id}.${face} has no provenance`);
+      assert.equal(e.value, board[face], `${board.id}.${face} provenance value`);
+      assert.ok(e.formula.length > 0, `${board.id}.${face} formula`);
+    }
+    (board.cutProfileVector ?? []).forEach((p, i) => {
+      assert.equal(entries[`${board.id}.cut[${i}].y`]?.value, p.y, `${board.id}.cut[${i}].y`);
+      assert.equal(entries[`${board.id}.cut[${i}].z`]?.value, p.z, `${board.id}.cut[${i}].z`);
+    });
+    if (board.profilePlane !== "YZ") {
+      const [a, c] = board.profilePlane === "XZ" ? ["x", "z"] : ["x", "y"];
+      (board.profileVector ?? []).forEach((p, i) => {
+        const q = p as Record<string, number>;
+        assert.equal(entries[`${board.id}.pv[${i}].${a}`]?.value, q[a], `${board.id}.pv[${i}].${a}`);
+        assert.equal(entries[`${board.id}.pv[${i}].${c}`]?.value, q[c], `${board.id}.pv[${i}].${c}`);
+      });
+    }
+  }
+  // Named quantities show by name and kind; a bare literal stays in the formula.
+  const step = entries["D1.cut[13].y"]!;
+  assert.equal(step.formula, "frontStepY1 - (T3_DEPTH - 10)");
+  assert.equal(step.terms.T3_DEPTH?.kind, "rule");
+  assert.equal(step.terms.T3_DEPTH?.name, "T3_DEPTH_MM");
+  assert.equal(step.terms.frontStepY1?.kind, "ref");
+  assert.equal(entries["T3.z1"]!.terms.H?.kind, "param");
+  // A default that the user did not give is a rule, not a param.
+  const bare = generateOverheadCabinet({ cabinetWidth: 900, cabinetDepth: 350, cabinetHeight: 400, zones: [{ type: "up_flap", width: 900 }] });
+  assert.equal(bare.debug.provenance!.entries["T1.y0"]!.terms.TCH?.kind, "rule");
+  assert.ok(Object.keys(prov.rules).includes("T3_DEPTH_MM"));
 }
 
 function testDividerBoardThicknessUsesCptNotGrooveSlot() {
@@ -328,13 +355,8 @@ function testNceSingleRangehoodZoneGeometry() {
   });
   assert.deepEqual(result.validation.errors, []);
   const byId = new Map(result.boards.map((board) => [board.id, board]));
-  const top = byId.get("RGHD_TOP");
-  const front = byId.get("RGHD_FRONT");
-  const back = byId.get("RGHD_BACK");
-  assert.ok(top && front && back);
-  assert.deepEqual([top.x0, top.x1, top.y0, top.y1, top.z0, top.z1], [8, 992, 0, 400, 90, 105]);
-  assert.deepEqual([front.x0, front.x1, front.y0, front.y1, front.z0, front.z1], [15, 985, 0, 15, 15, 90]);
-  assert.deepEqual([back.x0, back.x1, back.y0, back.y1, back.z0, back.z1], [15, 985, 385, 400, 15, 90]);
+  // Board boxes are pinned in presets.json (rangehood-1000); features below.
+  assert.ok(byId.get("RGHD_TOP") && byId.get("RGHD_FRONT") && byId.get("RGHD_BACK"));
   const cutout = result.features.find((feature) => feature?.type === "rangehood_bp_cutout");
   assert.deepEqual(cutout?.x, [55, 610]);
   assert.deepEqual(cutout?.y, [57.5, 342.5]);
@@ -439,7 +461,9 @@ const tests = [
   testFrontPanelXUsesOuterAndSharedClearance,
   testOpenZoneDoesNotShiftFollowingPanelDividerIndices,
   testDividerZBaseSitsOnBottomPanelTop,
+  testPresetPinsHold,
   testBoardsAreEmittedInFinalAssembledPose,
+  testProvenanceCoversEveryFaceAndPoint,
   testDividerBoardThicknessUsesCptNotGrooveSlot,
   testGenerateOverheadCabinetBoardsAndFeatures,
   testRelationshipDeclarationsEmbeddedInResult,

@@ -3,6 +3,9 @@
 // re-implements cabinet formulas; it only calls these bundles.
 // These sources are independent of E:\Work\Cursor Project\modules and
 // of the Fusion plugin — do not point this script at those trees.
+//
+//   node build-generators.js                 build everything
+//   node build-generators.js overheadCabinet build one entry (the bench does this after a rule change)
 const path = require("path");
 const esbuild = require("esbuild");
 
@@ -14,10 +17,17 @@ const ENTRIES = [
   { name: "bedroom", entry: path.join(MODULES_DIR, "bedroom", "generator.ts") },
   { name: "bedBox", entry: path.join(MODULES_DIR, "bedBox", "generator.ts") },
   { name: "overheadCabinet", entry: path.join(MODULES_DIR, "overheadCabinet", "generator.ts") },
+  // Shared helpers the bench needs in the browser (pins are read/written there).
+  { name: "pins", entry: path.join(MODULES_DIR, "_lib", "pins.ts") },
 ];
 
-async function main() {
-  for (const { name, entry } of ENTRIES) {
+async function buildGenerators(names = null) {
+  const wanted = names && names.length ? ENTRIES.filter((e) => names.includes(e.name)) : ENTRIES;
+  if (names && names.length && wanted.length !== names.length) {
+    const known = new Set(ENTRIES.map((e) => e.name));
+    throw new Error(`unknown generator entry: ${names.filter((n) => !known.has(n)).join(", ")}`);
+  }
+  for (const { name, entry } of wanted) {
     await esbuild.build({
       entryPoints: [entry],
       bundle: true,
@@ -30,9 +40,14 @@ async function main() {
     });
     console.log("built", name);
   }
+  return wanted.map((e) => e.name);
 }
 
-main().catch((err) => {
-  console.error(err);
-  process.exit(1);
-});
+module.exports = { buildGenerators, ENTRIES };
+
+if (require.main === module) {
+  buildGenerators(process.argv.slice(2)).catch((err) => {
+    console.error(err);
+    process.exit(1);
+  });
+}

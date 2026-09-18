@@ -80,6 +80,8 @@ export interface RelationshipDeclaration {
   allowedHardware: string[];
 }
 
+import type { Provenance } from "../_lib/dim.ts";
+
 export interface OverheadCabinetResult {
   params: Required<
     Pick<OverheadCabinetParams, "cabinetWidth" | "cabinetDepth"> & {
@@ -117,5 +119,7 @@ export interface OverheadCabinetResult {
     dividerCenterlines: number[];
     legacyGeometry?: unknown;
     svgPreview?: string;
+    /** Every board face / outline point / feature coordinate with its formula and named terms (see docs/bench-spec.md). */
+    provenance?: Provenance;
   };
 }

@@ -6,6 +6,7 @@ import { scene, camera } from "./space.js";
 import { getJob, getSelectedId, getSpace, getPlanes, resultFor } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
+import { prismYZ, boardGeometry, boxMesh, boxEdges } from "./boardGeom.js";
 
 export const HANDLE_SIZE = 44;
 
@@ -70,65 +71,6 @@ export function poseFits(cab, pose) {
   return footprintFits(sp, fp.corners, [fp.z0, z1]);
 }
 
-/**
- * Solid from a closed YZ outline [{y, z}, ...] extruded across X from x0 to x1
- * (a board cut to the roof, or the nose slab itself).
- */
-function prismYZ(outline, x0, x1) {
-  const pts = outline.map((p) => new THREE.Vector2(p.y, p.z));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(x1 - x0, 0.1), bevelEnabled: false });
-  // Shape (u, v, w) → world (x0 + w, u, v): u along Y, v up, extrusion along X.
-  geo.applyMatrix4(new THREE.Matrix4().set(0, 0, 1, x0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
-  return geo;
-}
-
-/** Solid from a closed XY outline [{x, y}, ...] extruded up Z from z0 to z1 (an OHC T3 with its LED notch). */
-function prismXY(outline, z0, z1) {
-  const pts = outline.map((p) => new THREE.Vector2(p.x, p.y));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(z1 - z0, 0.1), bevelEnabled: false });
-  geo.translate(0, 0, z0);
-  return geo;
-}
-
-/** Solid from a closed XZ outline [{x, z}, ...] extruded along Y from y0 to y1 (an OHC T4 with its notches, a door). */
-function prismXZ(outline, y0, y1) {
-  // Shape (u, v) = (z, x) so the extrusion axis maps onto +Y without mirroring the solid.
-  const pts = outline.map((p) => new THREE.Vector2(p.z, p.x));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(y1 - y0, 0.1), bevelEnabled: false });
-  // Shape (u, v, w) → world (v, y0 + w, u).
-  geo.applyMatrix4(new THREE.Matrix4().set(0, 1, 0, 0, 0, 0, 1, y0, 1, 0, 0, 0, 0, 0, 0, 1));
-  return geo;
-}
-
-/**
- * Board solid: its `profileVector` outline when the generator gives one (a plate with notches / tongues),
- * else its bounding box. Outlines in the YZ plane are cabinet-local; XY / XZ outlines are aligned so their
- * minimum matches the board's bounding box, like the Fusion adapter does (`_align_body_axis_min`).
- * `cutProfileVector` is relative to the board's own y0 / z0.
- */
-function boardGeometry(b) {
-  const plane = b.profilePlane;
-  const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
-  if (plane === "YZ" && b.thicknessAxis === "X") {
-    const outline = pv ? pv
-      : b.cutProfileVector && b.cutProfileVector.length >= 4 ? b.cutProfileVector.map((p) => ({ y: b.y0 + p.y, z: b.z0 + p.z }))
-        : null;
-    if (outline) return { geo: prismYZ(outline, b.x0, b.x1), cut: true };
-  } else if (plane === "XY" && b.thicknessAxis === "Z" && pv) {
-    const dx = b.x0 - Math.min(...pv.map((p) => p.x));
-    const dy = b.y0 - Math.min(...pv.map((p) => p.y));
-    return { geo: prismXY(pv.map((p) => ({ x: p.x + dx, y: p.y + dy })), b.z0, b.z1), cut: true };
-  } else if (plane === "XZ" && b.thicknessAxis === "Y" && pv) {
-    const dx = b.x0 - Math.min(...pv.map((p) => p.x));
-    const dz = b.z0 - Math.min(...pv.map((p) => p.z));
-    return { geo: prismXZ(pv.map((p) => ({ x: p.x + dx, z: p.z + dz })), b.y0, b.y1), cut: true };
-  }
-  return { geo: null, cut: false };
-}
-
 /** Closed local YZ outline of a nose slab: floor, then the roof profile back toward the room face. */
 export function slabOutline(profile, depth) {
   const top = profile.slice().sort((a, b) => a[0] - b[0]);
@@ -139,20 +81,6 @@ export function applyPose(group, pose) {
   group.position.set(pose.x, pose.y, pose.z);
   group.rotation.set(0, 0, (pose.rotZ || 0) * Math.PI / 180);
   group.updateMatrixWorld(true);
-}
-
-function boxMesh(x0, x1, y0, y1, z0, z1, mat) {
-  const geo = new THREE.BoxGeometry(Math.max(x1 - x0, 0.1), Math.max(y1 - y0, 0.1), Math.max(z1 - z0, 0.1));
-  const mesh = new THREE.Mesh(geo, mat);
-  mesh.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  return mesh;
-}
-
-function boxEdges(x0, x1, y0, y1, z0, z1, mat) {
-  const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0));
-  const lines = new THREE.LineSegments(geo, mat);
-  lines.position.set((x0 + x1) / 2, (y0 + y1) / 2, (z0 + z1) / 2);
-  return lines;
 }
 
 function buildGroup(cab) {

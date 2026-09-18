@@ -533,6 +533,17 @@ button:disabled { cursor: default; opacity: 0.45; }
 .empty.small { font-size: 11px; }
 .empty.ok { color: var(--ok); }
 
+/* context menu (rail / cabinet right-click → generator bench; bench board menu) */
+.ctx {
+  position: fixed; z-index: 100; min-width: 180px; padding: 4px;
+  background: var(--bg-panel-2); border: 1px solid var(--line-strong); border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.ctx.hidden { display: none; }
+.ctx button { display: block; width: 100%; text-align: left; padding: 5px 10px; border-radius: 3px; }
+.ctx button:hover:not(:disabled) { background: var(--bg-hover); }
+.ctx .ctx-title { padding: 4px 10px 2px; color: var(--text-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+
 #topbar .hint { color: var(--accent); font-size: 11px; }
 
 .tb.wide { width: 100%; margin-top: 4px; border: 1px dashed var(--line-strong); color: var(--text-2); }

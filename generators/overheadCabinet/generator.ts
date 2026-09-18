@@ -1,6 +1,7 @@
 import {
   DIVIDER_THICKNESS_MM,
   DEFAULT_ROUTER_DIAMETER_MM,
+  RULES as R,
   boardXRange,
   calculateOverheadGeometry,
   clampRange,
@@ -9,6 +10,7 @@ import {
   type OverheadLegacyGeometry,
   type OutlinePoint,
 } from "./geometry.ts";
+import { alias, beginProvenance, dim, endProvenance, param, provenanceActive, ref, same, type Term } from "../_lib/dim.ts";
 import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
@@ -17,22 +19,22 @@ export * from "./geometry.ts";
 export * from "./svgPreview.ts";
 
 /** Match General Tall / Kitchen / Fridge LED insert groove (mm). */
-const LED_GROOVE_WIDTH = 14.5;
-const LED_GROOVE_DEPTH = 6.5;
+const LED_GROOVE_WIDTH = R.LED_GROOVE_WIDTH_MM.value;
+const LED_GROOVE_DEPTH = R.LED_GROOVE_DEPTH_MM.value;
 /**
  * Clear strip from T3 front edge to the near wall of the main channel.
  * Shared with GT / Kitchen / Fridge: 18 mm land → centerline 25.25.
  */
-const LED_GROOVE_FRONT_LAND_MM = 18;
+const LED_GROOVE_FRONT_LAND_MM = R.LED_GROOVE_FRONT_LAND_MM.value;
 const LED_GROOVE_FRONT_OFFSET = LED_GROOVE_FRONT_LAND_MM + LED_GROOVE_WIDTH / 2;
-const LED_GROOVE_BRANCH_END_INSET = 80;
-const T3_LED_BOARD_DEPTH_FALLBACK = 90;
+const LED_GROOVE_BRANCH_END_INSET = R.LED_GROOVE_BRANCH_END_INSET_MM.value;
+const T3_LED_BOARD_DEPTH_FALLBACK = R.T3_DEPTH_MM.value;
 
 const RANGEHOOD_PRESET_NCE = "NCE";
-const RANGEHOOD_CUTOUT_WIDTH_MM = 555;
-const RANGEHOOD_CUTOUT_DEPTH_MM = 285;
-const RANGEHOOD_MIN_EDGE_MM = 40;
-const RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM = 75;
+const RANGEHOOD_CUTOUT_WIDTH_MM = R.RANGEHOOD_CUTOUT_WIDTH_MM.value;
+const RANGEHOOD_CUTOUT_DEPTH_MM = R.RANGEHOOD_CUTOUT_DEPTH_MM.value;
+const RANGEHOOD_MIN_EDGE_MM = R.RANGEHOOD_MIN_EDGE_MM.value;
+const RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM = R.RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM.value;
 
 interface ResolvedZone {
   id: string;
@@ -56,23 +58,29 @@ interface RangehoodGroup {
   edgeOffsetX: number;
 }
 
+/**
+ * Only what the user gave. Missing values are left undefined so geometry.ts
+ * falls back to the rule constants and the provenance shows them as "rule",
+ * not as a param the user typed.
+ */
 function toInputs(params: OverheadCabinetParams): OverheadCabinetInputs {
+  const opt = (v: number | undefined | null): number | undefined => (v == null ? undefined : Number(v));
   return {
     cabinetWidth: Number(params.cabinetWidth),
     cabinetDepth: Number(params.cabinetDepth),
     cabinetHeight: params.cabinetHeight,
     style: params.style,
-    topClearanceHeight: params.topClearanceHeight ?? 40,
-    frontPanelThickness: params.frontPanelThickness ?? 16,
-    clearance: params.clearance ?? 2.5,
-    hingeHoleDiameter: params.hingeHoleDiameter ?? 35,
-    hingeHoleDepth: params.hingeHoleDepth ?? 12,
-    hingeHoleFromTop: params.hingeHoleFromTop ?? 22.5,
-    hingeHoleFromSide: params.hingeHoleFromSide ?? 100,
-    bottomThickness: params.featureWidth ?? params.bottomThickness ?? DIVIDER_THICKNESS_MM,
-    dividerTongueHeight: params.dividerTongueHeight ?? (params.featureWidth ?? DIVIDER_THICKNESS_MM) / 2 - 0.5,
-    routerDiameter: params.routerDiameter ?? DEFAULT_ROUTER_DIAMETER_MM,
-    featureWidth: params.featureWidth ?? DIVIDER_THICKNESS_MM,
+    topClearanceHeight: opt(params.topClearanceHeight),
+    frontPanelThickness: opt(params.frontPanelThickness),
+    clearance: opt(params.clearance),
+    hingeHoleDiameter: opt(params.hingeHoleDiameter),
+    hingeHoleDepth: opt(params.hingeHoleDepth),
+    hingeHoleFromTop: opt(params.hingeHoleFromTop),
+    hingeHoleFromSide: opt(params.hingeHoleFromSide),
+    bottomThickness: opt(params.featureWidth ?? params.bottomThickness),
+    dividerTongueHeight: opt(params.dividerTongueHeight),
+    routerDiameter: opt(params.routerDiameter),
+    featureWidth: opt(params.featureWidth),
     internalDividerCenterlines: Array.isArray(params.internalDividerCenterlines)
       ? params.internalDividerCenterlines.map(Number)
       : [],
@@ -210,17 +218,23 @@ function internalRangehoodDividerProfile(
   clearHeight: number,
 ): OutlinePoint[] {
   const cpt = inputs.featureWidth ?? DIVIDER_THICKNESS_MM;
-  const effectiveCabinetHeight = (inputs.cabinetHeight ?? 0) - cpt - clearHeight;
+  const P = param({ H: inputs.cabinetHeight ?? 0, CPT: cpt, clearHeight, Cd: inputs.cabinetDepth });
+  const effectiveCabinetHeight = dim(
+    "DividerSideRangehood.effectiveHeight",
+    { H: P.H, CPT: P.CPT, clearHeight: P.clearHeight },
+    (t) => t.H - t.CPT - t.clearHeight,
+  );
   return dividerSideTrimmedOutlinePoints(
-    inputs.cabinetDepth,
-    effectiveCabinetHeight,
-    cpt,
+    P.Cd,
+    ref("DividerSideRangehood.effectiveHeight"),
+    P.CPT,
     inputs.dividerTongueHeight,
     inputs.routerDiameter,
     cpt + 1,
     inputs.topClearanceHeight,
     inputs.style === "style_2" ? "style_2" : "style_1",
     inputs.frontPanelThickness,
+    "DividerSideRangehood",
   );
 }
 
@@ -254,13 +268,24 @@ function legacyToBoards(
     cabinetHeight: inputs.cabinetHeight,
     bottomThickness: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
     featureWidth: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
-    topClearanceHeight: inputs.topClearanceHeight ?? 40,
-    frontPanelThickness: inputs.frontPanelThickness ?? 16,
-    clearance: inputs.clearance ?? 2.5,
+    topClearanceHeight: inputs.topClearanceHeight ?? R.T1_HEIGHT_MM.value,
+    frontPanelThickness: inputs.frontPanelThickness ?? R.DEFAULT_FRONT_PANEL_THICKNESS_MM.value,
+    clearance: inputs.clearance ?? R.DEFAULT_CLEARANCE_MM.value,
   };
   const height = cabinetHeight ?? topClearanceHeight;
+
+  // Terms: a param when the user gave it, the rule constant otherwise.
+  const P = param({ Cw: cabinetWidth, Cd: cabinetDepth, H: height });
+  const t = <T extends Term>(v: number | null | undefined, name: string, rule: T): Term =>
+    v == null ? rule : param({ [name]: v })[name]!;
+  const CPT = t(inputs.featureWidth, "CPT", R.DIVIDER_THICKNESS_MM);
+  const TCH = t(inputs.topClearanceHeight, "TCH", R.T1_HEIGHT_MM);
+  const FPT = t(inputs.frontPanelThickness, "FPT", R.DEFAULT_FRONT_PANEL_THICKNESS_MM);
+  const CL = t(inputs.clearance, "clearance", R.DEFAULT_CLEARANCE_MM);
+  const zero = (key: string) => dim(key, {}, () => 0, { formula: "0" });
+
   // Style-1 rear-notch seating: T1/T2 sit TCH-1 behind the carcass front face.
-  const topRailY0 = topClearanceHeight - 1;
+  const topRailY0 = dim("T1.y0", { TCH }, (t) => t.TCH - 1);
 
   const boards: Board[] = [
     {
@@ -271,12 +296,12 @@ function legacyToBoards(
       materialThickness: bottomThickness,
       profilePlane: "XY",
       thicknessAxis: "Z",
-      x0: 0,
-      x1: cabinetWidth,
-      y0: 0,
-      y1: cabinetDepth,
-      z0: 0,
-      z1: bottomThickness,
+      x0: zero("BP.x0"),
+      x1: dim("BP.x1", { Cw: P.Cw }, (t) => t.Cw),
+      y0: zero("BP.y0"),
+      y1: dim("BP.y1", { Cd: P.Cd }, (t) => t.Cd),
+      z0: zero("BP.z0"),
+      z1: dim("BP.z1", { CPT }, (t) => t.CPT),
       source: "overhead_geometry",
     },
   ];
@@ -289,12 +314,12 @@ function legacyToBoards(
     materialThickness: frontPanelThickness,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: 0,
-    x1: cabinetWidth,
+    x0: zero("T1.x0"),
+    x1: dim("T1.x1", { Cw: P.Cw }, (t) => t.Cw),
     y0: topRailY0,
-    y1: topRailY0 + frontPanelThickness,
-    z0: height - topClearanceHeight,
-    z1: height,
+    y1: dim("T1.y1", { y0: ref("T1.y0"), FPT }, (t) => t.y0 + t.FPT),
+    z0: dim("T1.z0", { H: P.H, TCH }, (t) => t.H - t.TCH),
+    z1: dim("T1.z1", { H: P.H }, (t) => t.H),
     source: "overhead_geometry_v7",
   });
 
@@ -306,18 +331,19 @@ function legacyToBoards(
     materialThickness: featureWidth,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: 0,
-    x1: cabinetWidth,
-    y0: topRailY0 + frontPanelThickness,
-    y1: topRailY0 + frontPanelThickness + featureWidth,
-    z0: height - topClearanceHeight,
-    z1: height,
+    x0: zero("T2.x0"),
+    x1: dim("T2.x1", { Cw: P.Cw }, (t) => t.Cw),
+    y0: same("T2.y0", "T1.y1"),
+    y1: dim("T2.y1", { y0: ref("T2.y0"), CPT }, (t) => t.y0 + t.CPT),
+    z0: same("T2.z0", "T1.z0"),
+    z1: same("T2.z1", "T1.z1"),
     source: "overhead_geometry_v7",
   });
 
   if (geometry.trimmed_vectors.T3.length > 0) {
     const t3Depth = Math.max(...geometry.trimmed_vectors.T3.map(([, y]) => y));
-    const t3Top = height - topClearanceHeight - 1;
+    // T3 sits in the divider front step: top 1 under the top rails.
+    const t3Top = dim("T3.z1", { H: P.H, TCH }, (t) => t.H - t.TCH - 1);
     boards.push({
       id: "T3",
       name: "Top Rear Panel",
@@ -326,11 +352,11 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XY",
       thicknessAxis: "Z",
-      x0: 0,
-      x1: cabinetWidth,
-      y0: 0,
-      y1: t3Depth,
-      z0: t3Top - featureWidth,
+      x0: zero("T3.x0"),
+      x1: dim("T3.x1", { Cw: P.Cw }, (t) => t.Cw),
+      y0: zero("T3.y0"),
+      y1: dim("T3.y1", { rearY: ref("T3.pv.rearY") }, () => t3Depth, { formula: "rearY" }),
+      z0: dim("T3.z0", { z1: ref("T3.z1"), CPT }, (t) => t.z1 - t.CPT),
       z1: t3Top,
       source: "overhead_geometry",
       profileVector: geometry.trimmed_vectors.T3.map(([x, y]) => ({ x, y })),
@@ -341,7 +367,7 @@ function legacyToBoards(
     // Vertical plate on the divider rear notches; the outline's second
     // coordinate is height (Z), notches open downward.
     const t4Height = Math.max(...geometry.trimmed_vectors.T4.map(([, z]) => z));
-    const t4Y1 = cabinetDepth - featureWidth - clearance;
+    const t4Y1 = dim("T4.y1", { Cd: P.Cd, CPT, clearance: CL }, (t) => t.Cd - t.CPT - t.clearance);
     boards.push({
       id: "T4",
       name: "Top Front Panel",
@@ -350,12 +376,12 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XZ",
       thicknessAxis: "Y",
-      x0: 0,
-      x1: cabinetWidth,
-      y0: t4Y1 - featureWidth,
+      x0: zero("T4.x0"),
+      x1: dim("T4.x1", { Cw: P.Cw }, (t) => t.Cw),
+      y0: dim("T4.y0", { y1: ref("T4.y1"), CPT }, (t) => t.y1 - t.CPT),
       y1: t4Y1,
-      z0: height - t4Height,
-      z1: height,
+      z0: dim("T4.z0", { H: P.H, top: ref("T4.pv.top") }, () => height - t4Height, { formula: "H - top" }),
+      z1: dim("T4.z1", { H: P.H }, (t) => t.H),
       source: "overhead_geometry",
       profileVector: geometry.trimmed_vectors.T4.map(([x, z]) => ({ x, z })),
     });
@@ -363,23 +389,29 @@ function legacyToBoards(
 
   for (let dividerIndex = 0; dividerIndex < geometry.divider_features.length; dividerIndex += 1) {
     const feature = geometry.divider_features[dividerIndex]!;
+    const id = feature.id;
     // Board solid thickness must be featureWidth (CPT), not the BP groove
     // slot width (CPT + clearance). Groove/notch features keep the wider
     // slot range; only the divider body uses boardXRange.
     const [x0, x1] = clampRange(boardXRange(feature.XDi, featureWidth), 0, cabinetWidth);
+    dim(`${id}.x0`, { XDi: feature.XDi, CPT }, () => x0, { formula: "max(0, XDi - CPT / 2)" });
+    dim(`${id}.x1`, { XDi: feature.XDi, CPT, Cw: P.Cw }, () => x1, { formula: "min(Cw, XDi + CPT / 2)" });
     // Divider outline origin = BP top face (z = CPT); the tongue in the
     // cutProfileVector dips below z0 into the BP groove.
     const isInternalRangehoodDivider = Boolean(rangehood?.internalDividerIndices.includes(dividerIndex));
     const dividerZ0 = isInternalRangehoodDivider
-      ? featureWidth * 2 + (rangehood?.clearHeight ?? 0)
-      : featureWidth;
-    const dividerTopZ = cabinetHeight ?? bottomThickness + 1;
+      ? dim(`${id}.z0`, { CPT, clearHeight: rangehood?.clearHeight ?? 0 }, (t) => t.CPT * 2 + t.clearHeight)
+      : dim(`${id}.z0`, { CPT }, (t) => t.CPT);
+    const dividerTopZ = cabinetHeight == null
+      ? dim(`${id}.z1`, { CPT }, (t) => t.CPT + 1)
+      : dim(`${id}.z1`, { H: P.H }, (t) => t.H);
     const dividerProfile = isInternalRangehoodDivider
       ? internalRangehoodDividerProfile(inputs, rangehood?.clearHeight ?? 0)
       : geometry.trimmed_vectors.DividerSide;
+    alias(isInternalRangehoodDivider ? "DividerSideRangehood" : "DividerSide", `${id}.cut`);
     boards.push({
-      id: feature.id,
-      name: `Divider ${feature.id}`,
+      id,
+      name: `Divider ${id}`,
       category: "divider",
       boardType: "divider",
       materialThickness: featureWidth,
@@ -387,8 +419,8 @@ function legacyToBoards(
       thicknessAxis: "X",
       x0,
       x1,
-      y0: 0,
-      y1: cabinetDepth,
+      y0: zero(`${id}.y0`),
+      y1: dim(`${id}.y1`, { Cd: P.Cd }, (t) => t.Cd),
       z0: dividerZ0,
       z1: dividerTopZ,
       source: "overhead_geometry",
@@ -409,11 +441,11 @@ function legacyToBoards(
   }
 
   if (rangehood) {
-    const tongueProjection = featureWidth / 2 - 0.5;
-    const bpTopZ = featureWidth;
-    const topBottomZ = bpTopZ + rangehood.clearHeight;
-    const topX0 = rangehood.x0 - tongueProjection;
-    const topX1 = rangehood.x1 + tongueProjection;
+    const tongueProjection = dim("RGHD.tongueProjection", { CPT }, (t) => t.CPT / 2 - 0.5);
+    const bpTopZ = same("RGHD.bpTopZ", "BP.z1");
+    const topBottomZ = dim("RGHD.topBottomZ", { bpTopZ: ref("RGHD.bpTopZ"), clearHeight: rangehood.clearHeight }, (t) => t.bpTopZ + t.clearHeight);
+    const topX0 = dim("RGHD_TOP.x0", { rghdX0: rangehood.x0, tongueProjection: ref("RGHD.tongueProjection") }, (t) => t.rghdX0 - t.tongueProjection);
+    const topX1 = dim("RGHD_TOP.x1", { rghdX1: rangehood.x1, tongueProjection: ref("RGHD.tongueProjection") }, (t) => t.rghdX1 + t.tongueProjection);
     boards.push({
       id: "RGHD_TOP",
       name: "Rangehood Top",
@@ -424,10 +456,10 @@ function legacyToBoards(
       thicknessAxis: "Z",
       x0: topX0,
       x1: topX1,
-      y0: 0,
-      y1: cabinetDepth,
-      z0: topBottomZ,
-      z1: topBottomZ + featureWidth,
+      y0: zero("RGHD_TOP.y0"),
+      y1: dim("RGHD_TOP.y1", { Cd: P.Cd }, (t) => t.Cd),
+      z0: same("RGHD_TOP.z0", "RGHD.topBottomZ"),
+      z1: dim("RGHD_TOP.z1", { z0: ref("RGHD_TOP.z0"), CPT }, (t) => t.z0 + t.CPT),
       source: "overhead_rangehood",
       profileVector: rangehoodTopProfile(rangehood.clearWidth, cabinetDepth, tongueProjection),
       notes: ["NCE rangehood top with side tongues."],
@@ -440,12 +472,12 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XZ",
       thicknessAxis: "Y",
-      x0: rangehood.x0,
-      x1: rangehood.x1,
-      y0: 0,
-      y1: featureWidth,
-      z0: bpTopZ,
-      z1: topBottomZ,
+      x0: dim("RGHD_FRONT.x0", { rghdX0: rangehood.x0 }, (t) => t.rghdX0),
+      x1: dim("RGHD_FRONT.x1", { rghdX1: rangehood.x1 }, (t) => t.rghdX1),
+      y0: zero("RGHD_FRONT.y0"),
+      y1: dim("RGHD_FRONT.y1", { CPT }, (t) => t.CPT),
+      z0: same("RGHD_FRONT.z0", "RGHD.bpTopZ"),
+      z1: same("RGHD_FRONT.z1", "RGHD.topBottomZ"),
       source: "overhead_rangehood",
     });
     boards.push({
@@ -456,17 +488,28 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XZ",
       thicknessAxis: "Y",
-      x0: rangehood.x0,
-      x1: rangehood.x1,
-      y0: cabinetDepth - featureWidth,
-      y1: cabinetDepth,
-      z0: bpTopZ,
-      z1: topBottomZ,
+      x0: dim("RGHD_BACK.x0", { rghdX0: rangehood.x0 }, (t) => t.rghdX0),
+      x1: dim("RGHD_BACK.x1", { rghdX1: rangehood.x1 }, (t) => t.rghdX1),
+      y0: dim("RGHD_BACK.y0", { Cd: P.Cd, CPT }, (t) => t.Cd - t.CPT),
+      y1: dim("RGHD_BACK.y1", { Cd: P.Cd }, (t) => t.Cd),
+      z0: same("RGHD_BACK.z0", "RGHD.bpTopZ"),
+      z1: same("RGHD_BACK.z1", "RGHD.topBottomZ"),
       source: "overhead_rangehood",
     });
+    void bpTopZ; void topBottomZ;
   }
 
   for (const panel of geometry.front_panels) {
+    // Faces were recorded as FP<i>.x0 … .z1 by frontPanels(); the outline is the
+    // panel rectangle in board-local XZ.
+    const K = (n: string) => `${panel.id}.pv${n}`;
+    const w = dim(`${panel.id}.width`, { x1: ref(`${panel.id}.x1`), x0: ref(`${panel.id}.x0`) }, (t) => t.x1 - t.x0);
+    const h = dim(`${panel.id}.height`, { z1: ref(`${panel.id}.z1`), z0: ref(`${panel.id}.z0`) }, (t) => t.z1 - t.z0);
+    void w; void h;
+    for (const [i, [fx, fz]] of [[0, 0], [1, 0], [1, 1], [0, 1], [0, 0]].entries()) {
+      dim(K(`[${i}].x`), fx ? { width: ref(`${panel.id}.width`) } : {}, fx ? (t) => t.width : () => 0, { formula: fx ? "width" : "0" });
+      dim(K(`[${i}].z`), fz ? { height: ref(`${panel.id}.height`) } : {}, fz ? (t) => t.height : () => 0, { formula: fz ? "height" : "0" });
+    }
     boards.push({
       id: panel.id,
       name: `Front Panel ${panel.zoneIndex + 1}`,
@@ -708,6 +751,16 @@ function resolveCarcassColor(params: OverheadCabinetParams): { carcassColor: str
 }
 
 export function generateOverheadCabinet(rawParams: OverheadCabinetParams): OverheadCabinetResult {
+  beginProvenance();
+  try {
+    return generateOverheadCabinetInner(rawParams);
+  } finally {
+    // endProvenance() is called inside on success; this only clears after a throw.
+    if (provenanceActive()) endProvenance();
+  }
+}
+
+function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): OverheadCabinetResult {
   const inputs = toInputs(rawParams);
   const carcassColor = resolveCarcassColor(rawParams);
   const validation = { errors: [] as string[], warnings: [] as string[] };
@@ -729,31 +782,33 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
   const rangehood = geometry ? resolveRangehoodGroup(rawParams, geometry, validation) : null;
   const centerlines = geometry ? geometry.divider_features.map((f) => f.XDi) : [];
 
+  const resolvedParams = (): OverheadCabinetResult["params"] => ({
+    cabinetWidth: inputs.cabinetWidth,
+    cabinetDepth: inputs.cabinetDepth,
+    cabinetHeight: inputs.cabinetHeight ?? 0,
+    style: inputs.style ?? "style_1",
+    topClearanceHeight: inputs.topClearanceHeight ?? R.T1_HEIGHT_MM.value,
+    frontPanelThickness: inputs.frontPanelThickness ?? R.DEFAULT_FRONT_PANEL_THICKNESS_MM.value,
+    clearance: inputs.clearance ?? R.DEFAULT_CLEARANCE_MM.value,
+    hingeHoleDiameter: inputs.hingeHoleDiameter ?? R.DEFAULT_HINGE_HOLE_DIAMETER_MM.value,
+    hingeHoleDepth: inputs.hingeHoleDepth ?? R.DEFAULT_HINGE_HOLE_DEPTH_MM.value,
+    hingeHoleFromTop: inputs.hingeHoleFromTop ?? R.DEFAULT_HINGE_HOLE_FROM_TOP_MM.value,
+    hingeHoleFromSide: inputs.hingeHoleFromSide ?? R.DEFAULT_HINGE_HOLE_FROM_SIDE_MM.value,
+    bottomThickness: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
+    dividerTongueHeight: inputs.dividerTongueHeight ?? (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) / 2 - 0.5,
+    routerDiameter: inputs.routerDiameter ?? DEFAULT_ROUTER_DIAMETER_MM,
+    featureWidth: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
+    internalDividerCenterlines: inputs.internalDividerCenterlines ?? [],
+    rangehoodPreset: String(rawParams.rangehoodPreset || RANGEHOOD_PRESET_NCE),
+    rangehoodClearHeight: Number(rawParams.rangehoodClearHeight ?? RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM),
+    rangehoodAlignment: String(rawParams.rangehoodAlignment || "left"),
+    rangehoodEdgeOffsetX: Number(rawParams.rangehoodEdgeOffsetX ?? RANGEHOOD_MIN_EDGE_MM),
+    ...carcassColor,
+  });
+
   if (validation.errors.length > 0) {
     return {
-      params: {
-        cabinetWidth: inputs.cabinetWidth,
-        cabinetDepth: inputs.cabinetDepth,
-        cabinetHeight: inputs.cabinetHeight ?? 0,
-        style: inputs.style ?? "style_1",
-        topClearanceHeight: inputs.topClearanceHeight ?? 40,
-        frontPanelThickness: inputs.frontPanelThickness ?? 16,
-        clearance: inputs.clearance ?? 2.5,
-        hingeHoleDiameter: inputs.hingeHoleDiameter ?? 35,
-        hingeHoleDepth: inputs.hingeHoleDepth ?? 12,
-        hingeHoleFromTop: inputs.hingeHoleFromTop ?? 22.5,
-        hingeHoleFromSide: inputs.hingeHoleFromSide ?? 100,
-        bottomThickness: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
-        dividerTongueHeight: inputs.dividerTongueHeight ?? (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) / 2 - 0.5,
-        routerDiameter: inputs.routerDiameter ?? DEFAULT_ROUTER_DIAMETER_MM,
-        featureWidth: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
-        internalDividerCenterlines: inputs.internalDividerCenterlines ?? [],
-        rangehoodPreset: String(rawParams.rangehoodPreset || RANGEHOOD_PRESET_NCE),
-        rangehoodClearHeight: Number(rawParams.rangehoodClearHeight ?? RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM),
-        rangehoodAlignment: String(rawParams.rangehoodAlignment || "left"),
-        rangehoodEdgeOffsetX: Number(rawParams.rangehoodEdgeOffsetX ?? RANGEHOOD_MIN_EDGE_MM),
-        ...carcassColor,
-      },
+      params: resolvedParams(),
       boards: [],
       features: [],
       relationshipDeclarations: [],
@@ -763,6 +818,7 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
         boardFrame: OVERHEAD_BOARD_FRAME,
         legacyReference: "fusion360-cabinet-generator/core/overhead_geometry.py",
         dividerCenterlines: centerlines,
+        provenance: endProvenance(),
       },
     };
   }
@@ -780,29 +836,7 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
   });
 
   return {
-    params: {
-      cabinetWidth: inputs.cabinetWidth,
-      cabinetDepth: inputs.cabinetDepth,
-      cabinetHeight: inputs.cabinetHeight ?? 0,
-      style: inputs.style ?? "style_1",
-      topClearanceHeight: inputs.topClearanceHeight ?? 40,
-      frontPanelThickness: inputs.frontPanelThickness ?? 16,
-      clearance: inputs.clearance ?? 2.5,
-      hingeHoleDiameter: inputs.hingeHoleDiameter ?? 35,
-      hingeHoleDepth: inputs.hingeHoleDepth ?? 12,
-      hingeHoleFromTop: inputs.hingeHoleFromTop ?? 22.5,
-      hingeHoleFromSide: inputs.hingeHoleFromSide ?? 100,
-      bottomThickness: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
-      dividerTongueHeight: inputs.dividerTongueHeight ?? (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) / 2 - 0.5,
-      routerDiameter: inputs.routerDiameter ?? DEFAULT_ROUTER_DIAMETER_MM,
-      featureWidth: inputs.featureWidth ?? DIVIDER_THICKNESS_MM,
-      internalDividerCenterlines: inputs.internalDividerCenterlines ?? [],
-      rangehoodPreset: String(rawParams.rangehoodPreset || RANGEHOOD_PRESET_NCE),
-      rangehoodClearHeight: Number(rawParams.rangehoodClearHeight ?? RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM),
-      rangehoodAlignment: String(rawParams.rangehoodAlignment || "left"),
-      rangehoodEdgeOffsetX: Number(rawParams.rangehoodEdgeOffsetX ?? RANGEHOOD_MIN_EDGE_MM),
-      ...carcassColor,
-    },
+    params: resolvedParams(),
     boards,
     features: [
       ...dividerFeatures,
@@ -822,6 +856,7 @@ export function generateOverheadCabinet(rawParams: OverheadCabinetParams): Overh
       svgPreview: generateOHCSvgPreview(geometry, {
         selectedZoneIndex: Number((rawParams as { selectedZoneIndex?: number }).selectedZoneIndex ?? -1),
       }),
+      provenance: endProvenance(),
     },
   };
 }
