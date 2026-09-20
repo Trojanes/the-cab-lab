@@ -891,6 +891,398 @@ function relationshipDeclarationsForBoards(boards) {
   });
 }
 
+// generators/_lib/model.ts
+function planeAxes(plane) {
+  if (plane === "YZ") return ["y", "z", "x"];
+  if (plane === "XZ") return ["x", "z", "y"];
+  return ["x", "y", "z"];
+}
+function localOutline(b) {
+  const [U, V] = planeAxes(b.profilePlane);
+  let pts = null;
+  const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
+  if (b.profilePlane === "YZ") {
+    if (pv) pts = pv.map((p) => [Number(p.y) - b.y0, Number(p.z) - b.z0]);
+    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) pts = b.cutProfileVector.map((p) => [p.y, p.z]);
+  } else if (pv) {
+    const mu = Math.min(...pv.map((p) => Number(p[U])));
+    const mv = Math.min(...pv.map((p) => Number(p[V])));
+    pts = pv.map((p) => [Number(p[U]) - mu, Number(p[V]) - mv]);
+  }
+  if (!pts) return null;
+  const out = pts.slice();
+  const first = out[0];
+  const last = out[out.length - 1];
+  if (out.length > 2 && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) out.pop();
+  return out.length >= 3 ? out : null;
+}
+function rectOutline(b) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const w = b[`${U}1`] - b[`${U}0`];
+  const h = b[`${V}1`] - b[`${V}0`];
+  return [[0, 0], [w, 0], [w, h], [0, h]];
+}
+function signedArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[(i + 1) % pts.length];
+    s += x0 * y1 - x1 * y0;
+  }
+  return s / 2;
+}
+var AXIS_UPPER = { x: "X", y: "Y", z: "Z" };
+function edgeNormal(plane, from, to, ccw) {
+  const [U, V] = planeAxes(plane);
+  const du = to[0] - from[0];
+  const dv = to[1] - from[1];
+  let nu = ccw ? dv : -dv;
+  let nv = ccw ? -du : du;
+  const len = Math.hypot(nu, nv) || 1;
+  nu /= len;
+  nv /= len;
+  const eps = 1e-9;
+  if (Math.abs(nv) < eps) return `${nu > 0 ? "+" : "-"}${AXIS_UPPER[U]}`;
+  if (Math.abs(nu) < eps) return `${nv > 0 ? "+" : "-"}${AXIS_UPPER[V]}`;
+  const vec = [0, 0, 0];
+  const idx = { x: 0, y: 1, z: 2 };
+  vec[idx[U]] = nu;
+  vec[idx[V]] = nv;
+  return vec;
+}
+function facesOf(b) {
+  const [, , T] = planeAxes(b.profilePlane);
+  const t = AXIS_UPPER[T];
+  const faces = [
+    { id: "A", key: `${b.id}.A`, normal: `+${t}`, planeKey: `${b.id}.${T}1`, features: [] },
+    { id: "B", key: `${b.id}.B`, normal: `-${t}`, planeKey: `${b.id}.${T}0`, features: [] }
+  ];
+  const outline = localOutline(b) ?? rectOutline(b);
+  const ccw = signedArea(outline) > 0;
+  for (let i = 0; i < outline.length; i += 1) {
+    const from = outline[i];
+    const to = outline[(i + 1) % outline.length];
+    faces.push({
+      id: `E${i}`,
+      key: `${b.id}.E${i}`,
+      normal: edgeNormal(b.profilePlane, from, to, ccw),
+      segments: [i],
+      edge: { from: [from[0], from[1]], to: [to[0], to[1]] },
+      features: []
+    });
+  }
+  return faces;
+}
+function attachFaces(boards) {
+  for (const b of boards) b.faces = facesOf(b);
+  return boards;
+}
+function faceOf(b, id) {
+  const f = (b.faces ?? (b.faces = facesOf(b))).find((x) => x.id === id);
+  if (!f) throw new Error(`${b.id}: no face ${id}`);
+  return f;
+}
+function addFeature(b, faceId, feature) {
+  faceOf(b, faceId).features.push(feature);
+  return feature;
+}
+function edgeFaces(b) {
+  return (b.faces ?? (b.faces = facesOf(b))).filter((f) => f.id.startsWith("E"));
+}
+function edgeFacesIn(b, box) {
+  return edgeFaces(b).filter((f) => {
+    const mu = (f.edge.from[0] + f.edge.to[0]) / 2;
+    const mv = (f.edge.from[1] + f.edge.to[1]) / 2;
+    return mu >= box.u0 && mu <= box.u1 && mv >= box.v0 && mv <= box.v1;
+  });
+}
+function boundaryEdgeFaces(b, normal, tol = 0.01) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const axis = normal[1].toLowerCase();
+  const c = axis === U ? 0 : axis === V ? 1 : -1;
+  if (c < 0) return [];
+  const all = edgeFaces(b);
+  const coords = all.flatMap((f) => [f.edge.from[c], f.edge.to[c]]);
+  const extreme = normal[0] === "+" ? Math.max(...coords) : Math.min(...coords);
+  return all.filter((f) => f.normal === normal && Math.abs(f.edge.from[c] - extreme) <= tol && Math.abs(f.edge.to[c] - extreme) <= tol);
+}
+function tagEdges(b, kind, box, meta) {
+  const hit = edgeFacesIn(b, box);
+  for (const f of hit) f.features.push({ kind, ...meta });
+  return hit.map((f) => f.id);
+}
+function annotate(b, faceId, a) {
+  Object.assign(faceOf(b, faceId), a);
+}
+function localRect(b, r) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const ru = r[U];
+  const rv = r[V];
+  if (!ru || !rv) throw new Error(`${b.id}: rectangle needs ${U} and ${V} ranges`);
+  return {
+    u0: Math.min(...ru) - b[`${U}0`],
+    u1: Math.max(...ru) - b[`${U}0`],
+    v0: Math.min(...rv) - b[`${V}0`],
+    v1: Math.max(...rv) - b[`${V}0`]
+  };
+}
+function bigFaceToward(b, dir) {
+  const [, , T] = planeAxes(b.profilePlane);
+  if (dir[1] !== AXIS_UPPER[T]) return null;
+  return faceOf(b, dir[0] === "+" ? "A" : "B");
+}
+function joint(id, kind, a, b, extra = {}) {
+  return { id, kind, a, b, ...extra };
+}
+function faceRef(board, faces) {
+  return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
+}
+
+// generators/overheadCabinet/faces.ts
+var EPS = 0.01;
+function byId(boards) {
+  return new Map(boards.map((b) => [b.id, b]));
+}
+function orRule2(v, name, rule) {
+  return v == null ? rule : param({ [name]: v })[name];
+}
+function buildOverheadFaces(fb) {
+  const { boards, geometry, inputs } = fb;
+  const B = byId(boards);
+  const cpt = geometry.manufacturing.FGw;
+  const CPT = orRule2(inputs.featureWidth, "CPT", RULES.DIVIDER_THICKNESS_MM);
+  const TCH = orRule2(inputs.topClearanceHeight, "TCH", RULES.T1_HEIGHT_MM);
+  for (const b of boards) {
+    b.role = b.category;
+    const isFront = b.category === "front_panel" || b.id === "T1";
+    b.stock = { kind: isFront ? "door" : "carcass", thickness: b.materialThickness, colour: isFront ? void 0 : fb.carcassColorName };
+    if (!isFront) {
+      annotate(b, "A", { finish: { colour: fb.carcassColorName } });
+      annotate(b, "B", { finish: { colour: fb.carcassColorName } });
+    }
+    if (b.category === "front_panel") {
+      annotate(b, "B", { semantic: "front", visible: true });
+      annotate(b, "A", { semantic: "back", visible: false });
+    }
+  }
+  const bp = B.get("BP");
+  if (bp) {
+    annotate(bp, "A", { semantic: "inside" });
+    annotate(bp, "B", { semantic: "bottom", visible: true });
+  }
+  const dividers = boards.filter((b) => b.category === "divider");
+  if (dividers.length) {
+    annotate(dividers[0], "B", { semantic: "outside" });
+    annotate(dividers[dividers.length - 1], "A", { semantic: "outside" });
+    for (const d of dividers.slice(1, -1)) {
+      annotate(d, "A", { semantic: "inside" });
+      annotate(d, "B", { semantic: "inside" });
+    }
+    annotate(dividers[0], "A", { semantic: "inside" });
+    annotate(dividers[dividers.length - 1], "B", { semantic: "inside" });
+  }
+  const t3 = B.get("T3");
+  if (t3) {
+    annotate(t3, "A", { semantic: "top" });
+    annotate(t3, "B", { semantic: "bottom" });
+  }
+  if (bp) {
+    geometry.divider_features.forEach((df, index) => {
+      if (fb.suppressedGrooves.includes(index) || !df.bp_groove) return;
+      const g = df.bp_groove;
+      const r = localRect(bp, { x: g.x, y: g.y });
+      addFeature(bp, "A", {
+        id: g.id,
+        kind: "groove",
+        ...r,
+        depth: Math.abs(g.z[1] - g.z[0]),
+        for: df.id,
+        key: `BP.feat.${g.id}`,
+        source: "overhead_geometry"
+      });
+    });
+  }
+  const slot = geometry.manufacturing.FeatureSlotWidth;
+  const tch = geometry.manufacturing.TCH;
+  for (const [index, df] of geometry.divider_features.entries()) {
+    const d = B.get(df.id);
+    if (!d) continue;
+    const onRangehood = fb.suppressedGrooves.includes(index);
+    const [tongueY0, tongueY1] = df.divider_tongue.y;
+    const tongueH = Math.abs(df.divider_tongue.z[0] - df.divider_tongue.z[1]);
+    const zTop = d.z1 - d.z0;
+    tagEdges(d, "tongue", { u0: tongueY0 - d.y0 - EPS, u1: tongueY1 - d.y0 + EPS, v0: -tongueH - EPS, v1: -EPS }, {
+      id: `${df.id}_TONGUE`,
+      for: onRangehood ? "RGHD_TOP" : "BP",
+      source: "overhead_geometry"
+    });
+    if (B.has("T3")) {
+      const frontStepY1 = RULES.FRONT_TOP_NOTCH_Y_OFFSET_MM.value + RULES.FRONT_TOP_STEP_Y_MM.value;
+      tagEdges(d, "notch", { u0: -EPS, u1: frontStepY1 + EPS, v0: zTop - tch - slot - EPS, v1: zTop - tch + EPS }, {
+        id: `${df.id}_T3_STEP`,
+        for: "T3",
+        source: "overhead_geometry"
+      });
+    }
+    if (B.has("T4")) {
+      const rearNotchH = RULES.T4_HEIGHT_MM.value - cpt;
+      tagEdges(d, "notch", { u0: d.y1 - d.y0 - slot - EPS, u1: d.y1 - d.y0 + EPS, v0: zTop - rearNotchH - EPS, v1: zTop - EPS }, {
+        id: `${df.id}_T4_NOTCH`,
+        for: "T4",
+        source: "overhead_geometry"
+      });
+    }
+  }
+  const midlineTerm = {
+    T2: { terms: { TCH }, fn: (t) => t.TCH / 2 },
+    T3: { terms: { T3_DEPTH: RULES.T3_DEPTH_MM }, fn: (t) => t.T3_DEPTH / 2 },
+    T4: {
+      terms: { T4_NOTCH: RULES.T4_NOTCH_HEIGHT_MM, CLEAR: RULES.T4_SCREW_HOLE_NOTCH_CLEARANCE_MM, SHIFT: RULES.T4_SCREW_HOLE_UP_SHIFT_MM },
+      fn: (t) => t.T4_NOTCH + t.CLEAR + t.SHIFT
+    }
+  };
+  for (const part of ["T2", "T3", "T4"]) {
+    const board = B.get(part);
+    if (!board) continue;
+    const [U, V] = planeAxes(board.profilePlane);
+    for (const hole of geometry.panel_screw_holes[part]) {
+      const K = `${part}.feat.${hole.id}`;
+      const df = geometry.divider_features.find((f) => f.id === hole.for_divider);
+      const cu = dim(`${K}.${U}`, { XDi: df?.XDi ?? hole.center[0], [`${part}_${U}0`]: ref(`${part}.${U}0`) }, (t) => t.XDi - t[`${part}_${U}0`], { formula: `XDi - ${part}.${U}0` });
+      const m = midlineTerm[part];
+      const cv = dim(`${K}.${V}`, m.terms, m.fn);
+      addFeature(board, "A", {
+        id: hole.id,
+        kind: "hole",
+        center: [cu, cv],
+        diameter: hole.diameter,
+        depth: hole.depth,
+        through: false,
+        for: hole.for_divider,
+        key: K,
+        source: "overhead_geometry"
+      });
+    }
+  }
+  for (const h of geometry.hinge_holes) {
+    const fp = B.get(h.boardId);
+    if (!fp) continue;
+    const n = h.id.replace(`${h.boardId}_`, "");
+    addFeature(fp, "A", {
+      id: h.id,
+      kind: "hole",
+      center: [h.center[0], h.center[1]],
+      diameter: h.diameter,
+      depth: h.depth,
+      through: false,
+      for: "hinge",
+      key: `${h.boardId}.feat.${n}`,
+      source: "overhead_geometry_v7"
+    });
+  }
+  for (const led of fb.ledFeatures) {
+    if (led.type !== "t3_groove" || !t3) continue;
+    const main = led.main;
+    const branches = led.branches ?? [];
+    const depth = Number(led.depth);
+    const KM = "T3.feat.LED_MAIN";
+    dim(`${KM}.x0`, {}, () => 0, { formula: "0" });
+    dim(`${KM}.x1`, { x1: ref("T3.x1"), x0: ref("T3.x0") }, (t) => t.x1 - t.x0);
+    dim(`${KM}.y0`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM }, (t) => t.LAND);
+    dim(`${KM}.y1`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.LAND + t.W);
+    addFeature(t3, "A", {
+      id: "T3_LED_MAIN",
+      kind: "tgroove",
+      u0: main.x0,
+      u1: main.x1,
+      v0: main.y0,
+      v1: main.y1,
+      depth,
+      for: "led",
+      key: KM,
+      source: "T3"
+    });
+    branches.forEach((br, i) => {
+      const KB = `T3.feat.LED_BRANCH_${i + 1}`;
+      const x = i === 0 ? { terms: { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, x0: (t) => t.INSET - t.W / 2, x1: (t) => t.INSET + t.W / 2 } : { terms: { width: ref(`${KM}.x1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, x0: (t) => t.width - t.INSET - t.W / 2, x1: (t) => t.width - t.INSET + t.W / 2 };
+      dim(`${KB}.x0`, x.terms, x.x0);
+      dim(`${KB}.x1`, x.terms, x.x1);
+      dim(`${KB}.y0`, { mainY1: ref(`${KM}.y1`) }, (t) => t.mainY1);
+      dim(`${KB}.y1`, { rearY: ref("T3.pv.rearY") }, (t) => t.rearY);
+      addFeature(t3, "A", {
+        id: `T3_LED_BRANCH_${i + 1}`,
+        kind: "tgroove",
+        u0: br.x0,
+        u1: br.x1,
+        v0: br.y0,
+        v1: br.y1,
+        depth,
+        for: "led",
+        key: KB,
+        source: "T3"
+      });
+    });
+  }
+  for (const f of fb.rangehoodFeatures) {
+    const type = String(f.type);
+    if (type === "rangehood_bp_cutout" && bp) {
+      const r = localRect(bp, { x: f.x, y: f.y });
+      const K = "BP.feat.RGHD_CUTOUT";
+      const Cd = param({ Cd: inputs.cabinetDepth }).Cd;
+      const edgeOffsetX = param({ edgeOffsetX: Number(f.edgeOffsetX) }).edgeOffsetX;
+      if (String(f.alignment) === "left") {
+        dim(`${K}.x0`, { rghdX0: ref("RGHD_FRONT.x0"), edgeOffsetX }, (t) => t.rghdX0 + t.edgeOffsetX);
+      } else {
+        dim(`${K}.x0`, { rghdX1: ref("RGHD_FRONT.x1"), edgeOffsetX, W: RULES.RANGEHOOD_CUTOUT_WIDTH_MM }, (t) => t.rghdX1 - t.edgeOffsetX - t.W);
+      }
+      dim(`${K}.x1`, { x0: ref(`${K}.x0`), W: RULES.RANGEHOOD_CUTOUT_WIDTH_MM }, (t) => t.x0 + t.W);
+      dim(`${K}.y0`, { Cd, D: RULES.RANGEHOOD_CUTOUT_DEPTH_MM }, (t) => (t.Cd - t.D) / 2);
+      dim(`${K}.y1`, { y0: ref(`${K}.y0`), D: RULES.RANGEHOOD_CUTOUT_DEPTH_MM }, (t) => t.y0 + t.D);
+      addFeature(bp, "A", { id: String(f.id), kind: "cutout", ...r, through: true, for: "rangehood", key: K, source: "overhead_rangehood" });
+    } else if (type === "rangehood_divider_side_groove") {
+      const d = B.get(String(f.targetBoardId));
+      if (!d) continue;
+      const face = bigFaceToward(d, f.face);
+      if (!face) continue;
+      const r = localRect(d, { y: f.y, z: f.z });
+      addFeature(d, face.id, { id: String(f.id), kind: "groove", ...r, depth: Number(f.depth), for: "RGHD_TOP", source: "overhead_rangehood" });
+    } else if (type === "rangehood_top_divider_groove") {
+      const top = B.get(String(f.targetBoardId));
+      if (!top) continue;
+      const r = localRect(top, { x: f.x, y: f.y });
+      addFeature(top, "A", { id: String(f.id), kind: "groove", ...r, depth: Number(f.depth), for: String(f.dividerBoardId), source: "overhead_rangehood" });
+    }
+  }
+  const joints = [];
+  for (const decl of fb.declarations) {
+    const a = B.get(decl.hostPanelId);
+    const b = B.get(decl.targetPanelId);
+    if (!a || !b) continue;
+    if (decl.relationshipType === "face_contact") {
+      const fa = faceOf(a, a.y1 <= b.y0 + EPS ? "A" : "B");
+      const fbk = faceOf(b, fa.id === "A" ? "B" : "A");
+      joints.push(joint(decl.declarationId, "face_contact", faceRef(a.id, [fa]), faceRef(b.id, [fbk]), { hardware: decl.allowedHardware, rule: decl.ruleId }));
+      continue;
+    }
+    if (a.id === "BP") {
+      if (b.category === "divider") {
+        const bottom = edgeFacesIn(b, { u0: -EPS, u1: b.y1 - b.y0 + EPS, v0: -EPS, v1: EPS });
+        joints.push(joint(decl.declarationId, "tongue_groove", faceRef("BP", ["A"]), faceRef(b.id, bottom), { hardware: decl.allowedHardware, rule: decl.ruleId }));
+      } else {
+        joints.push(joint(decl.declarationId, "butt", faceRef("BP", boundaryEdgeFaces(a, "-Y")), faceRef(b.id, ["A"]), { hardware: decl.allowedHardware, rule: decl.ruleId }));
+      }
+      continue;
+    }
+    if (a.category === "divider" && b.category === "front_panel") {
+      joints.push(joint(decl.declarationId, "butt", faceRef(a.id, boundaryEdgeFaces(a, "-Y")), faceRef(b.id, ["A"]), { hardware: decl.allowedHardware, rule: decl.ruleId }));
+      continue;
+    }
+    joints.push(joint(decl.declarationId, "butt", faceRef(a.id, []), faceRef(b.id, []), { hardware: decl.allowedHardware, rule: decl.ruleId }));
+  }
+  void CPT;
+  return joints;
+}
+
 // generators/overheadCabinet/generator.ts
 var LED_GROOVE_WIDTH = RULES.LED_GROOVE_WIDTH_MM.value;
 var LED_GROOVE_DEPTH = RULES.LED_GROOVE_DEPTH_MM.value;
@@ -1528,6 +1920,7 @@ function generateOverheadCabinetInner(rawParams) {
       params: resolvedParams(),
       boards: [],
       features: [],
+      joints: [],
       relationshipDeclarations: [],
       validation,
       debug: {
@@ -1550,6 +1943,17 @@ function generateOverheadCabinetInner(rawParams) {
     if (!rangehood?.internalDividerIndices.includes(index)) return feature;
     return { ...feature, bp_groove: void 0 };
   });
+  attachFaces(boards);
+  const joints = buildOverheadFaces({
+    boards,
+    geometry,
+    inputs,
+    suppressedGrooves: rangehood?.internalDividerIndices ?? [],
+    ledFeatures,
+    rangehoodFeatures,
+    declarations: relationshipDeclarations,
+    carcassColorName: carcassColor.carcassColorName
+  });
   return {
     params: resolvedParams(),
     boards,
@@ -1560,6 +1964,7 @@ function generateOverheadCabinetInner(rawParams) {
       ...rangehoodFeatures,
       ...ledFeatures
     ],
+    joints,
     relationshipDeclarations,
     validation,
     debug: {

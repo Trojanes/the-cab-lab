@@ -611,6 +611,165 @@
             "x": 562.85,
             "z": 366.5
           }
+        },
+        "faceFeatures": {
+          "BP.A.BG_D0": {
+            "u0": 0,
+            "u1": 15.5,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D1": {
+            "u0": 658.7,
+            "u1": 674.7,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D2": {
+            "u0": 1325.4,
+            "u1": 1341.4,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D3": {
+            "u0": 1984.5,
+            "u1": 2000,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "T2.A.T2SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 20
+          },
+          "T2.A.T2SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 666.7,
+            "cy": 20
+          },
+          "T2.A.T2SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1333.4,
+            "cy": 20
+          },
+          "T2.A.T2SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 20
+          },
+          "T3.A.T3SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 45
+          },
+          "T3.A.T3SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 666.7,
+            "cy": 45
+          },
+          "T3.A.T3SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1333.4,
+            "cy": 45
+          },
+          "T3.A.T3SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 45
+          },
+          "T3.A.T3_LED_MAIN": {
+            "u0": 0,
+            "u1": 2000,
+            "v0": 18,
+            "v1": 32.5,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_1": {
+            "u0": 72.75,
+            "u1": 87.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_2": {
+            "u0": 1912.75,
+            "u1": 1927.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T4.A.T4SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 38
+          },
+          "T4.A.T4SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 666.7,
+            "cy": 38
+          },
+          "T4.A.T4SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1333.4,
+            "cy": 38
+          },
+          "T4.A.T4SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 38
+          },
+          "FP0.A.FP0_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP0.A.FP0_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 562.95,
+            "cy": 366.5
+          },
+          "FP1.A.FP1_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP1.A.FP1_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 564.2,
+            "cy": 366.5
+          },
+          "FP2.A.FP2_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP2.A.FP2_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 562.85,
+            "cy": 366.5
+          }
         }
       }
     },
@@ -1078,6 +1237,128 @@
           "FP1.HINGE_2": {
             "x": 496.25,
             "z": 366.5
+          }
+        },
+        "faceFeatures": {
+          "BP.A.BG_D0": {
+            "u0": 0,
+            "u1": 15.5,
+            "v0": 116.667,
+            "v1": 233.333,
+            "depth": 7.5
+          },
+          "BP.A.BG_D1": {
+            "u0": 592,
+            "u1": 608,
+            "v0": 116.667,
+            "v1": 233.333,
+            "depth": 7.5
+          },
+          "BP.A.BG_D2": {
+            "u0": 1184.5,
+            "u1": 1200,
+            "v0": 116.667,
+            "v1": 233.333,
+            "depth": 7.5
+          },
+          "T2.A.T2SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 20
+          },
+          "T2.A.T2SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 600,
+            "cy": 20
+          },
+          "T2.A.T2SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1192.5,
+            "cy": 20
+          },
+          "T3.A.T3SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 45
+          },
+          "T3.A.T3SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 600,
+            "cy": 45
+          },
+          "T3.A.T3SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1192.5,
+            "cy": 45
+          },
+          "T3.A.T3_LED_MAIN": {
+            "u0": 0,
+            "u1": 1200,
+            "v0": 18,
+            "v1": 32.5,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_1": {
+            "u0": 72.75,
+            "u1": 87.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_2": {
+            "u0": 1112.75,
+            "u1": 1127.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T4.A.T4SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 38
+          },
+          "T4.A.T4SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 600,
+            "cy": 38
+          },
+          "T4.A.T4SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1192.5,
+            "cy": 38
+          },
+          "FP0.A.FP0_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP0.A.FP0_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 496.25,
+            "cy": 366.5
+          },
+          "FP1.A.FP1_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP1.A.FP1_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 496.25,
+            "cy": 366.5
           }
         }
       }
@@ -1684,6 +1965,153 @@
             "x": 496.25,
             "z": 366.5
           }
+        },
+        "faceFeatures": {
+          "BP.A.BG_D0": {
+            "u0": 0,
+            "u1": 15.5,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D1": {
+            "u0": 642,
+            "u1": 658,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D2": {
+            "u0": 1392,
+            "u1": 1408,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D3": {
+            "u0": 1984.5,
+            "u1": 2000,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "T2.A.T2SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 20
+          },
+          "T2.A.T2SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 650,
+            "cy": 20
+          },
+          "T2.A.T2SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1400,
+            "cy": 20
+          },
+          "T2.A.T2SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 20
+          },
+          "T3.A.T3SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 45
+          },
+          "T3.A.T3SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 650,
+            "cy": 45
+          },
+          "T3.A.T3SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1400,
+            "cy": 45
+          },
+          "T3.A.T3SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 45
+          },
+          "T3.A.T3_LED_MAIN": {
+            "u0": 0,
+            "u1": 2000,
+            "v0": 18,
+            "v1": 32.5,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_1": {
+            "u0": 72.75,
+            "u1": 87.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_2": {
+            "u0": 1912.75,
+            "u1": 1927.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T4.A.T4SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 38
+          },
+          "T4.A.T4SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 650,
+            "cy": 38
+          },
+          "T4.A.T4SH_D2": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1400,
+            "cy": 38
+          },
+          "T4.A.T4SH_D3": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 1992.5,
+            "cy": 38
+          },
+          "FP0.A.FP0_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP0.A.FP0_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 546.25,
+            "cy": 366.5
+          },
+          "FP2.A.FP2_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP2.A.FP2_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 496.25,
+            "cy": 366.5
+          }
         }
       }
     },
@@ -2086,6 +2514,111 @@
           "FP0.HINGE_2": {
             "x": 895,
             "z": 366.5
+          }
+        },
+        "faceFeatures": {
+          "BP.A.BG_D0": {
+            "u0": 0,
+            "u1": 15.5,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BG_D1": {
+            "u0": 984.5,
+            "u1": 1000,
+            "v0": 133.333,
+            "v1": 266.667,
+            "depth": 7.5
+          },
+          "BP.A.BP_NCE_RANGEHOOD_CUTOUT": {
+            "u0": 55,
+            "u1": 610,
+            "v0": 57.5,
+            "v1": 342.5
+          },
+          "T2.A.T2SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 20
+          },
+          "T2.A.T2SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 992.5,
+            "cy": 20
+          },
+          "T3.A.T3SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 45
+          },
+          "T3.A.T3SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 992.5,
+            "cy": 45
+          },
+          "T3.A.T3_LED_MAIN": {
+            "u0": 0,
+            "u1": 1000,
+            "v0": 18,
+            "v1": 32.5,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_1": {
+            "u0": 72.75,
+            "u1": 87.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T3.A.T3_LED_BRANCH_2": {
+            "u0": 912.75,
+            "u1": 927.25,
+            "v0": 32.5,
+            "v1": 90,
+            "depth": 6.5
+          },
+          "T4.A.T4SH_D0": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 7.5,
+            "cy": 38
+          },
+          "T4.A.T4SH_D1": {
+            "diameter": 3,
+            "depth": 15,
+            "cx": 992.5,
+            "cy": 38
+          },
+          "D0.A.RGHD_D0_SIDE_GROOVE": {
+            "u0": 133.333,
+            "u1": 266.667,
+            "v0": 75,
+            "v1": 91,
+            "depth": 7.5
+          },
+          "D1.B.RGHD_D1_SIDE_GROOVE": {
+            "u0": 133.333,
+            "u1": 266.667,
+            "v0": 75,
+            "v1": 91,
+            "depth": 7.5
+          },
+          "FP0.A.FP0_HINGE_1": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 100,
+            "cy": 366.5
+          },
+          "FP0.A.FP0_HINGE_2": {
+            "diameter": 35,
+            "depth": 12,
+            "cx": 895,
+            "cy": 366.5
           }
         }
       }

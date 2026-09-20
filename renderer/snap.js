@@ -3,9 +3,10 @@
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
 import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
-import { getJob, getSpace, getPlanes, onChange, snap } from "./job.js";
+import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
 import { envelopeFootprint } from "./cabinets3d.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
+import { wallSolid, wallParts, wallBoxes } from "./walls.js";
 
 export const SNAP_RADIUS_PX = 14;
 
@@ -97,6 +98,23 @@ function build() {
       add(a.x, a.y, a.z, pl.id, [unit(prev.x - a.x, prev.y - a.y, prev.z - a.z), unit(next.x - a.x, next.y - a.y, next.z - a.z)]);
     }
   }
+  // Partition walls: their bottom and top corners (the top follows the roof), and the corners of every door hole.
+  for (const w of getWalls()) {
+    const s = wallSolid(w, sp, getStock());
+    for (const x of [s.x0, s.x1]) for (const y of [s.y0, s.y1]) {
+      add(x, y, s.z0, w.id, AXIS_DIRS);
+      add(x, y, s.topZ(s.along === "x" ? x : y), w.id, AXIS_DIRS);
+    }
+    for (const o of s.openings) {
+      for (const u of [o.u0, o.u1]) for (const v of (s.along === "x" ? [s.y0, s.y1] : [s.x0, s.x1])) for (const z of [o.zBottom, o.zTop]) {
+        if (s.along === "x") add(u, v, z, w.id, AXIS_DIRS); else add(v, u, z, w.id, AXIS_DIRS);
+      }
+    }
+    // Sliding doors: the corners of the leaf and the pelmet (boards beside the wall).
+    for (const p of wallParts(s, sp, getStock(), wallBoxes(getWalls().filter((o) => o.id !== w.id), sp, getStock()))) {
+      for (const x of [p.x0, p.x1]) for (const y of [p.y0, p.y1]) for (const z of [p.z0, p.z1]) add(x, y, z, w.id, AXIS_DIRS);
+    }
+  }
   return Array.from(map.values());
 }
 
@@ -156,6 +174,16 @@ function buildPlanes() {
     const slice = slicePlane(sp, pl.axis, pl.value);
     if (!slice) continue;
     face(pl.axis, pl.value, pl.dir, pl.id, pl.from?.label ? `Offset ${Math.round(pl.offset)} from ${pl.from.label}` : pl.id, slice.ext);
+  }
+  // Partition walls: four vertical faces (cabinets snap to them and can be drawn on them); a flat top when the wall runs across the van.
+  for (const w of getWalls()) {
+    const s = wallSolid(w, sp, getStock());
+    const ext = { x: [s.x0, s.x1], y: [s.y0, s.y1], z: [s.z0, s.zTopMin] };
+    face("x", s.x0, -1, w.id, `${w.id} −X face`, ext);
+    face("x", s.x1, +1, w.id, `${w.id} +X face`, ext);
+    face("y", s.y0, -1, w.id, `${w.id} −Y face`, ext);
+    face("y", s.y1, +1, w.id, `${w.id} +Y face`, ext);
+    if (w.axis === "y") face("z", s.zTopMin, +1, w.id, `${w.id} top`, ext);
   }
   return out;
 }

@@ -70,13 +70,29 @@
           <button class="tb seg" data-view="front">Front</button>
           <button class="tb seg" data-view="side">Side</button>
         </div>
-        <label class="field-inline" title="Pull boards apart along their offset from the cabinet centre">Explode
+        <label class="field-inline" title="Pull the boards apart the way they go in (assembly) or away from the centre (radial)">Explode
           <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
         </label>
+        <div class="group step-nav" title="Assembly steps: one board goes in per step (← → keys)">
+          <button class="tb icon" id="stepPrev" title="Take the last board out (←)">◂</button>
+          <button class="tb step-label" id="stepLabel" title="Leave step mode: all boards follow the slider">all</button>
+          <button class="tb icon" id="stepNext" title="Put the next board in (→)">▸</button>
+        </div>
+        <button class="tb" id="explodeToggle" title="Explode mode · trails · labels · assembly order">Explode ▾</button>
         <button class="tb" id="btnFrame" title="Frame the cabinet (F)">Frame</button>
         <button class="tb" id="moreToggle" title="Opacity · section · what is drawn">⋯</button>
         <span class="spacer"></span>
         <button class="tb icon" id="bottomToggle" title="Boards &amp; audit (])">▾</button>
+        <div id="explodePop" class="pop hidden">
+          <div class="group seg-group" id="explodeModeGroup">
+            <button class="tb seg" data-mode="assembly" title="Each board slides out along the face it is joined on; parts move with what they sit on">Assembly</button>
+            <button class="tb seg" data-mode="radial" title="Every board away from the cabinet centre">Radial</button>
+          </div>
+          <label class="field-inline"><input type="checkbox" id="explodeTrails" checked> trails (from where a board sits to where it goes)</label>
+          <label class="field-inline"><input type="checkbox" id="explodeLabels" checked> board ids</label>
+          <div class="pop-title">Assembly order <span class="muted">click a board to jump to its step</span></div>
+          <div id="explodeOrder" class="explode-order"></div>
+        </div>
         <div id="morePop" class="pop hidden">
           <label class="field-inline">Opacity <input type="range" id="opacity" min="0.15" max="1" step="0.05" value="1"></label>
           <label class="field-inline">Cut X <input type="range" id="cutX" min="0" max="1" step="0.01" value="1"></label>

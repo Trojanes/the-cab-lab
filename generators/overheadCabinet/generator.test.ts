@@ -238,6 +238,148 @@ function testProvenanceCoversEveryFaceAndPoint() {
   assert.ok(Object.keys(prov.rules).includes("T3_DEPTH_MM"));
 }
 
+/**
+ * Face layer (docs/model-spec.md): every board has A / B / E<i>; every feature
+ * sits on the face it is machined into; tongue / notch tags cover only outline
+ * edges; joints resolve to faces. Numbers are pinned in presets.json.
+ */
+function testFaceLayer() {
+  const preset = presets.presets.find((p) => p.id === "golden-2000-3")!;
+  const result = generateOverheadCabinet(preset.params as never);
+  const byId = new Map(result.boards.map((b) => [b.id, b]));
+  const prov = result.debug.provenance!.entries;
+
+  for (const b of result.boards) {
+    const faces = b.faces!;
+    assert.ok(faces, `${b.id} has faces`);
+    const A = faces.find((f) => f.id === "A")!;
+    const Bf = faces.find((f) => f.id === "B")!;
+    // A = +thicknessAxis side, B = - side; their planes are the recorded box faces.
+    assert.equal(A.normal, `+${b.thicknessAxis}`);
+    assert.equal(Bf.normal, `-${b.thicknessAxis}`);
+    assert.equal(A.planeKey, `${b.id}.${b.thicknessAxis.toLowerCase()}1`);
+    assert.ok(prov[A.planeKey!], `${A.planeKey} in provenance`);
+    assert.ok(prov[Bf.planeKey!], `${Bf.planeKey} in provenance`);
+    // One edge face per outline edge (rectangle → 4).
+    const edges = faces.filter((f) => f.id.startsWith("E"));
+    const outline = b.cutProfileVector ?? b.profileVector;
+    const n = outline ? outline.length - 1 : 4;
+    assert.equal(edges.length, n, `${b.id} edge faces`);
+    for (const e of edges) assert.ok(e.edge && e.segments?.length === 1, `${e.key} has its edge`);
+    assert.equal(b.role, b.category);
+    assert.equal(b.stock?.thickness, b.materialThickness);
+  }
+
+  // BP.A: one groove per divider, matching the geometry's bp_groove (BP sits at the origin so local = cabinet).
+  const bp = byId.get("BP")!;
+  const grooves = bp.faces!.find((f) => f.id === "A")!.features.filter((f) => f.kind === "groove");
+  const geometry = calculateOverheadGeometry(preset.params as never);
+  assert.equal(grooves.length, geometry.divider_features.length);
+  geometry.divider_features.forEach((df, i) => {
+    assert.equal(grooves[i]!.id, df.bp_groove.id);
+    assert.equal(grooves[i]!.for, df.id);
+    assert.deepEqual([grooves[i]!.u0, grooves[i]!.u1], df.bp_groove.x);
+    assert.deepEqual([grooves[i]!.v0, grooves[i]!.v1], df.bp_groove.y);
+    assert.equal(grooves[i]!.depth, 7.5);
+  });
+  assert.equal(bp.faces!.find((f) => f.id === "B")!.features.length, 0, "nothing on the BP underside");
+
+  // D1: the tongue tag covers exactly the three edges below v = 0; the two notch tags exist; nothing on A / B.
+  const d1 = byId.get("D1")!;
+  const tongueEdges = d1.faces!.filter((f) => f.features.some((x) => x.kind === "tongue"));
+  assert.equal(tongueEdges.length, 3);
+  for (const e of tongueEdges) {
+    assert.ok(e.edge!.from[1] <= 0 && e.edge!.to[1] <= 0, `${e.key} lies below the outline origin`);
+    assert.equal(e.features[0]!.for, "BP");
+  }
+  assert.equal(d1.faces!.filter((f) => f.features.some((x) => x.id === "D1_T3_STEP")).length, 3);
+  assert.equal(d1.faces!.filter((f) => f.features.some((x) => x.id === "D1_T4_NOTCH")).length, 2);
+  assert.equal(d1.faces!.find((f) => f.id === "A")!.features.length, 0);
+  assert.equal(d1.faces!.find((f) => f.id === "B")!.features.length, 0);
+  assert.equal(byId.get("D0")!.faces!.find((f) => f.id === "B")!.semantic, "outside");
+
+  // FP0.A (back, +Y): the two hinge cups, same numbers as the flat feature list; B is the visible front.
+  const fp0 = byId.get("FP0")!;
+  const back = fp0.faces!.find((f) => f.id === "A")!;
+  assert.equal(back.semantic, "back");
+  const cups = back.features.filter((f) => f.kind === "hole");
+  assert.equal(cups.length, 2);
+  const hinges = geometry.hinge_holes.filter((h) => h.boardId === "FP0");
+  cups.forEach((c, i) => {
+    assert.deepEqual(c.center, hinges[i]!.center);
+    assert.equal(c.diameter, hinges[i]!.diameter);
+    assert.equal(c.key, `FP0.feat.HINGE_${i + 1}`);
+    assert.ok(prov[`${c.key}.x`] && prov[`${c.key}.z`], `${c.key} has provenance`);
+  });
+  const front = fp0.faces!.find((f) => f.id === "B")!;
+  assert.equal(front.semantic, "front");
+  assert.equal(front.visible, true);
+  assert.equal(fp0.stock?.kind, "door");
+
+  // T3.A: four screw pilot holes + LED main + two branches, all with provenance.
+  const t3 = byId.get("T3")!;
+  const t3A = t3.faces!.find((f) => f.id === "A")!;
+  assert.equal(t3A.semantic, "top");
+  assert.equal(t3A.features.filter((f) => f.kind === "hole").length, 4);
+  const led = t3A.features.filter((f) => f.kind === "tgroove");
+  assert.equal(led.length, 3);
+  assert.deepEqual([led[0]!.v0, led[0]!.v1], [18, 32.5]);
+  assert.equal(led[1]!.v1, 90);
+  for (const f of t3A.features) {
+    for (const c of ["x", "y"]) {
+      const k = f.kind === "hole" ? `${f.key}.${c}` : `${f.key}.${c}0`;
+      assert.ok(prov[k], `${k} in provenance`);
+    }
+  }
+  assert.equal(prov["T3.feat.T3SH_D1.y"]!.formula, "T3_DEPTH / 2");
+  assert.equal(prov["T3.feat.LED_MAIN.y1"]!.formula, "LAND + W");
+  assert.equal(prov["T3.feat.LED_MAIN.y1"]!.terms.LAND?.kind, "rule");
+
+  // T2 screw holes sit on the rail's midline in board-local v.
+  const t2 = byId.get("T2")!;
+  const t2Holes = t2.faces!.find((f) => f.id === "A")!.features;
+  assert.equal(t2Holes.length, 4);
+  assert.deepEqual(t2Holes[1]!.center, [666.7, 20]);
+
+  // Joints: the four declarations, resolved to faces.
+  assert.equal(result.joints.length, result.relationshipDeclarations.length);
+  const j = new Map(result.joints.map((x) => [x.id, x]));
+  assert.deepEqual(j.get("oh_bp_d0_back_to_divider")!.a, { board: "BP", faces: ["A"] });
+  assert.equal(j.get("oh_bp_d0_back_to_divider")!.kind, "tongue_groove");
+  assert.equal(j.get("oh_bp_d0_back_to_divider")!.b.faces.length, 2, "divider body bottom edges either side of the tongue");
+  // The front joint uses only the divider's front boundary edge, not every -Y edge (tongue side, steps).
+  assert.deepEqual(j.get("oh_d0_fp0_divider_to_front")!.a, { board: "D0", faces: ["E13"] });
+  assert.deepEqual(j.get("oh_d0_fp0_divider_to_front")!.b, { board: "FP0", faces: ["A"] });
+  assert.deepEqual(j.get("oh_t1_t2_top_rail_stack")!.a, { board: "T1", faces: ["A"] });
+  assert.deepEqual(j.get("oh_t1_t2_top_rail_stack")!.b, { board: "T2", faces: ["B"] });
+
+  // Pins cover the face features too.
+  assert.ok(Object.keys(preset.pins.faceFeatures ?? {}).length > 0, "golden preset pins face features — run scripts/pin-presets.ts --write");
+  assert.ok(preset.pins.faceFeatures!["BP.A.BG_D1"], "BP.A.BG_D1 pinned");
+}
+
+function testFaceLayerRangehood() {
+  const preset = presets.presets.find((p) => p.id === "rangehood-1000")!;
+  const result = generateOverheadCabinet(preset.params as never);
+  const byId = new Map(result.boards.map((b) => [b.id, b]));
+  const bpA = byId.get("BP")!.faces!.find((f) => f.id === "A")!;
+  const cutout = bpA.features.find((f) => f.kind === "cutout")!;
+  assert.ok(cutout, "rangehood cutout on BP.A");
+  assert.equal(cutout.through, true);
+  assert.deepEqual([cutout.u0, cutout.u1], [55, 610]);
+  assert.deepEqual([cutout.v0, cutout.v1], [57.5, 342.5]);
+  assert.equal(result.debug.provenance!.entries["BP.feat.RGHD_CUTOUT.x0"]!.formula, "rghdX0 + edgeOffsetX");
+  // Side grooves: D0 inside face (+X = A), D1 inside face (-X = B).
+  const d0 = byId.get("D0")!;
+  const d1 = byId.get("D1")!;
+  assert.equal(d0.faces!.find((f) => f.id === "A")!.features.filter((f) => f.kind === "groove").length, 1);
+  assert.equal(d0.faces!.find((f) => f.id === "B")!.features.length, 0);
+  assert.equal(d1.faces!.find((f) => f.id === "B")!.features.filter((f) => f.kind === "groove").length, 1);
+  const g = d1.faces!.find((f) => f.id === "B")!.features[0]!;
+  // z 90..106 cabinet → local v = z - z0 (D1.z0 = 15).
+  assert.deepEqual([g.v0, g.v1], [75, 91]);
+}
+
 function testDividerBoardThicknessUsesCptNotGrooveSlot() {
   const result = generateOverheadCabinet(baseParams);
   const dividers = result.boards.filter((board) => String(board.category) === "divider");
@@ -464,6 +606,8 @@ const tests = [
   testPresetPinsHold,
   testBoardsAreEmittedInFinalAssembledPose,
   testProvenanceCoversEveryFaceAndPoint,
+  testFaceLayer,
+  testFaceLayerRangehood,
   testDividerBoardThicknessUsesCptNotGrooveSlot,
   testGenerateOverheadCabinetBoardsAndFeatures,
   testRelationshipDeclarationsEmbeddedInResult,

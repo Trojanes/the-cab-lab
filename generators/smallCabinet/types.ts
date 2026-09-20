@@ -2,10 +2,9 @@
 
 export type SmallCabinetZoneType = "left_door" | "right_door" | "drawer";
 
-export type ProfilePoint =
-  | { x: number; y: number }
-  | { y: number; z: number }
-  | { x: number; z: number };
+import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+
+export type { Face, FaceFeature, Joint, ProfilePoint } from "../_lib/model.ts";
 
 export interface SmallCabinetZone {
   id?: string;
@@ -34,6 +33,11 @@ export interface SmallCabinetParams {
   lockSideDistance?: number;
   carcassColor?: string;
   carcassColorName?: string;
+  /** Door colour (job catalogue colour A / B); the renderer's module registry passes these. */
+  doorSeries?: string;
+  doorColor?: string;
+  doorColorName?: string;
+  colorSlot?: string;
   /** When true, left side panel uses door color slot. */
   leftSideDoorColor?: boolean;
   /** When true, right side panel uses door color slot. */
@@ -41,29 +45,12 @@ export interface SmallCabinetParams {
   zones?: SmallCabinetZone[];
 }
 
-export interface Board {
-  id: string;
-  name: string;
-  category: string;
-  boardType: string;
-  materialThickness: number;
-  profilePlane: "XY" | "XZ" | "YZ";
-  thicknessAxis: "X" | "Y" | "Z";
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-  z0: number;
-  z1: number;
-  source?: string;
-  notes?: string[];
+/** Shared board record (generators/_lib/model.ts) plus the small-cabinet attributes. */
+export interface Board extends ModelBoard {
   /** Attribute hint: side panel should use door color. */
   useDoorColor?: boolean;
   hingeSide?: "left" | "right";
   zoneId?: string;
-  profileVector?: ProfilePoint[];
-  profileFeatures?: Array<Record<string, unknown>>;
-  cutProfileVector?: Array<{ y: number; z: number }>;
   /** Door lock pocket on front panel (XZ local / world). */
   lockCutout?: LockCutout;
 }
@@ -130,8 +117,12 @@ export interface SmallCabinetResult {
     rightSideDoorColor: boolean;
   };
   zones: ResolvedZone[];
+  /** Board layer: each board carries its faces (A / B / E<i>) with the features that belong to them. */
   boards: Board[];
+  /** Flat legacy view of the same joinery (tongues, grooves, door locks); kept for existing consumers. */
   features: SmallCabinetFeature[];
+  /** Face ↔ face joints: side grooves receiving shelf / back tongues. */
+  joints: Joint[];
   validation: SmallCabinetValidation;
   debug?: Record<string, unknown>;
 }

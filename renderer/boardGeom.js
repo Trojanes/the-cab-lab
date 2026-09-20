@@ -3,14 +3,25 @@
 // board with an outline is extruded from it, otherwise it is its bounding box.
 import * as THREE from "three";
 
+function closedPath(points, map) {
+  const pts = points.map(map);
+  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
+  return pts;
+}
+/** `holes` = closed outlines (same plane) cut out of the shape (a door in a partition, a notch). */
+function shapeWithHoles(outline, holes, map) {
+  const shape = new THREE.Shape(closedPath(outline, map));
+  for (const h of holes || []) shape.holes.push(new THREE.Path(closedPath(h, map)));
+  return shape;
+}
+
 /**
  * Solid from a closed YZ outline [{y, z}, ...] extruded across X from x0 to x1
- * (a board cut to the roof, or the nose slab itself).
+ * (a board cut to the roof, the nose slab, a partition along the van).
  */
-export function prismYZ(outline, x0, x1) {
-  const pts = outline.map((p) => new THREE.Vector2(p.y, p.z));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(x1 - x0, 0.1), bevelEnabled: false });
+export function prismYZ(outline, x0, x1, holes = []) {
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.y, p.z));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(x1 - x0, 0.1), bevelEnabled: false });
   // Shape (u, v, w) → world (x0 + w, u, v): u along Y, v up, extrusion along X.
   geo.applyMatrix4(new THREE.Matrix4().set(0, 0, 1, x0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
   return geo;
@@ -26,11 +37,10 @@ export function prismXY(outline, z0, z1) {
 }
 
 /** Solid from a closed XZ outline [{x, z}, ...] extruded along Y from y0 to y1 (an OHC T4 with its notches, a door). */
-export function prismXZ(outline, y0, y1) {
+export function prismXZ(outline, y0, y1, holes = []) {
   // Shape (u, v) = (z, x) so the extrusion axis maps onto +Y without mirroring the solid.
-  const pts = outline.map((p) => new THREE.Vector2(p.z, p.x));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(y1 - y0, 0.1), bevelEnabled: false });
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.z, p.x));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(y1 - y0, 0.1), bevelEnabled: false });
   // Shape (u, v, w) → world (v, y0 + w, u).
   geo.applyMatrix4(new THREE.Matrix4().set(0, 1, 0, 0, 0, 0, 1, y0, 1, 0, 0, 0, 0, 0, 0, 1));
   return geo;

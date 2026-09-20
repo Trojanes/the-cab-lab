@@ -93,6 +93,27 @@ export function boardPoints(board, prov, features = []) {
       });
     }
   }
+
+  // Face-layer holes (A / B faces, face-local = board-local): screw pilots, cups not already listed above.
+  const seen = new Set(pts.flatMap((p) => p.keys.filter(Boolean)));
+  for (const face of board.faces || []) {
+    if (face.id !== "A" && face.id !== "B") continue;
+    for (const f of face.features) {
+      if (f.kind !== "hole" || !f.center) continue;
+      const ka = f.key ? `${f.key}.${A}` : null;
+      const kb = f.key ? `${f.key}.${B}` : null;
+      if ((ka && seen.has(ka)) || pts.some((p) => p.local[0] === f.center[0] && p.local[1] === f.center[1] && p.kind === "feature")) continue;
+      pts.push({
+        kind: "feature",
+        label: `${face.id} · ${f.id.replace(`${id}_`, "")}`,
+        keys: [has(ka) ? ka : null, has(kb) ? kb : null],
+        local: [f.center[0], f.center[1]],
+        cabinet: [a0 + f.center[0], b0 + f.center[1]],
+        radius: (f.diameter || 3) / 2,
+        face: face.id,
+      });
+    }
+  }
   return pts;
 }
 
@@ -101,6 +122,17 @@ function featureRects(board, features) {
   const rects = [];
   const id = board.id;
   const [A, B] = planeAxes(board.profilePlane);
+  // Face layer first: every groove / T-groove / cutout on A or B is already face-local.
+  if (board.faces && board.faces.length) {
+    for (const face of board.faces) {
+      if (face.id !== "A" && face.id !== "B") continue;
+      for (const f of face.features) {
+        if (!Number.isFinite(f.u0) || !Number.isFinite(f.v0)) continue;
+        rects.push({ label: `${face.id} · ${f.id.replace(`${id}_`, "")}`, a0: f.u0, a1: f.u1, b0: f.v0, b1: f.v1 });
+      }
+    }
+    return rects;
+  }
   for (const f of features) {
     if (!f) continue;
     if (f.type === "t3_groove" && f.targetBoardId === id && f.main) {

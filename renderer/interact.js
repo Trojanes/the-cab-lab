@@ -28,6 +28,7 @@ import {
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
+import { wallPickables, solidBoxes } from "./walls3d.js";
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 
@@ -127,7 +128,7 @@ function clearPreview() {
 function pick(clientX, clientY) {
   const ray = rayFromClient(clientX, clientY);
   const rc = new THREE.Raycaster(ray.origin, ray.direction);
-  const hits = rc.intersectObjects(pickables(), false);
+  const hits = rc.intersectObjects([...pickables(), ...wallPickables()], false);
   const handle = hits.find((h) => h.object.userData.kind === "handle");
   return handle || hits[0] || null;
 }
@@ -522,10 +523,8 @@ function placementBox() {
  * Returns { [axis]: { size, id } } for the axes that were stopped.
  */
 function stopAtCabinets(anchor, size, sign, n, order) {
-  const boxes = job.getJob().cabinets.map((c) => {
-    const fp = envelopeFootprint(c, c.pose);
-    return { id: c.id, x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
-  });
+  // Every solid in the job: cabinets and partition walls alike.
+  const boxes = solidBoxes();
   if (!boxes.length) return {};
   const cur = { ...size };
   const range = (a) => {
@@ -1421,13 +1420,18 @@ function clampPoseToSpace(cab, pose0) {
   return { pose, clamped };
 }
 
-function overlaps(cab, pose) {
+/** Ids of the cabinets and partition walls a cabinet at `pose` would overlap. */
+export function overlaps(cab, pose) {
   const a = envelopeFootprint(cab, pose);
-  return job.getJob().cabinets.filter((o) => {
-    if (o.id === cab.id) return false;
-    const b = envelopeFootprint(o, o.pose);
-    return a.minX < b.maxX - 0.5 && a.maxX > b.minX + 0.5 && a.minY < b.maxY - 0.5 && a.maxY > b.minY + 0.5 && a.z0 < b.z1 - 0.5 && a.z1 > b.z0 + 0.5;
-  }).map((o) => o.id);
+  return solidBoxes().filter((b) => {
+    if (b.id === cab.id) return false;
+    return a.minX < b.x[1] - 0.5 && a.maxX > b.x[0] + 0.5 && a.minY < b.y[1] - 0.5 && a.maxY > b.y[0] + 0.5 && a.z0 < b.z[1] - 0.5 && a.z1 > b.z[0] + 0.5;
+  }).map((b) => b.id);
+}
+/** Only the partition walls a cabinet at `pose` would overlap (walls come first; a cabinet never enters one). */
+function wallHits(cab, pose) {
+  const walls = new Set(job.getWalls().map((w) => w.id));
+  return overlaps(cab, pose).filter((id) => walls.has(id));
 }
 
 function updateMove(tipAt) {
@@ -1546,10 +1550,8 @@ function sideBlocked(b, side, excludeId = null) {
     if (Math.abs(at - bound) < 0.5 && (sp.walls || []).includes(wallIdx)) return true;
   }
   const others = AXES.filter((a) => a !== side.axis);
-  for (const c of job.getJob().cabinets) {
-    if (c.id === excludeId) continue;
-    const fp = envelopeFootprint(c, c.pose);
-    const o = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+  for (const o of solidBoxes()) {
+    if (o.id === excludeId) continue;
     const near = side.dir > 0 ? o[side.axis][0] : o[side.axis][1];
     if (Math.abs(near - at) > 0.5) continue;
     if (others.every((a) => lo[a] < o[a][1] - 0.5 && hi[a] > o[a][0] + 0.5)) return true;
@@ -1850,8 +1852,9 @@ canvas.addEventListener("pointerdown", (e) => {
     job.select(null);
     return;
   }
-  const { kind, cabId, handle, planeId } = hit.object.userData;
+  const { kind, cabId, handle, planeId, wallId } = hit.object.userData;
   if (kind === "cplane") { job.select(planeId); return; }
+  if (kind === "wall") { job.select(wallId); return; }
   const cab = job.getJob().cabinets.find((c) => c.id === cabId);
   if (!cab) return;
 
@@ -1947,10 +1950,14 @@ function handleDragMove(e) {
   const env0 = mod.envelope(drag.params0);
   const h = drag.handle;
 
-  // Resize handles stop at the space boundary: only apply a candidate that still fits.
+  // Resize handles stop at the space boundary and at partition walls: only apply a candidate that still fits.
   let stopped = false;
+  let stoppedBy = "the space boundary";
   const applyIfFits = (params, pose) => {
-    if (!poseFits({ ...cab, params, pose }, pose)) { stopped = true; return; }
+    const probe = { ...cab, params, pose };
+    if (!poseFits(probe, pose)) { stopped = true; return; }
+    const hits = wallHits(probe, pose);
+    if (hits.length) { stopped = true; stoppedBy = hits[0]; return; }
     job.updateCabinet(drag.cabId, (c) => { c.params = params; c.pose = pose; });
   };
 
@@ -1980,7 +1987,7 @@ function handleDragMove(e) {
   }
   const env = mod.envelope(job.getJob().cabinets.find((c) => c.id === drag.cabId).params);
   const val = h.type === "divider" ? null : `${h.type} ${Math.round(h.type === "D" ? env.D + FRONT_THICKNESS_DEFAULT : env[h.type])}`;
-  showTip(e.clientX, e.clientY, [val || "Zone boundary", stopped ? "Stopped at the space boundary" : null], stopped ? "warn" : "");
+  showTip(e.clientX, e.clientY, [val || "Zone boundary", stopped ? `Stopped at ${stoppedBy}` : null], stopped ? "warn" : "");
 }
 
 function endDrag(e) {
@@ -2242,6 +2249,13 @@ window.addEventListener("keydown", (e) => {
   if (pl && (e.key === "Delete" || e.key === "Backspace")) {
     log("key.delete", { id: pl.id });
     job.removePlane(pl.id);
+    return;
+  }
+  // A partition wall: 3D only selects and deletes it; it is drawn and edited in the floor plan.
+  const wall = job.getSelectedWall();
+  if (wall && (e.key === "Delete" || e.key === "Backspace")) {
+    log("key.delete", { id: wall.id });
+    job.removeWall(wall.id);
     return;
   }
 

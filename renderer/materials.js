@@ -10,11 +10,16 @@ import { getSetting } from "./settings.js";
 export const MATERIALS_SETTINGS_KEY = "materials.defaults";
 export const CARCASS_COLOR = "White Stipple";
 
+// Partition stock is also the room partition (the walls that split a vehicle
+// into shower / ensuite / living). Its clearances leave room for packers:
+// a partition wall stands floorClearance above the floor and stops
+// ceilingClearance under the roof.
 export const DEFAULT_STOCK = {
   carcass: { thickness: 15 },
-  partition: { thickness: 18 },
+  partition: { thickness: 18, floorClearance: 2, ceilingClearance: 2 },
   door: { thickness: 16 },
 };
+export const CLEARANCE_MAX = 100;
 
 export const DOOR_SERIES = {
   acrylic: {
@@ -47,7 +52,7 @@ const DEFAULT_DOOR_NAME = "Gloss White";
 export function builtInStock() {
   return {
     carcass: { thickness: DEFAULT_STOCK.carcass.thickness },
-    partition: { thickness: DEFAULT_STOCK.partition.thickness },
+    partition: { ...DEFAULT_STOCK.partition },
     door: { thickness: DEFAULT_STOCK.door.thickness },
   };
 }
@@ -108,12 +113,27 @@ function stockThickness(raw, key, fallback) {
   return { thickness: Number.isFinite(n) && n > 0 ? Math.round(n * 10) / 10 : fallback };
 }
 
+function clearance(raw, key, fallback) {
+  const n = Number(raw && raw.partition && raw.partition[key]);
+  return Number.isFinite(n) && n >= 0 ? Math.round(n * 10) / 10 : fallback;
+}
+
 export function normalizeStock(raw) {
   return {
     carcass: stockThickness(raw, "carcass", DEFAULT_STOCK.carcass.thickness),
-    partition: stockThickness(raw, "partition", DEFAULT_STOCK.partition.thickness),
+    partition: {
+      ...stockThickness(raw, "partition", DEFAULT_STOCK.partition.thickness),
+      floorClearance: clearance(raw, "floorClearance", DEFAULT_STOCK.partition.floorClearance),
+      ceilingClearance: clearance(raw, "ceilingClearance", DEFAULT_STOCK.partition.ceilingClearance),
+    },
     door: stockThickness(raw, "door", DEFAULT_STOCK.door.thickness),
   };
+}
+
+/** Partition wall clearances { floor, ceiling } in mm. */
+export function partitionClearance(stock) {
+  const s = normalizeStock(stock);
+  return { floor: s.partition.floorClearance, ceiling: s.partition.ceilingClearance };
 }
 
 export function validateMaterials(finish, stock) {
@@ -128,6 +148,10 @@ export function validateMaterials(finish, stock) {
   for (const [key, label] of [["carcass", "Carcass"], ["partition", "Partition"], ["door", "Door"]]) {
     const th = s[key].thickness;
     if (!(th >= 3 && th <= 50)) errors.push(`${label} thickness must be between 3 and 50 mm.`);
+  }
+  for (const [key, label] of [["floorClearance", "Partition floor clearance"], ["ceilingClearance", "Partition ceiling clearance"]]) {
+    const v = s.partition[key];
+    if (!(v >= 0 && v <= CLEARANCE_MAX)) errors.push(`${label} must be between 0 and ${CLEARANCE_MAX} mm.`);
   }
   return errors;
 }
@@ -172,6 +196,7 @@ export function describeMaterials(finish, stock) {
     ["Door", door],
     ["Carcass", `${s.carcass.thickness} mm`],
     ["Partition", `${s.partition.thickness} mm`],
+    ["Partition clearance", `floor ${s.partition.floorClearance} · ceiling ${s.partition.ceilingClearance}`],
     ["Door stock", `${s.door.thickness} mm`],
   ];
 }

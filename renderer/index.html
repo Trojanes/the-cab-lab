@@ -82,7 +82,45 @@
     </aside>
 
     <main id="center">
-      <div id="viewport"></div>
+      <div id="viewport">
+        <!-- Floor plan: a 2D sheet over the 3D view where partition walls are drawn. Same job; the 3D follows. -->
+        <button id="floorplanBtn" class="tb fp-btn" title="Floor plan — draw partition walls in 2D over the 3D view; the 3D follows every change" disabled>
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
+            <rect x="2" y="2.5" width="12" height="11"/>
+            <path d="M2 8.5 H8 M8 2.5 V13.5 M8 8.5 H14"/>
+          </svg>
+          <span>Floor plan</span>
+        </button>
+        <div id="floorplan" class="hidden">
+          <canvas id="fpCanvas"></canvas>
+          <div class="fp-tools">
+            <span class="fp-title">Floor plan</span>
+            <span class="fp-sep"></span>
+            <button class="tb seg" data-fp-tool="wall" title="Wall (W) — two points on one feature edge fix the span (Enter = the far end), pull the wall into the room, Tab / digits type the clear distance · left-click confirms · right-click cancels">Wall</button>
+            <button class="tb seg" data-fp-tool="door" title="Shower door (D) — click the end of a partition, then the door's first edge along it, then its other edge (Tab / digits type the numbers); a card asks the bottom / top clearance · left-click confirms · right-click cancels">Shower door</button>
+            <button class="tb seg" data-fp-tool="slide" title="Sliding door (S) — click the end of a partition, the door's first edge, its other edge, then the side of the wall the door hangs on; a card asks the top clearance, how much wider the leaf is and its height · the hole goes to the floor; the leaf and the pelmet (track cover) are built from the Partition stock · left-click confirms · right-click cancels">Sliding door</button>
+            <span class="spacer"></span>
+            <button class="tb" data-fp="fit" title="Fit the space (F)">Fit</button>
+            <button class="tb" data-fp="close" title="Back to 3D (Esc)">Close</button>
+          </div>
+          <div class="fp-hint"></div>
+          <div class="fp-tip hidden"></div>
+          <label class="fp-dim hidden"><span>L</span><input type="text" inputmode="decimal" tabindex="-1" spellcheck="false"></label>
+          <!-- Door card. Shower door: the hole's clearance to the floor and to the top of the wall.
+               Sliding door: top clearance (= pelmet height), leaf overlap over the hole, leaf height. -->
+          <div class="fp-card hidden">
+            <div class="fp-card-title">Shower door · clearance</div>
+            <label data-for="shower"><span>Bottom (mm)</span><input type="number" min="0" step="1" data-op="bottom"></label>
+            <label><span>Top (mm)</span><input type="number" min="0" step="1" data-op="top"></label>
+            <label data-for="sliding"><span>Leaf wider by (mm)</span><input type="number" min="0" step="1" data-op="overlap"></label>
+            <label data-for="sliding"><span>Leaf height (mm)</span><input type="number" min="1" step="1" data-op="height"></label>
+            <div class="fp-card-actions">
+              <button class="tb" data-op="cancel">Cancel</button>
+              <button class="tb primary" data-op="ok">Create</button>
+            </div>
+          </div>
+        </div>
+      </div>
       <div id="viewport-hud">
         <span id="viewLabel">3D</span>
       </div>

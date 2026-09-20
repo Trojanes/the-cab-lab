@@ -7,6 +7,7 @@ The box *is* the generator's outer size. Pull its faces to change W / D / H, dra
 zone boundaries, edit details in the right panel. Boards are always regenerated from `job.json`, never edited.
 
 Current state: Small cabinet and Overhead cabinet wired end to end (place, move, rotate, resize, zones, checks, board table, save / load, undo).
+Partition walls (18 / 24 mm Partition stock, floor to roof) are drawn in the **Floor plan** sheet over the 3D view and block cabinets.
 Bedroom (the vehicle's nose slab, for now one solid volume) is wired with its own placement flow. Other modules are
 listed but not wired yet.
 
@@ -41,6 +42,10 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/modules.js` — module registry: generator bundle + envelope (W / D / H) + divider handles; `placement: "nose"`
   modules add `withSpace` (bind width / height / roof profile to the space), `envelopeProfile`, `handles`, `roofAware`
 - `renderer/cabinets3d.js` — draws boards, envelope, handles from generator output
+- `renderer/walls.js` — partition walls (`job.walls`): record → footprint / roof-cut outline for the current Partition stock + clearances; legality (inside the space, overlaps, rests on a wall)
+- `renderer/walls3d.js` — draws the walls in 3D (select + Delete only); `solidBoxes()` = every solid (cabinets + walls) for clamping
+- `renderer/features2d.js` — the plan's feature edges (space walls, partition faces / ends, cabinet sides — split where solids meet) and feature points
+- `renderer/floorplan.js` — the **Floor plan** sheet over the 3D view where walls are drawn (two ways, see below)
 - `renderer/snap.js` — feature points (space + cabinet corners), face planes for alignment, edge / height inference
 - `renderer/interact.js` — left-button interaction: three-step placement, Move command, type-ins, select, resize, dividers, keys
 - `renderer/presets.js` — per-module starting sizes (preset H today; a settings UI will edit them)
@@ -84,9 +89,75 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - Space dialog: Front / Right / Back / Left wall checkboxes (all on by default). Below the space fields:
   **Cabinets** — carcass / partition colour is **White Stipple**; doors are **Acrylic** or **HPL** (one or two
   colours from that series). Board stocks default to **Carcass 15 mm**, **Partition 18 mm**, **Door 16 mm**.
-  These live on the job (`finish` / `stock`), not on the space. New cabinets copy White Stipple onto the box,
-  door colour A onto the fronts, and the matching thicknesses. Which modules use door colour B is set later.
-  **Set current as default** (in the Cabinets block) saves the catalogue to `settings.json` for new jobs.
+  **Partition floor / ceiling clearance** (default 2 / 2 mm) is the room left for packers under and over a
+  partition wall. These live on the job (`finish` / `stock`), not on the space. New cabinets copy White Stipple
+  onto the box, door colour A onto the fronts, and the matching thicknesses. Which modules use door colour B is
+  set later. **Set current as default** (in the Cabinets block) saves the catalogue to `settings.json` for new jobs.
+- **Floor plan / partition walls** (button at the top right of the 3D view; `Esc` closes): a 2D sheet slides
+  over the 3D view — same job, so the 3D underneath already shows every wall when the sheet is closed. Walls come
+  first, cabinets after: a partition is a solid for placement, Move, resize handles and the door-side rule, and
+  its faces / corners are snap features. A wall is `job.walls[] = { id, axis, at, u0, u1, side }`: `axis` its
+  normal (`y` = across the van), `at` the **reference face** the offset was measured to, `side` the way the
+  thickness grows, `u0..u1` its span. Thickness and height are never stored — thickness = Partition stock, bottom =
+  floor + floor clearance, top = roof − ceiling clearance (a wall along the van follows the nose) — so a catalogue
+  change moves every wall. Everything is drawn from **features**: a feature edge is a wall of the space, a face or
+  end of a partition, or a side of a cabinet, split wherever another solid touches it (the back wall with two
+  partitions against it is three edges); feature points are their ends. One tool, **Wall** (`W`), armed when the
+  sheet opens: click the first point on a line (a feature point, a point **in line** with another partition —
+  dashed guide — or 10 mm along it) → click the second point on the **same** line (`Enter` = the far end, i.e. the
+  whole span) → pull the wall out to **either side** and click or `Enter` (`Offset` = the clear distance to the
+  near face; the thickness grows away). A partition is picked as a **body**, not a face: its two faces are one
+  line, and the offset is measured from whichever face the cursor is on (pull toward the nose → from the nose
+  face). Alignment is **centre line to centre line**: a wall **end** in line with another partition stops on that
+  partition's centre line (the end is buried half a thickness — a T‑joint, legal and counted as resting on that
+  wall), and the **offset** in line with a parallel partition puts the new centre on its centre (same stock, so
+  the faces coincide). Next to a partition its own face corners yield to its centre line; junctions with other
+  walls stay feature points. A cabinet has no centre line: its sides are the alignment. At the second point and at
+  the offset, **`Tab`** (or a digit) opens
+  the type-in with the live value selected, AutoCAD-style: type `L` / `Offset`, `Enter` or a left-click confirms.
+  **Right-click cancels**: the wall in progress goes back to the first point; right-click again leaves the tool
+  (`Esc` does the same; a third `Esc` closes the sheet). The preview turns red and cannot be dropped when it
+  overlaps a wall or cabinet, leaves the space, or would rest on nothing at either end (a free-standing wall is not
+  allowed; one end on the space or on another partition is enough). Pulling past the opposite wall stops there.
+  After a drop the tool stays armed — the new wall's faces are the next edges to draw from. Wheel zooms, middle /
+  right-**drag** pans, `F` fits. In 3D a wall can only be selected (right panel: length, faces, what it rests on,
+  stock, checks) and deleted; drawing and re-drawing happen in the plan.
+- **Shower door** (`D` in the floor plan): a rectangular hole in the middle of a partition — not to the floor, not
+  to the roof. Click the **end** of the partition to measure from → move along the wall to the door's first edge
+  (`Tab` / digits: distance from that end) → pull to the other edge (`Tab` / digits: `W`, no default) → a card asks
+  the **bottom / top clearance** (default 100 / 100, the last input is remembered; `top` 0 is allowed) → `Enter` /
+  Create cuts the hole; `Esc` / right-click cancels. Stored on the wall as `openings[] = { id, type: "showerDoor",
+  from: lo|hi, offset, width, bottom, top }` — measured from the end you picked, so the door follows that end;
+  hole bottom = floor + bottom, hole top = wall top − top (under the nose, the lowest roof over the door). The wall
+  is drawn as a board in the plane of its face with the hole cut out (`prismXZ` / `prismYZ` with holes). Refused
+  when it leaves the wall, overlaps another door, is under 50 wide / high, or another partition meets the wall
+  inside it. In the plan the wall is cut over the door (jamb lines, dashed door line); click the door to select it,
+  Delete removes just the door; the right panel lists the wall's doors with editable offset / width / clearances.
+  Checks warn when a cabinet stands within 600 mm (`DOOR_CLEAR_DEPTH`) in front of or behind a door. Door jambs are
+  snap features for cabinets.
+- **Sliding door** (`S` in the floor plan): the same tool with one more click and two boards. The hole always goes
+  **to the floor** (`bottom` is 0 and not asked); `top` (default 100) is the clearance under the wall top. Click the
+  **end** of the partition → the opening's first edge → its other edge (`Tab` / digits as for the shower door) →
+  **move to the side of the wall the door hangs on** — the leaf and the pelmet preview follow the cursor (front /
+  back for a wall across the van, left / right for one along it), red with the reason when that side does not work
+  — click → a card asks **Top** (100), **Leaf wider by** (40) and **Leaf height** (1880) → `Enter` / Create. Stored
+  as `openings[] = { type: "slidingDoor", from, offset, width, top, side: ±1, overlap, doorHeight }`; the two boards
+  are **derived** from it in `walls.js` (`openingParts`) and never stored, both from the **Partition** stock (`t`):
+  the **leaf** is `width + overlap` wide centred on the hole, `doorHeight` high standing 15 above the floor, its
+  near face **20 clear** of the wall face on `side`, drawn closed; the **pelmet** (track cover) is `top` high with
+  its top on the wall's top line (roof − ceiling clearance, following the nose under a wall along the van) so its
+  underside is level with the hole top, **20 clear** of the leaf (i.e. 40 + t off the wall), and runs along the
+  wall's direction **until the space or another partition stops it** on that side — the full van width when nothing
+  is in the way, shorter when a partition stands behind. The leaf runs up **behind** the pelmet — the pelmet is
+  meant to reach down over the leaf top and hide the track (defaults: 15 + 1880 = 1895 leaf top vs. a 1963 wall top
+  − 100 = 1863 pelmet underside → 32 mm of cover); when it does not reach, the door is still created with a yellow
+  warning (`pelmet stops N above the leaf top`) and the panel shows **Covers the leaf top by**. Refused when the leaf
+  runs into the ceiling, runs past what stops the pelmet, has **no room to slide open** (the pelmet must extend one
+  hole width beyond the leaf on one side), or the leaf / pelmet hits a cabinet or another partition; a new partition drawn across a pelmet is
+  fine (the pelmet just stops there), across a leaf is an overlap. The right panel lists the door with offset /
+  width / top / overlap / leaf height, **Flip** to hang it on the other face, and the derived leaf and pelmet sizes
+  with what stops the pelmet. Leaf and pelmet are solids for cabinet placement (boxes stop at them) and their
+  corners are snap points.
 - **Vehicle space**: width is constant; the rear is a box (Width × Rear depth × Height) and the nose is a side view
   (Y along the van from the nose tip at `Y = 0`, Z up) grafted onto its front. The nose comes either from **Points**
   (a table of feature points joined by straight lines — the built-in default is `(0,0) (0,737) (345,1515) (579,1758)
@@ -160,7 +231,7 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   `R` still rotates the whole cabinet 90° about its centre (that does change the footprint).
   Fronts are drawn light blue, carcass tan, so the door side of every cabinet is visible at a glance.
 - Blue cubes: pull W / D / H · orange bars: zone boundaries (horizontal for stacked zones, vertical for zones along W)
-- `M` move · `O` face · `R` rotate 90° · `F` frame selection (or space) · `Del` remove · `Esc` cancel / deselect
+- `M` move · `O` face · `R` rotate 90° · `F` frame selection (or space) · `Del` remove (cabinet, plane or partition wall) · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools
 - `Ctrl+Shift+L` open the usage log folder
 
@@ -187,6 +258,10 @@ opens it at launch. One tab per generator + preset; `+` opens another generator.
   (`node --experimental-strip-types generators/overheadCabinet/generator.test.ts`). Pinned = protected.
 - **Report…**: writes `logs/bench/<time>-<module>.md` with the selection, its provenance chain, the tried formula and
   your note; the agent reads it instead of a verbal description.
+- **Faces**: every board is module → board → face (`docs/model-spec.md`). The board panel lists **Faces of &lt;id&gt;**:
+  `A` (+thickness side) and `B` (− side) with their colour and what is machined into them (grooves, holes, LED, lock
+  slots), plus the outline edges `E<i>` tagged as tongue / notch. L3 draws the A / B features on the flattened board.
+  Face features are pinned too (`pins.faceFeatures`).
 
 Only the Overhead generator carries provenance today; a generator joins the bench when it uses `dim()` for its faces and
 points and ships a `presets.json`. Fusion-copy generators are not connected until they follow the OHC architecture

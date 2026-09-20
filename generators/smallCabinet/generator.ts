@@ -17,6 +17,8 @@
  */
 
 import { computeFrontPanelBounds, frontPanelIsValid } from "./frontPanelCalculator.ts";
+import { attachFaces } from "../_lib/model.ts";
+import { buildSmallCabinetFaces } from "./faces.ts";
 import {
   applyBackJoinery,
   applyHorizontalJoinery,
@@ -147,6 +149,7 @@ function emptyParamsResult(
     zones: [],
     boards: [],
     features: [],
+    joints: [],
     validation: { errors, warnings },
   };
 }
@@ -471,6 +474,18 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     );
   }
 
+  // Face layer: A / B / E<i> on every board, grooves on the side faces, tongue tags, lock slots, joints.
+  attachFaces(boards);
+  const doorColorName = params.doorColorName || params.doorColor;
+  const joints = buildSmallCabinetFaces({
+    boards,
+    features,
+    panelThickness: CPT,
+    carcassColorName,
+    doorColorName: doorColorName ? String(doorColorName) : undefined,
+    params,
+  });
+
   return {
     params: {
       cabinetWidth: W,
@@ -489,6 +504,7 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     zones: resolvedZones,
     boards,
     features,
+    joints,
     validation: { errors, warnings },
     debug: {
       interiorHeight: interiorH,

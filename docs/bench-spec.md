@@ -130,8 +130,35 @@ module and answers; the bench reloads and restores its tabs.
   numbers / booleans / strings / JSON for arrays); rules list with docs and
   write‑back, ● = used in this run.
 - Centre: 3D. Hover → highlight + tip (id · face/point · value · formula).
-  Click board / point / joint. Toolbar: 3D/Top/Front/Side · Explode · Frame ·
+  Click board / point / joint. Toolbar: 3D/Top/Front/Side · Explode slider ·
+  step nav `◂ n / N · id ▸` · **Explode ▾** · Frame ·
   `⋯` (opacity, X/Y/Z section on the cabinet's materials only, joints / points).
+- **Explode** (`renderer/bench/explode.js`, display only — groups move, boards
+  never change). Two modes: *assembly* (default) and *radial* (every board away
+  from the centre). Assembly reads the result's `joints` and the face features
+  made `for` another board (grooves, tongue tags, screw pilots), falls back to
+  AABB contact, and derives
+  - an **assembly order**: breadth‑first from the carcass board most others are
+    joined to (OHC `BP`, small cabinet `SIDE_L`), declared relations before
+    bare contact, islands after, fronts last;
+  - a **pull direction** per board: the normal of the big face (A / B) taking
+    part in its relation with the earliest‑placed board it is joined to (the
+    parent's face, else its own), signed by which side of the parent it sits;
+    otherwise the axis the two touch along. Offsets are cumulative (a board
+    moves with its parent, then one `unit × factor` along its own axis;
+    `unit = 0.6 × max(D, H)`), so OHC dividers rise `+Z` off `BP`, `T3` rises
+    above them, `T2` / `T1` come forward `-Y`, `T4` back `+Y`, doors `-Y`.
+  - **Steps**: `▸` puts the next board in (animated), `◂` takes the last one
+    out, `← →` keys do the same; the label (`6 / 12 · T2`) leaves step mode.
+    Boards already in sit at home, the one that just went in is highlighted
+    with its trail, the rest wait faint at their exploded position.
+  - **Trails** (dashed, home → exploded) and **board ids** (sprites, constant
+    screen size; the same role ids nesting and labels use) toggle in the
+    popover, which also lists the order as clickable chips. The board panel
+    shows `assembly step k of N · slides +Z onto BP (groove, tongue)`.
+  - Nothing here is a generator contract: order and directions are inferred for
+    display; a generator that wants to dictate them will do so through the
+    joints it emits.
 - Right: selection panel (faces / point / joint) with formula, terms (param
   blue · rule orange · ref purple), dependency tree, *Try a formula*, *Pin*,
   *Edit board*, *Report*.
@@ -154,7 +181,9 @@ module and answers; the bench reloads and restores its tabs.
 `{ module, name, from, to, reason, affected, boards, preset, path }` ·
 `bench.rebuild` `{ module, ok, ms }` · `bench.pin` `{ module, preset, what: board|all, id, count, faces }` ·
 `bench.report` `{ module, preset, path, selection, note }` · `bench.board.open` ·
-`bench.board.frame` · `bench.view`. (`kind` is reserved for the event name, hence `what`.)
+`bench.board.frame` · `bench.view` · `bench.explode`
+`{ module, mode: assembly|radial, factor, step (null = all), of, board (the one that just went in), order, how: slider|step|key|chip|panel|mode }`.
+(`kind` is reserved for the event name, hence `what`.)
 
 ## Running
 
@@ -163,8 +192,9 @@ module and answers; the bench reloads and restores its tabs.
 - `npm run pins:check` — compare every preset's pins with the current output;
   `node --experimental-strip-types scripts/pin-presets.ts overheadCabinet --write` re-pins everything (snapshot update; deliberate).
 - `node build-generators.js overheadCabinet` — rebuild one bundle (what the bench does after a rule change).
-- `CABLAB_BENCH=1 CABLAB_BENCH_SNAP=<file.png>` — screenshot the bench (default view, a selected board, the board
-  editor, a selected point) and quit; for agent / CI checks without a person at the screen.
+- `CABLAB_BENCH=1 CABLAB_BENCH_SNAP=<file.png>` — screenshot the bench (default view, exploded `-explode.png`,
+  six assembly steps in with the Explode popover open `-step.png`, a selected board, the board editor, a selected
+  point) and quit; for agent / CI checks without a person at the screen.
 
 ## Adding a generator to the bench
 
@@ -173,6 +203,9 @@ module and answers; the bench reloads and restores its tabs.
 3. `presets.json` with at least one golden preset; seed pins with `scripts/pin-presets.ts <module> --write`.
 4. The generator test iterates the presets with `checkPins`.
 5. Register the module in `scripts/pin-presets.ts` `GENERATORS`; `build-generators.js` already bundles it.
+6. Emit the model layers (`docs/model-spec.md`): `attachFaces(boards)`, then a `faces.ts` that puts every
+   feature on its face (`addFeature` on A / B, `tagEdges` on the outline) and resolves `joints`. Pins cover
+   `faceFeatures`; the L2 board panel lists **Faces of &lt;id&gt;** and L3 draws A / B features from them.
 
 Reports (`logs/bench/<ISO time>-<module>.md`) contain: module, preset,
 params, the selection with its provenance chain, the pinned/expected value,

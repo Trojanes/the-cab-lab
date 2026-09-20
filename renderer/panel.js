@@ -5,8 +5,12 @@ import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths } f
 import { getSpaceKind } from "./spaces.js";
 import { openSpaceDialog } from "./spaceDialog.js";
 import { poseFits } from "./cabinets3d.js";
-import { describeMaterials, thickness } from "./materials.js";
-import { sideOfRotZ, sideLabel } from "./interact.js";
+import { describeMaterials, thickness, partitionClearance } from "./materials.js";
+import { sideOfRotZ, sideLabel, overlaps } from "./interact.js";
+import { wallLength, wallOrientation, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP } from "./walls.js";
+import { envelopeFootprint } from "./cabinets3d.js";
+import { statusOf } from "./walls3d.js";
+import { openFloorPlan } from "./floorplan.js";
 import { log } from "./log.js";
 
 const panel = document.getElementById("rightpanel");
@@ -56,8 +60,20 @@ function section(title, children) {
 export function spaceFitIssues() {
   const issues = [];
   if (!job.hasSpace()) return issues;
+  const wallIds = new Set(job.getWalls().map((w) => w.id));
+  const cabIds = new Set(job.getJob().cabinets.map((c) => c.id));
   for (const cab of job.getJob().cabinets) {
     if (!poseFits(cab, cab.pose)) issues.push(`${cab.id} is outside the space or overlaps an obstacle.`);
+    const all = overlaps(cab, cab.pose);
+    const hits = all.filter((id) => wallIds.has(id));
+    if (hits.length) issues.push(`${cab.id} overlaps partition ${hits.join(", ")}.`);
+    const parts = all.filter((id) => !wallIds.has(id) && !cabIds.has(id)); // "op-1 leaf" / "op-1 pelmet"
+    if (parts.length) issues.push(`${cab.id} overlaps the sliding door ${parts.join(", ")}.`);
+  }
+  for (const w of job.getWalls()) {
+    const st = statusOf(w);
+    if (!st.ok) issues.push(`${w.id}: ${st.issues.join("; ")}.`);
+    issues.push(...(st.warnings || []).map((m) => `${w.id}: ${m}.`), ...doorBlockers(w, st.solid));
   }
   return issues;
 }
@@ -88,7 +104,7 @@ function renderSpace() {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Space" }),
-      el("div", { class: "panel-sub", text: `${kind.label} · ${resolved.summary} · ${count} cabinet(s)` }),
+      el("div", { class: "panel-sub", text: `${kind.label} · ${resolved.summary} · ${count} cabinet(s)${job.getWalls().length ? ` · ${job.getWalls().length} partition(s)` : ""}` }),
     ]),
     section(kind.label, [
       ...(kind.describe
@@ -109,7 +125,7 @@ function renderSpace() {
       : null,
     el("div", { class: "panel-section muted" }, [
       el("div", { class: "sec-title", text: "Next" }),
-      el("div", { class: "empty small", text: "Pick a module on the left, click a corner of the space (or of another cabinet) to start its box, size it with the mouse or Tab-typed numbers, click again to create. Pull the blue faces to change W / D / H, drag the orange bars to move zone boundaries." }),
+      el("div", { class: "empty small", text: "Walls first: open the Floor plan (top right of the 3D view) and draw the partition walls from the space's walls. Then pick a module on the left, click a corner of the space (or of a wall / another cabinet) to start its box, size it with the mouse or Tab-typed numbers, click again to create. Pull the blue faces to change W / D / H, drag the orange bars to move zone boundaries." }),
     ]),
   ].filter(Boolean));
   drawerChecks.replaceChildren(
@@ -569,6 +585,108 @@ function renderPlane(pl) {
   drawerBoards.replaceChildren(el("div", { class: "empty", text: "A construction plane has no boards." }));
 }
 
+/** A partition wall: read-only geometry (drawn in the floor plan), its checks, Remove. */
+/** Cabinets standing in the way of a wall's doors: "cab-1 blocks op-1 in wall-2". */
+function doorBlockers(w, s) {
+  const out = [];
+  for (const o of s.openings) {
+    for (const cab of job.getJob().cabinets) {
+      const fp = envelopeFootprint(cab, cab.pose);
+      const box = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+      if (cabinetBlocksOpening(box, s, o)) out.push(`${cab.id} blocks the ${(OPENING_TYPES[o.type] || "door").toLowerCase()} ${o.id} in ${w.id} (within ${DOOR_CLEAR_DEPTH} mm).`);
+    }
+  }
+  return out;
+}
+
+function renderWall(w) {
+  const st = statusOf(w);
+  const s = st.solid;
+  const stock = job.getStock();
+  const cl = partitionClearance(stock);
+  const blocked = [...(st.warnings || []), ...doorBlockers(w, s)];
+  const along = s.along.toUpperCase();
+  const across = w.axis.toUpperCase();
+  const anchorText = (a) => a || "free";
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: "Partition wall" }),
+      el("div", { class: "panel-sub", text: `${w.id} · ${wallOrientation(w)}` }),
+    ]),
+    section("Geometry", [
+      el("div", { class: "kv" }, [el("span", { text: "Length" }), el("b", { text: `${Math.round(wallLength(w))} mm` })]),
+      el("div", { class: "kv" }, [el("span", { text: `From ${along}` }), el("b", { text: `${Math.round(w.u0)}` })]),
+      el("div", { class: "kv" }, [el("span", { text: `To ${along}` }), el("b", { text: `${Math.round(w.u1)}` })]),
+      el("div", { class: "kv" }, [el("span", { text: `Reference face ${across}` }), el("b", { text: `${Math.round(w.at)} · grows ${w.side > 0 ? "+" : "−"}${across}` })]),
+      el("div", { class: "kv" }, [el("span", { text: `Faces ${across}` }), el("b", { text: `${Math.round(w.axis === "x" ? s.x0 : s.y0)} … ${Math.round(w.axis === "x" ? s.x1 : s.y1)}` })]),
+      el("div", { class: "kv" }, [el("span", { text: "Rests on" }), el("b", { text: `${anchorText(st.anchors.lo)} / ${anchorText(st.anchors.hi)}` })]),
+    ]),
+    section("Stock (from the job catalogue)", [
+      el("div", { class: "kv" }, [el("span", { text: "Thickness" }), el("b", { text: `${s.thickness} mm · Partition` })]),
+      el("div", { class: "kv" }, [el("span", { text: "Bottom" }), el("b", { text: `${cl.floor} mm above the floor` })]),
+      el("div", { class: "kv" }, [el("span", { text: "Top" }), el("b", { text: `${Math.round(s.zTopMin)}${Math.abs(s.z1 - s.zTopMin) > 0.5 ? ` … ${Math.round(s.z1)}` : ""} (roof − ${cl.ceiling})` })]),
+      el("div", { class: "empty small", text: "Thickness and clearances follow the Partition stock in the space dialog; every wall changes together." }),
+    ]),
+    section(`Doors (${(w.openings || []).length})`, [
+      ...(w.openings || []).length
+        ? s.openings.map((o) => {
+            const sliding = o.type === "slidingDoor";
+            const leaf = sliding ? (st.parts || []).find((p) => p.opId === o.id && p.part === "leaf") : null;
+            const pelmet = sliding ? (st.parts || []).find((p) => p.opId === o.id && p.part === "pelmet") : null;
+            const sideName = sliding ? (w.axis === "x" ? (o.side > 0 ? "right" : "left") : (o.side > 0 ? "back" : "front")) : null;
+            return el("div", { class: "opening" }, [
+              el("div", { class: "opening-head" }, [
+                el("b", { text: o.id }),
+                el("span", { text: `${OPENING_TYPES[o.type] || "Door"} · ${along} ${Math.round(o.u0)} … ${Math.round(o.u1)} · from the ${o.from === "lo" ? (s.along === "x" ? "left" : "front") : (s.along === "x" ? "right" : "back")} end` }),
+                el("button", { class: "icon", text: "×", title: "Remove this door", onclick: () => job.removeOpening(w.id, o.id) }),
+              ]),
+              numField("Offset from end", o.offset, (v) => job.setOpening(w.id, o.id, { offset: v }), { step: 10, min: 0 }),
+              numField("Width", o.width, (v) => job.setOpening(w.id, o.id, { width: v }), { step: 10, min: OPENING_MIN_WIDTH }),
+              sliding ? null : numField("Bottom clearance", o.bottom, (v) => job.setOpening(w.id, o.id, { bottom: v }), { step: 10, min: 0 }),
+              numField(sliding ? "Top clearance (pelmet height)" : "Top clearance", o.top, (v) => job.setOpening(w.id, o.id, { top: v }), { step: 10, min: 0 }),
+              el("div", { class: "kv" }, [el("span", { text: "Hole" }), el("b", { text: `${Math.round(o.zBottom)} … ${Math.round(o.zTop)} high` })]),
+              ...(sliding
+                ? [
+                    numField("Leaf wider by", o.overlap, (v) => job.setOpening(w.id, o.id, { overlap: v }), { step: 10, min: 0 }),
+                    numField("Leaf height", o.doorHeight, (v) => job.setOpening(w.id, o.id, { doorHeight: v }), { step: 10, min: 1 }),
+                    el("div", { class: "kv" }, [
+                      el("span", { text: "Hangs on" }),
+                      el("b", { text: `${sideName} side` }),
+                      el("button", { class: "tb", text: "Flip", title: "Hang the door on the other face of the wall", onclick: () => job.setOpening(w.id, o.id, { side: -o.side }) }),
+                    ]),
+                    leaf ? el("div", { class: "kv" }, [el("span", { text: "Leaf" }), el("b", { text: `${Math.round(leaf.length)} × ${Math.round(o.doorHeight)} · ${SLIDING_GAP} off the wall · ${SLIDING_FLOOR_GAP} off the floor` })]) : null,
+                    pelmet ? el("div", { class: "kv" }, [el("span", { text: "Pelmet" }), el("b", { text: `${Math.round(pelmet.length)} × ${Math.round(pelmet.height)} · ${pelmet.stoppedBy.lo} → ${pelmet.stoppedBy.hi}` })]) : null,
+                    leaf && pelmet ? el("div", { class: "kv" }, [el("span", { text: "Covers the leaf top by" }), el("b", { text: `${Math.round(pelmetCover(leaf, pelmet))} mm` })]) : null,
+                    el("div", { class: "empty small", text: "Leaf and pelmet are Partition stock, derived from this record: the hole goes to the floor; the pelmet sits against the roof and runs until the space or another partition stops it." }),
+                  ]
+                : []),
+            ]);
+          })
+        : [el("div", { class: "empty small", text: "No door yet. In the floor plan pick Shower door (D) or Sliding door (S): click an end of this wall, the door's first edge, its other edge (then the side it hangs on), then the numbers." })],
+    ]),
+    st.issues.length || blocked.length
+      ? el("div", { class: "panel-section" }, [
+          el("div", { class: "sec-title", text: "Checks" }),
+          ...st.issues.map((m) => el("div", { class: "msg err", text: m })),
+          ...blocked.map((m) => el("div", { class: "msg warn", text: m })),
+        ])
+      : null,
+    el("div", { class: "panel-section" }, [
+      el("div", { class: "empty small", text: "Walls and doors are drawn and re-drawn in the floor plan (button at the top right of the 3D view). Delete removes this wall." }),
+      el("button", { class: "tb wide", text: "Open floor plan…", onclick: () => openFloorPlan("panel") }),
+    ]),
+    el("div", { class: "panel-foot" }, [
+      el("button", { class: "tb danger", text: "Remove wall", onclick: () => job.removeWall(w.id) }),
+    ]),
+  ].filter(Boolean));
+  drawerChecks.replaceChildren(
+    st.issues.length || blocked.length
+      ? el("div", {}, [...st.issues.map((m) => el("div", { class: "msg err", text: m })), ...blocked.map((m) => el("div", { class: "msg warn", text: m }))])
+      : el("div", { class: "empty ok", text: "Wall rests on a wall, stays inside the space and overlaps nothing." }),
+  );
+  drawerBoards.replaceChildren(el("div", { class: "empty", text: "Partition walls are not cut into boards yet (v1)." }));
+}
+
 export function renderPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC is selected; everything else uses the narrow panel.
@@ -578,7 +696,9 @@ export function renderPanel() {
   if (sel) renderCabinet(sel);
   else {
     const pl = job.getSelectedPlane();
+    const wall = job.getSelectedWall();
     if (pl) renderPlane(pl);
+    else if (wall) renderWall(wall);
     else renderSpace();
   }
 }

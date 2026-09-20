@@ -1,28 +1,7 @@
-export type ProfilePoint =
-  | { x: number; y: number }
-  | { y: number; z: number }
-  | { x: number; z: number };
-
-export interface Board {
-  id: string;
-  name: string;
-  category: string;
-  boardType: string;
-  materialThickness: number;
-  profilePlane: "XY" | "XZ" | "YZ";
-  thicknessAxis: "X" | "Y" | "Z";
-  x0: number;
-  x1: number;
-  y0: number;
-  y1: number;
-  z0: number;
-  z1: number;
-  source?: string;
-  notes?: string[];
-  profileVector?: ProfilePoint[];
-  cutProfileVector?: Array<{ y: number; z: number }>;
-  profileFeatures?: Array<Record<string, unknown>>;
-}
+// Board / face / joint records are the shared model (generators/_lib/model.ts, docs/model-spec.md).
+export type { Board, Face, FaceFeature, Joint, ProfilePoint } from "../_lib/model.ts";
+import type { Joint } from "../_lib/model.ts";
+import type { Board } from "../_lib/model.ts";
 
 export interface OverheadCabinetParams {
   style?: "style_1" | "style_2" | string;
@@ -107,8 +86,12 @@ export interface OverheadCabinetResult {
       rangehoodEdgeOffsetX: number;
     }
   >;
+  /** Board layer: each board carries its faces (A / B / E<i>) with the features that belong to them. */
   boards: Board[];
+  /** Flat legacy view of the same features (grooves, hinge holes, LED, rangehood); kept for existing consumers. */
   features: unknown[];
+  /** Face ↔ face joints (the model-layer form of `relationshipDeclarations`). */
+  joints: Joint[];
   relationshipDeclarations: RelationshipDeclaration[];
   validation: OverheadValidation;
   debug: {

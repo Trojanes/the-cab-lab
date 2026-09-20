@@ -11,6 +11,7 @@ import { log } from "../log.js";
 import { collectPins, pinsForBoard, mergePins, checkPins, countPins } from "../gen/pins.js";
 import { renderBoard2D, boardPoints, planeAxes } from "./board2d.js";
 import { entryOf, FACES, tree, usesRule, usesParam, affectedByRule, affectedBy, boardsOfKeys, fmt, evaluate, varsFor } from "./provenance.js";
+import { planExplode, assemblyOffsets, radialOffsets, explodeUnit, dirLabel, separation } from "./explode.js";
 
 const bridge = window.cablab || null;
 const bench = bridge && bridge.bench;
@@ -53,6 +54,10 @@ function newTab(moduleId, { presetId = null, params = null, label = null } = {})
     label,
     view: "3d",
     explode: 0,
+    explodeMode: "assembly", // assembly | radial
+    step: null,              // null = every board follows the slider; n = n boards are in, the rest wait outside
+    trails: true,
+    explodeLabels: true,
     opacity: 1,
     cut: { x: 1, y: 1, z: 1 },
     showJoints: true,
@@ -455,6 +460,7 @@ let pointMeshes = [];
 let jointObjs = [];
 let bbox = null;
 let hover = null;
+let explodePlan = null; // { rels, order, plan } from explode.js for the current result
 // Section planes apply to the cabinet's materials only (the grid and axes stay whole).
 const clipPlanes = [new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0), new THREE.Plane(new THREE.Vector3(0, -1, 0), 0), new THREE.Plane(new THREE.Vector3(0, 0, -1), 0)];
 renderer.localClippingEnabled = true;
@@ -497,7 +503,8 @@ function build3D(keepCamera) {
   if (!t || !c) return;
   const boards = c.result.boards || [];
   bbox = cabinetBox(boards);
-  const center = bbox.getCenter(new THREE.Vector3());
+  explodePlan = planExplode(c.result);
+  if (t.step != null) t.step = Math.min(t.step, explodePlan.order.length);
   const span = bbox.getSize(new THREE.Vector3()).length();
   const pr = Math.max(3, span / 260);
 
@@ -521,9 +528,9 @@ function build3D(keepCamera) {
     cabRoot.add(group);
     boardGroups.set(b.id, { group, mesh, edges, mat, center: bc, board: b });
   }
-  buildJoints();
+  buildTrails();
+  buildLabels();
   applyExplode();
-  applyOpacity();
   applyCut();
   paintSelection();
   if (!keepCamera || !t.camera) {
@@ -535,13 +542,6 @@ function build3D(keepCamera) {
   }
 }
 
-/** AABB separation between two boards: > 0 gap, ≈ 0 touching, < 0 overlap (penetration). */
-function separation(a, b) {
-  const sx = Math.max(a.x0 - b.x1, b.x0 - a.x1);
-  const sy = Math.max(a.y0 - b.y1, b.y0 - a.y1);
-  const sz = Math.max(a.z0 - b.z1, b.z0 - a.z1);
-  return Math.max(sx, sy, sz);
-}
 function jointStatus(sep) {
   if (sep > 0.01) return "gap";
   if (sep < -0.01) return "bad";
@@ -551,7 +551,7 @@ function jointStatus(sep) {
 function buildJoints() {
   const t = tab();
   const c = cur();
-  for (const j of jointObjs) cabRoot.remove(j.line, j.dot);
+  for (const j of jointObjs) { cabRoot.remove(j.line, j.dot); j.line.geometry.dispose(); j.dot.geometry.dispose(); }
   jointObjs = [];
   if (!t.showJoints) return;
   const decls = c.result.relationshipDeclarations || [];
@@ -575,24 +575,239 @@ function buildJoints() {
   });
 }
 
-function applyExplode() {
+// --- explode: assembly / radial, steps, trails, labels ------------------------------------------
+// Only the groups' positions move (docs/bench-spec.md). Geometry, boards and the result never change.
+
+const GHOST_OPACITY = 0.22;
+const STEP_MS = 380;
+let explodeAnim = null;
+
+/** Index of a board in the assembly order (-1 when unknown). */
+function stepIndex(id) {
+  return explodePlan ? explodePlan.order.indexOf(id) : -1;
+}
+/** In step mode: the board that just went in. */
+function stepCurrentId() {
+  const t = tab();
+  if (!t || t.step == null || !explodePlan || t.step < 1) return null;
+  return explodePlan.order[t.step - 1] || null;
+}
+/** In step mode: still waiting outside (drawn faint, at its exploded position). */
+function isWaiting(id) {
+  const t = tab();
+  return !!(t && t.step != null && stepIndex(id) >= t.step);
+}
+/** Whether the exploded state is visible at all (something is offset or steps are on). */
+function explodeActive() {
+  const t = tab();
+  return !!(t && (t.explode > 0 || t.step != null));
+}
+
+/** Target offset per board for the tab's mode / factor / step. */
+function explodeTargets() {
+  const t = tab();
+  const c = cur();
+  const out = new Map();
+  if (!t || !c || !explodePlan) return out;
+  const boards = c.result.boards || [];
+  const factor = t.step != null ? Math.max(t.explode, 0.01) : t.explode;
+  const size = bbox.getSize(new THREE.Vector3());
+  const raw = t.explodeMode === "radial"
+    ? radialOffsets(boards, factor)
+    : assemblyOffsets(explodePlan.plan, explodePlan.order, explodeUnit(size), factor);
+  for (const b of boards) {
+    const o = raw.get(b.id) || [0, 0, 0];
+    // Steps: boards already in sit at home; the rest wait at their exploded position.
+    const home = t.step != null && stepIndex(b.id) < t.step;
+    out.set(b.id, home ? new THREE.Vector3() : new THREE.Vector3(o[0], o[1], o[2]));
+  }
+  return out;
+}
+
+/** Move the boards to their targets — at once (slider) or over STEP_MS (a step). */
+function applyExplode({ animate = false } = {}) {
   const t = tab();
   if (!t || !bbox) return;
-  const center = bbox.getCenter(new THREE.Vector3());
-  for (const g of boardGroups.values()) {
-    const off = g.center.clone().sub(center).multiplyScalar(t.explode * 0.8);
-    g.group.position.copy(off);
+  const targets = explodeTargets();
+  if (explodeAnim) { cancelAnimationFrame(explodeAnim); explodeAnim = null; }
+  if (!animate) {
+    for (const [id, g] of boardGroups) g.group.position.copy(targets.get(id) || new THREE.Vector3());
+    afterExplodeMove();
+    return;
   }
-  buildJoints();
+  const from = new Map(Array.from(boardGroups, ([id, g]) => [id, g.group.position.clone()]));
+  const start = performance.now();
+  const tick = (now) => {
+    const k = Math.min(1, (now - start) / STEP_MS);
+    const e = 1 - (1 - k) ** 3;
+    for (const [id, g] of boardGroups) g.group.position.lerpVectors(from.get(id), targets.get(id) || new THREE.Vector3(), e);
+    afterExplodeMove();
+    explodeAnim = k < 1 ? requestAnimationFrame(tick) : null;
+  };
+  explodeAnim = requestAnimationFrame(tick);
 }
+/** Everything that hangs on the boards' positions. */
+function afterExplodeMove() {
+  buildJoints();
+  updateTrails();
+  updateLabels();
+  applyOpacity();
+}
+
 function applyOpacity() {
   const t = tab();
-  for (const g of boardGroups.values()) {
-    g.mat.transparent = t.opacity < 1;
-    g.mat.opacity = t.opacity;
-    g.mat.depthWrite = t.opacity >= 1;
+  for (const [id, g] of boardGroups) {
+    const o = isWaiting(id) ? Math.min(t.opacity, GHOST_OPACITY) : t.opacity;
+    g.mat.transparent = o < 1;
+    g.mat.opacity = o;
+    g.mat.depthWrite = o >= 1;
     g.mat.needsUpdate = true;
+    g.edges.material = isWaiting(id) ? edgeMatGhost : edgeMat;
   }
+}
+
+// Trails: a dashed line from where a board sits to where it is drawn; the board that just went in gets the accent.
+const trailMat = new THREE.LineDashedMaterial({ color: 0x8a93a0, dashSize: 24, gapSize: 14, transparent: true, opacity: 0.8 });
+const trailMatCur = new THREE.LineDashedMaterial({ color: 0xffd166, dashSize: 24, gapSize: 14 });
+const edgeMatGhost = new THREE.LineBasicMaterial({ color: 0x4a4034, transparent: true, opacity: 0.3 });
+let trails = null; // { all: LineSegments, cur: LineSegments }
+function buildTrails() {
+  if (trails) { cabRoot.remove(trails.all, trails.cur); trails.all.geometry.dispose(); trails.cur.geometry.dispose(); }
+  const mk = (mat) => {
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(Math.max(boardGroups.size, 1) * 6), 3));
+    const l = new THREE.LineSegments(geo, mat);
+    l.renderOrder = 11;
+    l.frustumCulled = false;
+    cabRoot.add(l);
+    return l;
+  };
+  trails = { all: mk(trailMat), cur: mk(trailMatCur) };
+}
+function updateTrails() {
+  const t = tab();
+  if (!trails || !t) return;
+  const on = t.trails !== false && explodeActive();
+  const curId = stepCurrentId();
+  let nAll = 0;
+  let nCur = 0;
+  const pa = trails.all.geometry.attributes.position;
+  const pc = trails.cur.geometry.attributes.position;
+  if (on) {
+    for (const [id, g] of boardGroups) {
+      const off = g.group.position;
+      // The board that just went in is home: draw its trail from where it waited.
+      const isCur = id === curId;
+      if (!isCur && off.lengthSq() < 1) continue;
+      const home = g.center;
+      const away = isCur ? home.clone().add(explodeTargetsWaiting(id)) : home.clone().add(off);
+      const p = isCur ? pc : pa;
+      const n = isCur ? nCur : nAll;
+      p.setXYZ(n * 2, home.x, home.y, home.z);
+      p.setXYZ(n * 2 + 1, away.x, away.y, away.z);
+      if (isCur) nCur += 1; else nAll += 1;
+    }
+  }
+  for (const [l, n, p] of [[trails.all, nAll, pa], [trails.cur, nCur, pc]]) {
+    p.needsUpdate = true;
+    l.geometry.setDrawRange(0, n * 2);
+    l.visible = n > 0;
+    if (n) { l.computeLineDistances(); l.geometry.computeBoundingSphere(); }
+  }
+}
+/** Where a board would wait if it were still outside (for the current board's trail). */
+function explodeTargetsWaiting(id) {
+  const t = tab();
+  const c = cur();
+  const boards = c.result.boards || [];
+  const factor = Math.max(t.explode, 0.01);
+  const raw = t.explodeMode === "radial" ? radialOffsets(boards, factor) : assemblyOffsets(explodePlan.plan, explodePlan.order, explodeUnit(bbox.getSize(new THREE.Vector3())), factor);
+  const o = raw.get(id) || [0, 0, 0];
+  return new THREE.Vector3(o[0], o[1], o[2]);
+}
+
+// Labels: the board id as a sprite at a constant screen size (the same role id nesting and labels use).
+const labelTextures = new Map(); // `${text}|${tone}` -> CanvasTexture
+function labelTexture(text, tone) {
+  const key = `${text}|${tone}`;
+  if (labelTextures.has(key)) return labelTextures.get(key);
+  const dpr = 2;
+  const cv = document.createElement("canvas");
+  const ctx = cv.getContext("2d");
+  ctx.font = `600 ${22 * dpr}px "Segoe UI", system-ui, sans-serif`;
+  const w = Math.ceil(ctx.measureText(text).width) + 20 * dpr;
+  const hgt = 34 * dpr;
+  cv.width = w; cv.height = hgt;
+  ctx.font = `600 ${22 * dpr}px "Segoe UI", system-ui, sans-serif`;
+  ctx.textBaseline = "middle";
+  ctx.textAlign = "center";
+  const r = 8 * dpr;
+  ctx.beginPath();
+  ctx.roundRect(1, 1, w - 2, hgt - 2, r);
+  ctx.fillStyle = tone === "cur" ? "rgba(255, 209, 102, 0.95)" : "rgba(26, 28, 31, 0.85)";
+  ctx.fill();
+  ctx.lineWidth = 2 * dpr;
+  ctx.strokeStyle = tone === "cur" ? "#ffd166" : tone === "ghost" ? "rgba(138, 147, 160, 0.5)" : "#8a93a0";
+  ctx.stroke();
+  ctx.fillStyle = tone === "cur" ? "#1a1c1f" : tone === "ghost" ? "rgba(216, 221, 228, 0.55)" : "#d8dde4";
+  ctx.fillText(text, w / 2, hgt / 2);
+  const tex = new THREE.CanvasTexture(cv);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.userData = { aspect: w / hgt };
+  labelTextures.set(key, tex);
+  return tex;
+}
+let labelSprites = new Map(); // boardId -> Sprite
+function buildLabels() {
+  for (const s of labelSprites.values()) { cabRoot.remove(s); s.material.dispose(); }
+  labelSprites = new Map();
+  for (const [id] of boardGroups) {
+    const mat = new THREE.SpriteMaterial({ map: labelTexture(id, ""), sizeAttenuation: false, depthTest: false, depthWrite: false, transparent: true });
+    const s = new THREE.Sprite(mat);
+    s.renderOrder = 40;
+    s.visible = false;
+    cabRoot.add(s);
+    labelSprites.set(id, s);
+  }
+}
+function updateLabels() {
+  const t = tab();
+  if (!t) return;
+  const on = t.explodeLabels !== false && explodeActive();
+  const curId = stepCurrentId();
+  const hgt = 0.032; // fraction of the view height (× 2·tan(fov/2))
+  for (const [id, s] of labelSprites) {
+    s.visible = on;
+    if (!on) continue;
+    const g = boardGroups.get(id);
+    const tone = id === curId ? "cur" : isWaiting(id) ? "ghost" : "";
+    const tex = labelTexture(id, tone);
+    if (s.material.map !== tex) { s.material.map = tex; s.material.needsUpdate = true; }
+    s.position.copy(g.center).add(g.group.position);
+    s.scale.set(hgt * tex.userData.aspect * camera.aspect, hgt, 1);
+  }
+}
+
+/** Steps: n boards in. `null` leaves step mode. */
+function setStep(n, how) {
+  const t = tab();
+  if (!t || !explodePlan) return;
+  const N = explodePlan.order.length;
+  const next = n == null ? null : Math.max(0, Math.min(N, n));
+  if (next === t.step) return;
+  // Entering steps with the slider at 0 would show nothing moving: give it a working distance.
+  if (next != null && t.step == null && t.explode <= 0) { t.explode = 0.6; $("#explode").value = "0.6"; }
+  t.step = next;
+  applyExplode({ animate: true });
+  paintSelection();
+  syncToolbar();
+  logExplode(how);
+  saveState();
+}
+function logExplode(how) {
+  const t = tab();
+  if (!t) return;
+  log("bench.explode", { module: t.moduleId, mode: t.explodeMode, factor: t.explode, step: t.step, of: explodePlan?.order.length ?? 0, board: stepCurrentId(), order: explodePlan?.order || [], how });
 }
 function applyCut() {
   const t = tab();
@@ -631,14 +846,16 @@ const HL = 0x3a2a00;
 function paintSelection() {
   const t = tab();
   const sel = t?.selection;
+  const curId = stepCurrentId();
   for (const [id, g] of boardGroups) {
-    const on = sel && (sel.kind === "board" || sel.kind === "face" || sel.kind === "point") && sel.id === id;
+    const on = (sel && (sel.kind === "board" || sel.kind === "face" || sel.kind === "point") && sel.id === id) || id === curId;
     const joint = sel && sel.kind === "joint" && (sel.a === id || sel.b === id);
     const l3 = t.l3 === id;
     g.mat.emissive.setHex(on || joint || l3 ? HL : 0x000000);
     g.mat.emissiveIntensity = on || l3 ? 1.2 : joint ? 0.8 : 0;
     g.mat.color.setHex(on || l3 ? 0xffe08a : joint ? 0xe8d7b0 : g.board.category === "front_panel" ? 0x9ec5d8 : 0xc9b799);
   }
+  renderExplodeOrder();
   for (const m of pointMeshes) {
     const p = m.userData.point;
     const on = sel && sel.kind === "point" && sel.id === m.userData.boardId && sel.keys && sel.keys.join() === p.keys.join();
@@ -861,7 +1078,7 @@ function renderSelection() {
   if (!sel) {
     const r = c.result;
     panel.append(
-      h("div", { class: "panel-head" }, [h("div", { class: "panel-title", text: `${MODULES[t.moduleId]?.label || t.moduleId}` }), h("div", { class: "panel-sub", text: `${t.presetId || "custom"} · ${r.boards.length} boards · ${(r.relationshipDeclarations || []).length} declared joints · ${Object.keys(prov.entries).length} formulas` })]),
+      h("div", { class: "panel-head" }, [h("div", { class: "panel-title", text: `${MODULES[t.moduleId]?.label || t.moduleId}` }), h("div", { class: "panel-sub", text: `${t.presetId || "custom"} · ${r.boards.length} boards · ${r.boards.reduce((n, b) => n + (b.faces ? b.faces.length : 0), 0)} faces · ${(r.joints || r.relationshipDeclarations || []).length} joints · ${Object.keys(prov.entries).length} formulas` })]),
       section("Nothing selected", [
         h("div", { class: "empty small", text: "Click a board, a point or a joint dot. Right-click a board → Edit board." }),
         legend(),
@@ -883,9 +1100,16 @@ function renderSelection() {
     if (!b) return;
     const pins = presetPins();
     const pinned = pins?.boards?.[b.id];
+    const ep = explodePlan?.plan.get(b.id);
+    const stepNo = stepIndex(b.id) + 1;
     panel.append(h("div", { class: "panel-head" }, [
       h("div", { class: "panel-title", text: `${b.id} · ${b.name}` }),
       h("div", { class: "panel-sub", text: `${b.category} · ${b.boardType} · plane ${b.profilePlane} · thickness ${fmt(b.materialThickness)} along ${b.thicknessAxis} · ${fmt(b.x1 - b.x0)} × ${fmt(b.y1 - b.y0)} × ${fmt(b.z1 - b.z0)}` }),
+      ep ? h("div", { class: "panel-sub assembly-line", title: "Assembly order and pull direction (Explode ▾). Click to show this step.", onclick: () => setStep(stepNo, "panel") }, [
+        h("span", { text: `assembly step ${stepNo} of ${explodePlan.order.length} · ` }),
+        h("b", { text: ep.fixed ? "base board, stays" : `slides ${dirLabel(ep)}` }),
+        h("span", { text: ep.parent ? ` onto ${ep.parent}${ep.via.length ? ` (${ep.via.join(", ")})` : ""}` : "" }),
+      ]) : null,
     ]));
     const rows = FACES.map((f) => {
       const key = `${b.id}.${f}`;
@@ -904,8 +1128,33 @@ function renderSelection() {
       panel.append(section(`Dependency tree · ${sel.key}`, [treeBlock(prov, sel.key) || h("div", { class: "empty small", text: "—" })]));
       panel.append(section("Try a formula", tryoutBlock(sel.key)));
     }
+    // Face layer (docs/model-spec.md): A / B / E<i>, each with what is machined into it.
+    if (b.faces && b.faces.length) {
+      const fmtFeat = (f) => {
+        if (f.center) return `${f.kind} ${f.id} · ⌀${fmt(f.diameter)} at (${fmt(f.center[0])}, ${fmt(f.center[1])})${f.through ? " through" : f.depth != null ? ` depth ${fmt(f.depth)}` : ""}`;
+        if (Number.isFinite(f.u0)) return `${f.kind} ${f.id} · u ${fmt(f.u0)}..${fmt(f.u1)} · v ${fmt(f.v0)}..${fmt(f.v1)}${f.through ? " through" : f.depth != null ? ` depth ${fmt(f.depth)}` : ""}`;
+        return `${f.kind} ${f.id}${f.for ? ` → ${f.for}` : ""}`;
+      };
+      const big = b.faces.filter((f) => f.id === "A" || f.id === "B");
+      const edges = b.faces.filter((f) => f.id.startsWith("E"));
+      const tagged = edges.filter((f) => f.features.length);
+      const rows = [];
+      for (const f of big) {
+        const meta = [typeof f.normal === "string" ? f.normal : "slanted", f.semantic, f.visible === true ? "visible" : f.visible === false ? "hidden" : null, f.finish?.colour].filter(Boolean).join(" · ");
+        rows.push(h("div", { class: "kv", onclick: () => f.planeKey && select({ kind: "face", id: b.id, key: f.planeKey }) }, [h("span", { text: `${f.id}  ${meta}` }), h("b", { text: f.planeKey || "" })]));
+        for (const ft of f.features) rows.push(h("div", { class: "empty small", text: `    ${fmtFeat(ft)}` }));
+      }
+      rows.push(h("div", { class: "kv" }, [h("span", { text: `${edges.length} edge faces` }), h("b", { text: tagged.length ? `${tagged.length} tagged` : "" })]));
+      const byTag = new Map();
+      for (const f of tagged) for (const ft of f.features) {
+        const k = `${ft.kind} ${ft.id}${ft.for ? ` → ${ft.for}` : ""}`;
+        byTag.set(k, [...(byTag.get(k) || []), f.id]);
+      }
+      for (const [k, ids] of byTag) rows.push(h("div", { class: "empty small", text: `    ${k} · ${ids.join(" ")}` }));
+      panel.append(section(`Faces of ${b.id}`, rows));
+    }
     const feats = (c.result.features || []).filter((f) => f && (f.targetBoardId === b.id || f.boardId === b.id || (b.id === "BP" && f.bp_groove)));
-    if (feats.length) {
+    if (feats.length && !(b.faces && b.faces.length)) {
       panel.append(section(`Features on ${b.id}`, feats.map((f) => h("div", { class: "kv", }, [h("span", { text: f.type || (f.purpose ? `${f.purpose} hole` : f.bp_groove ? `groove ${f.bp_groove.id}` : f.id) }), h("b", { text: f.id || "" })]))));
     }
     const joints = jointObjs.filter((j) => j.decl.panelAId === b.id || j.decl.panelBId === b.id);
@@ -1180,17 +1429,23 @@ $("#leftToggle").addEventListener("click", () => togglePane("left"));
 $("#bottomToggle").addEventListener("click", () => togglePane("bottom"));
 applyPanes();
 
-// "⋯": opacity, section planes, what is drawn.
-$("#moreToggle").addEventListener("click", () => {
-  const open = $("#morePop").classList.toggle("hidden");
-  $("#moreToggle").classList.toggle("active", !open);
-});
-window.addEventListener("pointerdown", (e) => {
-  if (!$("#morePop").contains(e.target) && e.target !== $("#moreToggle") && !$("#moreToggle").contains(e.target)) {
-    $("#morePop").classList.add("hidden");
-    $("#moreToggle").classList.remove("active");
-  }
-});
+// Popovers: "⋯" (opacity, section planes, what is drawn) and "Explode ▾" (mode, trails, labels, order).
+function bindPop(toggleSel, popSel) {
+  const toggle = $(toggleSel);
+  const pop = $(popSel);
+  toggle.addEventListener("click", () => {
+    const open = pop.classList.toggle("hidden");
+    toggle.classList.toggle("active", !open);
+  });
+  window.addEventListener("pointerdown", (e) => {
+    if (!pop.contains(e.target) && e.target !== toggle && !toggle.contains(e.target)) {
+      pop.classList.add("hidden");
+      toggle.classList.remove("active");
+    }
+  });
+}
+bindPop("#moreToggle", "#morePop");
+bindPop("#explodeToggle", "#explodePop");
 
 // --- L3: board editor ----------------------------------------------------------------------------
 
@@ -1386,6 +1641,35 @@ function buildReport(note) {
 $$("#viewGroup [data-view]").forEach((btn) => btn.addEventListener("click", () => { setBenchView(btn.dataset.view); log("bench.view", { module: tab()?.moduleId, view: btn.dataset.view }); saveState(); }));
 $("#btnFrame").addEventListener("click", frameCabinet);
 $("#explode").addEventListener("input", (e) => { tab().explode = Number(e.target.value); applyExplode(); saveState(); });
+$("#explode").addEventListener("change", () => logExplode("slider"));
+$("#stepPrev").addEventListener("click", () => { const t = tab(); if (!t || !explodePlan) return; setStep(t.step == null ? explodePlan.order.length - 1 : t.step - 1, "step"); });
+$("#stepNext").addEventListener("click", () => { const t = tab(); if (!t) return; setStep(t.step == null ? 1 : t.step + 1, "step"); });
+$("#stepLabel").addEventListener("click", () => setStep(null, "step"));
+$$("#explodeModeGroup [data-mode]").forEach((btn) => btn.addEventListener("click", () => {
+  const t = tab();
+  if (!t || t.explodeMode === btn.dataset.mode) return;
+  t.explodeMode = btn.dataset.mode;
+  applyExplode({ animate: true });
+  syncToolbar();
+  logExplode("mode");
+  saveState();
+}));
+$("#explodeTrails").addEventListener("change", (e) => { tab().trails = e.target.checked; updateTrails(); saveState(); });
+$("#explodeLabels").addEventListener("change", (e) => { tab().explodeLabels = e.target.checked; updateLabels(); saveState(); });
+/** The order list in the popover: one chip per board, done / current / waiting; click = jump to that step. */
+function renderExplodeOrder() {
+  const t = tab();
+  const box = $("#explodeOrder");
+  box.replaceChildren();
+  if (!t || !explodePlan) return;
+  explodePlan.order.forEach((id, i) => {
+    const p = explodePlan.plan.get(id);
+    const state = t.step == null ? "" : i + 1 === t.step ? "cur" : i < t.step ? "done" : "todo";
+    box.append(h("button", { class: `chip ${state}`, title: p.fixed ? `${id} · base board` : `${id} slides ${dirLabel(p)} onto ${p.parent}`, onclick: () => setStep(i + 1, "chip") }, [
+      h("span", { class: "n", text: String(i + 1) }), h("span", { text: id }), h("span", { class: "dir", text: p.fixed ? "" : dirLabel(p) }),
+    ]));
+  });
+}
 $("#opacity").addEventListener("input", (e) => { tab().opacity = Number(e.target.value); applyOpacity(); saveState(); });
 for (const ax of ["x", "y", "z"]) {
   $(`#cut${ax.toUpperCase()}`).addEventListener("input", (e) => { tab().cut[ax] = Number(e.target.value); applyCut(); saveState(); });
@@ -1396,6 +1680,16 @@ function syncToolbar() {
   const t = tab();
   if (!t) return;
   $("#explode").value = String(t.explode);
+  const N = explodePlan?.order.length ?? 0;
+  const curId = stepCurrentId();
+  $("#stepLabel").textContent = t.step == null ? "all" : `${t.step} / ${N}${curId ? ` · ${curId}` : ""}`;
+  $("#stepLabel").classList.toggle("active", t.step != null);
+  $("#stepPrev").disabled = t.step === 0;
+  $("#stepNext").disabled = t.step != null && t.step >= N;
+  $$("#explodeModeGroup [data-mode]").forEach((b) => b.classList.toggle("active", b.dataset.mode === (t.explodeMode || "assembly")));
+  $("#explodeTrails").checked = t.trails !== false;
+  $("#explodeLabels").checked = t.explodeLabels !== false;
+  renderExplodeOrder();
   $("#opacity").value = String(t.opacity);
   $("#cutX").value = String(t.cut.x); $("#cutY").value = String(t.cut.y); $("#cutZ").value = String(t.cut.z);
   $("#showJoints").checked = t.showJoints;
@@ -1415,6 +1709,9 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "f" || e.key === "F") frameCabinet();
   if (e.key === "[") togglePane("left");
   if (e.key === "]") togglePane("bottom");
+  // Assembly steps: ← takes the last board out, → puts the next one in.
+  if (e.key === "ArrowRight" && tab() && !tab().l3) { e.preventDefault(); setStep(tab().step == null ? 1 : tab().step + 1, "key"); }
+  if (e.key === "ArrowLeft" && tab() && !tab().l3 && explodePlan) { e.preventDefault(); setStep(tab().step == null ? explodePlan.order.length - 1 : tab().step - 1, "key"); }
 });
 
 function renderEmpty() {
@@ -1425,6 +1722,8 @@ function renderEmpty() {
   $("#stInfo").textContent = "—";
   setBadges(null);
   cabRoot.clear();
+  explodePlan = null;
+  $("#explodeOrder").replaceChildren();
 }
 
 // --- boot ------------------------------------------------------------------------------------------------

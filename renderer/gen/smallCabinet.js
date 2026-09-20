@@ -47,6 +47,206 @@ function frontPanelIsValid(bounds, eps = 1e-6) {
   return bounds.x1 - bounds.x0 > eps && bounds.z1 - bounds.z0 > eps;
 }
 
+// generators/_lib/model.ts
+function planeAxes(plane) {
+  if (plane === "YZ") return ["y", "z", "x"];
+  if (plane === "XZ") return ["x", "z", "y"];
+  return ["x", "y", "z"];
+}
+function localOutline(b) {
+  const [U, V] = planeAxes(b.profilePlane);
+  let pts = null;
+  const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
+  if (b.profilePlane === "YZ") {
+    if (pv) pts = pv.map((p) => [Number(p.y) - b.y0, Number(p.z) - b.z0]);
+    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) pts = b.cutProfileVector.map((p) => [p.y, p.z]);
+  } else if (pv) {
+    const mu = Math.min(...pv.map((p) => Number(p[U])));
+    const mv = Math.min(...pv.map((p) => Number(p[V])));
+    pts = pv.map((p) => [Number(p[U]) - mu, Number(p[V]) - mv]);
+  }
+  if (!pts) return null;
+  const out = pts.slice();
+  const first = out[0];
+  const last = out[out.length - 1];
+  if (out.length > 2 && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) out.pop();
+  return out.length >= 3 ? out : null;
+}
+function rectOutline(b) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const w = b[`${U}1`] - b[`${U}0`];
+  const h = b[`${V}1`] - b[`${V}0`];
+  return [[0, 0], [w, 0], [w, h], [0, h]];
+}
+function signedArea(pts) {
+  let s = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const [x0, y0] = pts[i];
+    const [x1, y1] = pts[(i + 1) % pts.length];
+    s += x0 * y1 - x1 * y0;
+  }
+  return s / 2;
+}
+var AXIS_UPPER = { x: "X", y: "Y", z: "Z" };
+function edgeNormal(plane, from, to, ccw) {
+  const [U, V] = planeAxes(plane);
+  const du = to[0] - from[0];
+  const dv = to[1] - from[1];
+  let nu = ccw ? dv : -dv;
+  let nv = ccw ? -du : du;
+  const len = Math.hypot(nu, nv) || 1;
+  nu /= len;
+  nv /= len;
+  const eps = 1e-9;
+  if (Math.abs(nv) < eps) return `${nu > 0 ? "+" : "-"}${AXIS_UPPER[U]}`;
+  if (Math.abs(nu) < eps) return `${nv > 0 ? "+" : "-"}${AXIS_UPPER[V]}`;
+  const vec = [0, 0, 0];
+  const idx = { x: 0, y: 1, z: 2 };
+  vec[idx[U]] = nu;
+  vec[idx[V]] = nv;
+  return vec;
+}
+function facesOf(b) {
+  const [, , T] = planeAxes(b.profilePlane);
+  const t = AXIS_UPPER[T];
+  const faces = [
+    { id: "A", key: `${b.id}.A`, normal: `+${t}`, planeKey: `${b.id}.${T}1`, features: [] },
+    { id: "B", key: `${b.id}.B`, normal: `-${t}`, planeKey: `${b.id}.${T}0`, features: [] }
+  ];
+  const outline = localOutline(b) ?? rectOutline(b);
+  const ccw = signedArea(outline) > 0;
+  for (let i = 0; i < outline.length; i += 1) {
+    const from = outline[i];
+    const to = outline[(i + 1) % outline.length];
+    faces.push({
+      id: `E${i}`,
+      key: `${b.id}.E${i}`,
+      normal: edgeNormal(b.profilePlane, from, to, ccw),
+      segments: [i],
+      edge: { from: [from[0], from[1]], to: [to[0], to[1]] },
+      features: []
+    });
+  }
+  return faces;
+}
+function attachFaces(boards) {
+  for (const b of boards) b.faces = facesOf(b);
+  return boards;
+}
+function faceOf(b, id) {
+  const f = (b.faces ?? (b.faces = facesOf(b))).find((x) => x.id === id);
+  if (!f) throw new Error(`${b.id}: no face ${id}`);
+  return f;
+}
+function addFeature(b, faceId, feature) {
+  faceOf(b, faceId).features.push(feature);
+  return feature;
+}
+function edgeFaces(b) {
+  return (b.faces ?? (b.faces = facesOf(b))).filter((f) => f.id.startsWith("E"));
+}
+function edgeFacesIn(b, box) {
+  return edgeFaces(b).filter((f) => {
+    const mu = (f.edge.from[0] + f.edge.to[0]) / 2;
+    const mv = (f.edge.from[1] + f.edge.to[1]) / 2;
+    return mu >= box.u0 && mu <= box.u1 && mv >= box.v0 && mv <= box.v1;
+  });
+}
+function tagEdges(b, kind, box, meta) {
+  const hit = edgeFacesIn(b, box);
+  for (const f of hit) f.features.push({ kind, ...meta });
+  return hit.map((f) => f.id);
+}
+function annotate(b, faceId, a) {
+  Object.assign(faceOf(b, faceId), a);
+}
+function localRect(b, r) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const ru = r[U];
+  const rv = r[V];
+  if (!ru || !rv) throw new Error(`${b.id}: rectangle needs ${U} and ${V} ranges`);
+  return {
+    u0: Math.min(...ru) - b[`${U}0`],
+    u1: Math.max(...ru) - b[`${U}0`],
+    v0: Math.min(...rv) - b[`${V}0`],
+    v1: Math.max(...rv) - b[`${V}0`]
+  };
+}
+function joint(id, kind, a, b, extra = {}) {
+  return { id, kind, a, b, ...extra };
+}
+function faceRef(board, faces) {
+  return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
+}
+
+// generators/smallCabinet/faces.ts
+var EPS = 0.01;
+function buildSmallCabinetFaces(fb) {
+  const B = new Map(fb.boards.map((b) => [b.id, b]));
+  const joints = [];
+  for (const b of fb.boards) {
+    b.role = b.category;
+    const isFront = b.category === "front_panel";
+    b.stock = { kind: isFront ? "door" : "carcass", thickness: b.materialThickness, colour: isFront ? fb.doorColorName : fb.carcassColorName };
+    if (isFront) {
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColorName } });
+      annotate(b, "A", { semantic: "back", visible: false, finish: { colour: fb.doorColorName } });
+    } else {
+      annotate(b, "A", { finish: { colour: fb.carcassColorName } });
+      annotate(b, "B", { finish: { colour: fb.carcassColorName } });
+    }
+  }
+  const sideL = B.get("SIDE_L");
+  const sideR = B.get("SIDE_R");
+  if (sideL) {
+    annotate(sideL, "A", { semantic: "inside" });
+    annotate(sideL, "B", { semantic: "outside", finish: { colour: sideL.useDoorColor ? fb.doorColorName : fb.carcassColorName } });
+  }
+  if (sideR) {
+    annotate(sideR, "B", { semantic: "inside" });
+    annotate(sideR, "A", { semantic: "outside", finish: { colour: sideR.useDoorColor ? fb.doorColorName : fb.carcassColorName } });
+  }
+  for (const id of ["TOP", "BOTTOM"]) {
+    const b = B.get(id);
+    if (!b) continue;
+    annotate(b, "A", { semantic: id === "TOP" ? "top" : "inside" });
+    annotate(b, "B", { semantic: id === "TOP" ? "inside" : "bottom" });
+  }
+  const back = B.get("BACK");
+  if (back) {
+    annotate(back, "A", { semantic: "back" });
+    annotate(back, "B", { semantic: "inside" });
+  }
+  for (const f of fb.features) {
+    if (f.type !== "side_groove") continue;
+    const side = B.get(f.targetBoardId);
+    if (!side || f.y0 == null || f.y1 == null || f.z0 == null || f.z1 == null) continue;
+    const faceId = side.id === "SIDE_L" ? "A" : "B";
+    const r = localRect(side, { y: [f.y0, f.y1], z: [f.z0, f.z1] });
+    addFeature(side, faceId, { id: f.id, kind: "groove", ...r, depth: f.depth, for: f.relatedBoardId, source: f.source });
+  }
+  const t = fb.panelThickness;
+  for (const f of fb.features) {
+    if (f.type !== "shelf_tongue" && f.type !== "back_tongue") continue;
+    const b = B.get(f.targetBoardId);
+    if (!b) continue;
+    const width = b.x1 - b.x0;
+    const uBox = f.side === "left" ? { u0: -EPS, u1: t - EPS } : { u0: width - t + EPS, u1: width + EPS };
+    const vBox = f.type === "shelf_tongue" ? { v0: (f.y0 ?? 0) - b.y0 - EPS, v1: (f.y1 ?? 0) - b.y0 + EPS } : { v0: (f.z0 ?? 0) - b.z0 - EPS, v1: (f.z1 ?? 0) - b.z0 + EPS };
+    const tagged = tagEdges(b, "tongue", { ...uBox, ...vBox }, { id: f.id, for: f.relatedBoardId, source: f.source });
+    const side = f.relatedBoardId ? B.get(f.relatedBoardId) : void 0;
+    if (side && tagged.length) {
+      joints.push(joint(`${f.id}_joint`, "tongue_groove", faceRef(side.id, [side.id === "SIDE_L" ? "A" : "B"]), faceRef(b.id, tagged), { hardware: [], rule: "small_tongue_groove_v1" }));
+    }
+  }
+  for (const b of fb.boards) {
+    if (!b.lockCutout) continue;
+    const r = localRect(b, { x: [b.lockCutout.x0, b.lockCutout.x1], z: [b.lockCutout.z0, b.lockCutout.z1] });
+    addFeature(b, "B", { id: `${b.id}_door_lock`, kind: "cutout", ...r, radius: b.lockCutout.radius, through: true, for: "door_lock", source: "door_lock" });
+  }
+  return joints;
+}
+
 // generators/smallCabinet/shelfJoinery.ts
 var SHELF_TONGUE_DEPTH_FRACTION = 1 / 3;
 var GROOVE_LENGTH_OVERSIZE = 5;
@@ -411,6 +611,7 @@ function emptyParamsResult(params, W, D, H, CPT, FPT, clearance, locksEnabled, l
     zones: [],
     boards: [],
     features: [],
+    joints: [],
     validation: { errors, warnings }
   };
 }
@@ -727,6 +928,16 @@ function generateSmallCabinet(params) {
       warnings
     );
   }
+  attachFaces(boards);
+  const doorColorName = params.doorColorName || params.doorColor;
+  const joints = buildSmallCabinetFaces({
+    boards,
+    features,
+    panelThickness: CPT,
+    carcassColorName,
+    doorColorName: doorColorName ? String(doorColorName) : void 0,
+    params
+  });
   return {
     params: {
       cabinetWidth: W,
@@ -745,6 +956,7 @@ function generateSmallCabinet(params) {
     zones: resolvedZones,
     boards,
     features,
+    joints,
     validation: { errors, warnings },
     debug: {
       interiorHeight: interiorH,

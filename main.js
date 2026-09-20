@@ -329,6 +329,15 @@ app.whenReady().then(() => {
           throw lastErr || new Error("capture failed");
         };
         await shot(snap);
+        // Exploded (assembly mode, slider 0.7, popover open) and one step into the assembly sequence.
+        await benchWin.webContents.executeJavaScript('{ const s = document.querySelector("#explode"); s.value = "0.7"; s.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector("#btnFrame").click(); } true');
+        await new Promise((r) => setTimeout(r, 1200));
+        await shot(snap.replace(/\.png$/i, "") + "-explode.png");
+        await benchWin.webContents.executeJavaScript('document.querySelector("#explodeToggle").click(); for (let i = 0; i < 6; i += 1) document.querySelector("#stepNext").click(); true');
+        await new Promise((r) => setTimeout(r, 1200));
+        await shot(snap.replace(/\.png$/i, "") + "-step.png");
+        await benchWin.webContents.executeJavaScript('{ document.querySelector("#stepLabel").click(); const s = document.querySelector("#explode"); s.value = "0"; s.dispatchEvent(new Event("input", { bubbles: true })); document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); } true');
+        await new Promise((r) => setTimeout(r, 600));
         await benchWin.webContents.executeJavaScript('document.querySelector(\'[data-dpane="boards"] tbody tr:nth-child(3)\')?.click(); true');
         await new Promise((r) => setTimeout(r, 1200));
         await shot(snap.replace(/\.png$/i, "") + "-sel.png");

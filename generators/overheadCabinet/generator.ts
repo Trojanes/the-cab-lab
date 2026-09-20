@@ -14,6 +14,8 @@ import { alias, beginProvenance, dim, endProvenance, param, provenanceActive, re
 import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
+import { attachFaces } from "../_lib/model.ts";
+import { buildOverheadFaces } from "./faces.ts";
 
 export * from "./geometry.ts";
 export * from "./svgPreview.ts";
@@ -811,6 +813,7 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
       params: resolvedParams(),
       boards: [],
       features: [],
+      joints: [],
       relationshipDeclarations: [],
       validation,
       debug: {
@@ -835,6 +838,19 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
     return { ...feature, bp_groove: undefined };
   });
 
+  // Face layer: A / B / E<i> on every board, then each feature on the face it is machined into.
+  attachFaces(boards);
+  const joints = buildOverheadFaces({
+    boards,
+    geometry,
+    inputs,
+    suppressedGrooves: rangehood?.internalDividerIndices ?? [],
+    ledFeatures,
+    rangehoodFeatures,
+    declarations: relationshipDeclarations,
+    carcassColorName: carcassColor.carcassColorName,
+  });
+
   return {
     params: resolvedParams(),
     boards,
@@ -845,6 +861,7 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
       ...rangehoodFeatures,
       ...ledFeatures,
     ],
+    joints,
     relationshipDeclarations,
     validation,
     debug: {

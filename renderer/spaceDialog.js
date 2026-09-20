@@ -14,6 +14,7 @@ import { noseFromDxf } from "./dxf.js";
 import { getSetting, setSetting, settingsPath } from "./settings.js";
 import {
   CARCASS_COLOR,
+  CLEARANCE_MAX,
   DOOR_SERIES,
   MATERIALS_SETTINGS_KEY,
   coerceDoorName,
@@ -451,7 +452,18 @@ function renderMaterials() {
     stockRow.append(el("label", { class: "stock-field" }, [el("span", { text: `${label} (mm)` }), input]));
   }
   block.append(stockRow);
-  block.append(el("div", { class: "materials-hint", text: "Carcass = box · Partition = dividers · Door = fronts" }));
+  block.append(el("div", { class: "materials-hint", text: "Carcass = box · Partition = dividers and room partition walls · Door = fronts" }));
+
+  // Partition walls stand off the floor and stop under the roof by these amounts (room for packers).
+  const clearRow = el("div", { class: "stock-grid" });
+  for (const [key, label] of [["floorClearance", "Partition floor clearance (mm)"], ["ceilingClearance", "Partition ceiling clearance (mm)"]]) {
+    const input = el("input", { type: "number", step: 1, min: 0, max: CLEARANCE_MAX, value: stock.partition[key] });
+    input.addEventListener("input", () => { stock.partition[key] = Number(input.value); refresh(); });
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+    clearRow.append(el("label", { class: "stock-field" }, [el("span", { text: label }), input]));
+  }
+  block.append(clearRow);
+  block.append(el("div", { class: "materials-hint", text: "A partition wall runs from floor + floor clearance up to roof − ceiling clearance." }));
 
   const saved = getSetting(MATERIALS_SETTINGS_KEY);
   const setBtn = el("button", { type: "button", class: "tb", text: "Set current as default", title: "New jobs start with these colours and thicknesses (saved to settings.json now)" });

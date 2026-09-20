@@ -208,8 +208,82 @@ function testThreeZonesBoardCount(): void {
   assert.equal(result.features.filter((f) => f.type === "door_lock").length, 2);
 }
 
+/** Face layer (docs/model-spec.md): grooves on the inside side faces, tongue tags on outline edges, lock slot on the door front. */
+function testFaceLayer(): void {
+  const result = generateSmallCabinet({
+    cabinetWidth: 600,
+    cabinetDepth: 560,
+    cabinetHeight: 800,
+    panelThickness: 16,
+    frontPanelThickness: 18,
+    leftSideDoorColor: true,
+    doorColorName: "Storm Grey",
+    zones: [
+      { id: "upper", type: "left_door", height: 400 },
+      { id: "lower", type: "drawer", height: 368 },
+    ],
+  });
+  assert.equal(result.validation.errors.length, 0);
+  for (const b of result.boards) {
+    assert.ok(b.faces && b.faces.length >= 6, `${b.id} faces`);
+    assert.equal(b.faces!.find((f) => f.id === "A")!.normal, `+${b.thicknessAxis}`);
+    assert.equal(b.faces!.filter((f) => f.id.startsWith("E")).length, (b.profileVector?.length ?? 5) - 1, `${b.id} edge faces`);
+    assert.equal(b.role, b.category);
+  }
+  const left = boardById(result, "SIDE_L")!;
+  const right = boardById(result, "SIDE_R")!;
+  // Inside faces carry the grooves (SIDE_L.A = +X, SIDE_R.B = -X); outside faces carry nothing.
+  const leftIn = left.faces!.find((f) => f.id === "A")!;
+  const rightIn = right.faces!.find((f) => f.id === "B")!;
+  assert.equal(leftIn.semantic, "inside");
+  assert.equal(leftIn.features.filter((f) => f.kind === "groove").length, 4);
+  assert.equal(rightIn.features.filter((f) => f.kind === "groove").length, 4);
+  assert.equal(left.faces!.find((f) => f.id === "B")!.features.length, 0);
+  assert.equal(right.faces!.find((f) => f.id === "A")!.features.length, 0);
+  // Left side outer face takes the door colour (leftSideDoorColor), right keeps the carcass colour.
+  assert.equal(left.faces!.find((f) => f.id === "B")!.finish?.colour, "Storm Grey");
+  assert.equal(right.faces!.find((f) => f.id === "A")!.finish?.colour, "White Stipple");
+  // Groove numbers are the legacy feature numbers, local to the side (y0 = 0, z0 = 0).
+  const midGroove = leftIn.features.find((f) => f.for === "MID_1")!;
+  const legacy = result.features.find((f) => f.type === "side_groove" && f.targetBoardId === "SIDE_L" && f.relatedBoardId === "MID_1")!;
+  assert.deepEqual([midGroove.u0, midGroove.u1, midGroove.v0, midGroove.v1, midGroove.depth], [legacy.y0, legacy.y1, legacy.z0, legacy.z1, legacy.depth]);
+
+  // MID_1: three edges per tongue, left tongue edges at u ≤ CPT, right at u ≥ W - CPT.
+  const mid = boardById(result, "MID_1")!;
+  const tongueL = mid.faces!.filter((f) => f.features.some((x) => x.kind === "tongue" && x.for === "SIDE_L"));
+  const tongueR = mid.faces!.filter((f) => f.features.some((x) => x.kind === "tongue" && x.for === "SIDE_R"));
+  assert.equal(tongueL.length, 3);
+  assert.equal(tongueR.length, 3);
+  for (const e of tongueL) assert.ok(e.edge!.from[0] <= 16 && e.edge!.to[0] <= 16, `${e.key} on the left tongue`);
+  for (const e of tongueR) assert.ok(e.edge!.from[0] >= 584 && e.edge!.to[0] >= 584, `${e.key} on the right tongue`);
+  assert.equal(mid.faces!.find((f) => f.id === "A")!.features.length, 0);
+
+  // Door: lock slot on the room-side face B, through; drawer front has none.
+  const fp1 = boardById(result, "FP_1")!;
+  const fp1Front = fp1.faces!.find((f) => f.id === "B")!;
+  assert.equal(fp1Front.semantic, "front");
+  assert.equal(fp1Front.visible, true);
+  const lock = fp1Front.features.find((f) => f.kind === "cutout")!;
+  assert.ok(lock);
+  assert.equal(lock.through, true);
+  assert.equal(lock.radius, 7.75);
+  assert.equal(lock.u0, fp1.lockCutout!.x0 - fp1.x0);
+  assert.equal(lock.v1, fp1.lockCutout!.z1 - fp1.z0);
+  assert.equal(fp1.stock?.kind, "door");
+  assert.equal(fp1.stock?.colour, "Storm Grey");
+  assert.equal(boardById(result, "FP_2")!.faces!.find((f) => f.id === "B")!.features.length, 0);
+
+  // Joints: one per tongue (4 boards × 2 sides), side face ↔ tongue edges.
+  assert.equal(result.joints.length, 8);
+  const j = result.joints.find((x) => x.id === "MID_1_tongue_L_joint")!;
+  assert.deepEqual(j.a, { board: "SIDE_L", faces: ["A"] });
+  assert.equal(j.b.board, "MID_1");
+  assert.deepEqual(j.b.faces, tongueL.map((f) => f.id));
+}
+
 const tests = [
   testTwoZoneDoorDrawer,
+  testFaceLayer,
   testFrontPanelCalculatorNeighborHalfClearance,
   testSingleRightDoor,
   testLocksCanBeDisabled,

@@ -3,6 +3,8 @@ import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
 import * as job from "./job.js";
 import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes } from "./cabinets3d.js";
+import { syncWalls } from "./walls3d.js";
+import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
 import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove, startOrient, startPlane } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
@@ -191,6 +193,8 @@ function refreshStatus() {
   $('[data-action="plane"]').classList.toggle("active", getMode().startsWith("plane"));
   const pl = job.getSelectedPlane();
   if (pl) $("#stSelection").textContent = `Selection: ${pl.id} (Plane)`;
+  const wall = job.getSelectedWall();
+  if (wall) $("#stSelection").textContent = `Selection: ${wall.id} (Partition)`;
 }
 
 // --- file actions -------------------------------------------------------------------
@@ -275,6 +279,7 @@ function refreshAll() {
   $$("#moduleList .rail-item[data-module]").forEach((b) => { b.disabled = !job.hasSpace(); });
   syncCabinets();
   syncPlanes();
+  syncWalls();
   maybeRenderPanel();
   refreshRail();
   refreshStatus();

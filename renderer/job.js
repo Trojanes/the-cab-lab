@@ -5,6 +5,7 @@ import { getModule } from "./modules.js";
 import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
 import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
+import { normalizeWall, normalizeOpening } from "./walls.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
@@ -21,6 +22,7 @@ function newJob() {
     stock: materials.stock, // carcass / partition / door thicknesses
     cabinets: [],
     planes: [], // construction planes: { id, axis, value, dir, offset, from }
+    walls: [], // partition walls: { id, axis, at, u0, u1, side } — see walls.js
   };
 }
 
@@ -37,6 +39,7 @@ function migrate(obj) {
     };
   }
   if (!Array.isArray(obj.planes)) obj.planes = [];
+  obj.walls = (Array.isArray(obj.walls) ? obj.walls : []).map(normalizeWall).filter(Boolean);
   obj.finish = normalizeFinish(obj.finish);
   obj.stock = normalizeStock(obj.stock);
   return obj;
@@ -80,6 +83,9 @@ export function getMaterials() { return { finish: job.finish, stock: job.stock }
 export function getPlanes() { return job.planes || []; }
 export function getPlane(id) { return (job.planes || []).find((p) => p.id === id) || null; }
 export function getSelectedPlane() { return getPlane(selectedId); }
+export function getWalls() { return job.walls || []; }
+export function getWall(id) { return (job.walls || []).find((w) => w.id === id) || null; }
+export function getSelectedWall() { return getWall(selectedId); }
 export function isDirty() { return dirty; }
 export function getFilePath() { return filePath; }
 export function canUndo() { return undoStack.length > 0; }
@@ -129,9 +135,16 @@ export function undo() {
   redoStack.push(JSON.stringify(job));
   job = JSON.parse(undoStack.pop());
   invalidate();
-  if (selectedId && !job.cabinets.some((c) => c.id === selectedId) && !(job.planes || []).some((p) => p.id === selectedId)) selectedId = null;
+  if (!selectionExists()) selectedId = null;
   dirty = true;
   emit("job");
+}
+
+function selectionExists() {
+  if (!selectedId) return true;
+  return job.cabinets.some((c) => c.id === selectedId)
+    || (job.planes || []).some((p) => p.id === selectedId)
+    || (job.walls || []).some((w) => w.id === selectedId);
 }
 
 export function redo() {
@@ -140,7 +153,7 @@ export function redo() {
   undoStack.push(JSON.stringify(job));
   job = JSON.parse(redoStack.pop());
   invalidate();
-  if (selectedId && !job.cabinets.some((c) => c.id === selectedId) && !(job.planes || []).some((p) => p.id === selectedId)) selectedId = null;
+  if (!selectionExists()) selectedId = null;
   dirty = true;
   emit("job");
 }
@@ -272,6 +285,94 @@ export function removePlane(id) {
   pushHistory();
   log("plane.remove", { id });
   job.planes.splice(i, 1);
+  if (selectedId === id) selectedId = null;
+  dirty = true;
+  emit("job");
+}
+
+let nextWallCounter = 1;
+function makeWallId() {
+  let id;
+  do {
+    id = `wall-${nextWallCounter++}`;
+  } while ((job.walls || []).some((w) => w.id === id));
+  return id;
+}
+
+/** A partition wall (see walls.js). `wall` = { axis, at, u0, u1, side }; `meta` is logged only. */
+export function addWall(wall, meta = {}) {
+  const w = normalizeWall({ ...wall, id: "pending" });
+  if (!w) return null;
+  pushHistory();
+  if (!Array.isArray(job.walls)) job.walls = [];
+  w.id = makeWallId();
+  job.walls.push(w);
+  selectedId = w.id;
+  log("wall.add", { ...w, ...meta });
+  dirty = true;
+  emit("job");
+  return w;
+}
+
+let nextOpeningCounter = 1;
+function makeOpeningId() {
+  let id;
+  const taken = new Set((job.walls || []).flatMap((w) => (w.openings || []).map((o) => o.id)));
+  do {
+    id = `op-${nextOpeningCounter++}`;
+  } while (taken.has(id));
+  return id;
+}
+
+/**
+ * An opening in a wall: { type, from, offset, width, bottom, top } (+ side /
+ * overlap / doorHeight for a slidingDoor — see walls.js). `meta` is logged only.
+ */
+export function addOpening(wallId, opening, meta = {}) {
+  const wall = getWall(wallId);
+  const op = normalizeOpening({ ...opening, id: "pending" });
+  if (!wall || !op) return null;
+  pushHistory();
+  op.id = makeOpeningId();
+  if (!Array.isArray(wall.openings)) wall.openings = [];
+  wall.openings.push(op);
+  selectedId = wall.id;
+  log("opening.add", { wallId, ...op, ...meta });
+  dirty = true;
+  emit("job");
+  return op;
+}
+
+export function setOpening(wallId, opId, patch) {
+  const wall = getWall(wallId);
+  const i = wall ? (wall.openings || []).findIndex((o) => o.id === opId) : -1;
+  if (i < 0) return;
+  const next = normalizeOpening({ ...wall.openings[i], ...patch });
+  if (!next) return;
+  pushHistory();
+  wall.openings[i] = next;
+  log("opening.set", { wallId, id: opId, patch, opening: next });
+  dirty = true;
+  emit("job");
+}
+
+export function removeOpening(wallId, opId) {
+  const wall = getWall(wallId);
+  const i = wall ? (wall.openings || []).findIndex((o) => o.id === opId) : -1;
+  if (i < 0) return;
+  pushHistory();
+  log("opening.remove", { wallId, id: opId, opening: wall.openings[i] });
+  wall.openings.splice(i, 1);
+  dirty = true;
+  emit("job");
+}
+
+export function removeWall(id) {
+  const i = (job.walls || []).findIndex((w) => w.id === id);
+  if (i < 0) return;
+  pushHistory();
+  log("wall.remove", { id, wall: job.walls[i] });
+  job.walls.splice(i, 1);
   if (selectedId === id) selectedId = null;
   dirty = true;
   emit("job");
