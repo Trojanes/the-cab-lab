@@ -4,21 +4,26 @@
 //
 // One way to draw a wall, from features (see features2d.js):
 //   1. click the first point on a feature edge (a corner, a junction, 10 mm
-//      along the edge, or a point aligned with another feature)
-//   2. click the second point on the same edge (Tab / digits type L; Enter =
-//      the far end of the edge, i.e. the whole span)
+//      along the edge, or a point aligned with another feature). A junction —
+//      a partition standing on the line — is ONE point on that partition's
+//      centre line; the pull direction at step 2 decides which side of it the
+//      wall goes.
+//   2. click the second point on the same line (Tab / digits type L; Enter =
+//      the far end of the line, i.e. the whole span)
 //   3. pull the wall off the edge into the room; Tab / digits type Offset —
 //      the clear distance to the wall's near face, the thickness grows away —
 //      click or Enter drops it
-// Right-click cancels the current wall (again: leaves the tool). A wall is red
-// and cannot be dropped when it overlaps a solid, leaves the space or rests on
-// nothing at either end. Thickness = Partition stock; height = floor +
-// clearance … roof − clearance (walls.js).
+// Centre lines are references only: the board is trimmed onto the FACE of any
+// partition an end was drawn into (walls.js trimToFaces) — no physical
+// overlap, ever. Right-click cancels the current wall (again: leaves the
+// tool). A wall is red and cannot be dropped when it overlaps a solid, leaves
+// the space or rests on nothing at either end. Thickness = Partition stock;
+// height = floor + clearance … roof − clearance (walls.js).
 import * as job from "./job.js";
 import { snap } from "./job.js";
 import { envelopeFootprint } from "./cabinets3d.js";
 import { thickness } from "./materials.js";
-import { wallSolid, wallStatus, wallBoxes, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
+import { wallSolid, wallStatus, wallBoxes, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
 import { solidBoxes } from "./walls3d.js";
 import { buildFeatures, nearestEdge, projectOnEdge, pointOnEdge, featureUsOnEdge, distToEdge } from "./features2d.js";
 import { disarm, cancelMove, cancelOrient, evalDim, sideOfRotZ } from "./interact.js";
@@ -196,9 +201,14 @@ function wallBody(sourceId) {
   const axis = s.solid.axis;
   return { id: s.id, axis, along: s.solid.along, centre: (s[axis][0] + s[axis][1]) / 2, t: s[axis][1] - s[axis][0], box: s };
 }
-/** What the user picked, as a body: a partition's two faces are one wall line; other edges are themselves. */
+/**
+ * What the user picked, as a body: a partition's two faces are one wall line
+ * (per segment, when another wall splits the face); other edges are themselves.
+ */
 function lineKey(e) {
-  return e.kind === "wall" ? `${e.source}|${e.axis}` : e.id;
+  if (e.kind !== "wall") return e.id;
+  const seg = e.id.includes("#") ? e.id.slice(e.id.indexOf("#")) : "";
+  return `${e.source}|${e.axis}${seg}`;
 }
 /** Distance from a plan point to the wall line the edge stands for (centre line for a partition). */
 function distToLine(p, e) {
@@ -211,6 +221,16 @@ function distToLine(p, e) {
 /** Display name of the edge as the user sees it: the wall itself, not one of its faces. */
 function edgeName(e) {
   return e.kind === "wall" ? e.source : e.label;
+}
+/**
+ * A partition's END face (one thickness long) is never a line to draw from —
+ * at a junction with the space wall it lies on that wall and would steal the
+ * pick, and nothing longer than 18 mm can come off it.
+ */
+function isEndFace(e) {
+  if (e.kind !== "wall") return false;
+  const s = feats().solids.find((x) => x.id === e.source && x.kind === "wall");
+  return !!s && s.solid.along === e.axis;
 }
 /**
  * The face of the picked line the wall is offset from: for a partition, the
@@ -315,9 +335,10 @@ function endLabel(solid, from) {
  *   in line with the centre line of another partition (or a cabinet side) that crosses the edge → it (dashed guide)
  *   else the 10 mm grid.
  * Alignment is body to body: a wall end that lines up with another partition
- * stops on its centre line — the end is buried half a thickness, which is a
- * T-joint, not a collision (walls.js). `from` + `locked`: a typed length from
- * the first point, toward the cursor's side.
+ * is picked on its centre line — a reference only; the board is trimmed back
+ * onto that partition's face at the offset step (walls.js trimToFaces), so
+ * nothing ever overlaps. `from` + `locked`: a typed length from the first
+ * point, toward the cursor's side.
  */
 function snapOnEdge(edge, p, { from = null, locked = null } = {}) {
   const tol = tolMm();
@@ -336,7 +357,8 @@ function snapOnEdge(edge, p, { from = null, locked = null } = {}) {
       : [{ at: s[edge.along][0], label: `flush with ${s.id} side`, reach: 0 }, { at: s[edge.along][1], label: `flush with ${s.id} side`, reach: 0 }];
     for (const c of cands) {
       // A partition standing against this edge cuts it at its face; its centre line lies half a thickness
-      // beyond the cut. Reaching it there is the T-joint, so the end may go that far past the edge.
+      // beyond the cut. The point may reach it there (the junction is picked at the middle of that
+      // partition); the board itself is trimmed back to the face.
       if (c.at < edge.u0 - c.reach - 0.5 || c.at > edge.u1 + c.reach + 0.5) continue;
       const d = Math.abs(c.at - u);
       if (d <= tol) aligns.push({ u: c.at, d, label: c.label, id: s.id, kind: s.kind });
@@ -708,8 +730,9 @@ function resolve(p) {
   const F = feats();
   const tol = tolMm();
   const t = thickness(job.getStock(), "partition");
-  // A partition can always be offset from (one of its sides has room); any other face needs room toward the room.
-  const drawable = (e) => e.kind === "wall" || roomFrom(e).room >= t + 1;
+  // A partition's long face can always be offset from (one of its sides has room); its end faces are not lines
+  // to draw from; any other face needs room toward the room.
+  const drawable = (e) => (e.kind === "wall" ? !isEndFace(e) : roomFrom(e).room >= t + 1);
   const out = { p, tip: [], tone: "" };
   if (!tool) {
     const hit = hitSolid(p);
@@ -765,10 +788,15 @@ function resolve(p) {
   const o = offsetFor(face, p, tool.locked);
   out.face = face;
   out.offset = o;
-  out.wall = previewFrom(face, o.d, tool.u1, tool.u2);
+  // The points were picked on centre lines; the board stops on faces (no overlap, ever).
+  const drawn = previewFrom(face, o.d, tool.u1, tool.u2);
+  const trim = trimToFaces(drawn, job.getSpace(), job.getStock(), wallBoxes(job.getWalls(), job.getSpace(), job.getStock()));
+  out.wall = trim.wall;
+  out.trimmed = trim.trimmed;
   out.status = statusFor(out.wall);
-  out.tip.push(`Offset ${Math.round(o.d)} from ${face.label}`);
+  out.tip.push(`Offset ${Math.round(o.d)} from ${face.label}`, `L ${Math.round(out.wall.u1 - out.wall.u0)}`);
   if (o.label) out.tip.push(o.label);
+  for (const end of ["lo", "hi"]) if (trim.trimmed[end]) out.tip.push(`stops on ${trim.trimmed[end].id}'s face (−${Math.round(trim.trimmed[end].by)})`);
   if (o.clamped) { out.tip.push(`stopped at ${o.clamped}`); out.tone = "warn"; }
   if (!out.status.ok) { out.tip.push(...out.status.issues); out.tone = "bad"; }
   return out;
@@ -806,25 +834,27 @@ function click(p) {
     tool.edge = cur.edge;
     tool.u1 = cur.u;
     tool.p1 = cur.pt;
-    // Every drawable line through the point stays a candidate until the second point picks one
-    // (a partition's two faces count as one line).
+    // Every drawable line at the point stays a candidate until the second point picks one (a partition's
+    // two faces count as one line). "At" is within one partition thickness: a junction is ONE point, not
+    // two — the partition standing there splits the line into two segments (…900 | 918…) and the point
+    // sits on its centre line between them, 9 mm from each. Both segments, and the lines of the partition
+    // itself, stay candidates, so the direction of the pull at the second point picks the line.
     const t = thickness(job.getStock(), "partition");
     const seen = new Set([lineKey(tool.edge)]);
     tool.candidates = [tool.edge];
     const u = (e) => cur.pt[e.along];
     for (const e of feats().edges) {
       if (seen.has(lineKey(e))) continue;
-      // Through the point — or the partition whose centre line the point snapped to (the point sits 9 mm
-      // inside it, so it is not on a face; the user may still pivot along that wall).
-      const onLine = distToEdge(cur.pt, e) <= 0.5
+      const near = distToEdge(cur.pt, e) <= t + 0.5
         || (e.kind === "wall" && cur.snap.alignTo === e.source && u(e) >= e.u0 - 0.5 && u(e) <= e.u1 + 0.5);
-      if (!onLine) continue;
-      if (!(e.kind === "wall" || roomFrom(e).room >= t + 1)) continue;
+      if (!near) continue;
+      if (!(e.kind === "wall" ? !isEndFace(e) : roomFrom(e).room >= t + 1)) continue;
       seen.add(lineKey(e));
       tool.candidates.push(e);
     }
+    const junction = tool.candidates.length > 1 ? tool.candidates.filter((e) => e !== tool.edge && distToEdge(cur.pt, e) > 0.5).map((e) => e.id) : [];
     tool.step = "pt2";
-    log("wall.draw.point", { step: "pt1", edge: tool.edge.id, line: edgeName(tool.edge), u: tool.u1, snap: cur.snap.kind, alignTo: cur.snap.alignTo, candidates: tool.candidates.map((e) => lineKey(e)) });
+    log("wall.draw.point", { step: "pt1", edge: tool.edge.id, line: edgeName(tool.edge), u: tool.u1, snap: cur.snap.kind, alignTo: cur.snap.alignTo, candidates: tool.candidates.map((e) => lineKey(e)), junction: junction.length ? junction : null });
     showDim("L", cur.pt);
   } else if (tool.step === "pt2") {
     tool.candidates = null; // settled by the second click
@@ -889,6 +919,8 @@ function commit(how) {
     alignedOffset: cur.offset.alignTo || null,
     clamped: cur.offset.clamped,
     length: cur.wall.u1 - cur.wall.u0,
+    drawn: { u0: Math.min(tool.u1, tool.u2), u1: Math.max(tool.u1, tool.u2) },
+    trimmed: cur.trimmed,
     anchors: st.anchors,
   };
   const w = job.addWall(cur.wall, meta);

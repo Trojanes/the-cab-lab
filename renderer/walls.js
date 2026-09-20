@@ -369,35 +369,52 @@ function boxesOverlap(a, b) {
 }
 
 /**
- * Is one end of wall `e` buried in wall `h` (a T-joint)? Alignment is centre
- * line to centre line, so a wall that stops "in line with" another one ends
- * halfway through its thickness; that is a joint, not a collision.
- * True when the overlap along `e` is at most `h`'s thickness, one of `e`'s
- * ends lies inside `h`, and `h` covers `e`'s thickness across.
- */
-function endBuriedIn(e, h) {
-  if (!e.along || !h.along || e.along === h.along) return false;
-  const a = e.along; // e runs along this axis; h's thickness is along it too
-  const c = a === "x" ? "y" : "x";
-  const lo = Math.max(e[a][0], h[a][0]);
-  const hi = Math.min(e[a][1], h[a][1]);
-  if (hi - lo > h[a][1] - h[a][0] + EPS) return false;
-  const endInside = (e[a][0] >= h[a][0] - EPS && e[a][0] <= h[a][1] + EPS) || (e[a][1] >= h[a][0] - EPS && e[a][1] <= h[a][1] + EPS);
-  if (!endInside) return false;
-  return h[c][0] <= e[c][0] + EPS && h[c][1] >= e[c][1] - EPS;
-}
-export function isTJoint(a, b) {
-  return endBuriedIn(a, b) || endBuriedIn(b, a);
-}
-
-/**
- * Ids of `boxes` the wall solid overlaps (touching is not overlapping; a T-joint
- * with another wall is not either; a sliding door's pelmet is not — it stops at
- * partitions, so a new wall across its line just shortens it).
+ * No physical overlap, ever: a wall may touch another solid, never enter it.
+ * A wall that ends on another partition stops on that partition's FACE (its
+ * centre line is only the alignment reference — see trimToFaces). Ids of
+ * `boxes` the wall solid overlaps; touching is not overlapping, and a sliding
+ * door's pelmet is not either (it stops at partitions, so a new wall across
+ * its line just shortens it).
  */
 export function wallOverlaps(solid, boxes, excludeId = null) {
   const me = { id: solid.id, kind: "wall", along: solid.along, x: [solid.x0, solid.x1], y: [solid.y0, solid.y1], z: [solid.z0, solid.z1] };
-  return boxes.filter((b) => b.id !== excludeId && b.wallId !== excludeId && b.part !== "pelmet" && boxesOverlap(me, b) && !(b.kind === "wall" && isTJoint(me, b))).map((b) => b.id);
+  return boxes.filter((b) => b.id !== excludeId && b.wallId !== excludeId && b.part !== "pelmet" && boxesOverlap(me, b)).map((b) => b.id);
+}
+
+/**
+ * Pull a wall's ends out of the partitions they were drawn into, onto their
+ * faces. Drawing aligns to centre lines (a junction is picked at the middle of
+ * the partition standing there), so an end can land up to half a thickness
+ * inside another wall; the board itself must stop on the face. Only a shallow
+ * end (at most one partition thickness deep, with the wall going on past the
+ * other side of that partition) is moved — anything deeper is a real overlap
+ * and stays for wallStatus to refuse.
+ * Returns { wall, trimmed: { lo, hi } } with `{ id, from, to, by }` per moved end.
+ */
+export function trimToFaces(wall, resolved, stock, otherWallBoxes = []) {
+  const s = wallSolid(wall, resolved, stock);
+  const t = s.thickness;
+  const along = s.along;
+  const across = wall.axis;
+  const band = across === "x" ? [s.x0, s.x1] : [s.y0, s.y1];
+  let u0 = wall.u0;
+  let u1 = wall.u1;
+  const trimmed = { lo: null, hi: null };
+  for (const b of otherWallBoxes) {
+    if (b.kind !== "wall" || b.id === wall.id) continue;
+    if (!(b[across][0] < band[1] - EPS && b[across][1] > band[0] + EPS)) continue;
+    if (!(b.z[0] < s.z1 - EPS && b.z[1] > s.z0 + EPS)) continue;
+    const r = b[along];
+    if (u0 > r[0] - EPS && u0 < r[1] - EPS && u1 > r[1] + EPS && r[1] - u0 <= t + EPS) {
+      trimmed.lo = { id: b.id, from: u0, to: r[1], by: r[1] - u0 };
+      u0 = r[1];
+    }
+    if (u1 < r[1] + EPS && u1 > r[0] + EPS && u0 < r[0] - EPS && u1 - r[0] <= t + EPS) {
+      trimmed.hi = { id: b.id, from: u1, to: r[0], by: u1 - r[0] };
+      u1 = r[0];
+    }
+  }
+  return { wall: { ...wall, u0, u1 }, trimmed };
 }
 
 /** Index of the space wall a wall end can rest on: the low / high end of the axis it runs along. */
@@ -428,13 +445,10 @@ export function wallAnchors(solid, resolved, otherBoxes) {
     }
     for (const o of otherBoxes) {
       if (o.id === solid.id) continue;
-      // Our end sits on the other wall's face, or is buried in it (T-joint on its centre line); it covers our thickness band.
+      // Our end sits ON the other wall's face (never inside it) and the two thickness bands meet.
       const near = end < 0 ? o[along][1] : o[along][0];
-      const onFace = Math.abs(near - u) <= EPS;
-      const buried = u >= o[along][0] - EPS && u <= o[along][1] + EPS;
-      if (!onFace && !buried) continue;
-      if (o[bandAxis][0] <= band[0] + EPS && o[bandAxis][1] >= band[1] - EPS) { out[key] = o.id; break; }
-      if (onFace && o[bandAxis][0] < band[1] - EPS && o[bandAxis][1] > band[0] + EPS) { out[key] = o.id; break; }
+      if (Math.abs(near - u) > EPS) continue;
+      if (o[bandAxis][0] < band[1] - EPS && o[bandAxis][1] > band[0] + EPS) { out[key] = o.id; break; }
     }
   }
   return out;

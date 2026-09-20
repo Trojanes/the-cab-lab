@@ -108,11 +108,15 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   whole span) → pull the wall out to **either side** and click or `Enter` (`Offset` = the clear distance to the
   near face; the thickness grows away). A partition is picked as a **body**, not a face: its two faces are one
   line, and the offset is measured from whichever face the cursor is on (pull toward the nose → from the nose
-  face). Alignment is **centre line to centre line**: a wall **end** in line with another partition stops on that
-  partition's centre line (the end is buried half a thickness — a T‑joint, legal and counted as resting on that
-  wall), and the **offset** in line with a parallel partition puts the new centre on its centre (same stock, so
-  the faces coincide). Next to a partition its own face corners yield to its centre line; junctions with other
-  walls stay feature points. A cabinet has no centre line: its sides are the alignment. At the second point and at
+  face). Alignment is **centre line to centre line**: a wall **end** in line with another partition is picked on
+  that partition's centre line, and the **offset** in line with a parallel partition puts the new centre on its
+  centre (same stock, so the faces coincide). Centre lines are **references only** — **no physical overlap,
+  ever**: at the offset step the board is trimmed back onto the **face** of any partition an end was drawn into
+  (`stops on wall-1's face (−9)` in the tip; `trimmed` in the log), so a wall that meets another one **rests on
+  its face**, never inside it. A **junction** — a partition standing on the line you are drawing from — is **one
+  point** on that partition's centre line (not two, 900 and 918): both segments of the line stay live, and the
+  direction you pull the second point decides which side of the partition the new wall goes. Next to a partition
+  its own face corners yield to its centre line. A cabinet has no centre line: its sides are the alignment. At the second point and at
   the offset, **`Tab`** (or a digit) opens
   the type-in with the live value selected, AutoCAD-style: type `L` / `Offset`, `Enter` or a left-click confirms.
   **Right-click cancels**: the wall in progress goes back to the first point; right-click again leaves the tool
