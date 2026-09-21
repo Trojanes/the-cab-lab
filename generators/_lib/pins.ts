@@ -28,10 +28,14 @@ export interface BoardLike {
 export interface ResultLike {
   boards: BoardLike[];
   features?: unknown[];
+  /** Layout regions of a volume-only module (bedroom body): pinned like boards, by id. */
+  zones?: Array<{ id: string; x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }>;
 }
 
 export interface Pins {
   boards?: Record<string, { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }>;
+  /** Region boxes (`result.zones[]`) of a module that has no boards yet. */
+  zones?: Record<string, { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }>;
   points?: Record<string, number[][]>;
   features?: Record<string, Record<string, number>>;
   /** `${boardId}.${faceId}.${featureId}` → numeric fields of a face feature (u0 u1 v0 v1 cx cy diameter depth radius). */
@@ -125,6 +129,10 @@ export function collectPins(result: ResultLike): Pins {
     for (const [k, v] of Object.entries(vals)) rounded[k] = round(v);
     pins.faceFeatures![key] = rounded;
   }
+  if (result.zones && result.zones.length) {
+    pins.zones = {};
+    for (const z of result.zones) pins.zones[z.id] = { x0: round(z.x0), x1: round(z.x1), y0: round(z.y0), y1: round(z.y1), z0: round(z.z0), z1: round(z.z1) };
+  }
   return pins;
 }
 
@@ -146,6 +154,7 @@ export function mergePins(base: Pins, add: Pins): Pins {
     points: { ...(base.points ?? {}), ...(add.points ?? {}) },
     features: { ...(base.features ?? {}), ...(add.features ?? {}) },
     faceFeatures: { ...(base.faceFeatures ?? {}), ...(add.faceFeatures ?? {}) },
+    ...(base.zones || add.zones ? { zones: { ...(base.zones ?? {}), ...(add.zones ?? {}) } } : {}),
   };
 }
 
@@ -164,6 +173,17 @@ export function checkPins(result: ResultLike, pins: Pins, tol = PIN_TOL_MM): Pin
     }
     for (const f of FACES) {
       if (!near(faces[f], b[f])) out.push({ path: `${id}.${f}`, expected: faces[f], actual: b[f] });
+    }
+  }
+  const zoneById = new Map((result.zones ?? []).map((z) => [z.id, z]));
+  for (const [id, faces] of Object.entries(pins.zones ?? {})) {
+    const z = zoneById.get(id);
+    if (!z) {
+      out.push({ path: `zone ${id}`, expected: null, actual: null });
+      continue;
+    }
+    for (const f of FACES) {
+      if (!near(faces[f], z[f])) out.push({ path: `zone ${id}.${f}`, expected: faces[f], actual: z[f] });
     }
   }
   for (const [key, expected] of Object.entries(pins.points ?? {})) {
@@ -223,6 +243,7 @@ export function checkPins(result: ResultLike, pins: Pins, tol = PIN_TOL_MM): Pin
 export function countPins(pins: Pins): number {
   let n = 0;
   for (const f of Object.values(pins.boards ?? {})) n += Object.keys(f).length;
+  for (const f of Object.values(pins.zones ?? {})) n += Object.keys(f).length;
   for (const pts of Object.values(pins.points ?? {})) n += pts.reduce((s, p) => s + p.length, 0);
   for (const f of Object.values(pins.features ?? {})) n += Object.keys(f).length;
   for (const f of Object.values(pins.faceFeatures ?? {})) n += Object.keys(f).length;

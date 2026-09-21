@@ -86,6 +86,56 @@ export function boardGeometry(b) {
   return { geo: prismXZ(outline, b.y0, b.y1), cut: true };
 }
 
+const AXES_OF = { YZ: ["y", "z", "x"], XZ: ["x", "z", "y"], XY: ["x", "y", "z"] };
+
+/**
+ * Highlight sheet for one face of a board (cabinet frame), `thick` mm proud of
+ * the face so it reads over the board. A / B: the board's outline (or box) as a
+ * thin slab on that side; E<i>: a quad along the outline edge through the
+ * thickness. Display only — nothing here changes the board.
+ */
+export function faceSheetGeometry(b, face, thick = 1.5) {
+  const [U, V, T] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const t0 = b[`${T}0`], t1 = b[`${T}1`];
+  if (face.id === "A" || face.id === "B") {
+    const lo = face.id === "A" ? t1 : t0 - thick;
+    const hi = lo + thick;
+    const outline = boardOutline(b);
+    if (outline) {
+      if (b.profilePlane === "YZ") return prismYZ(outline, lo, hi);
+      if (b.profilePlane === "XY") return prismXY(outline, lo, hi);
+      return prismXZ(outline, lo, hi);
+    }
+    const r = { x: [b.x0, b.x1], y: [b.y0, b.y1], z: [b.z0, b.z1] };
+    r[T] = [lo, hi];
+    const geo = new THREE.BoxGeometry(r.x[1] - r.x[0], r.y[1] - r.y[0], r.z[1] - r.z[0]);
+    geo.translate((r.x[0] + r.x[1]) / 2, (r.y[0] + r.y[1]) / 2, (r.z[0] + r.z[1]) / 2);
+    return geo;
+  }
+  if (!face.edge) return null;
+  // Edge face: board-local (u, v) → cabinet frame, a quad spanning the thickness (a touch over),
+  // pushed `thick / 2` out along the edge's outward normal so it sits proud of the board's side.
+  const n = { x: 0, y: 0, z: 0 };
+  if (typeof face.normal === "string") n[face.normal[1].toLowerCase()] = face.normal[0] === "+" ? 1 : -1;
+  else if (Array.isArray(face.normal)) { n.x = face.normal[0]; n.y = face.normal[1]; n.z = face.normal[2]; }
+  const push = thick / 2;
+  const toCab = (u, v, t) => {
+    const p = { x: 0, y: 0, z: 0 };
+    p[U] = b[`${U}0`] + u;
+    p[V] = b[`${V}0`] + v;
+    p[T] = t;
+    return [p.x + n.x * push, p.y + n.y * push, p.z + n.z * push];
+  };
+  const a0 = toCab(face.edge.from[0], face.edge.from[1], t0 - push);
+  const a1 = toCab(face.edge.to[0], face.edge.to[1], t0 - push);
+  const b1 = toCab(face.edge.to[0], face.edge.to[1], t1 + push);
+  const b0 = toCab(face.edge.from[0], face.edge.from[1], t1 + push);
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute([...a0, ...a1, ...b1, ...a0, ...b1, ...b0], 3));
+  geo.computeVertexNormals();
+  return geo;
+}
+
 export function boxMesh(x0, x1, y0, y1, z0, z1, mat) {
   const geo = new THREE.BoxGeometry(Math.max(x1 - x0, 0.1), Math.max(y1 - y0, 0.1), Math.max(z1 - z0, 0.1));
   const mesh = new THREE.Mesh(geo, mat);

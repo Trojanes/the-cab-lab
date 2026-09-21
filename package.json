@@ -8,7 +8,7 @@
   "scripts": {
     "start": "node ensure-electron.js && node build-generators.js && electron .",
     "build:generators": "node build-generators.js",
-    "test:generators": "node --experimental-strip-types generators/smallCabinet/generator.test.ts && node --experimental-strip-types generators/overheadCabinet/generator.test.ts",
+    "test:generators": "node --experimental-strip-types generators/smallCabinet/generator.test.ts && node --experimental-strip-types generators/overheadCabinet/generator.test.ts && node --experimental-strip-types generators/bedroom/generator.test.ts && node --experimental-strip-types generators/bedBox/generator.test.ts",
     "pins:check": "node --experimental-strip-types scripts/pin-presets.ts overheadCabinet",
     "bench": "node ensure-electron.js && node build-generators.js && node scripts/run-bench.js",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File create-desktop-shortcut.ps1"

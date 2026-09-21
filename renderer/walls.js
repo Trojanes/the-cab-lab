@@ -56,6 +56,8 @@ export const SLIDING_GAP = 20;
 /** The leaf's bottom edge above the floor. */
 export const SLIDING_FLOOR_GAP = 15;
 export const SLIDING_MIN_DOOR_HEIGHT = 50;
+/** How far the open leaf may stick out past the pelmet before the door is refused. */
+export const SLIDING_MAX_OVERHANG = 100;
 
 export function normalizeOpening(raw) {
   if (!raw) return null;
@@ -293,7 +295,8 @@ export function allWallParts(walls, resolved, stock) {
  * overlapping each other, or another wall meeting this one inside the hole.
  * `anchorBoxes` = the other partitions. `ctx.parts` (openingParts of this wall)
  * and `ctx.boxes` (every other solid) add the sliding-door checks: the leaf
- * must fit under the pelmet and have room to slide open; neither board may
+ * must fit under the pelmet and have room to slide open (the open leaf may
+ * stick out past the pelmet by SLIDING_MAX_OVERHANG); neither board may
  * hit a cabinet or another partition.
  */
 export function openingIssues(wall, solid, anchorBoxes = [], ctx = {}) {
@@ -332,8 +335,11 @@ export function openingIssues(wall, solid, anchorBoxes = [], ctx = {}) {
     const p1 = pelmet[along][1];
     if (l0 < p0 - EPS) issues.push(`${name}: door leaf runs past ${pelmet.stoppedBy.lo}`);
     if (l1 > p1 + EPS) issues.push(`${name}: door leaf runs past ${pelmet.stoppedBy.hi}`);
-    // Open = the leaf slid its hole width to one side; it has to stay under the pelmet.
-    if (!(p1 - l1 >= o.width - EPS || l0 - p0 >= o.width - EPS)) issues.push(`${name}: no room to slide open (needs ${Math.round(o.width)} beside the door leaf)`);
+    // Open = the leaf slid its hole width to one side. Workshop tracks often
+    // leave a bit of the leaf past the pelmet; refuse only when that overhang
+    // would exceed SLIDING_MAX_OVERHANG.
+    const need = Math.max(0, o.width - SLIDING_MAX_OVERHANG);
+    if (!(p1 - l1 >= need - EPS || l0 - p0 >= need - EPS)) issues.push(`${name}: no room to slide open (needs ${Math.round(need)} beside the door leaf)`);
     for (const part of [leaf, pelmet]) {
       for (const b of boxes) {
         if (b.id === wall.id || b.wallId === wall.id) continue;

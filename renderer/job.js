@@ -47,6 +47,9 @@ function migrate(obj) {
 
 let job = newJob();
 let selectedId = null;
+// Board / face under the selected cabinet (module → board → face). Display only: the
+// cabinet stays the selected object; this narrows the highlight and the panel's read-out.
+let subSel = null; // null | { boardId, faceId: null | "A" | "B" | "E<i>" }
 let dirty = false;
 let filePath = null;
 const undoStack = [];
@@ -77,6 +80,21 @@ export function getSpace() {
 }
 export function getSelectedId() { return selectedId; }
 export function getSelected() { return job.cabinets.find((c) => c.id === selectedId) || null; }
+/**
+ * The board / face selected inside the selected cabinet, validated against the current
+ * generator result (role ids are stable, so a re-sized cabinet keeps its selection; a board
+ * that no longer exists drops it). `{ cabId, boardId, faceId, board, face }` or null.
+ */
+export function getSubSelection() {
+  if (!subSel || !selectedId) return null;
+  const cab = getSelected();
+  if (!cab) return null;
+  const board = (resultFor(cab.id)?.boards || []).find((b) => b.id === subSel.boardId);
+  if (!board) return null;
+  const face = subSel.faceId ? (board.faces || []).find((f) => f.id === subSel.faceId) || null : null;
+  if (subSel.faceId && !face) return { cabId: cab.id, boardId: board.id, faceId: null, board, face: null };
+  return { cabId: cab.id, boardId: board.id, faceId: face ? face.id : null, board, face };
+}
 export function getFinish() { return job.finish; }
 export function getStock() { return job.stock; }
 export function getMaterials() { return { finish: job.finish, stock: job.stock }; }
@@ -135,7 +153,7 @@ export function undo() {
   redoStack.push(JSON.stringify(job));
   job = JSON.parse(undoStack.pop());
   invalidate();
-  if (!selectionExists()) selectedId = null;
+  if (!selectionExists()) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -153,7 +171,7 @@ export function redo() {
   undoStack.push(JSON.stringify(job));
   job = JSON.parse(redoStack.pop());
   invalidate();
-  if (!selectionExists()) selectedId = null;
+  if (!selectionExists()) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -251,6 +269,7 @@ export function addCabinet(moduleId, pose, size) {
   job.cabinets.push(cab);
   bindAttached();
   selectedId = cab.id;
+  subSel = null;
   log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params });
   dirty = true;
   emit("job");
@@ -273,6 +292,7 @@ export function addPlane({ axis, value, dir, offset, from }) {
   const plane = { id: makePlaneId(), axis, value, dir, offset, from: from || null };
   job.planes.push(plane);
   selectedId = plane.id;
+  subSel = null;
   log("plane.add", plane);
   dirty = true;
   emit("job");
@@ -285,7 +305,7 @@ export function removePlane(id) {
   pushHistory();
   log("plane.remove", { id });
   job.planes.splice(i, 1);
-  if (selectedId === id) selectedId = null;
+  if (selectedId === id) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -308,6 +328,7 @@ export function addWall(wall, meta = {}) {
   w.id = makeWallId();
   job.walls.push(w);
   selectedId = w.id;
+  subSel = null;
   log("wall.add", { ...w, ...meta });
   dirty = true;
   emit("job");
@@ -337,6 +358,7 @@ export function addOpening(wallId, opening, meta = {}) {
   if (!Array.isArray(wall.openings)) wall.openings = [];
   wall.openings.push(op);
   selectedId = wall.id;
+  subSel = null;
   log("opening.add", { wallId, ...op, ...meta });
   dirty = true;
   emit("job");
@@ -373,7 +395,7 @@ export function removeWall(id) {
   pushHistory();
   log("wall.remove", { id, wall: job.walls[i] });
   job.walls.splice(i, 1);
-  if (selectedId === id) selectedId = null;
+  if (selectedId === id) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -385,7 +407,7 @@ export function removeCabinet(id) {
   log("cabinet.remove", { id, moduleId: job.cabinets[i].moduleId });
   job.cabinets.splice(i, 1);
   invalidate(id);
-  if (selectedId === id) selectedId = null;
+  if (selectedId === id) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -419,11 +441,34 @@ export function setPose(id, pose, { history = true } = {}) {
   updateCabinet(id, (cab) => { cab.pose = { ...cab.pose, ...pose }; });
 }
 
-export function select(id) {
-  if (selectedId === id) return;
+/**
+ * Select a job object (cabinet / wall / plane id, or null) — optionally a board and a face
+ * inside a cabinet: `select("cab-1", { boardId: "BP", faceId: "A" })`. Selecting the cabinet
+ * alone clears any board / face selection.
+ */
+export function select(id, sub = null) {
+  // A region (`{ regionId }`) is the volume-only counterpart of a board: one of the bedroom
+  // body's layout regions, selected in the front view or by a second click in 3D.
+  const nextSub = id && sub && sub.boardId
+    ? { boardId: sub.boardId, faceId: sub.faceId || null }
+    : id && sub && sub.regionId ? { regionId: sub.regionId } : null;
+  const same = selectedId === id
+    && (subSel?.boardId ?? null) === (nextSub?.boardId ?? null)
+    && (subSel?.faceId ?? null) === (nextSub?.faceId ?? null)
+    && (subSel?.regionId ?? null) === (nextSub?.regionId ?? null);
+  if (same) return;
   selectedId = id;
-  log("select", { id });
+  subSel = nextSub;
+  log("select", { id, board: nextSub?.boardId ?? null, face: nextSub?.faceId ?? null, region: nextSub?.regionId ?? null });
   emit("selection");
+}
+
+/** The selected region id of the selected cabinet (bedroom body), or null. */
+export function getSelectedRegion() {
+  if (!subSel || !subSel.regionId || !selectedId) return null;
+  const cab = getSelected();
+  if (!cab) return null;
+  return (resultFor(cab.id)?.zones || []).some((z) => z.id === subSel.regionId) ? subSel.regionId : null;
 }
 
 // --- file -----------------------------------------------------------------
@@ -432,6 +477,7 @@ export function resetJob() {
   log("file.new", { hadCabinets: job.cabinets.length, dirty });
   job = newJob();
   selectedId = null;
+  subSel = null;
   undoStack.length = 0;
   redoStack.length = 0;
   invalidate();
@@ -447,6 +493,7 @@ export function loadJob(obj, path) {
   job = migrate(obj);
   log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space, finish: job.finish, stock: job.stock });
   selectedId = null;
+  subSel = null;
   undoStack.length = 0;
   redoStack.length = 0;
   invalidate();

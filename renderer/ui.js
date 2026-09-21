@@ -7,6 +7,8 @@ import { syncWalls } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
 import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove, startOrient, startPlane } from "./interact.js";
 import { renderPanel } from "./panel.js";
+import { render as renderTree } from "./tree.js";
+import { faceLabel } from "./boardModel.js";
 import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
@@ -173,7 +175,10 @@ canvas.addEventListener("pointerleave", () => { stCursor.textContent = "X — Y 
 
 function refreshStatus() {
   const sel = job.getSelected();
-  $("#stSelection").textContent = sel ? `Selection: ${sel.id} (${MODULES[sel.moduleId].label})` : "Selection: —";
+  const sub = job.getSubSelection();
+  // module → board → face, e.g. "cab-1 (Overhead) › BP › inside"
+  const subPath = sub ? ` › ${sub.boardId}${sub.face ? ` › ${faceLabel(sub.face)} (${sub.face.id})` : ""}` : "";
+  $("#stSelection").textContent = sel ? `Selection: ${sel.id} (${MODULES[sel.moduleId].label})${subPath}` : "Selection: —";
   const path = job.getFilePath();
   const name = path ? path.split(/[\\/]/).pop() : "Untitled";
   $("#stFile").textContent = job.isDirty() ? `${name} · unsaved` : name;
@@ -281,6 +286,7 @@ function refreshAll() {
   syncPlanes();
   syncWalls();
   maybeRenderPanel();
+  renderTree();
   refreshRail();
   refreshStatus();
 }

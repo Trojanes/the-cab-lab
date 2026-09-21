@@ -1,0 +1,24 @@
+{
+  "BOOT_HEIGHT_DEFAULT_MM": { "value": 398, "doc": "Tunnel boot height (top of the boot deck above the floor) when the params give none. Bedroom Style 3 measures 398; the east-west bedroom 418." },
+  "WARDROBE_WIDTH_DEFAULT_MM": { "value": 330, "doc": "Wardrobe width from the van's side wall to its inner face (the opening edge) when the params give none. Same on both sides: the north-south bedroom is symmetric by rule." },
+  "OHC_BOTTOM_DEFAULT_MM": { "value": 1418, "doc": "Underside of the overhead block above the floor when the params give none." },
+  "BOOT_DECK_THICKNESS_MM": { "value": 18, "doc": "Tunnel boot deck (the board the wardrobes and the mattress sit on): 18 mm structural stock, wall to wall and the full depth of the body. Style 3 measures 18." },
+  "BOOT_HEIGHT_MIN_MM": { "value": 200, "doc": "Lowest tunnel boot deck allowed." },
+  "WARDROBE_WIDTH_MIN_MM": { "value": 150, "doc": "Narrowest wardrobe allowed (from the side wall)." },
+  "OPENING_HEIGHT_MIN_MM": { "value": 500, "doc": "Least clear height between the boot deck and the overhead underside — room for the mattress and to sit up." },
+  "OHC_HEIGHT_MIN_MM": { "value": 150, "doc": "Least overhead block height under the lowest roof over the body." },
+  "BED_FRAME_QUEEN_WIDTH_MM": { "value": 1508, "doc": "Outer width of the queen bed frame / bed box. A product size, not a design number: the opening between the wardrobes must be at least this wide and the bed box is exactly this wide. Style 3 measures 1508 (side panel outer faces)." },
+
+  "DOOR_PANEL_THICKNESS_DEFAULT_MM": { "value": 16, "doc": "Wardrobe colour panel (door stock) thickness when the params give none." },
+  "WARDROBE_T2_BACK_MM": { "value": 66, "doc": "Y from the room face to the back of T2 — the one fixed distance of the wardrobe top. The colour panel runs full height (to the roof) from here toward the nose; in front of it the panel is cut down to the T3 seat. Style 3: 66." },
+  "WARDROBE_T2_THICKNESS_MM": { "value": 15, "doc": "T2 (rear top rail) thickness; it stands on T3 with its back at WARDROBE_T2_BACK." },
+  "WARDROBE_T2_HEIGHT_MM": { "value": 35, "doc": "T2 height at its back, measured to the roof there. Sets the T3 seat: T3 top = roof(T2 back) − this − T3 clearance. The roof slopes, so T2 is taller at its front (Style 3: 35 back, 38 front)." },
+  "WARDROBE_T1_THICKNESS_MM": { "value": 16, "doc": "T1 (front top rail) thickness; it stands on T3 directly in front of T2." },
+  "WARDROBE_T1_OVERSIZE_MM": { "value": 20, "doc": "T1 is cut this much taller than the roof at its back (a flat top: the three-axis router cannot cut the slope) — trimmed to the roof on site." },
+  "WARDROBE_T3_THICKNESS_MM": { "value": 15, "doc": "T3 (top panel over the wardrobe) thickness." },
+  "WARDROBE_T3_CLEARANCE_MM": { "value": 1, "doc": "Clearance between T3 top and the T1 / T2 undersides, and above T3 in the colour panel's pocket." },
+  "WARDROBE_T3_DEPTH_MM": { "value": 188, "doc": "T3 depth from the room face toward the nose." },
+  "WARDROBE_T3_LIP_DEPTH_MM": { "value": 16, "doc": "Pocket in the colour panel behind the T2 back (Y from WARDROBE_T2_BACK) that T3's tail slides into; its height is T3 + clearance." },
+  "WARDROBE_T3_TAIL_CLEARANCE_MM": { "value": 5, "doc": "T3's tail stops this short of the pocket end. Beyond the tail T3 is notched back to the colour panel's wall-side face." },
+  "WARDROBE_PANEL_MIN_HEIGHT_MM": { "value": 300, "doc": "Least colour-panel height between the boot deck and the T3 seat." }
+}

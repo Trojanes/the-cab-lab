@@ -1,0 +1,11 @@
+{
+  "BOARD_THICKNESS_MM": { "value": 18, "doc": "Every bed box board — side panels, end panel, centre divider, rails — is 18 mm structural stock. Style 3 measures 18 throughout." },
+  "LENGTH_DEFAULT_MM": { "value": 979, "doc": "Outer length of the bed box from the body's room face to the end panel's outer face when the params give none. Style 3: side panels 961 + end panel 18. Set by hand until mattress presets exist." },
+  "RAIL_HEIGHT_MM": { "value": 100, "doc": "Height of every rail (long and short). One rail sits on the floor, one is flush with the top of the box." },
+  "RAIL_NOTCH_DEPTH_MM": { "value": 20, "doc": "Depth of the notch in each short rail where the centre divider passes: cut from the top edge of the low rail, from the bottom edge of the high rail." },
+  "RAIL_NOTCH_CLEARANCE_MM": { "value": 2, "doc": "The short-rail notch is the divider thickness plus this (18 + 2 = 20 wide)." },
+  "DIVIDER_NOTCH_DEPTH_MM": { "value": 19, "doc": "How far the centre divider's end notches run in from each end: the short rail's 18 plus 1 mm of room." },
+  "DIVIDER_NOTCH_UNDERCUT_MM": { "value": 15, "doc": "The divider's end notch is the rail height minus this (100 − 15 = 85 high), so the half-lap with the 20 mm rail notch leaves 5 mm vertical clearance." },
+  "REAR_RAIL_GAP_MM": { "value": 1, "doc": "The short rails at the body end stand this far clear of the body's room face (the boot's room-face upright)." },
+  "END_PANEL_OVERSIZE_MM": { "value": 1, "doc": "The end panel is cut this much wider than the box on each side — edge-banding / trimming allowance." }
+}

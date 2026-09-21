@@ -3,10 +3,11 @@
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
 import { scene, camera } from "./space.js";
-import { getJob, getSelectedId, getSpace, getPlanes, resultFor } from "./job.js";
+import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
-import { prismYZ, boardGeometry, boxMesh, boxEdges } from "./boardGeom.js";
+import { prismYZ, boardGeometry, boxMesh, boxEdges, faceSheetGeometry } from "./boardGeom.js";
+import { faceAtHit } from "./boardModel.js";
 
 export const HANDLE_SIZE = 44;
 
@@ -15,12 +16,24 @@ const carcassMat = new THREE.MeshStandardMaterial({ color: 0xc9b799, roughness: 
 const frontMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6 });
 const errorMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.8, transparent: true, opacity: 0.35 });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a4034 });
+// A board is selected in the tree / by a second click: it lights up, the rest of its cabinet fades.
+const boardSelMat = new THREE.MeshStandardMaterial({ color: 0x6fa0f0, emissive: 0x1e3a6e, roughness: 0.5 });
+const carcassDimMat = new THREE.MeshStandardMaterial({ color: 0xc9b799, roughness: 0.8, transparent: true, opacity: 0.22, depthWrite: false });
+const frontDimMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6, transparent: true, opacity: 0.22, depthWrite: false });
+const edgeDimMat = new THREE.LineBasicMaterial({ color: 0x4a4034, transparent: true, opacity: 0.3 });
+// A face is selected: a translucent sheet just proud of that face (faceSheetGeometry offsets it;
+// no polygonOffset — with the scene's depth range that pulled the sheet through the board).
+const faceSelMat = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
 const envMat = new THREE.LineBasicMaterial({ color: 0x4f86e0 });
 const envMatIdle = new THREE.LineBasicMaterial({ color: 0x6b7784, transparent: true, opacity: 0.35 });
 const envMatBad = new THREE.LineBasicMaterial({ color: 0xd94b4b });
 const handleMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0 });
 const handleHoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
 const dividerMat = new THREE.MeshBasicMaterial({ color: 0xe0a34f });
+// A void region (the bedroom's mattress opening): dashed-looking thin outline, no fill; the pick mesh is invisible.
+const voidEdgeMat = new THREE.LineBasicMaterial({ color: 0x8a8378, transparent: true, opacity: 0.7 });
+const voidEdgeSelMat = new THREE.LineBasicMaterial({ color: 0x6fa0f0 });
+const voidPickMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 
 const root = new THREE.Group();
 root.name = "cabinets";
@@ -95,8 +108,36 @@ function buildGroup(cab) {
   const modOf = getModule(cab.moduleId);
   const valid = result && result.validation && result.validation.errors.length === 0;
 
-  if (!hasBoards && valid && modOf.volumeOnly) {
-    // Volume-only module (Bedroom body, Bed Box v0): the envelope itself is the solid — cut to the roof when it has a profile.
+  // A module laid out in regions (Bedroom body): every region that is not yet made of boards is
+  // drawn from its own YZ section (roof already applied by the generator) extruded across its X
+  // span — solid regions as blocks, a void (the mattress opening) as an outline only. Regions that
+  // list `boards` are drawn as those boards below, like any other cabinet.
+  const allRegions = valid && modOf.volumeOnly ? (result.zones || []).filter((z) => Array.isArray(z.outlineYZ) && z.outlineYZ.length > 2) : [];
+  const regions = allRegions.filter((z) => !(z.boards && z.boards.length));
+  if (regions.length) {
+    const selRegion = selected ? getSelectedRegion() : null;
+    const sub = selected ? getSubSelection() : null;
+    for (const z of regions) {
+      const geo = prismYZ(z.outlineYZ, z.x0, z.x1);
+      if (z.kind === "void") {
+        const lines = new THREE.LineSegments(new THREE.EdgesGeometry(geo), selRegion === z.id ? voidEdgeSelMat : voidEdgeMat);
+        lines.renderOrder = 4;
+        group.add(lines);
+        // An invisible pick target so the opening can still be clicked (second click selects the region).
+        const pick = new THREE.Mesh(geo, voidPickMat);
+        pick.userData = { kind: "board", cabId: cab.id, boardId: null, regionId: z.id };
+        group.add(pick);
+        continue;
+      }
+      const isSel = selRegion === z.id;
+      const mesh = new THREE.Mesh(geo, isSel ? boardSelMat : selRegion || sub ? carcassDimMat : carcassMat);
+      mesh.userData = { kind: "board", cabId: cab.id, boardId: null, regionId: z.id };
+      group.add(mesh);
+      group.add(new THREE.LineSegments(new THREE.EdgesGeometry(geo), selRegion || sub ? edgeDimMat : edgeMat));
+    }
+  }
+  if (!allRegions.length && !hasBoards && valid && modOf.volumeOnly) {
+    // Volume-only module (Bed Box v0): the envelope itself is the solid — cut to the roof when it has a profile.
     const solid = modOf.envelopeProfile
       ? new THREE.Mesh(prismYZ(slabOutline(modOf.envelopeProfile(cab.params), env.D), env.x0, env.x1), carcassMat)
       : boxMesh(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, carcassMat);
@@ -107,17 +148,34 @@ function buildGroup(cab) {
       ? new THREE.LineSegments(new THREE.EdgesGeometry(solid.geometry), edgeMat)
       : boxEdges(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, edgeMat));
   } else if (hasBoards) {
+    // Board / face selected inside this cabinet (module → board → face): the board lights up,
+    // its neighbours fade, and the face gets a sheet. The geometry itself is untouched.
+    const sub = selected ? getSubSelection() : null;
+    // A region selected in a mixed module (bedroom body): its boards light up, the rest fades.
+    const selRegion = selected && allRegions.length ? getSelectedRegion() : null;
     for (const b of result.boards) {
-      const mat = b.category === "front_panel" ? frontMat : carcassMat;
+      const front = b.category === "front_panel";
+      const isSel = (sub && sub.boardId === b.id) || (!sub && selRegion && b.zoneId === selRegion);
+      const dim = (sub && !isSel) || (selRegion && !isSel);
+      const mat = isSel && !sub && selRegion ? carcassMat : isSel ? boardSelMat : dim ? (front ? frontDimMat : carcassDimMat) : front ? frontMat : carcassMat;
       // A board with an outline (robe side cut to the roof, an OHC divider / T3 / T4 with its notches) is drawn
       // from that outline, not its bounding box.
       const { geo, cut } = boardGeometry(b);
       const mesh = cut ? new THREE.Mesh(geo, mat) : boxMesh(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
       mesh.userData = { kind: "board", cabId: cab.id, boardId: b.id };
       group.add(mesh);
-      group.add(cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, edgeMat));
+      const lineMat = dim ? edgeDimMat : edgeMat;
+      group.add(cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), lineMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, lineMat));
+      if (isSel && sub && sub.face) {
+        const sheetGeo = faceSheetGeometry(b, sub.face);
+        if (sheetGeo) {
+          const sheet = new THREE.Mesh(sheetGeo, faceSelMat);
+          sheet.renderOrder = 8;
+          group.add(sheet);
+        }
+      }
     }
-  } else {
+  } else if (!allRegions.length) {
     // Invalid params: show the envelope as a red ghost so it can still be fixed.
     const ghost = boxMesh(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, errorMat);
     ghost.userData = { kind: "board", cabId: cab.id, boardId: null };
@@ -134,7 +192,8 @@ function buildGroup(cab) {
   envLines.renderOrder = 5;
   group.add(envLines);
 
-  if (selected) {
+  // Handles only while the cabinet itself is selected: reading a board / face hides them.
+  if (selected && !getSubSelection()) {
     const handles = new THREE.Group();
     handles.name = "handles";
     const s = HANDLE_SIZE;
@@ -145,19 +204,30 @@ function buildGroup(cab) {
       m.renderOrder = 20;
       handles.add(m);
     };
+    const at = { W: [env.x1, env.y1 / 2, env.z1 / 2], D: [env.x1 / 2, env.y0, env.z1 / 2], H: [env.x1 / 2, env.y1 / 2, mod.growsDown ? env.z0 : env.z1] };
     const wanted = new Set(mod.handles || ["W", "D", "H"]);
-    if (wanted.has("W")) mk(env.x1, env.y1 / 2, env.z1 / 2, { type: "W" });
-    if (wanted.has("D")) mk(env.x1 / 2, env.y0, env.z1 / 2, { type: "D" });
+    if (wanted.has("W")) mk(...at.W, { type: "W" });
+    if (wanted.has("D")) mk(...at.D, { type: "D" });
     // A ceiling-hung module keeps its top: the H handle sits on the bottom and pulls it down.
-    if (wanted.has("H")) mk(env.x1 / 2, env.y1 / 2, mod.growsDown ? env.z0 : env.z1, { type: "H" });
+    if (wanted.has("H")) mk(...at.H, { type: "H" });
+    // On-demand handle (Bed Box length): a double arrow along the axis, shown only after the panel armed it.
+    if (armedHandle && armedHandle.cabId === cab.id && (mod.handlesOnDemand || []).includes(armedHandle.type)) {
+      // The arrow stands clear of the face it pulls, on the outside (D: the front; W: the right; H: the top, or the bottom of a ceiling-hung box).
+      const outward = armedHandle.type === "D" ? -1 : armedHandle.type === "H" && mod.growsDown ? -1 : 1;
+      handles.add(arrowHandle(at[armedHandle.type], armedHandle.type, outward, { kind: "handle", cabId: cab.id, handle: { type: armedHandle.type } }));
+    }
 
-    if (hasBoards) {
+    if (hasBoards || regions.length) {
       for (const d of mod.dividers(cab.params, result)) {
         // Zone boundaries: horizontal bars at local z (stacked zones) or vertical bars at local x (zones along W).
+        // `span` limits a bar to part of the face (a wardrobe inner face runs from the boot deck to the roof).
         const vertical = d.axis === "x";
-        const bar = new THREE.Mesh(vertical ? new THREE.BoxGeometry(6, 8, env.H + 8) : new THREE.BoxGeometry(env.W + 8, 6, 8), dividerMat);
-        if (vertical) bar.position.set(d.pos, env.y0 - 4, env.H / 2);
-        else bar.position.set(env.W / 2, env.y0 - 4, d.pos);
+        const span = d.span || (vertical ? [0, env.H] : [0, env.W]);
+        const len = span[1] - span[0] + 8;
+        const mid = (span[0] + span[1]) / 2;
+        const bar = new THREE.Mesh(vertical ? new THREE.BoxGeometry(6, 8, len) : new THREE.BoxGeometry(len, 6, 8), dividerMat);
+        if (vertical) bar.position.set(d.pos, env.y0 - 4, mid);
+        else bar.position.set(mid, env.y0 - 4, d.pos);
         bar.userData = { kind: "handle", cabId: cab.id, handle: { type: "divider", ...d } };
         bar.renderOrder = 20;
         handles.add(bar);
@@ -170,9 +240,59 @@ function buildGroup(cab) {
   return group;
 }
 
+/**
+ * On-demand handle (`mod.handlesOnDemand`): the panel arms one dimension of the
+ * selected cabinet and a double arrow appears in 3D along that axis; dragging
+ * it works exactly like the cube handles. It disappears on Esc, when the
+ * selection changes, or when armed again (toggle). `{ cabId, type }` or null.
+ */
+let armedHandle = null;
+export function armHandle(cabId, type) {
+  armedHandle = armedHandle && armedHandle.cabId === cabId && armedHandle.type === type ? null : { cabId, type };
+  syncCabinets();
+  return armedHandle;
+}
+export function disarmHandle() {
+  if (!armedHandle) return false;
+  armedHandle = null;
+  syncCabinets();
+  return true;
+}
+export function armedHandleFor(cabId) {
+  return armedHandle && armedHandle.cabId === cabId ? armedHandle.type : null;
+}
+
+/**
+ * Double-headed arrow along local `axisType` (W → X, D → Y, H → Z), standing just
+ * outside the face at `pos` on its `outward` side (±1); every part carries `userData`.
+ */
+function arrowHandle(pos, axisType, outward, userData) {
+  const L = 280; // overall length, mm
+  const head = 70;
+  const gap = 30; // clear of the face
+  const g = new THREE.Group();
+  g.userData = { arrow: true };
+  const parts = [
+    new THREE.Mesh(new THREE.CylinderGeometry(9, 9, L - 2 * head, 12), handleMat),
+    new THREE.Mesh(new THREE.ConeGeometry(26, head, 16), handleMat),
+    new THREE.Mesh(new THREE.ConeGeometry(26, head, 16), handleMat),
+  ];
+  parts[1].position.y = (L - head) / 2;
+  parts[2].position.y = -(L - head) / 2;
+  parts[2].rotation.z = Math.PI;
+  for (const m of parts) { m.userData = userData; m.renderOrder = 20; g.add(m); }
+  // Cylinders / cones point along +Y; turn the arrow onto the handle's axis.
+  const dir = axisType === "W" ? new THREE.Vector3(1, 0, 0) : axisType === "H" ? new THREE.Vector3(0, 0, 1) : new THREE.Vector3(0, 1, 0);
+  g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+  g.position.set(pos[0], pos[1], pos[2]).addScaledVector(dir, outward * (gap + L / 2));
+  return g;
+}
+
 export function syncCabinets() {
   const job = getJob();
   const seen = new Set();
+  // An armed handle belongs to the selected cabinet only; a change of selection (or a board pick) drops it.
+  if (armedHandle && (armedHandle.cabId !== getSelectedId() || getSubSelection())) armedHandle = null;
   for (const cab of job.cabinets) {
     seen.add(cab.id);
     const old = groups.get(cab.id);
@@ -191,11 +311,28 @@ export function syncCabinets() {
 
 export function setHandleHover(mesh, hovered) {
   if (!mesh || mesh.userData.kind !== "handle") return;
-  if (mesh.userData.handle.type === "divider") {
-    mesh.material = hovered ? handleHoverMat : dividerMat;
-  } else {
-    mesh.material = hovered ? handleHoverMat : handleMat;
+  // An arrow handle is several meshes in one group: light them all.
+  const targets = mesh.parent && mesh.parent.userData && mesh.parent.userData.arrow ? mesh.parent.children : [mesh];
+  for (const m of targets) {
+    if (m.userData.handle.type === "divider") m.material = hovered ? handleHoverMat : dividerMat;
+    else m.material = hovered ? handleHoverMat : handleMat;
   }
+}
+
+/**
+ * The face of a board a raycast hit landed on: `{ cabId, boardId, faceId }` (faceId null when
+ * the board has no faces or the hit is not a board). Normal and point are taken into the
+ * cabinet frame; the board meshes carry no rotation of their own.
+ */
+export function faceUnderHit(hit) {
+  const ud = hit?.object?.userData;
+  if (!ud || ud.kind !== "board" || !ud.boardId) return null;
+  const group = groups.get(ud.cabId);
+  const board = (resultFor(ud.cabId)?.boards || []).find((b) => b.id === ud.boardId);
+  if (!group || !board) return { cabId: ud.cabId, boardId: ud.boardId, faceId: null };
+  const n = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 0, 1);
+  const p = group.worldToLocal(hit.point.clone());
+  return { cabId: ud.cabId, boardId: ud.boardId, faceId: faceAtHit(board, { x: n.x, y: n.y, z: n.z }, { x: p.x, y: p.y, z: p.z }) };
 }
 
 /** All meshes that can be picked with the left button. */

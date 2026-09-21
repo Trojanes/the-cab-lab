@@ -1,16 +1,17 @@
 // Right panel: shows the space when nothing is selected, otherwise the
 // selected cabinet's params. Every edit writes into job.js and regenerates.
 import * as job from "./job.js";
-import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths } from "./modules.js";
+import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, BEDROOM_LAYOUT_LABEL } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
 import { openSpaceDialog } from "./spaceDialog.js";
-import { poseFits } from "./cabinets3d.js";
+import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
 import { describeMaterials, thickness, partitionClearance } from "./materials.js";
 import { sideOfRotZ, sideLabel, overlaps } from "./interact.js";
 import { wallLength, wallOrientation, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP } from "./walls.js";
 import { envelopeFootprint } from "./cabinets3d.js";
 import { statusOf } from "./walls3d.js";
 import { openFloorPlan } from "./floorplan.js";
+import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "./boardModel.js";
 import { log } from "./log.js";
 
 const panel = document.getElementById("rightpanel");
@@ -50,8 +51,81 @@ function numField(label, value, onCommit, opts = {}) {
   return el("label", { class: "field" }, [el("span", { text: label }), input]);
 }
 
+/**
+ * A number field with a "drag in 3D" toggle: pressing it arms an on-demand arrow
+ * handle on the cabinet (cabinets3d.armHandle) for that dimension; pressing again,
+ * Esc or a selection change removes it. Typing still works as usual.
+ */
+function dragField(label, value, onCommit, cabId, type, title) {
+  const field = numField(label, value, onCommit);
+  const armed = armedHandleFor(cabId) === type;
+  const btn = el("button", { class: `icon drag${armed ? " active" : ""}`, title, text: "⇕", onclick: (e) => {
+    e.preventDefault();
+    const now = armHandle(cabId, type);
+    log("handle.arm", { id: cabId, handle: type, on: !!now });
+    renderPanel();
+  } });
+  field.classList.add("with-drag");
+  field.append(btn);
+  return field;
+}
+
 function section(title, children) {
   return el("div", { class: "panel-section" }, [el("div", { class: "sec-title", text: title }), ...children]);
+}
+const kv = (label, value) => el("div", { class: "kv" }, [el("span", { text: label }), el("b", { text: value })]);
+
+/**
+ * Read-out for the board / face selected inside the cabinet (tree or a second click in 3D).
+ * Read only: boards and faces are regenerated from the cabinet's params; nothing here edits them.
+ */
+function boardSection() {
+  const sub = job.getSubSelection();
+  if (!sub) return null;
+  const b = sub.board;
+  const d = boardDims(b);
+  const f = sub.face;
+  const back = el("button", { class: "tb", text: f ? `‹ Board ${b.id}` : "‹ Cabinet", title: "Back up one level (Esc)", onclick: () => job.select(sub.cabId, f ? { boardId: b.id } : null) });
+  const rows = [
+    el("div", { class: "kv" }, [el("span", { text: "Path" }), el("b", { text: `${sub.cabId} › ${b.id}${f ? ` › ${f.id}` : ""}` })]),
+    kv("Board", `${b.name} · ${b.id}`),
+    kv("Size (L × W × T)", `${Math.round(d.L)} × ${Math.round(d.W)} × ${d.T} mm`),
+    kv("Stock", `${b.stock?.kind || b.category}${b.stock?.colour ? ` · ${b.stock.colour}` : ""} · ${b.materialThickness} mm`),
+    kv("Lies in", `${b.profilePlane} · thickness along ${b.thicknessAxis}`),
+  ];
+  if (f) {
+    rows.push(
+      kv("Face", `${faceLabel(f)} · ${f.id}`),
+      kv("Looks", typeof f.normal === "string" ? `${f.normal} (${dirName(f.normal)})` : "slanted"),
+      f.visible != null ? kv("After assembly", f.visible ? "visible" : "hidden") : null,
+      f.finish?.colour ? kv("Colour", f.finish.colour) : null,
+      f.finish?.edgeBand ? kv("Edge band", `${f.finish.edgeBand.thickness} mm${f.finish.edgeBand.colour ? ` · ${f.finish.edgeBand.colour}` : ""}`) : null,
+    );
+    if (f.features.length) {
+      rows.push(el("div", { class: "sec-title", style: "margin-top:8px", text: `Machined into it (${f.features.length})` }));
+      for (const ft of f.features) rows.push(el("div", { class: "empty small mono", text: featureLine(ft) }));
+    } else {
+      rows.push(el("div", { class: "empty small", text: f.id.startsWith("E") ? "Plain edge." : "Nothing machined into this face." }));
+    }
+  } else {
+    const faces = b.faces || [];
+    if (faces.length) {
+      for (const bf of bigFaces(b)) {
+        const bits = [bf.id, featureSummary(bf), bf.finish?.colour].filter(Boolean).join(" · ");
+        rows.push(el("div", { class: "kv link", onclick: () => job.select(sub.cabId, { boardId: b.id, faceId: bf.id }) }, [el("span", { text: faceLabel(bf) }), el("b", { text: bits })]));
+      }
+      const edges = edgeFaces(b);
+      const tagged = edges.filter((e) => e.features.length);
+      rows.push(kv(`${edges.length} edges`, tagged.length ? tagged.map((e) => `${e.id} ${e.features.map((t) => t.kind).join("/")}`).join(", ") : "plain"));
+    } else {
+      rows.push(el("div", { class: "empty small", text: "This generator does not describe faces yet." }));
+    }
+  }
+  rows.push(el("div", { class: "empty small", text: "Generated from the cabinet's parameters — change a size or a zone and the board follows. Esc climbs back up." }));
+  return el("div", { class: "panel-section sub-sel" }, [
+    el("div", { class: "sec-head" }, [el("div", { class: "sec-title", text: f ? "Face" : "Board" }), back]),
+    ...rows.filter(Boolean),
+  ]);
 }
 
 // --- space ---------------------------------------------------------------------
@@ -355,6 +429,7 @@ function renderOverhead(cab, mod, result, shared) {
       el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
       el("div", { class: "panel-sub", text: `${cab.id} · doors ${sideLabel(sideOfRotZ(cab.pose.rotZ))} · ${Math.round(env.W)} × ${Math.round(env.D + fpt)} × ${Math.round(env.H)} mm · top on the ceiling` }),
     ]),
+    shared.board,
     section(`Zones · left → right · ${zones.length} · ${Math.round(total)} mm`, [
       el("div", { class: "zs-tools" }, [addZone, delZone, avgZone, el("span", { class: "zs-hint", text: "Drag a boundary · click a zone · Ctrl+click adds to the selection" })]),
       strip,
@@ -363,6 +438,191 @@ function renderOverhead(cab, mod, result, shared) {
     ]),
     zoneCard,
     section("Front view", [front]),
+    fold,
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
+// --- bedroom body editor ------------------------------------------------------------
+//
+// Wide page while the Bedroom body is selected: the generator's 2D front
+// elevation (click a region to select it, drag a boundary to move it — boot
+// deck, wardrobe inner faces, overhead underside; 10 mm
+// steps, Shift = 1 mm), the four layout numbers as fields, a card for the
+// selected region, and the body-level fields folded below. Width, depth and
+// roof are not edited here: they come from the vehicle and the placement.
+// Every edit is one undo step; a boundary drag commits once on release.
+
+let bedroomDrag = null; // { cabId, refresh } while a front-view boundary is dragged
+
+function renderBedroom(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const valid = !!result && !result.validation.errors.length;
+  const rp = valid ? result.params : p;
+  const info = valid ? result.layout : null;
+  const selectedRegion = job.getSelectedRegion();
+  const labelOf = (key) => BEDROOM_LAYOUT_LABEL[key] || key;
+
+  const setLayout = (key, value, how, extra = {}) => {
+    const next = mod.setLayout(p, key, value);
+    const to = next[key];
+    const clamped = Math.round(value) !== Math.round(to) ? mod.layoutLimits(p, key) : null;
+    if (next === p) { log("bedroom.layout.set", { id: cab.id, key, from: p[key], to, how, clamped, changed: false, ...extra }); return; }
+    job.setParams(cab.id, next);
+    log("bedroom.layout.set", { id: cab.id, key, from: p[key], to, how, clamped, changed: true, ...extra });
+  };
+
+  // A drag in progress: redraw the SVG in place and keep the container (and its pointer capture) alive.
+  if (bedroomDrag && bedroomDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    bedroomDrag.refresh();
+    return;
+  }
+
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => {
+    const res = job.resultFor(cab.id);
+    front.innerHTML = mod.frontView(res, { selectedRegion: job.getSelectedRegion() }) || "";
+    if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+  };
+  drawFront();
+
+  // Region selection: one click on a region. Boundary drag: pointer down on a boundary group.
+  front.addEventListener("click", (e) => {
+    if (bedroomDrag) return;
+    const region = e.target.closest?.("[data-region]");
+    if (!region) return;
+    const id = region.getAttribute("data-region");
+    job.select(cab.id, job.getSelectedRegion() === id ? null : { regionId: id });
+  });
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    const svg = front.querySelector("svg");
+    if (!g || !svg || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const key = g.getAttribute("data-boundary");
+    const axis = g.getAttribute("data-axis");
+    const side = Number(g.getAttribute("data-side") || 0);
+    const params0 = cab.params;
+    const from = params0[key];
+    const before = job.snapshot();
+    // mm ↔ px: the SVG carries its own mapping; the container may be scaled to the panel width.
+    const toMm = (clientX, clientY) => {
+      const s = front.querySelector("svg");
+      const rect = s.getBoundingClientRect();
+      const k = Number(s.getAttribute("width")) / rect.width;
+      const scale = Number(s.dataset.scale);
+      const ox = Number(s.dataset.ox);
+      const oy = Number(s.dataset.oy);
+      const H = Number(s.dataset.h);
+      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : H - ((clientY - rect.top) * k - oy) / scale;
+    };
+    const W = params0.width;
+    const valueAt = (mm) => (key === "wardrobeWidth" ? (side > 0 ? W - mm : mm) : mm);
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    front.classList.add("dragging");
+    g.classList.add("active");
+    bedroomDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const step = ev.shiftKey ? 1 : 10;
+      const v = Math.round(valueAt(toMm(ev.clientX, ev.clientY)) / step) * step;
+      job.setParams(cab.id, mod.setLayout(params0, key, v), { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      front.classList.remove("dragging");
+      bedroomDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("bedroom.layout.drag", { id: cab.id, key, side: side || undefined, from, to: now ? now.params[key] : null, changed, where: "front view" });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+
+  // Layout fields: the four numbers, each with the range the other three leave it.
+  const layoutField = (key, label, hint) => {
+    const lim = mod.layoutLimits(p, key);
+    const field = numField(`${label} (mm)`, p[key], (v) => setLayout(key, v, "type"), { step: 10, min: 0 });
+    field.title = `${lim.min} … ${lim.max} mm${hint ? ` · ${hint}` : ""}`;
+    return field;
+  };
+  const layoutSection = section("Layout · symmetric left / right", [
+    layoutField("bootHeight", "Tunnel boot height", "top of the boot deck"),
+    layoutField("wardrobeWidth", "Wardrobe width, each side", "side wall → inner face"),
+    layoutField("ohcBottom", "Overhead bottom", "underside of the overhead block"),
+    el("label", { class: "field" }, [
+      el("span", { text: "Bed frame" }),
+      el("select", { title: "A product size: the opening must take it and the bed box is exactly this wide", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, bedFrame: v }); log("bedroom.layout.set", { id: cab.id, key: "bedFrame", from: p.bedFrame, to: v, how: "select", changed: v !== p.bedFrame }); } },
+        [el("option", { value: "queen", text: `Queen · ${info ? Math.round(info.bedFrameWidth) : 1508} wide`, selected: true })]),
+    ]),
+    info ? kv("Mattress opening", `${Math.round(info.openingWidth)} wide × ${Math.round(info.openingHeight)} high · ${Math.round(info.bedMargin)} beside the bed each side`) : null,
+    info ? kv("Overhead at the room face", `${Math.round(info.ohcHeight)} high`) : null,
+    info ? kv("Bed box", `${Math.round(mod.bedBoxSize(rp).W)} wide × ${Math.round(mod.bedBoxSize(rp).H)} high · from the bed frame and the boot`) : null,
+    info && info.top ? kv("Wardrobe top", `T3 seat ${Math.round(info.top.seat)} · roof ${Math.round(info.top.roofAtT2)} at the T2 back · T2 ${Math.round(info.top.t2Height)} high`) : null,
+    el("div", { class: "empty small", text: "Drag a boundary in the front view (10 mm, Shift = 1 mm) or type here. The wardrobes stop where the opening equals the bed frame. Width, depth and roof come from the vehicle." }),
+  ].filter(Boolean));
+
+  // Selected region card.
+  let regionCard = null;
+  const zone = valid ? result.zones.find((z) => z.id === selectedRegion) : null;
+  if (zone) {
+    const drives = zone.id === "boot" ? ["bootHeight"] : zone.id === "ohc" ? ["ohcBottom"] : zone.id === "opening" ? ["bootHeight", "ohcBottom", "wardrobeWidth"] : ["wardrobeWidth"];
+    regionCard = section(`${zone.label} · ${zone.kind === "void" ? "opening" : "block"}`, [
+      kv("Across (X)", `${Math.round(zone.x0)} – ${Math.round(zone.x1)} · ${Math.round(zone.x1 - zone.x0)} wide`),
+      kv("Height (Z)", `${Math.round(zone.z0)} – ${Math.round(zone.z1)}${zone.roofTop ? " at the room face, cut to the roof" : ""}`),
+      kv("Depth (Y)", `${Math.round(zone.y1)}${zone.y1 < rp.depth - 0.5 ? ` of ${Math.round(rp.depth)} — the roof cuts it off` : ""}`),
+      kv("Set by", drives.map(labelOf).join(", ")),
+      zone.boards && zone.boards.length
+        ? el("div", { class: "kv" }, [el("span", { text: `Boards (${zone.boards.length})` }), el("b", {}, zone.boards.map((id) =>
+            el("a", { class: "link", text: `${id} `, title: "Select this board", onclick: () => job.select(cab.id, { boardId: id }) })))])
+        : null,
+      el("div", { class: "empty small", text: zone.kind === "void"
+        ? "Not a part: what the boot deck, the wardrobe inner faces and the overhead underside leave free. The bed frame stands here and the bed box continues it into the room."
+        : zone.id === "boot"
+          ? "Made of boards: the deck on top, an upright on the room face and one at the nose, all wall to wall. Click a board id or a board in 3D to read it."
+          : zone.boards && zone.boards.length
+            ? "So far: the colour panel (door stock, colour into the opening; cut down to the T3 seat in front of the T2 back, pocket for T3's tail) and T3. T1 / T2 run wall to wall on the T3s. Wall side, base, shelf and door come next."
+            : "One block for now — its boards come in a later version, each bounded by this region's faces." }),
+    ].filter(Boolean));
+  }
+
+  // Body-level fields, folded: depth from the placement, width / roof from the vehicle.
+  const fromSpace = "Set by the vehicle: redefine the space to change it";
+  const nBoards = result?.boards?.length || 0;
+  const fold = el("details", { class: "panel-fold" }, [
+    el("summary", { text: `Body · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${valid ? result.zones.length : 0} regions · ${nBoards} boards` }),
+    section("Envelope (= nose body)", [
+      numField("Width (mm)", env.W, () => {}, { readOnly: fromSpace }),
+      numField("From front (mm)", env.D, shared.setNoseDepth),
+      numField("Height at room face (mm)", env.H, () => {}, { readOnly: fromSpace }),
+      info ? kv("Roof at the nose", `${Math.round(info.roofMin)} mm`) : null,
+    ].filter(Boolean)),
+    section("Material (job stock)", [
+      kv("Carcass", `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${p.panelThickness ?? thickness(job.getStock(), "carcass")} mm`),
+      el("div", { class: "empty small", text: "The boot uprights are carcass stock; the boot deck thickness is a bedroom rule (rules.json). Wardrobes and overhead are still drawn as solids." }),
+    ]),
+  ]);
+
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: `${mod.label} body` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · boot ${Math.round(p.bootHeight)} · wardrobes ${Math.round(p.wardrobeWidth)} · overhead from ${Math.round(p.ohcBottom)} · ${nBoards} boards` }),
+    ]),
+    shared.board,
+    section("Front view · from the room", [
+      front,
+      el("div", { class: "zs-hint", text: "Click a region to select it · drag an orange boundary · Shift = 1 mm" }),
+    ]),
+    layoutSection,
+    regionCard,
     fold,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),
@@ -458,44 +718,38 @@ function renderCabinet(cab) {
     });
     job.commitSnapshot(before);
   };
-  const fromSpace = "Set by the vehicle: redefine the space to change it";
-  const noseChildren = [
-    el("div", { class: "panel-head" }, [
-      el("div", { class: "panel-title", text: mod.label }),
-      el("div", { class: "panel-sub", text: `${cab.id} · nose slab · solid volume` }),
-    ]),
-    section("Outer size (= nose slab)", [
-      numField("Width (mm)", env.W, () => {}, { readOnly: fromSpace }),
-      numField("From front (mm)", env.D, setNoseDepth),
-      numField("Height at room face (mm)", env.H, () => {}, { readOnly: fromSpace }),
-    ]),
-    el("div", { class: "panel-section" }, [
-      el("div", { class: "empty small", text: "One solid volume for now — tunnel boot, robes and overhead are partitioned inside it in a later version." }),
-    ]),
-    checks,
-    el("div", { class: "panel-foot" }, [remove]),
-  ];
+  if (mod.panel === "bedroom") {
+    renderBedroom(cab, mod, result, { checks, remove, setNoseDepth, board: boardSection() });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
 
-  // Bed box: glued to the body (centre line, body face); W / D free, height = tunnel boot.
+  const board = boardSection();
+
+  // Bed box: stands in the body's mattress opening — W (bed frame) and H (boot) from the body, only the length is free.
   const bedChildren = [
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: mod.label }),
-      el("div", { class: "panel-sub", text: `${cab.id} · on the body's room face · centred · solid volume` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · on the body's room face · centred · ${result?.boards?.length || 0} boards` }),
     ]),
+    board,
     section("Size", [
-      numField("Width (mm)", env.W, setEnv("W")),
-      numField("Length from body (mm)", env.D, setEnv("D")),
-      numField("Height (mm)", env.H, () => {}, { readOnly: "Tunnel boot height — set together with the body's boot later" }),
+      numField("Width (mm)", env.W, () => {}, { readOnly: "From the Bedroom body: the bed frame's width (queen 1508). Change the body's bed frame." }),
+      dragField("Length from body (mm)", env.D, setEnv("D"), cab.id, "D", "Show an arrow at the room end of the box; drag it to change the length"),
+      numField("Height (mm)", env.H, () => {}, { readOnly: "From the Bedroom body: its tunnel boot height." }),
+    ]),
+    section("Boards", [
+      el("div", { class: "empty small", text: "Two side panels, an end panel (1 mm wider each side for edge banding), a centre divider notched at both ends, four long rails against the sides and four short rails across the box (one on the floor, one flush with the top; the short rails notched 20 × 20 for the divider — a half-lap). No bottom, no top, no board on the body face: the boot's upright is there. Everything is the bed box stock (18)." }),
+      kv("Stock", `${p.panelThickness ?? 18} mm · ${p.carcassColorName || p.carcassColor || "White Stipple"}`),
     ]),
     el("div", { class: "panel-section" }, [
-      el("div", { class: "empty small", text: "Follows the Bedroom body: always centred on the van and against the body's room-side face. One solid volume for now." }),
+      el("div", { class: "empty small", text: "Follows the Bedroom body: centred on the van, against the body's room-side face, as wide as the bed frame and as high as the boot." }),
     ]),
     checks,
     el("div", { class: "panel-foot" }, [remove]),
   ];
-
   if (mod.panel === "ohc") {
-    renderOverhead(cab, mod, result, { checks, remove });
+    renderOverhead(cab, mod, result, { checks, remove, board });
     fillDrawer(result, errors, warnings);
     return;
   }
@@ -505,6 +759,7 @@ function renderCabinet(cab) {
       el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
       el("div", { class: "panel-sub", text: `${cab.id} · ${result?.boards?.length || 0} boards` }),
     ]),
+    board,
     section("Outer size (= box)", [
       numField("Width (mm)", env.W, setEnv("W")),
       numField("Depth (mm)", env.D, setEnv("D")),
@@ -529,7 +784,7 @@ function renderCabinet(cab) {
     checks,
     el("div", { class: "panel-foot" }, [remove]),
   ];
-  panel.replaceChildren(...(mod.placement === "nose" ? noseChildren : mod.placement === "bedBox" ? bedChildren : boxChildren).filter(Boolean));
+  panel.replaceChildren(...(mod.placement === "bedBox" ? bedChildren : boxChildren).filter(Boolean));
   fillDrawer(result, errors, warnings);
 }
 
@@ -545,16 +800,20 @@ function fillDrawer(result, errors, warnings) {
   );
 
   const boards = result?.boards || [];
+  const sub = job.getSubSelection();
+  const cabId = job.getSelectedId();
   drawerBoards.replaceChildren(
     boards.length
-      ? el("table", { class: "grid" }, [
-          el("thead", {}, [el("tr", {}, ["ID", "Name", "Type", "L (mm)", "W (mm)", "T (mm)"].map((h) => el("th", { text: h })))]),
+      ? el("table", { class: "grid pick" }, [
+          el("thead", {}, [el("tr", {}, ["ID", "Name", "Type", "L (mm)", "W (mm)", "T (mm)", "Faces"].map((h) => el("th", { text: h })))]),
           el("tbody", {}, boards.map((b) => {
-            const dx = b.x1 - b.x0, dy = b.y1 - b.y0, dz = b.z1 - b.z0;
-            const dims = [dx, dy, dz].filter((_, k) => ["X", "Y", "Z"][k] !== b.thicknessAxis).sort((a, c) => c - a);
-            return el("tr", {}, [
+            const d = boardDims(b);
+            const feats = (b.faces || []).reduce((n, f) => n + f.features.length, 0);
+            // Same selection as the tree and the 3D view: one click = this board.
+            return el("tr", { class: sub && sub.boardId === b.id ? "sel" : "", onclick: () => job.select(cabId, { boardId: b.id }) }, [
               el("td", { text: b.id }), el("td", { text: b.name }), el("td", { text: b.boardType }),
-              el("td", { text: dims[0].toFixed(1) }), el("td", { text: dims[1].toFixed(1) }), el("td", { text: String(b.materialThickness) }),
+              el("td", { text: d.L.toFixed(1) }), el("td", { text: d.W.toFixed(1) }), el("td", { text: String(d.T) }),
+              el("td", { text: b.faces ? `${b.faces.length}${feats ? ` · ${feats} feat.` : ""}` : "—" }),
             ]);
           })),
         ])
@@ -689,8 +948,8 @@ function renderWall(w) {
 
 export function renderPanel() {
   const sel = job.getSelected();
-  // The wide editor page only while an OHC is selected; everything else uses the narrow panel.
-  const wide = !!sel && getModule(sel.moduleId).panel === "ohc";
+  // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
+  const wide = !!sel && ["ohc", "bedroom"].includes(getModule(sel.moduleId).panel);
   panel.classList.toggle("wide", wide);
   app.classList.toggle("wide-right", wide);
   if (sel) renderCabinet(sel);

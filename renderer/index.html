@@ -124,6 +124,15 @@
       <div id="viewport-hud">
         <span id="viewLabel">3D</span>
       </div>
+      <!-- Browser (like Fusion's): floats over the 3D view, see-through. Module → board → face over the generator
+           result (docs/model-spec.md); reads job.resultFor, stores nothing. Rows catch their own clicks so the canvas never sees them. -->
+      <div id="browser">
+        <div class="browser-head">
+          <button class="tree-caret open" data-browser-toggle title="Collapse / expand the browser"></button>
+          <span class="browser-title">Job</span>
+        </div>
+        <div id="jobTree" title="Module → board → face · click selects, the caret expands · Esc climbs back up"></div>
+      </div>
       <div id="dimInputs" class="hidden">
         <label data-dim="W"><span>W</span><input type="text" inputmode="decimal" tabindex="-1" spellcheck="false"></label>
         <label data-dim="D"><span>D</span><input type="text" inputmode="decimal" tabindex="-1" spellcheck="false"></label>

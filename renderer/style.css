@@ -196,6 +196,85 @@ button:disabled { cursor: default; opacity: 0.45; }
   color: var(--text-3);
 }
 
+/* ---------- browser (over the 3D view) ---------- */
+/* Module → board → face, floating at the top left of the viewport like Fusion's browser: no panel
+   background, the scene shows through; text carries a shadow so it reads over the grid. */
+#browser {
+  position: absolute;
+  top: 30px;
+  left: 12px;
+  z-index: 4;
+  width: 270px;
+  max-height: calc(100% - 50px);
+  display: flex;
+  flex-direction: column;
+  font-size: 12px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.9), 0 0 6px rgba(0, 0, 0, 0.5);
+}
+#browser.hidden { display: none; }
+.browser-head {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 6px;
+  color: var(--text-3);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+.browser-head .tree-caret { color: var(--text-3); }
+#browser.collapsed #jobTree { display: none; }
+#jobTree {
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  scrollbar-width: thin;
+}
+.tree-row {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  min-height: 22px;
+  padding: 2px 6px 2px 6px;
+  border-radius: var(--radius);
+  border-left: 2px solid transparent;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+}
+.tree-row:hover { background: rgba(255, 255, 255, 0.07); }
+.tree-row.sel { background: rgba(79, 134, 224, 0.3); border-left-color: var(--accent); }
+.tree-row.k-face.sel { border-left-color: #ffd166; background: rgba(255, 209, 102, 0.24); }
+.tree-caret {
+  flex: 0 0 12px;
+  width: 12px;
+  height: 12px;
+  align-self: center;
+  position: relative;
+  color: var(--text-3);
+  padding: 0;
+}
+.tree-caret::before {
+  content: "";
+  position: absolute;
+  left: 3px; top: 2px;
+  border: 4px solid transparent;
+  border-left: 5px solid currentColor;
+}
+.tree-caret.open::before { transform: rotate(90deg) translate(1px, 1px); }
+.tree-caret:hover { color: var(--text); }
+.tree-caret.none::before { display: none; }
+.tree-label { flex: 0 0 auto; color: var(--text); }
+.k-space .tree-label { font-weight: 600; }
+.k-cabinet .tree-label { font-weight: 500; }
+.k-board .tree-label, .k-face .tree-label, .k-edges .tree-label { font-weight: 400; }
+.k-face .tree-label { color: var(--text-2); }
+.k-face.sel .tree-label { color: var(--text); }
+.tree-sub { flex: 1 1 0; min-width: 0; color: var(--text-3); font-size: 11px; overflow: hidden; text-overflow: ellipsis; }
+.tree-empty { padding: 6px 10px; font-size: 11px; color: var(--text-3); white-space: normal; }
+/* The floor plan sheet covers the viewport: the browser steps aside (tree.js watches the sheet). */
+#browser.fp-open { display: none; }
+
 /* ---------- center ---------- */
 
 #center {
@@ -442,6 +521,11 @@ button:disabled { cursor: default; opacity: 0.45; }
 .field input:disabled { color: var(--text-2); }
 .field.readonly input { color: var(--text-2); border-style: dashed; cursor: default; }
 .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+/* A dimension that can also be dragged in 3D: the ⇕ toggle arms an arrow handle on the cabinet. */
+.field.with-drag { grid-template-columns: 1fr 96px 22px; gap: 6px; }
+.field.with-drag button.icon.drag { width: 22px; height: 24px; font-size: 13px; color: var(--text-2); border: 1px solid var(--line-strong); }
+.field.with-drag button.icon.drag:hover:not(:disabled) { color: var(--text); background: var(--bg-hover); }
+.field.with-drag button.icon.drag.active { color: #fff; background: var(--accent); border-color: var(--accent); }
 .panel-foot {
   margin-top: auto;
   padding: 10px 14px;
@@ -787,6 +871,16 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .ohc-front { border-radius: var(--radius); overflow: hidden; background: #f8fbff; }
 .ohc-front svg { display: block; width: 100%; height: auto; }
 
+/* Bedroom body front view: regions are clickable, orange boundaries draggable. */
+.bedroom-front { border-radius: var(--radius); overflow: hidden; background: #f8fbff; touch-action: none; }
+.bedroom-front svg { display: block; width: 100%; height: auto; }
+.bedroom-front .region { cursor: pointer; }
+.bedroom-front .region:hover { filter: brightness(0.96); }
+.bedroom-front .boundary[data-axis="x"] { cursor: ew-resize; }
+.bedroom-front .boundary[data-axis="z"] { cursor: ns-resize; }
+.bedroom-front .boundary:hover line:first-child, .bedroom-front .boundary.active line:first-child { stroke: #fff; stroke-width: 3; }
+.bedroom-front.dragging { cursor: grabbing; }
+
 .msg { padding: 4px 6px; margin-bottom: 4px; border-radius: var(--radius); font-size: 11px; }
 .msg.err { background: rgba(217, 75, 75, 0.15); color: #f0a0a0; }
 .msg.warn { background: rgba(224, 163, 79, 0.15); color: #f0cf9a; }
@@ -795,6 +889,18 @@ table.grid { border-collapse: collapse; width: 100%; font-size: 11px; }
 table.grid th, table.grid td { padding: 3px 8px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
 table.grid th { color: var(--text-3); font-weight: 500; text-transform: uppercase; font-size: 10px; letter-spacing: 0.06em; }
 table.grid td:nth-child(n+4) { text-align: right; font-variant-numeric: tabular-nums; }
+table.grid.pick tbody tr { cursor: default; }
+table.grid.pick tbody tr:hover { background: var(--bg-hover); }
+table.grid.pick tbody tr.sel { background: var(--accent-soft); }
+table.grid.pick td:last-child { text-align: left; color: var(--text-3); }
+
+/* Board / face read-out (right panel) for the selection inside a cabinet. */
+.panel-section.sub-sel { background: var(--bg-panel-2); }
+.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.sec-head .tb { height: 22px; padding: 0 8px; font-size: 11px; color: var(--text-2); }
+.kv.link { cursor: default; }
+.kv.link:hover span { color: var(--text); text-decoration: underline; }
+.mono { font-family: Consolas, "Cascadia Mono", monospace; font-size: 11px; padding-left: 8px; }
 
 /* ---------- status bar ---------- */
 

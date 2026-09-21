@@ -50,7 +50,9 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/interact.js` — left-button interaction: three-step placement, Move command, type-ins, select, resize, dividers, keys
 - `renderer/presets.js` — per-module starting sizes (preset H today; a settings UI will edit them)
 - `renderer/hud.js` — cursor tooltip
-- `renderer/panel.js` — right panel (space or selected cabinet) and drawer tables
+- `renderer/panel.js` — right panel (space or selected cabinet, plus the selected board / face read-out) and drawer tables
+- `renderer/tree.js` — the **browser** floating over the 3D view (top left, see-through): module → board → face over the generator result (`docs/model-spec.md`); stores nothing
+- `renderer/boardModel.js` — read-only helpers over boards / faces (labels, feature summaries, which face a 3D hit landed on)
 - `renderer/ui.js` — shell wiring
 - `renderer/boardGeom.js` — board solids from generator output (outline extrusion or box); shared by the app and the bench
 - `renderer/benchMenu.js` — right-click on a rail module / placed cabinet → opens the generator bench
@@ -156,8 +158,8 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   meant to reach down over the leaf top and hide the track (defaults: 15 + 1880 = 1895 leaf top vs. a 1963 wall top
   − 100 = 1863 pelmet underside → 32 mm of cover); when it does not reach, the door is still created with a yellow
   warning (`pelmet stops N above the leaf top`) and the panel shows **Covers the leaf top by**. Refused when the leaf
-  runs into the ceiling, runs past what stops the pelmet, has **no room to slide open** (the pelmet must extend one
-  hole width beyond the leaf on one side), or the leaf / pelmet hits a cabinet or another partition; a new partition drawn across a pelmet is
+  runs into the ceiling, runs past what stops the pelmet, has **no room to slide open** (the pelmet must reach
+  the hole width minus 100 mm beyond the leaf on one side — the open leaf may stick out 100 mm past the pelmet), or the leaf / pelmet hits a cabinet or another partition; a new partition drawn across a pelmet is
   fine (the pelmet just stops there), across a leaf is an overlap. The right panel lists the door with offset /
   width / top / overlap / leaf height, **Flip** to hang it on the other face, and the derived leaf and pelmet sizes
   with what stops the pelmet. Leaf and pelmet are solids for cabinet placement (boxes stop at them) and their
@@ -194,27 +196,60 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - **Bedroom** is a rail group: hovering it opens a flyout with **Body** (the nose slab below), **Bed Box** (below) and
   **Bed Side Table** (listed, not wired yet). Groups are declared in `MODULE_GROUPS` in `renderer/modules.js`.
 - **Bedroom › Bed Box** (one per vehicle, needs the Body first — the flyout item is disabled until it exists): the bed
-  base as one solid volume, glued to the Body's room-side face, centred on the van's centre line and symmetric about
-  it; height = tunnel boot height (420 until the boot is defined on the Body). Two steps: **width** — a 2D line on the
-  floor along the Body face grows symmetrically from the centre line (width = 2 × distance from the centre line to the
-  cursor), type `W`, click or `Enter` locks it; **length** — the box rises and its room-side face follows the cursor
-  into the room (snaps to cabinet faces, stops at the back wall and at cabinets in its lane), type `D`, click or `Enter`
-  creates. `Esc` at any step cancels the whole thing. Picking Bed Box again selects the existing one and re-runs both
-  steps (nothing is duplicated). It follows the Body: change the Body's depth, redefine the space or edit W / D in the
-  panel and `attach()` re-centres it and keeps it against the Body face (`bindToJob` in `job.js`); the Body's depth drag
-  ignores cabinets attached to it. Generator `generators/bedBox/generator.ts`.
-- **Bedroom › Body** (nose slab, one per vehicle): not a free box. Its front is the nose cross-section, its width the van's
-  inside width, its height the roof at the room-side face; the only free size is the depth **from the front**.
-  Pick the module → the slab is already shown at the preset depth (700). Click anywhere → the room-side face follows
-  the cursor along the van (snaps to roof breaks, the seam and cabinet faces; stops at the back wall and at other
-  cabinets), the single **From front** type-in takes numbers and expressions; click again or `Enter` creates it,
-  `Esc` cancels; `Enter` straight away takes the preset. Picking the module again selects the existing slab and
-  re-enters the same depth drag (nothing is duplicated). The slab is posed `rotZ 180` at the nose so the room-side
-  face is its front; local Y runs from the room face toward the nose and the roof profile over the slab is bound into
-  its params (`roofProfile`) on create, on every edit and whenever the space is redefined. Only a D handle is shown;
-  the panel's **From front** field moves the room-side face too. v0 emits no boards: the slab is drawn as one solid
-  cut to the roof (a volume-only module — no boards, no validation errors, `envelopeProfile` present). Tunnel boot,
-  robes and overhead will be partitioned inside this envelope later. Generator: `generators/bedroom/generator.ts`.
+  base as **twelve boards**, standing in the Body's mattress opening and running into the room: glued to the Body's
+  room-side face, centred on the van, **width = the Body's bed frame (queen 1508), height = the Body's tunnel boot
+  height** — both read from the Body, never typed or dragged here. Only the length is its own (default 979, a rule;
+  set by hand until mattress presets exist). One step: the box stands on the Body face and its room-side face follows
+  the cursor into the room (snaps to cabinet faces, stops at the back wall and at cabinets in its lane), type `D`,
+  click or `Enter` creates, `Esc` cancels. Picking Bed Box again selects the existing one and re-runs the length step
+  (nothing is duplicated). It follows the Body: change the Body's boot height or bed frame, its depth, redefine the
+  space or edit D in the panel and `attach()` re-reads W / H, re-centres it and keeps it against the Body face
+  (`bindToJob` in `job.js`); the Body's depth drag ignores cabinets attached to it.
+  Boards (all bed-box stock, 18 — `generators/bedBox/rules.json`): `SIDE_L` / `SIDE_R` (room end → Body face),
+  `END` (over the side panel ends, 1 mm wider each side for edge banding), `DIVIDER` (centred, notched 19 deep ×
+  85 high at both ends top and bottom), `RAIL_L/R_LOW/HIGH` (long rails against the sides, 100 high, on the floor
+  and flush with the top, butting the short rails) and `RAIL_END/BODY_LOW/HIGH` (short rails across the box at the
+  end panel and 1 mm off the Body face, notched 20 × 20 in the middle — a **half-lap** with the divider). No bottom,
+  no top, no board on the Body face (the boot's upright is there). Every face and outline point goes through
+  `dim()`; joints: 4 half-laps, 11 butts, 6 face contacts. Pins: `generators/bedBox/presets.json` (`style3-queen`),
+  test `generators/bedBox/generator.test.ts`. Generator `generators/bedBox/generator.ts`.
+- **Bedroom › Body** (the nose body, one per vehicle — the north-south bedroom): not a free box. Its front is the nose
+  cross-section, its width the van's inside width, its height the roof at the room-side face; the only free size is the
+  depth **from the front**. Pick the module → the body is already shown at the preset depth (756). Click anywhere → the
+  room-side face follows the cursor along the van (snaps to roof breaks, the seam and cabinet faces; stops at the back
+  wall and at other cabinets), the single **From front** type-in takes numbers and expressions; click again or `Enter`
+  creates it, `Esc` cancels; `Enter` straight away takes the preset. Picking the module again selects the existing body
+  and re-enters the same depth drag (nothing is duplicated). The body is posed `rotZ 180` at the nose so the room-side
+  face is its front; local Y runs from the room face toward the nose and the roof profile over it is bound into its
+  params (`roofProfile`) on create, on every edit and whenever the space is redefined.
+  Inside that envelope the body is **laid out in five regions** by three numbers and a choice — **tunnel boot
+  height** (the boot deck, wall to wall), **wardrobe width** (side wall → inner face, the same both sides: symmetric
+  by rule), **overhead bottom**, and the **bed frame** (queen = 1508, a product size: the opening between the
+  wardrobes must take it, so the wardrobes stop at `(W − 1508) / 2`): `boot` · `wardrobe L / R`
+  (boot deck → roof, cut to the roof profile) · the **mattress opening** between them (a void — not a part, just what
+  the deck, the wardrobe faces and the overhead underside leave free) · `ohc` above it (to the roof). The **tunnel
+  boot is boards**: `BOOT_DECK` (18 mm rule stock, wall to wall × full depth, top at the boot height) resting on two
+  carcass-stock uprights, `BOOT_BACK` (outer face on the room face) and `BOOT_FRONT` (outer face at the nose end) —
+  butt joints, faces annotated, every face through `dim()`. The **wardrobes have their colour panel and top**:
+  `WARD_L/R_PANEL` (door stock, colour face into the opening, boot deck → roof) is cut down to the **T3 seat** in
+  front of the **T2 back** (`WARDROBE_T2_BACK_MM` 66 — the one fixed Y of the top) and has a pocket behind it for T3's
+  tail; the seat is `roof(66) − T2 height (35) − 1 − T3 (15)`, so a steeper or flatter roof moves the whole top and T2
+  stays 35 high at its back. `WARD_L/R_T3` (188 deep) sits on the seat, over the panel for its 77 mm tail and notched
+  back to the panel's wall side beyond it; `T2` and `T1` run wall to wall on the T3s (+1) — T2 to the roof at its
+  back, **T1 20 mm above the roof by design** (flat top for the three-axis router, trimmed on site; reported as a
+  warning). The other regions (opening, overhead) are still drawn as blocks from their own roof-cut section
+  (`zones[].outlineYZ`); a region that lists `boards` is drawn as those boards. Selecting the body turns the
+  right panel into its **editor page** (wide): the generator's **2D front elevation** from the room — click a region to
+  select it (a second click in 3D does the same, `Esc` climbs back), **drag an orange boundary** (boot deck, wardrobe
+  inner faces, overhead underside; 10 mm steps, `Shift` = 1 mm; one undo step per drag) — the three
+  **Layout** fields with the range the other values leave each one, the bed frame select, the derived opening /
+  overhead / bed-margin numbers,
+  a card for the selected region and the body-level fields folded below. The same boundaries are the orange bars in
+  3D on the room face (spanning only their region). Limits and defaults are rules (`generators/bedroom/rules.json`:
+  Style 3 = boot 398, wardrobes 330, overhead from 1418, queen frame 1508; minimum opening height 500); every
+  region face goes through `dim()`, so the bench can show `wardrobeR.x0 = W − wardrobeWidth`. Pins:
+  `generators/bedroom/presets.json` (`style3`, `flat-roof`), test `generators/bedroom/generator.test.ts`.
+  Generator: `generators/bedroom/generator.ts`.
 - Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
   (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.
 - Inference: after touching a corner, moving along one of its edges pins that coordinate (dashed axis-coloured line),
@@ -234,7 +269,18 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   door sides, nor is a side flush against a wall or a neighbour, nor one that would leave W or D below the module minimum.
   `R` still rotates the whole cabinet 90° about its centre (that does change the footprint).
   Fronts are drawn light blue, carcass tan, so the door side of every cabinet is visible at a glance.
-- Blue cubes: pull W / D / H · orange bars: zone boundaries (horizontal for stacked zones, vertical for zones along W)
+- Blue cubes: pull W / D / H · orange bars: zone boundaries (horizontal for stacked zones, vertical for zones along W).
+  Handles hide while a board / face is selected inside the cabinet. A dimension that is normally typed (the Bed Box
+  length) has a ⇕ button next to its field: press it and a blue double arrow appears just outside that face in 3D —
+  drag it back and forth; `Esc`, a selection change or pressing ⇕ again removes it.
+- **Browser** (floats over the top left of the 3D view, see-through like Fusion's; the small caret folds it): Space → every placed cabinet (plus partitions and planes) → its boards
+  (`name · role id · L × W × T`) → its faces (the module's word for them — inside, front, bottom — with what is machined
+  into each, and the outline edges folded into one row with their tongue / notch tags). Click a row to select it, the
+  caret expands. In 3D the same path is one click per level: cabinet → a board of the selected cabinet → the face under
+  the cursor; `Esc` climbs back up. A selected board lights up and its neighbours fade; a selected face gets a yellow
+  sheet. The cabinet stays the selected object throughout (Move / Face / `Del` act on it), the right panel adds a
+  read-only **Board** / **Face** card, and the drawer's Boards rows select the same way. Nothing in the tree is stored:
+  it is a browser over the generator result, re-read after every change.
 - `M` move · `O` face · `R` rotate 90° · `F` frame selection (or space) · `Del` remove (cabinet, plane or partition wall) · `Esc` cancel / deselect
 - `Ctrl+N/O/S` new / open / save (`Ctrl+Shift+S` save as) · `Ctrl+Z/Y` undo / redo · `F12` dev tools
 - `Ctrl+Shift+L` open the usage log folder

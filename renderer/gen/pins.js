@@ -61,6 +61,10 @@ function collectPins(result) {
     for (const [k, v] of Object.entries(vals)) rounded[k] = round(v);
     pins.faceFeatures[key] = rounded;
   }
+  if (result.zones && result.zones.length) {
+    pins.zones = {};
+    for (const z of result.zones) pins.zones[z.id] = { x0: round(z.x0), x1: round(z.x1), y0: round(z.y0), y1: round(z.y1), z0: round(z.z0), z1: round(z.z1) };
+  }
   return pins;
 }
 function pinsForBoard(result, boardId) {
@@ -77,7 +81,8 @@ function mergePins(base, add) {
     boards: { ...base.boards ?? {}, ...add.boards ?? {} },
     points: { ...base.points ?? {}, ...add.points ?? {} },
     features: { ...base.features ?? {}, ...add.features ?? {} },
-    faceFeatures: { ...base.faceFeatures ?? {}, ...add.faceFeatures ?? {} }
+    faceFeatures: { ...base.faceFeatures ?? {}, ...add.faceFeatures ?? {} },
+    ...base.zones || add.zones ? { zones: { ...base.zones ?? {}, ...add.zones ?? {} } } : {}
   };
 }
 function checkPins(result, pins, tol = PIN_TOL_MM) {
@@ -92,6 +97,17 @@ function checkPins(result, pins, tol = PIN_TOL_MM) {
     }
     for (const f of FACES) {
       if (!near(faces[f], b[f])) out.push({ path: `${id}.${f}`, expected: faces[f], actual: b[f] });
+    }
+  }
+  const zoneById = new Map((result.zones ?? []).map((z) => [z.id, z]));
+  for (const [id, faces] of Object.entries(pins.zones ?? {})) {
+    const z = zoneById.get(id);
+    if (!z) {
+      out.push({ path: `zone ${id}`, expected: null, actual: null });
+      continue;
+    }
+    for (const f of FACES) {
+      if (!near(faces[f], z[f])) out.push({ path: `zone ${id}.${f}`, expected: faces[f], actual: z[f] });
     }
   }
   for (const [key, expected] of Object.entries(pins.points ?? {})) {
@@ -149,6 +165,7 @@ function checkPins(result, pins, tol = PIN_TOL_MM) {
 function countPins(pins) {
   let n = 0;
   for (const f of Object.values(pins.boards ?? {})) n += Object.keys(f).length;
+  for (const f of Object.values(pins.zones ?? {})) n += Object.keys(f).length;
   for (const pts of Object.values(pins.points ?? {})) n += pts.reduce((s, p) => s + p.length, 0);
   for (const f of Object.values(pins.features ?? {})) n += Object.keys(f).length;
   for (const f of Object.values(pins.faceFeatures ?? {})) n += Object.keys(f).length;

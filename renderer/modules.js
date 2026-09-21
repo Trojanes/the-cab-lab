@@ -3,8 +3,8 @@
 // divider handles exist. The renderer only reads this; formulas stay in the
 // generators.
 import { generateSmallCabinet } from "./gen/smallCabinet.js";
-import { generateBedroom } from "./gen/bedroom.js";
-import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN } from "./gen/bedBox.js";
+import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES } from "./gen/bedroom.js";
+import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
@@ -122,25 +122,40 @@ const smallCabinet = {
 };
 
 /**
- * Bedroom: the vehicle's nose slab, for now one solid volume (tunnel boot,
- * robes and overhead are partitioned inside it later). Not a
- * free box: its front is the nose cross-section, its width the van's inside
- * width, its height the roof at the room face; only the depth (distance from
- * the nose) is chosen. Placement "nose" (see interact.js) puts it at the
+ * Bedroom body: the vehicle's nose, laid out as five regions — tunnel boot
+ * (wall to wall, floor → bootHeight), a wardrobe each side (bootHeight → roof),
+ * the mattress opening between them (a void) and the overhead block above it.
+ * Symmetric by rule: one `wardrobeWidth` serves both sides. No boards yet: the
+ * regions are the solids (`result.zones[].outlineYZ`, drawn by cabinets3d.js).
+ *
+ * Not a free box: its front is the nose cross-section, its width the van's
+ * inside width, its height the roof at the room face; only the depth (distance
+ * from the nose) is chosen. Placement "nose" (see interact.js) puts it at the
  * front with pose { x: W, y: D, rotZ: 180 } so the room-side face is the
  * cabinet front (fronts at negative local Y, per the core contract) and local
  * Y runs from the room face toward the nose.
+ *
+ * Layout editing goes through `setLayout(params, key, value)` (clamped by the
+ * generator's `layoutLimits`); the 3D orange bars and the panel's front view
+ * are both views of the same four numbers.
  */
+export const BEDROOM_LAYOUT = BEDROOM_LAYOUT_KEYS;
+export const BEDROOM_LAYOUT_LABEL = {
+  bootHeight: "Tunnel boot height",
+  wardrobeWidth: "Wardrobe width",
+  ohcBottom: "Overhead bottom",
+};
 const bedroom = {
   id: "bedroom",
   label: "Bedroom",
-  sub: "nose volume",
+  sub: "nose body",
   placement: "nose",
   single: true, // one per vehicle; picking the module again edits the existing one
   roofAware: true, // the envelope already follows the roof; fit checks skip the roof
-  volumeOnly: true, // no boards yet: the envelope is drawn as the solid
+  volumeOnly: true, // regions without boards yet (wardrobes, overhead, opening) are drawn as solids; the boot is boards
+  panel: "bedroom", // wide right-hand editor: front view with draggable boundaries + layout fields
   handles: ["D"],
-  defaultSize: { W: 2100, D: 700, H: 1965 },
+  defaultSize: { W: 2275, D: 756, H: 1797 },
   minSize: { W: 600, D: 300, H: 600 },
 
   defaults(W, D, H, materials) {
@@ -151,7 +166,14 @@ const bedroom = {
       depth: round1(D),
       height: round1(H),
       roofProfile: [[0, round1(H)], [round1(D), round1(H)]],
+      bootHeight: BEDROOM_RULES.BOOT_HEIGHT_DEFAULT_MM.value,
+      // The wardrobes never close the opening below the bed frame: on a narrow van they start narrower.
+      wardrobeWidth: Math.min(BEDROOM_RULES.WARDROBE_WIDTH_DEFAULT_MM.value, Math.floor((round1(W) - BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value) / 2)),
+      ohcBottom: BEDROOM_RULES.OHC_BOTTOM_DEFAULT_MM.value,
+      bedFrame: "queen",
       panelThickness: thickness(stock, "carcass"),
+      doorPanelThickness: thickness(stock, "door"), // the wardrobe colour panels
+      doorColorName: color.doorColorName,
       frontPanelThickness: 0,
       carcassColor: color.carcassColor,
       doorSeries: color.doorSeries,
@@ -164,6 +186,11 @@ const bedroom = {
     return generateBedroom(params);
   },
 
+  /** 2D front elevation (SVG markup) from the last generation; `selectedRegion` is outlined. */
+  frontView(result, { selectedRegion = null } = {}) {
+    return generateBedroomSvgPreview(result, { selectedRegion, showDimensions: true });
+  },
+
   envelope(params) {
     return { W: params.width, D: params.depth, H: params.height };
   },
@@ -174,6 +201,19 @@ const bedroom = {
     if (D != null) next.depth = round1(D);
     if (H != null) next.height = round1(H);
     return next;
+  },
+
+  /** Layout: the four numbers the regions are built from. Clamped by the generator's limits. */
+  layoutKeys: BEDROOM_LAYOUT_KEYS,
+  layoutLimits(params, key) {
+    return bedroomLayoutLimits(params, key);
+  },
+  setLayout(params, key, value) {
+    return setBedroomLayout(params, key, value);
+  },
+  /** W × H of the bed box: the bed frame's width, the boot deck's height. */
+  bedBoxSize(params) {
+    return bedBoxSizeFor(params);
   },
 
   /**
@@ -208,18 +248,50 @@ const bedroom = {
     return params.roofProfile || [[0, params.height], [params.depth, params.height]];
   },
 
-  dividers() { return []; },
-  setDivider(params) { return params; },
+  /**
+   * Layout boundaries as orange bars on the room face. Each bar drives one
+   * layout key; the mirrored pair (wardrobe inner faces) carries `side` so
+   * either bar moves both. `span` is the bar's extent along the other axis
+   * (a wardrobe face runs from the boot deck to the roof, not the whole height).
+   */
+  dividers(params, result) {
+    if (!result || result.validation?.errors?.length) return [];
+    const p = result.params;
+    const W = p.width;
+    const H = p.height;
+    const lim = (k) => bedroomLayoutLimits(p, k);
+    const bh = lim("bootHeight");
+    const ob = lim("ohcBottom");
+    const ww = lim("wardrobeWidth");
+    return [
+      { index: 0, key: "bootHeight", axis: "z", pos: p.bootHeight, min: bh.min, max: bh.max, span: [0, W] },
+      { index: 1, key: "ohcBottom", axis: "z", pos: p.ohcBottom, min: ob.min, max: ob.max, span: [p.wardrobeWidth, W - p.wardrobeWidth] },
+      { index: 2, key: "wardrobeWidth", side: -1, axis: "x", pos: p.wardrobeWidth, min: ww.min, max: ww.max, span: [p.bootHeight, H] },
+      { index: 3, key: "wardrobeWidth", side: 1, axis: "x", pos: round1(W - p.wardrobeWidth), min: W - ww.max, max: W - ww.min, span: [p.bootHeight, H] },
+    ];
+  },
+
+  /** Move bar `index` to local coordinate `pos` (x or z); returns new params with the layout key it drives changed. */
+  setDivider(params, result, index, pos) {
+    const d = this.dividers(params, result).find((b) => b.index === index);
+    if (!d) return params;
+    const W = params.width;
+    const value = d.key === "wardrobeWidth" ? (d.side > 0 ? W - pos : pos) : pos;
+    return setBedroomLayout(params, d.key, Math.round(value));
+  },
   zoneTypes: [],
 };
 
 /**
- * Bed Box: the bed base, attached to the Bedroom body. It sits against the
- * body's room-side face, centred on the van's centre line and symmetric about
- * it; height = tunnel boot height (420 until the boot is defined on the body).
- * Placement "bedBox" (interact.js): drag the width as a 2D line on the floor,
- * click, pull the depth into the room, click. `attach` keeps it glued to the
- * body whenever the body or the space changes.
+ * Bed Box: the bed base, attached to the Bedroom body — twelve boards (side
+ * panels, end panel, centre divider, four long and four short rails). It
+ * stands against the body's room-side face, centred on the van, in the
+ * mattress opening: width = the body's bed frame (queen 1508), height = the
+ * boot height — both read from the body (`bedroom.bedBoxSize`), never typed
+ * here. Only its length into the room is free (default 979, a rule). Placement
+ * "bedBox" (interact.js): pull the length into the room, click. `attach` keeps
+ * it glued to the body (size and pose) whenever the body or the space changes.
+ * Every board is the bed box stock (18, `rules.json`), not the job's carcass.
  */
 const bedBox = {
   id: "bedBox",
@@ -229,19 +301,19 @@ const bedBox = {
   single: true,
   requires: "bedroom", // usable only once the body exists
   attachesTo: "bedroom", // the body's depth drag ignores it
-  volumeOnly: true,
-  handles: ["D"],
-  defaultSize: { W: 1530, D: 1900, H: BED_BOX_DEFAULT_HEIGHT },
+  handles: [], // no permanent cubes: W and H come from the body
+  handlesOnDemand: ["D"], // the panel's "drag in 3D" button shows an arrow for the length
+  defaultSize: { W: BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value, D: BED_BOX_RULES.LENGTH_DEFAULT_MM.value, H: BED_BOX_DEFAULT_HEIGHT },
   minSize: { W: BED_BOX_MIN.width, D: BED_BOX_MIN.depth, H: BED_BOX_MIN.height },
 
   defaults(W, D, H, materials) {
-    const { finish, stock } = materialsOf(materials);
+    const { finish } = materialsOf(materials);
     const color = cabinetColor(finish);
     return {
       width: round1(W),
       depth: round1(D),
       height: round1(H),
-      panelThickness: thickness(stock, "carcass"),
+      panelThickness: BED_BOX_RULES.BOARD_THICKNESS_MM.value,
       frontPanelThickness: 0,
       carcassColor: color.carcassColor,
       doorSeries: color.doorSeries,
@@ -264,19 +336,23 @@ const bedBox = {
   },
 
   /**
-   * Glue to the body: room-side face of the box at the body's room-side
-   * face, centred on the van. Returns { params, pose } or null when there is
-   * no body (the box then stays where it is).
+   * Glue to the body: width from its bed frame, height from its boot deck, the
+   * body-side face of the box at the body's room-side face, centred on the
+   * van. Returns { params, pose } or null when there is no body (the box then
+   * stays as it is).
    */
   attach(params, pose, { cabinets, resolved }) {
     const body = cabinets.find((c) => c.moduleId === "bedroom");
     if (!body || !resolved) return null;
-    const bodyD = getModule(body.moduleId).envelope(body.params).D;
+    const bodyMod = getModule(body.moduleId);
+    const bodyD = bodyMod.envelope(body.params).D;
+    const size = bodyMod.bedBoxSize(body.params);
+    const nextParams = params.width === size.W && params.height === size.H ? params : { ...params, width: size.W, height: size.H };
     const cx = (resolved.bounds.minX + resolved.bounds.maxX) / 2;
     // rotZ 180: local X runs W→0 from pose.x, local Y from the room face (pose.y) toward the body.
-    const next = { x: round1(cx + params.width / 2), y: round1(bodyD + params.depth), z: 0, rotZ: 180 };
+    const next = { x: round1(cx + size.W / 2), y: round1(bodyD + params.depth), z: 0, rotZ: 180 };
     const same = pose.x === next.x && pose.y === next.y && pose.z === next.z && (pose.rotZ || 0) === next.rotZ;
-    return { params, pose: same ? pose : next };
+    return { params: nextParams, pose: same ? pose : next };
   },
 
   dividers() { return []; },

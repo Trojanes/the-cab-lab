@@ -15,10 +15,10 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine, frame } from "./space.js";
 import * as job from "./job.js";
-import { getModule } from "./modules.js";
+import { getModule, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL } from "./modules.js";
 import { getPreset } from "./presets.js";
 import {
-  pickables, groupFor, envelopeBox, envelopeFootprint, poseFits, setHandleHover,
+  pickables, groupFor, envelopeBox, envelopeFootprint, poseFits, setHandleHover, faceUnderHit, disarmHandle,
   showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
   showFaceHint, hideFaceHint, flashFaceHint,
 } from "./cabinets3d.js";
@@ -1170,15 +1170,12 @@ export function cancelPlane() {
 
 // --- bed box placement ---------------------------------------------------------------------
 //
-// Attached to the Bedroom body: against its room-side face, centred on the
-// van, symmetric about the centre line, height = tunnel boot (420 for now).
-//   width   a 2D line on the floor along the body face; width = 2 × distance
-//           from the centre line to the cursor
-//   depth   one click locks the width → the box rises: depth follows the
+// Attached to the Bedroom body: it stands in the mattress opening and runs
+// into the room. Width (the body's bed frame) and height (boot height) are
+// read from the body — never typed or dragged here. Only the length is chosen:
+//   length  the box stands on the body face, its room-side face follows the
 //           cursor into the room (snaps to cabinet faces / back wall)
-//   click / Enter → create (or re-size the existing one), Esc → cancel all
-
-const BEDBOX_LINE_D = 10; // thickness of the 2D width line on the floor
+//   click / Enter → create (or re-size the existing one), Esc → cancel
 
 function bedBody() {
   return job.getJob().cabinets.find((c) => c.moduleId === "bedroom") || null;
@@ -1187,8 +1184,9 @@ function bedFrame() {
   const sp = job.getSpace();
   const body = bedBody();
   if (!sp || !body) return null;
-  const bodyD = getModule(body.moduleId).envelope(body.params).D;
-  return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id };
+  const bodyMod = getModule(body.moduleId);
+  const bodyD = bodyMod.envelope(body.params).D;
+  return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id, size: bodyMod.bedBoxSize(body.params) };
 }
 function bedT(e, axis) {
   const f = bedFrame();
@@ -1197,8 +1195,7 @@ function bedT(e, axis) {
 }
 function bedBoxBox() {
   const f = bedFrame();
-  const D = bed.step === "width" ? BEDBOX_LINE_D : bed.D;
-  return { x0: f.cx - bed.W / 2, y0: f.y, z0: 0, W: bed.W, D, H: bed.H, max: { W: f.maxW, D: f.maxD, H: bed.H } };
+  return { x0: f.cx - bed.W / 2, y0: f.y, z0: 0, W: bed.W, D: bed.D, H: bed.H, max: { W: bed.W, D: f.maxD, H: bed.H } };
 }
 
 export function startBedBox(moduleId) {
@@ -1215,9 +1212,9 @@ export function startBedBox(moduleId) {
   const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
   const env = existing ? mod.envelope(existing.params) : null;
   bed = {
-    moduleId, step: "width", editId: existing ? existing.id : null,
-    W: env ? env.W : mod.minSize.W, D: env ? env.D : mod.minSize.D, H: env ? env.H : mod.defaultSize.H,
-    locked: { W: null, D: null }, snapLabel: null, clamped: null, lastClient: null,
+    moduleId, step: "depth", editId: existing ? existing.id : null,
+    W: f.size.W, D: env ? env.D : mod.defaultSize.D, H: f.size.H,
+    locked: { D: null }, snapLabel: null, clamped: null, lastClient: null,
   };
   job.select(existing ? existing.id : null);
   canvas.style.cursor = "crosshair";
@@ -1225,25 +1222,11 @@ export function startBedBox(moduleId) {
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) {
     dimLabels[k].classList.remove("focused", "locked");
-    dimLabels[k].classList.toggle("hidden", k !== "W");
+    dimLabels[k].classList.toggle("hidden", k !== "D");
   }
   drawBedBox(null);
-  log("bedbox.arm", { moduleId, editId: bed.editId, bodyId: f.bodyId, bodyDepth: f.y, W: bed.W, D: bed.D, H: bed.H });
+  log("bedbox.arm", { moduleId, editId: bed.editId, bodyId: f.bodyId, bodyDepth: f.y, W: bed.W, D: bed.D, H: bed.H, from: "body: bed frame width, bootHeight" });
   emitMode();
-}
-
-/** Width for the cursor (or the lock): 2 × distance from the centre line, snapped, within the van. */
-function bedWidth(e) {
-  const mod = getModule(bed.moduleId);
-  const f = bedFrame();
-  let W;
-  if (bed.locked.W != null) W = bed.locked.W;
-  else if (e) W = job.snap(2 * Math.abs(bedT(e, "x")));
-  else W = bed.W;
-  bed.clamped = null;
-  if (W > f.maxW) { W = f.maxW; bed.clamped = "side walls"; }
-  if (W < mod.minSize.W) { W = mod.minSize.W; bed.clamped = `minimum ${mod.minSize.W}`; }
-  bed.W = W;
 }
 
 /** Depth for the cursor (or the lock): snapped, clamped to the space, stopped by other cabinets in the bed's lane. */
@@ -1276,43 +1259,24 @@ function bedDepth(e) {
 
 function drawBedBox(e) {
   const b = bedBoxBox();
-  if (bed.step === "width") {
-    // 2D: a W × H rectangle standing on the body face, no depth yet.
-    hideGhost();
-    showWidthRect(b.x0, b.x0 + b.W, b.y0, b.H, { clamped: !!bed.clamped });
-  } else {
-    hideWidthRect();
-    showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: !!bed.clamped });
-  }
-  for (const k of ["W", "D"]) {
-    if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(bed[k]);
-    dimLabels[k].classList.toggle("locked", bed.locked[k] != null || (k === "W" && bed.step === "depth"));
-  }
-  positionDimInputs({ ...b, D: bed.step === "width" ? 0 : b.D });
+  showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: !!bed.clamped });
+  if (document.activeElement !== dimInputs.D) dimInputs.D.value = Math.round(bed.D);
+  dimLabels.D.classList.toggle("locked", bed.locked.D != null);
+  positionDimInputs(b);
   if (!e) return;
-  const lines = bed.step === "width"
-    ? [`W ${Math.round(bed.W)} · centred on the van`, bed.clamped ? `Stopped at ${bed.clamped}` : null, "Click to lock the width · Esc cancels"]
-    : [`D ${Math.round(bed.D)} from the body · H ${Math.round(bed.H)}`, bed.snapLabel, bed.clamped ? `Stopped at ${bed.clamped}` : null, bed.editId ? "Click or Enter to apply · Esc cancels" : "Click or Enter to create · Esc cancels"];
-  showTip(e.clientX, e.clientY, lines, bed.clamped ? "warn" : bed.locked.W != null || bed.locked.D != null ? "lock" : "");
+  const lines = [
+    `D ${Math.round(bed.D)} from the body · W ${Math.round(bed.W)} (bed frame) × H ${Math.round(bed.H)} (boot)`,
+    bed.snapLabel,
+    bed.clamped ? `Stopped at ${bed.clamped}` : null,
+    bed.editId ? "Click or Enter to apply · Esc cancels" : "Click or Enter to create · Esc cancels",
+  ];
+  showTip(e.clientX, e.clientY, lines, bed.clamped ? "warn" : bed.locked.D != null ? "lock" : "");
 }
 
 function updateBedBox(e) {
   if (e) bed.lastClient = { x: e.clientX, y: e.clientY };
-  if (bed.step === "width") bedWidth(e); else bedDepth(e);
+  bedDepth(e);
   drawBedBox(e);
-}
-
-/** Width step → depth step (click or Enter with a width). */
-function bedLockWidth(how) {
-  bedWidth(null);
-  bed.step = "depth";
-  dimLabels.D.classList.remove("hidden");
-  dimLabels.W.classList.add("locked");
-  if (document.activeElement === dimInputs.W) focusDim("D");
-  log("bedbox.width", { moduleId: bed.moduleId, editId: bed.editId, how, W: bed.W, locked: bed.locked.W, clamped: bed.clamped });
-  bed.clamped = null;
-  drawBedBox(null);
-  emitMode();
 }
 
 function finishBedBox(how) {
@@ -1813,11 +1777,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  if (bed) {
-    if (bed.step === "width") { bedWidth(e); bedLockWidth("click"); }
-    else finishBedBox("click");
-    return;
-  }
+  if (bed) { finishBedBox("click"); return; }
 
   if (move) {
     if (move.step === "grab") {
@@ -1873,11 +1833,26 @@ canvas.addEventListener("pointerdown", (e) => {
     };
     // OrbitControls ignores the left button, so the middle button still orbits mid-drag.
     canvas.setPointerCapture(e.pointerId);
-    log("handle.start", { id: cabId, handle: handle.type, index: handle.index, envelope: getModule(cab.moduleId).envelope(cab.params) });
+    log("handle.start", { id: cabId, handle: handle.type, index: handle.index, key: handle.key || undefined, envelope: getModule(cab.moduleId).envelope(cab.params) });
     emitMode();
     return;
   }
 
+  // Drill down module → board → face: the first click takes the cabinet, a click on a board of
+  // the selected cabinet takes that board, a click on the selected board takes the face under
+  // the cursor. Esc (or the cabinet row in the tree) climbs back up.
+  if (cabId === job.getSelectedId() && hit.object.userData.boardId) {
+    const sub = job.getSubSelection();
+    const under = faceUnderHit(hit);
+    if (!sub || sub.boardId !== under.boardId) job.select(cabId, { boardId: under.boardId });
+    else job.select(cabId, { boardId: under.boardId, faceId: under.faceId });
+    return;
+  }
+  // A volume-only module laid out in regions (bedroom body): the second click takes the region.
+  if (cabId === job.getSelectedId() && hit.object.userData.regionId) {
+    job.select(cabId, { regionId: hit.object.userData.regionId });
+    return;
+  }
   job.select(cabId);
 });
 
@@ -1985,9 +1960,13 @@ function handleDragMove(e) {
   } else if (h.type === "divider") {
     job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, h.pos + delta), { history: false });
   }
-  const env = mod.envelope(job.getJob().cabinets.find((c) => c.id === drag.cabId).params);
-  const val = h.type === "divider" ? null : `${h.type} ${Math.round(h.type === "D" ? env.D + FRONT_THICKNESS_DEFAULT : env[h.type])}`;
-  showTip(e.clientX, e.clientY, [val || "Zone boundary", stopped ? `Stopped at ${stoppedBy}` : null], stopped ? "warn" : "");
+  const now = job.getJob().cabinets.find((c) => c.id === drag.cabId).params;
+  const env = mod.envelope(now);
+  // A layout bar (bedroom body) names the number it drives; a zone bar just says what it is.
+  const val = h.type === "divider"
+    ? (h.key && now[h.key] != null ? `${LAYOUT_LABEL[h.key] || h.key} ${Math.round(now[h.key])}` : "Zone boundary")
+    : `${h.type} ${Math.round(h.type === "D" ? env.D + FRONT_THICKNESS_DEFAULT : env[h.type])}`;
+  showTip(e.clientX, e.clientY, [val, stopped ? `Stopped at ${stoppedBy}` : null], stopped ? "warn" : "");
 }
 
 function endDrag(e) {
@@ -2001,6 +1980,9 @@ function endDrag(e) {
     id: d.cabId, handle: d.handle.type, index: d.handle.index, changed,
     envelope: cab ? getModule(cab.moduleId).envelope(cab.params) : null,
     zones: cab && cab.params.zones ? cab.params.zones.map((z) => z.height ?? z.width) : undefined,
+    // A layout bar (bedroom body): which number it drove and where it ended up.
+    key: d.handle.key || undefined,
+    value: cab && d.handle.key ? cab.params[d.handle.key] : undefined,
     pose: cab ? cab.pose : null,
   });
   hideTip();
@@ -2050,7 +2032,7 @@ function focusedDim() {
 function typableDims() {
   if (cplane) return ["W"];
   if (nose) return ["D"];
-  if (bed) return bed.step === "width" ? ["W"] : ["W", "D"];
+  if (bed) return ["D"];
   if (rb && rb.step === "face") return DIM_ORDER.filter((k) => AXIS_OF[k] !== rb.plane.axis);
   return DIM_ORDER;
 }
@@ -2105,11 +2087,11 @@ function setTyped(k, v) {
     log("plane.typein", { value: dimInputs.W.value, locked: cplane.locked });
     updatePlane(null);
   } else if (bed) {
-    if (k !== "W" && k !== "D") return;
-    const min = getModule(bed.moduleId).minSize[k];
-    bed.locked[k] = v != null && v >= min ? v : null;
-    log("bedbox.typein", { dim: k, value: dimInputs[k].value, locked: bed.locked[k], step: bed.step });
-    if (k === "W") bedWidth(null); else if (bed.step === "depth") bedDepth(null);
+    if (k !== "D") return; // W and H come from the body
+    const min = getModule(bed.moduleId).minSize.D;
+    bed.locked.D = v != null && v >= min ? v : null;
+    log("bedbox.typein", { dim: k, value: dimInputs.D.value, locked: bed.locked.D, step: bed.step });
+    bedDepth(null);
     drawBedBox(null);
   } else if (nose) {
     if (k !== "D") return;
@@ -2161,7 +2143,7 @@ for (const k of DIM_ORDER) {
       commitDim(k);
       if (nose) finishNose("enter");
       else if (cplane) { if (cplane.step === "offset") finishPlane("enter"); }
-      else if (bed) { if (bed.step === "width") bedLockWidth("enter"); else finishBedBox("enter"); }
+      else if (bed) finishBedBox("enter");
       else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else if (retype) endRetype(true);
@@ -2211,7 +2193,7 @@ window.addEventListener("keydown", (e) => {
       e.preventDefault();
       if (nose) finishNose("enter");
       else if (cplane) finishPlane("enter");
-      else if (bed) { if (bed.step === "width") bedLockWidth("enter"); else finishBedBox("enter"); }
+      else if (bed) finishBedBox("enter");
       else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else endRetype(true);
@@ -2234,6 +2216,13 @@ window.addEventListener("keydown", (e) => {
     if (move) cancelMove();
     else if (cplane) cancelPlane();
     else if (placing) disarm();
+    else if (disarmHandle()) log("handle.arm", { id: job.getSelectedId(), on: false, how: "esc" }); // an on-demand arrow goes first
+    else if (job.getSubSelection()) {
+      // Face → board → cabinet, one level per Esc.
+      const sub = job.getSubSelection();
+      job.select(sub.cabId, sub.faceId ? { boardId: sub.boardId } : null);
+    }
+    else if (job.getSelectedRegion()) job.select(job.getSelectedId()); // region → body
     else job.select(null);
     return;
   }
