@@ -87,6 +87,7 @@ function mergePins(base, add) {
 }
 function checkPins(result, pins, tol = PIN_TOL_MM) {
   const out = [];
+  if (!pins) return out;
   const byId = new Map(result.boards.map((b) => [b.id, b]));
   const near = (a, b) => a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tol;
   for (const [id, faces] of Object.entries(pins.boards ?? {})) {
@@ -164,6 +165,7 @@ function checkPins(result, pins, tol = PIN_TOL_MM) {
 }
 function countPins(pins) {
   let n = 0;
+  if (!pins) return n;
   for (const f of Object.values(pins.boards ?? {})) n += Object.keys(f).length;
   for (const f of Object.values(pins.zones ?? {})) n += Object.keys(f).length;
   for (const pts of Object.values(pins.points ?? {})) n += pts.reduce((s, p) => s + p.length, 0);

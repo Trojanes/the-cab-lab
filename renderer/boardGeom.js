@@ -2,6 +2,7 @@
 // generator bench so both draw the same board the same way. Display only: a
 // board with an outline is extruded from it, otherwise it is its bounding box.
 import * as THREE from "three";
+import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
 
 function closedPath(points, map) {
   const pts = points.map(map);
@@ -28,10 +29,9 @@ export function prismYZ(outline, x0, x1, holes = []) {
 }
 
 /** Solid from a closed XY outline [{x, y}, ...] extruded up Z from z0 to z1 (an OHC T3 with its LED notch). */
-export function prismXY(outline, z0, z1) {
-  const pts = outline.map((p) => new THREE.Vector2(p.x, p.y));
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  const geo = new THREE.ExtrudeGeometry(new THREE.Shape(pts), { depth: Math.max(z1 - z0, 0.1), bevelEnabled: false });
+export function prismXY(outline, z0, z1, holes = []) {
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.x, p.y));
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(z1 - z0, 0.1), bevelEnabled: false });
   geo.translate(0, 0, z0);
   return geo;
 }
@@ -51,8 +51,23 @@ export function prismXZ(outline, y0, y1, holes = []) {
  * its profile plane — or null when it is a plain box. YZ outlines are
  * cabinet-local already (or board-local `cutProfileVector`, shifted by y0/z0);
  * XY / XZ outlines are aligned so their minimum meets the board's bounding
- * box, like the Fusion adapter does (`_align_body_axis_min`).
+ * box (`_align_body_axis_min`).
  */
+function xyShift(b) {
+  const pv = b.profileVector;
+  if (!pv || pv.length < 4) return { dx: 0, dy: 0 };
+  return {
+    dx: b.x0 - Math.min(...pv.map((p) => p.x)),
+    dy: b.y0 - Math.min(...pv.map((p) => p.y)),
+  };
+}
+
+export function boardHoles(b) {
+  if (b.profilePlane !== "XY" || b.thicknessAxis !== "Z" || !b.profileHoles) return [];
+  const { dx, dy } = xyShift(b);
+  return b.profileHoles.map((hole) => hole.map((p) => ({ x: p.x + dx, y: p.y + dy })));
+}
+
 export function boardOutline(b) {
   const plane = b.profilePlane;
   const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
@@ -62,8 +77,7 @@ export function boardOutline(b) {
     return null;
   }
   if (plane === "XY" && b.thicknessAxis === "Z" && pv) {
-    const dx = b.x0 - Math.min(...pv.map((p) => p.x));
-    const dy = b.y0 - Math.min(...pv.map((p) => p.y));
+    const { dx, dy } = xyShift(b);
     return pv.map((p) => ({ x: p.x + dx, y: p.y + dy }));
   }
   if (plane === "XZ" && b.thicknessAxis === "Y" && pv) {
@@ -78,11 +92,26 @@ export function boardOutline(b) {
  * Board solid: its outline extruded through its thickness when it has one,
  * else `{ geo: null, cut: false }` (draw the bounding box).
  */
+function shiftXY(points, dx, dy) {
+  return points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+}
+
 export function boardGeometry(b) {
+  if (b.profilePlane === "XY" && b.thicknessAxis === "Z" && b.slabs && b.slabs.length) {
+    const { dx, dy } = xyShift(b);
+    const geos = b.slabs.map((slab) => prismXY(
+      shiftXY(slab.outline, dx, dy),
+      slab.z0,
+      slab.z1,
+      (slab.holes || []).map((hole) => shiftXY(hole, dx, dy)),
+    ));
+    const geo = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+    return { geo, cut: true };
+  }
   const outline = boardOutline(b);
   if (!outline) return { geo: null, cut: false };
   if (b.profilePlane === "YZ") return { geo: prismYZ(outline, b.x0, b.x1), cut: true };
-  if (b.profilePlane === "XY") return { geo: prismXY(outline, b.z0, b.z1), cut: true };
+  if (b.profilePlane === "XY") return { geo: prismXY(outline, b.z0, b.z1, boardHoles(b)), cut: true };
   return { geo: prismXZ(outline, b.y0, b.y1), cut: true };
 }
 

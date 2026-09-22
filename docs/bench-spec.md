@@ -33,8 +33,7 @@ Decisions taken 2026‑09‑16:
   generator test reads them; hand‑written `box()` asserts are removed.
 - Golden OHC preset: **W 2000 × D 400 × H 400**, three equal `up_flap` zones.
 - Bench = separate `BrowserWindow`; tabs are independent (no split view).
-- Audience: developers only. Fusion‑copy generators are not connected until
-  they follow the OHC architecture (`boardFrame: "final"`, boards only).
+- Audience: developers only. A generator joins when it uses `boardFrame: "final"` and boards only.
 - Reports are files (`logs/bench/<time>-<module>.md`); the agent reads them via
   the usage‑log rule instead of the user pasting text.
 

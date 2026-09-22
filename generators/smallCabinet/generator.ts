@@ -10,7 +10,7 @@
  * - Front clearance via frontPanelCalculator (GT/Kitchen neighbor rules).
  * - TOP / MID / BOTTOM: depth/3 through tongues into sides; side grooves ±5 / ±0.5.
  * - BACK: height/3 through tongues into sides; side grooves ±5 / ±0.5.
- * - Side doors: optional door lock cutout (GT-sized rounded slot; Fusion-cut).
+ * - Side doors: optional door lock cutout (rounded slot).
  *
  * Coordinates: X left→right, Y front carcass (0) → back (D), Z floor→top.
  * Front panels sit at Y = -FPT .. 0.
@@ -442,7 +442,6 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
       centerX = Math.max(front.x0 + halfW, Math.min(front.x1 - halfW, centerX));
       centerZ = Math.max(front.z0 + halfH, Math.min(front.z1 - halfH, centerZ));
       front.lockCutout = lockCutoutFromCenter(centerX, centerZ);
-      // Fields expected by Fusion GT lock cutter (_gt_cut_fp_lock).
       (front as Board & { thickness?: number }).thickness = FPT;
       features.push({
         id: `${front.id}_door_lock`,

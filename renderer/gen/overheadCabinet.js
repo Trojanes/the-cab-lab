@@ -1098,7 +1098,7 @@ function buildOverheadFaces(fb) {
         depth: Math.abs(g.z[1] - g.z[0]),
         for: df.id,
         key: `BP.feat.${g.id}`,
-        source: "overhead_geometry"
+        source: "overhead"
       });
     });
   }
@@ -1114,14 +1114,14 @@ function buildOverheadFaces(fb) {
     tagEdges(d, "tongue", { u0: tongueY0 - d.y0 - EPS, u1: tongueY1 - d.y0 + EPS, v0: -tongueH - EPS, v1: -EPS }, {
       id: `${df.id}_TONGUE`,
       for: onRangehood ? "RGHD_TOP" : "BP",
-      source: "overhead_geometry"
+      source: "overhead"
     });
     if (B.has("T3")) {
       const frontStepY1 = RULES.FRONT_TOP_NOTCH_Y_OFFSET_MM.value + RULES.FRONT_TOP_STEP_Y_MM.value;
       tagEdges(d, "notch", { u0: -EPS, u1: frontStepY1 + EPS, v0: zTop - tch - slot - EPS, v1: zTop - tch + EPS }, {
         id: `${df.id}_T3_STEP`,
         for: "T3",
-        source: "overhead_geometry"
+        source: "overhead"
       });
     }
     if (B.has("T4")) {
@@ -1129,7 +1129,7 @@ function buildOverheadFaces(fb) {
       tagEdges(d, "notch", { u0: d.y1 - d.y0 - slot - EPS, u1: d.y1 - d.y0 + EPS, v0: zTop - rearNotchH - EPS, v1: zTop - EPS }, {
         id: `${df.id}_T4_NOTCH`,
         for: "T4",
-        source: "overhead_geometry"
+        source: "overhead"
       });
     }
   }
@@ -1160,7 +1160,7 @@ function buildOverheadFaces(fb) {
         through: false,
         for: hole.for_divider,
         key: K,
-        source: "overhead_geometry"
+        source: "overhead"
       });
     }
   }
@@ -1177,7 +1177,7 @@ function buildOverheadFaces(fb) {
       through: false,
       for: "hinge",
       key: `${h.boardId}.feat.${n}`,
-      source: "overhead_geometry_v7"
+      source: "overhead"
     });
   }
   for (const led of fb.ledFeatures) {
@@ -1483,7 +1483,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       y1: dim("BP.y1", { Cd: P.Cd }, (t2) => t2.Cd),
       z0: zero("BP.z0"),
       z1: dim("BP.z1", { CPT }, (t2) => t2.CPT),
-      source: "overhead_geometry"
+      source: "overhead"
     }
   ];
   boards.push({
@@ -1500,7 +1500,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
     y1: dim("T1.y1", { y0: ref("T1.y0"), FPT }, (t2) => t2.y0 + t2.FPT),
     z0: dim("T1.z0", { H: P.H, TCH }, (t2) => t2.H - t2.TCH),
     z1: dim("T1.z1", { H: P.H }, (t2) => t2.H),
-    source: "overhead_geometry_v7"
+    source: "overhead"
   });
   boards.push({
     id: "T2",
@@ -1516,7 +1516,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
     y1: dim("T2.y1", { y0: ref("T2.y0"), CPT }, (t2) => t2.y0 + t2.CPT),
     z0: same("T2.z0", "T1.z0"),
     z1: same("T2.z1", "T1.z1"),
-    source: "overhead_geometry_v7"
+    source: "overhead"
   });
   if (geometry.trimmed_vectors.T3.length > 0) {
     const t3Depth = Math.max(...geometry.trimmed_vectors.T3.map(([, y]) => y));
@@ -1535,7 +1535,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       y1: dim("T3.y1", { rearY: ref("T3.pv.rearY") }, () => t3Depth, { formula: "rearY" }),
       z0: dim("T3.z0", { z1: ref("T3.z1"), CPT }, (t2) => t2.z1 - t2.CPT),
       z1: t3Top,
-      source: "overhead_geometry",
+      source: "overhead",
       profileVector: geometry.trimmed_vectors.T3.map(([x, y]) => ({ x, y }))
     });
   }
@@ -1556,7 +1556,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       y1: t4Y1,
       z0: dim("T4.z0", { H: P.H, top: ref("T4.pv.top") }, () => height - t4Height, { formula: "H - top" }),
       z1: dim("T4.z1", { H: P.H }, (t2) => t2.H),
-      source: "overhead_geometry",
+      source: "overhead",
       profileVector: geometry.trimmed_vectors.T4.map(([x, z]) => ({ x, z }))
     });
   }
@@ -1585,7 +1585,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       y1: dim(`${id}.y1`, { Cd: P.Cd }, (t2) => t2.Cd),
       z0: dividerZ0,
       z1: dividerTopZ,
-      source: "overhead_geometry",
+      source: "overhead",
       cutProfileVector: dividerProfile.length > 0 ? dividerProfile.map(([y, z]) => ({ y, z })) : void 0,
       profileFeatures: [
         ...isInternalRangehoodDivider ? [] : [feature.bp_groove],
@@ -1679,7 +1679,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       y1: panel.y[1],
       z0: panel.z[0],
       z1: panel.z[1],
-      source: "overhead_geometry_v7",
+      source: "overhead",
       profileVector: [
         { x: 0, z: 0 },
         { x: panel.width, z: 0 },
@@ -1926,7 +1926,6 @@ function generateOverheadCabinetInner(rawParams) {
       debug: {
         phase: "geometry_v1",
         boardFrame: OVERHEAD_BOARD_FRAME,
-        legacyReference: "fusion360-cabinet-generator/core/overhead_geometry.py",
         dividerCenterlines: centerlines,
         provenance: endProvenance()
       }
@@ -1970,7 +1969,6 @@ function generateOverheadCabinetInner(rawParams) {
     debug: {
       phase: "geometry_v1",
       boardFrame: OVERHEAD_BOARD_FRAME,
-      legacyReference: "fusion360-cabinet-generator/core/overhead_geometry.py",
       dividerCenterlines: centerlines,
       legacyGeometry: geometry,
       svgPreview: generateOHCSvgPreview(geometry, {

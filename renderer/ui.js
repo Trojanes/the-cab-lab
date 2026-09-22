@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes } from "./cabinets3d.js";
 import { syncWalls } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, startMove, startOrient, startPlane } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -24,7 +24,7 @@ const list = $("#moduleList");
 const rail = $("#leftrail");
 const grouped = new Set(MODULE_GROUPS.flatMap((g) => g.items.map((i) => i.moduleId).filter(Boolean)));
 
-function moduleButton(mod, label = mod.label, sub = mod.sub) {
+function moduleButton(mod, label = mod.label, sub = mod.sub, onClick = null) {
   const btn = document.createElement("button");
   btn.className = "rail-item";
   btn.dataset.module = mod.id;
@@ -32,10 +32,10 @@ function moduleButton(mod, label = mod.label, sub = mod.sub) {
   btn.innerHTML = `<span class="rail-name"></span><span class="rail-sub"></span>`;
   $(".rail-name", btn).textContent = label;
   $(".rail-sub", btn).textContent = sub;
-  btn.addEventListener("click", () => {
+  btn.addEventListener("click", onClick || (() => {
     if (getPlacingModule() === mod.id) disarm();
     else armPlacement(mod.id);
-  });
+  }));
   railContext(btn, mod.id);
   return btn;
 }
@@ -76,7 +76,14 @@ for (const group of MODULE_GROUPS) {
   fly.className = "rail-flyout hidden";
   fly.append(Object.assign(document.createElement("div"), { className: "rail-title", textContent: group.label }));
   for (const item of group.items) {
-    if (item.moduleId && MODULES[item.moduleId]) fly.append(moduleButton(MODULES[item.moduleId], item.label, item.sub));
+    if (item.lounge && MODULES.loungeGenerator) {
+      const btn = moduleButton(MODULES.loungeGenerator, item.label, item.sub, () => {
+        if (getLoungeStyle() === item.lounge) disarm();
+        else startLounge(item.lounge);
+      });
+      btn.dataset.lounge = item.lounge;
+      fly.append(btn);
+    } else if (item.moduleId && MODULES[item.moduleId]) fly.append(moduleButton(MODULES[item.moduleId], item.label, item.sub));
     else fly.append(plannedButton(item.label, item.sub));
   }
   const open = () => {
@@ -114,6 +121,10 @@ function refreshRail() {
       b.disabled = !has;
       b.title = has ? "" : `Place the ${MODULES[b.dataset.requires].label} body first`;
     }
+    if (b.dataset.lounge) {
+      b.classList.toggle("active", getLoungeStyle() === b.dataset.lounge);
+      return;
+    }
     if (b.dataset.group) {
       const group = MODULE_GROUPS.find((g) => g.id === b.dataset.group);
       b.classList.toggle("active", !!placing && group.items.some((i) => i.moduleId === placing));
@@ -122,6 +133,14 @@ function refreshRail() {
     b.classList.toggle("active", b.dataset.module ? b.dataset.module === placing : (!placing && !sel && b.hasAttribute("data-space")));
   });
   const mode = getMode();
+  const loungeStep = mode.startsWith("lounge.") ? mode.slice("lounge.".length) : null;
+  const LOUNGE_HINT = {
+    corner: "click one corner of the plan · Esc cancels",
+    face: "click the opposite corner — that sets length and depth together · type W or D · Esc steps back",
+    side: "the lit end gets the side cabinet · click it · Esc steps back",
+    width: "pull the side cabinet's width · type W · click or Enter · Esc steps back",
+    height: "pull the height · type H · click or Enter creates · Esc steps back",
+  };
   const HINTS = {
     armed: placing
       ? MODULES[placing].placement === "ceiling"
@@ -141,7 +160,9 @@ function refreshRail() {
     "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
   };
-  $("#modeHint").textContent = HINTS[mode] || "";
+  $("#modeHint").textContent = loungeStep
+    ? `Lounge ${getLoungeStyle()} — ${LOUNGE_HINT[loungeStep] || ""}`
+    : (HINTS[mode] || "");
 }
 
 // --- view buttons ---------------------------------------------------------------
@@ -156,7 +177,35 @@ $$("#viewGroup [data-view]").forEach((btn) => {
 
 // --- drawer ---------------------------------------------------------------------
 const drawer = $("#drawer");
+const DRAWER_H_KEY = "cablab.drawerH";
+const DRAWER_MIN = 120;
+const savedDrawerH = Number(localStorage.getItem(DRAWER_H_KEY));
+if (savedDrawerH >= DRAWER_MIN) {
+  document.documentElement.style.setProperty("--drawer-h", `${savedDrawerH}px`);
+}
 $("#drawerToggle").addEventListener("click", () => drawer.classList.toggle("collapsed"));
+$("#drawerResize").addEventListener("pointerdown", (e) => {
+  if (e.button !== 0 || drawer.classList.contains("collapsed")) return;
+  e.preventDefault();
+  const startY = e.clientY;
+  const startH = drawer.getBoundingClientRect().height;
+  const max = Math.max(DRAWER_MIN, drawer.parentElement.getBoundingClientRect().height - 80);
+  drawer.classList.add("resizing");
+  e.currentTarget.setPointerCapture(e.pointerId);
+  const move = (ev) => {
+    const next = Math.min(max, Math.max(DRAWER_MIN, startH + (startY - ev.clientY)));
+    document.documentElement.style.setProperty("--drawer-h", `${Math.round(next)}px`);
+  };
+  const up = (ev) => {
+    drawer.classList.remove("resizing");
+    try { e.currentTarget.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+    localStorage.setItem(DRAWER_H_KEY, String(Math.round(drawer.getBoundingClientRect().height)));
+    window.removeEventListener("pointermove", move);
+    window.removeEventListener("pointerup", up);
+  };
+  window.addEventListener("pointermove", move);
+  window.addEventListener("pointerup", up);
+});
 $$("#drawer .dtab").forEach((tab) => {
   tab.addEventListener("click", () => {
     $$("#drawer .dtab").forEach((t) => t.classList.toggle("active", t === tab));

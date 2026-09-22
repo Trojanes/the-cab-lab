@@ -4,7 +4,7 @@
 // presets.json, reports and log events — never geometry.
 import * as THREE from "three";
 import { scene, camera, controls, canvas, renderer, setView, frame, rayFromClient } from "../space.js";
-import { MODULES } from "../modules.js";
+import { MODULES, moduleIdForGenerator } from "../modules.js";
 import { boardMesh } from "../boardGeom.js";
 import { showTip, hideTip } from "../hud.js";
 import { log } from "../log.js";
@@ -1731,7 +1731,8 @@ function renderEmpty() {
 loadState();
 if (bench) {
   bench.onShow(async (req) => {
-    const moduleId = req.moduleId && MODULES[req.moduleId] ? req.moduleId : "overheadCabinet";
+    const resolved = moduleIdForGenerator(req.moduleId);
+    const moduleId = resolved && MODULES[resolved] ? resolved : "overheadCabinet";
     if (req.params) await openTab(moduleId, { params: structuredClone(req.params), presetId: null, label: `${MODULES[moduleId].label} · ${req.cabinetId || "from job"}` }, req.from || "cabinet");
     else await openTab(moduleId, {}, req.from || "rail");
   });

@@ -21,7 +21,8 @@
 // height = floor + clearance … roof − clearance (walls.js).
 import * as job from "./job.js";
 import { snap } from "./job.js";
-import { envelopeFootprint } from "./cabinets3d.js";
+import { cabinetFootprints } from "./cabinets3d.js";
+import { loungeFromPolyline } from "./gen/lounge.js";
 import { thickness } from "./materials.js";
 import { wallSolid, wallStatus, wallBoxes, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
 import { solidBoxes } from "./walls3d.js";
@@ -41,6 +42,7 @@ const dimInput = dimEl.querySelector("input");
 const wallBtn = overlay.querySelector('[data-fp-tool="wall"]');
 const doorBtn = overlay.querySelector('[data-fp-tool="door"]');
 const slideBtn = overlay.querySelector('[data-fp-tool="slide"]');
+const loungeBtn = overlay.querySelector('[data-fp-tool="lounge"]');
 const cardEl = overlay.querySelector(".fp-card");
 const cardTitle = cardEl.querySelector(".fp-card-title");
 const cardBottom = cardEl.querySelector('[data-op="bottom"]');
@@ -118,6 +120,7 @@ overlay.querySelector('[data-fp="fit"]').addEventListener("click", () => { fit()
 wallBtn.addEventListener("click", () => setTool(tool && tool.kind === "wall" ? null : "wall"));
 doorBtn.addEventListener("click", () => setTool(isDoor("showerDoor") ? null : "door"));
 slideBtn.addEventListener("click", () => setTool(isDoor("slidingDoor") ? null : "slide"));
+if (loungeBtn) loungeBtn.addEventListener("click", () => setTool(tool && tool.kind === "lounge" ? null : "lounge"));
 
 // --- view -----------------------------------------------------------------------------
 
@@ -157,9 +160,14 @@ const tolMm = () => PICK_PX / view.k;
 // --- data ------------------------------------------------------------------------------
 
 function cabBoxes() {
-  return job.getJob().cabinets.map((c) => {
-    const fp = envelopeFootprint(c, c.pose);
-    return { id: c.id, x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1], pose: c.pose, moduleId: c.moduleId };
+  return job.getJob().cabinets.flatMap((c) => {
+    const fps = cabinetFootprints(c, c.pose);
+    return fps.map((fp, i) => ({
+      id: fps.length === 1 ? c.id : `${c.id}:${fp.id || i}`,
+      cabId: c.id,
+      x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1],
+      pose: c.pose, moduleId: c.moduleId, cab: c,
+    }));
   });
 }
 function feats() {
@@ -248,7 +256,7 @@ function sourceFace(e, p) {
 // --- tool ------------------------------------------------------------------------------
 
 const HINTS = {
-  idle: "Click a wall or a door to select it · Delete removes it · Wall (W) / Shower door (D) / Sliding door (S) draw · wheel zooms · middle / right-drag pans · Esc closes",
+  idle: "Click a wall or a door to select it · Delete removes it · Wall (W) / Shower door (D) / Sliding door (S) / Lounge (G) · wheel zooms · middle / right-drag pans · Esc closes",
   "wall.pt1": "Wall — click the first point on a wall of the space, a partition or a cabinet side (a corner, a junction, 10 mm along it, or in line with another wall) · right-click leaves the tool",
   "wall.pt2": "Wall — click the second point on the same line · Tab / digits type L · Enter takes the far end · right-click restarts",
   "wall.offset": "Pull the wall out to either side · Tab / digits type Offset (clear distance to its near face) · click or Enter drops it · right-click restarts",
@@ -261,9 +269,13 @@ const HINTS = {
   "slidingDoor.width": "Sliding door — pull to the other side of the opening · Tab / digits type W · click or Enter · right-click restarts",
   "slidingDoor.side": "Sliding door — move to the side of the wall the door hangs on: the leaf and the pelmet follow · click or Enter · right-click restarts",
   "slidingDoor.clear": "Sliding door — top clearance (= pelmet height), leaf overlap and leaf height (mm) · Enter creates · Esc / right-click cancels",
+  "lounge.p1": "Lounge — click the first point of the back edge (the wall the seat sits against) · 2 pts = I · 3 orthogonal = L · 3 colinear = Parallel · right-click leaves",
+  "lounge.p2": "Lounge — click the next back-edge point (axis-aligned from the last) · Enter finishes an I-run · right-click restarts",
+  "lounge.p3": "Lounge — click a third point (orthogonal = L, colinear = Parallel) or Enter to finish I · right-click restarts",
+  "lounge.p4": "Lounge — Enter drops the run · right-click restarts",
 };
-const FIRST = { wall: "pt1", door: "end" };
-const DRAW_LOG = { wall: "wall.draw", door: "opening.draw" };
+const FIRST = { wall: "pt1", door: "end", lounge: "p1" };
+const DRAW_LOG = { wall: "wall.draw", door: "opening.draw", lounge: "lounge.place" };
 /** Tool button → door type (the two door buttons drive one tool kind, "door"). */
 const DOOR_TYPE = { door: "showerDoor", slide: "slidingDoor" };
 
@@ -271,12 +283,15 @@ function isDoor(type = null) {
   return !!tool && tool.kind === "door" && (type == null || tool.type === type);
 }
 function newTool(kind, type = null) {
-  return kind === "door" ? { kind, type, step: "end", locked: null } : { kind, step: FIRST[kind], locked: null };
+  if (kind === "door") return { kind, type, step: "end", locked: null };
+  if (kind === "lounge") return { kind, step: "p1", pts: [], locked: null };
+  return { kind, step: FIRST[kind], locked: null };
 }
 function syncToolButtons() {
   wallBtn.classList.toggle("active", !!tool && tool.kind === "wall");
   doorBtn.classList.toggle("active", isDoor("showerDoor"));
   slideBtn.classList.toggle("active", isDoor("slidingDoor"));
+  if (loungeBtn) loungeBtn.classList.toggle("active", !!tool && tool.kind === "lounge");
 }
 
 function setTool(kind, { silent = false } = {}) {
@@ -745,6 +760,10 @@ function resolve(p) {
     return out;
   }
   if (tool.kind === "door") return resolveDoor(p);
+  if (tool.kind === "lounge") {
+    out.pt = { x: snap(p.x), y: snap(p.y) };
+    return out;
+  }
   if (tool.step === "pt1") {
     const e = nearestEdge(p, F.edges, tol, drawable);
     if (e) {
@@ -818,17 +837,72 @@ function openingAt(s, p) {
 
 // --- clicks / commits ----------------------------------------------------------------------
 
+function axisAlign(from, to) {
+  const adx = Math.abs(to.x - from.x);
+  const ady = Math.abs(to.y - from.y);
+  return adx >= ady ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+}
+
+function clickLounge(p) {
+  cur = resolve(p);
+  const raw = cur.pt || p;
+  if (!tool.pts) tool.pts = [];
+  const pt = tool.pts.length ? axisAlign(tool.pts[tool.pts.length - 1], raw) : { x: raw.x, y: raw.y };
+  const last = tool.pts[tool.pts.length - 1];
+  if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 10) { flashTip(); return; }
+  if ((tool.pts || []).length >= 3) { flashTip(); return; }
+  tool.pts.push(pt);
+  log("lounge.place.point", { n: tool.pts.length, x: pt.x, y: pt.y, snap: cur.snap ? cur.snap.kind : null });
+  tool.step = `p${tool.pts.length + 1}`;
+}
+
+function commitLounge(how) {
+  const pts = tool.pts || [];
+  if (pts.length < 2) { log("lounge.place.blocked", { how, reason: "need 2 points" }); flashTip(); return; }
+  let placed;
+  try { placed = loungeFromPolyline(pts); }
+  catch (err) { log("lounge.place.blocked", { how, reason: String(err.message || err) }); flashTip(); return; }
+  const env = {
+    W: placed.params.mainWidth || placed.params.totalWidth || 2000,
+    D: placed.params.lDepth || placed.params.mainDepth || placed.params.depth || 800,
+    H: placed.params.height || 420,
+  };
+  const cab = job.addCabinet("loungeGenerator", placed.pose, env, placed.params);
+  log("lounge.place.commit", { how, id: cab.id, style: placed.params.style, pts, pose: placed.pose });
+  tool = newTool("lounge");
+  hideDim();
+  updateHint();
+  render();
+}
+
+function drawLoungeTool() {
+  const pts = (tool.pts || []).slice();
+  if (cur && cur.pt) {
+    const next = pts.length ? axisAlign(pts[pts.length - 1], cur.pt) : cur.pt;
+    pts.push(next);
+  }
+  for (let i = 1; i < pts.length; i += 1) line(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, C.accent, 2);
+  for (const q of pts) dot(q.x, q.y, 5, C.point);
+}
+
+
 function click(p) {
   cur = resolve(p);
   if (!tool) {
     const hit = cur.hover;
     selectedOpening = cur.hoverOpening ? cur.hoverOpening.id : null;
-    job.select(hit ? hit.id : null);
-    log("floorplan.select", { id: hit ? hit.id : null, kind: hit ? hit.kind : null, opening: selectedOpening });
+    job.select(hit ? (hit.cab?.cabId || hit.id) : null);
+    log("floorplan.select", { id: hit ? (hit.cab?.cabId || hit.id) : null, kind: hit ? hit.kind : null, opening: selectedOpening });
     render();
     return;
   }
   if (tool.kind === "door") { clickDoor(p); return; }
+  if (tool.kind === "lounge") {
+    clickLounge(p);
+    updateHint();
+    render();
+    return;
+  }
   if (tool.step === "pt1") {
     if (!cur.edge) return;
     tool.edge = cur.edge;
@@ -885,6 +959,7 @@ function enter() {
     else if (tool.step === "clear") { readCard(); commitDoor("enter"); }
     return;
   }
+  if (tool.kind === "lounge") { commitLounge("enter"); return; }
   if (tool.step === "pt2") {
     if (mouse) cur = resolve(mouse); // lets the cursor pick the edge at a corner
     const e = tool.edge;
@@ -1119,6 +1194,7 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "w" || e.key === "W") { setTool(tool && tool.kind === "wall" ? null : "wall"); return; }
   if (e.key === "d" || e.key === "D") { setTool(isDoor("showerDoor") ? null : "door"); return; }
   if (e.key === "s" || e.key === "S") { setTool(isDoor("slidingDoor") ? null : "slide"); return; }
+  if (e.key === "g" || e.key === "G") { setTool(tool && tool.kind === "lounge" ? null : "lounge"); return; }
   if (tool && dimOpen() && /^[0-9.+\-*/]$/.test(e.key)) {
     dimInput.value = "";
     dimEl.classList.add("focused");
@@ -1289,6 +1365,7 @@ function render() {
 
   // Tool feedback.
   if (cur && tool && tool.kind === "door") drawDoorTool();
+  else if (cur && tool && tool.kind === "lounge") drawLoungeTool();
   else if (cur && tool) drawTool(F);
   else if (cur && cur.hover) {
     const s = cur.hover;

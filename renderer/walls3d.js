@@ -7,7 +7,7 @@ import { scene } from "./space.js";
 import { getJob, getWalls, getSelectedId, getSpace, getStock } from "./job.js";
 import { prismYZ, prismXZ } from "./boardGeom.js";
 import { wallSolid, wallStatus, wallBoxes, allWallParts } from "./walls.js";
-import { envelopeFootprint } from "./cabinets3d.js";
+import { cabinetFootprints } from "./cabinets3d.js";
 
 // White Stipple partition stock: lighter than the tan carcass so a wall reads as a wall.
 const wallMat = new THREE.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.85 });
@@ -33,8 +33,14 @@ export function solidBoxes({ excludeWall = null } = {}) {
   const boxes = wallBoxes(walls.filter((w) => w.id !== excludeWall), sp, stock);
   boxes.push(...allWallParts(walls, sp, stock).filter((p) => p.wallId !== excludeWall));
   for (const cab of getJob().cabinets) {
-    const fp = envelopeFootprint(cab, cab.pose);
-    boxes.push({ id: cab.id, kind: "cabinet", x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] });
+    const fps = cabinetFootprints(cab, cab.pose);
+    fps.forEach((fp, i) => {
+      boxes.push({
+        id: fps.length === 1 ? cab.id : `${cab.id}:${fp.id || i}`,
+        kind: "cabinet", cabId: cab.id,
+        x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1],
+      });
+    });
   }
   return boxes;
 }

@@ -133,7 +133,7 @@ export function buildShelfTongueSpec(shelf: Board, panelThickness: number): Shel
     y1: shelf.y1,
     tongueY0,
     tongueY1,
-    // Through tongue so side groove reads on the outer face (matches Fusion visual).
+    // Through tongue so the side groove reads on the outer face.
     tongueLength: round1(panelThickness),
     z0: shelf.z0,
     z1: shelf.z1,

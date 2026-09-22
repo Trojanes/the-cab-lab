@@ -159,8 +159,9 @@ export function mergePins(base: Pins, add: Pins): Pins {
 }
 
 /** Every pinned value that the result does not reproduce within PIN_TOL_MM. */
-export function checkPins(result: ResultLike, pins: Pins, tol = PIN_TOL_MM): PinMismatch[] {
+export function checkPins(result: ResultLike, pins: Pins | undefined, tol = PIN_TOL_MM): PinMismatch[] {
   const out: PinMismatch[] = [];
+  if (!pins) return out;
   const byId = new Map(result.boards.map((b) => [b.id, b]));
   const near = (a: number | null | undefined, b: number | null | undefined) =>
     a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= tol;
@@ -240,8 +241,9 @@ export function checkPins(result: ResultLike, pins: Pins, tol = PIN_TOL_MM): Pin
 }
 
 /** Number of pinned values in a Pins object. */
-export function countPins(pins: Pins): number {
+export function countPins(pins: Pins | undefined): number {
   let n = 0;
+  if (!pins) return n;
   for (const f of Object.values(pins.boards ?? {})) n += Object.keys(f).length;
   for (const f of Object.values(pins.zones ?? {})) n += Object.keys(f).length;
   for (const pts of Object.values(pins.points ?? {})) n += pts.reduce((s, p) => s + p.length, 0);

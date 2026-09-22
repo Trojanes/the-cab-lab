@@ -6,6 +6,9 @@ import { generateSmallCabinet } from "./gen/smallCabinet.js";
 import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES } from "./gen/bedroom.js";
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
+import { generateKitchenCabinet } from "./gen/kitchen.js";
+import { generateGeneralTall } from "./gen/generalTall.js";
+import { generateLounge, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
 
@@ -483,12 +486,220 @@ const overheadCabinet = {
   ],
 };
 
+/**
+ * Kitchen base cabinet（厨房底柜）— 列 × 区两级布局。
+ * 坐标契约与生成器一致：y=0 前缘（门板悬于 y∈[−FPT,0]）。
+ * 默认单列 left_door（无中间 V 板 → 无双侧半槽冲突）。
+ */
+const kitchenCabinet = {
+  id: "kitchenCabinet",
+  label: "Base",
+  sub: "kitchen run",
+  defaultSize: { W: 887, D: 270, H: 880 },
+  minSize: { W: 300, D: 250, H: 400 },
+
+  defaults(W, D, H, materials) {
+    const { stock } = materialsOf(materials);
+    const bch = 70;
+    return {
+      globalSettings: { length: round1(W), depth: round1(D), height: round1(H) },
+      materialThickness: thickness(stock, "carcass"),
+      frontThickness: thickness(stock, "door"),
+      bottomClearanceHeight: bch,
+      bottomClearanceStyle: "style_1",
+      frontClearance: 2.5,
+      lockEnabled: true,
+      columns: [
+        {
+          id: "c1",
+          width: round1(W),
+          zones: [{ id: "z1", height: round1(H - bch), zoneType: "left_door" }],
+        },
+      ],
+      wheelAvoidances: [],
+      vPanelMachiningPreferences: [],
+    };
+  },
+
+  generate(params) {
+    return generateKitchenCabinet(params);
+  },
+
+  envelope(params) {
+    const gs = params.globalSettings || {};
+    return { W: gs.length, D: gs.depth, H: gs.height };
+  },
+
+  setEnvelope(params, { W, D, H }) {
+    const next = structuredClone(params);
+    const gs = next.globalSettings;
+    if (W != null) {
+      gs.length = round1(W);
+      if (next.columns?.length === 1) {
+        next.columns[0].width = round1(W);
+      } else if (next.columns?.length) {
+        // 多列：按比例缩放列宽，保持列数
+        const oldW = gs.length ?? W;
+        const k = oldW > 0 ? W / oldW : 1;
+        for (const col of next.columns) col.width = round1((col.width || 0) * k);
+      }
+    }
+    if (D != null) gs.depth = round1(D);
+    if (H != null) {
+      gs.height = round1(H);
+      const bch = next.bottomClearanceHeight ?? 70;
+      const zoneSum = round1(H - bch);
+      // 各列区和按原比例缩放到新 H − BCH
+      for (const col of next.columns ?? []) {
+        const oldSum = (col.zones ?? []).reduce((a, z) => a + (z.height || 0), 0);
+        if (oldSum > 0 && (col.zones ?? []).length) {
+          let acc = 0;
+          for (let i = 0; i < col.zones.length; i++) {
+            const isLast = i === col.zones.length - 1;
+            const h = isLast ? round1(zoneSum - acc) : round1((col.zones[i].height / oldSum) * zoneSum);
+            col.zones[i].height = h;
+            acc = round1(acc + h);
+          }
+        }
+      }
+    }
+    return next;
+  },
+
+  dividers() {
+    return [];
+  },
+  setDivider(params) {
+    return params;
+  },
+  zoneTypes: [],
+};
+
+const generalTallCabinet = {
+  id: "generalTallCabinet",
+  label: "Tall",
+  sub: "general tall",
+  defaultSize: { W: 600, D: 584, H: 2000 },
+  minSize: { W: 400, D: 350, H: 800 },
+  defaults(W, D, H, materials) {
+    const { stock } = materialsOf(materials);
+    return {
+      cabinetWidth: W,
+      cabinetDepth: D,
+      cabinetHeight: H,
+      panelThickness: thickness(stock, "carcass"),
+      frontPanelThickness: thickness(stock, "door"),
+      topSystem: { style: "style_1", frontRailHeight: 40 },
+      bottomSystem: { style: "style_1", frontRailHeight: 53 },
+      zones: [
+        { id: "zone-1", type: "side_door", height: Math.max(200, Math.round(H * 0.3)) },
+        { id: "zone-2", type: "drawer", height: 300 },
+        { id: "zone-3", type: "double_door", height: Math.max(300, Math.round(H * 0.47)), verticalDivider: true },
+      ],
+    };
+  },
+  generate(params) {
+    return generateGeneralTall(params);
+  },
+  envelope(params) {
+    return { W: params.cabinetWidth, D: params.cabinetDepth, H: params.cabinetHeight };
+  },
+  setEnvelope(params, { W, D, H }) {
+    const next = { ...params };
+    if (W != null) next.cabinetWidth = round1(W);
+    if (D != null) next.cabinetDepth = round1(D);
+    if (H != null) next.cabinetHeight = round1(H);
+    return next;
+  },
+  dividers() { return []; },
+  setDivider(params) { return params; },
+  zoneTypes: [],
+};
+
+const loungeGenerator = {
+  id: "loungeGenerator",
+  label: "Lounge",
+  sub: "I / L",
+  defaultSize: { W: 2000, D: 800, H: 420 },
+  minSize: { W: 800, D: 400, H: 300 },
+  defaults(W, D, H) {
+    return {
+      style: "L_SHAPE",
+      height: H,
+      partitionPanelThickness: 18,
+      mainWidth: W,
+      mainDepth: Math.min(D, 600),
+      lWidth: Math.min(W - 400, 1600),
+      lDepth: D,
+      lPosition: "RIGHT",
+      topLidEnabled: true,
+    };
+  },
+  generate(params) {
+    return generateLounge(params);
+  },
+  envelope(params) {
+    if (params.style === "PARALLEL") {
+      return { W: params.totalWidth ?? 4000, D: params.depth ?? 800, H: params.height ?? 420 };
+    }
+    if (params.style === "L_SHAPE") {
+      return { W: params.mainWidth ?? 2000, D: params.lWidth ?? 1600, H: params.height ?? 420 };
+    }
+    const lD = params.lDepth ?? 800;
+    const mD = params.mainDepth ?? 600;
+    return { W: params.mainWidth ?? 2000, D: Math.max(lD, mD), H: params.height ?? 420 };
+  },
+  footprintBoxes(params, result) {
+    return loungeFootprintBoxes(params, result);
+  },
+  setEnvelope(params, { W, D, H }) {
+    const next = { ...params };
+    if (W != null) next.mainWidth = round1(W);
+    if (D != null) {
+      if (params.style === "L_SHAPE") next.lWidth = round1(D);
+      else if (params.style === "U_SHAPE") next.mainDepth = round1(D);
+      else next.lDepth = round1(D);
+    }
+    if (H != null) next.height = round1(H);
+    return next;
+  },
+  dividers() { return []; },
+  setDivider(params) { return params; },
+  zoneTypes: [],
+};
+
 export const MODULES = {
   smallCabinet,
   overheadCabinet,
   bedroom,
   bedBox,
+  kitchenCabinet,
+  generalTallCabinet,
+  loungeGenerator,
 };
+
+/**
+ * Renderer module id → generators/<dir> (presets, rules, esbuild entry).
+ * Ids that already match the folder are omitted.
+ */
+export const GENERATOR_DIRS = {
+  kitchenCabinet: "kitchen",
+  generalTallCabinet: "generalTall",
+  loungeGenerator: "lounge",
+};
+
+export function generatorDir(moduleId) {
+  return GENERATOR_DIRS[moduleId] || moduleId;
+}
+
+/** Folder name or module id → MODULES key (CABLAB_BENCH=kitchen, bench:modules). */
+export function moduleIdForGenerator(dirOrId) {
+  if (MODULES[dirOrId]) return dirOrId;
+  for (const [id, dir] of Object.entries(GENERATOR_DIRS)) {
+    if (dir === dirOrId) return id;
+  }
+  return dirOrId;
+}
 
 /**
  * Rail groups: one rail entry that opens a flyout of sub-modules on hover.
@@ -505,13 +716,19 @@ export const MODULE_GROUPS = [
       { id: "bedSideTable", label: "Bed Side Table", sub: "not wired yet", planned: true },
     ],
   },
+  {
+    id: "lounge",
+    label: "Lounge",
+    sub: "I / L",
+    items: [
+      { moduleId: "loungeGenerator", lounge: "I", label: "I", sub: "one run" },
+      { moduleId: "loungeGenerator", lounge: "L", label: "L", sub: "middle run, then one wing" },
+    ],
+  },
 ];
 
 /** Placeholders shown in the rail but not yet wired. */
 export const PLANNED_MODULES = [
-  { id: "generalTallCabinet", label: "Tall", sub: "general tall" },
-  { id: "kitchenCabinet", label: "Base", sub: "kitchen run" },
-  { id: "loungeGenerator", label: "Lounge", sub: "L / I layouts" },
   { id: "uShapeOverheadCabinet", label: "U overhead", sub: "three runs" },
 ];
 

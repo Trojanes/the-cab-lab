@@ -1,11 +1,11 @@
 /**
- * Overhead cabinet ‚Ä?face layer (docs/model-spec.md).
+ * Overhead cabinet ù?face layer (docs/model-spec.md).
  *
  * Takes the boards in their final pose plus the geometry's feature records and
  * hangs every one of them on the face it is machined into:
  *
  *   BP.A        divider grooves (BG_D<i>), rangehood cutout (through)
- *   D<i>.E*     tongue (into BP), T3 notch, T4 notch ‚Ä?tags on the outline edges
+ *   D<i>.E*     tongue (into BP), T3 notch, T4 notch ù?tags on the outline edges
  *   D<i>.A/B    rangehood side grooves
  *   T2/T3/T4.A  divider screw pilot holes (through)
  *   T3.A        LED T-groove (main + two branches)
@@ -116,7 +116,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
         depth: Math.abs(g.z[1] - g.z[0]),
         for: df.id,
         key: `BP.feat.${g.id}`,
-        source: "overhead_geometry",
+        source: "overhead",
       });
     });
   }
@@ -138,14 +138,14 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     tagEdges(d, "tongue", { u0: tongueY0 - d.y0 - EPS, u1: tongueY1 - d.y0 + EPS, v0: -tongueH - EPS, v1: -EPS }, {
       id: `${df.id}_TONGUE`,
       for: onRangehood ? "RGHD_TOP" : "BP",
-      source: "overhead_geometry",
+      source: "overhead",
     });
     if (B.has("T3")) {
       const frontStepY1 = R.FRONT_TOP_NOTCH_Y_OFFSET_MM.value + R.FRONT_TOP_STEP_Y_MM.value;
       tagEdges(d, "notch", { u0: -EPS, u1: frontStepY1 + EPS, v0: zTop - tch - slot - EPS, v1: zTop - tch + EPS }, {
         id: `${df.id}_T3_STEP`,
         for: "T3",
-        source: "overhead_geometry",
+        source: "overhead",
       });
     }
     if (B.has("T4")) {
@@ -153,7 +153,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       tagEdges(d, "notch", { u0: d.y1 - d.y0 - slot - EPS, u1: d.y1 - d.y0 + EPS, v0: zTop - rearNotchH - EPS, v1: zTop - EPS }, {
         id: `${df.id}_T4_NOTCH`,
         for: "T4",
-        source: "overhead_geometry",
+        source: "overhead",
       });
     }
   }
@@ -186,7 +186,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
         through: false,
         for: hole.for_divider,
         key: K,
-        source: "overhead_geometry",
+        source: "overhead",
       });
     }
   }
@@ -205,7 +205,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       through: false,
       for: "hinge",
       key: `${h.boardId}.feat.${n}`,
-      source: "overhead_geometry_v7",
+      source: "overhead",
     });
   }
 

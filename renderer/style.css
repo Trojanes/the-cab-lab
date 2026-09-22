@@ -197,7 +197,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 }
 
 /* ---------- browser (over the 3D view) ---------- */
-/* Module → board → face, floating at the top left of the viewport like Fusion's browser: no panel
+/* Module → board → face, floating at the top left of the viewport: no panel
    background, the scene shows through; text carries a shadow so it reads over the grid. */
 #browser {
   position: absolute;
@@ -441,8 +441,17 @@ button:disabled { cursor: default; opacity: 0.45; }
   border-top: 1px solid var(--line);
   transition: flex-basis 120ms ease;
 }
+#drawer.resizing { transition: none; }
 #drawer.collapsed { flex-basis: var(--drawer-tabs-h); }
 #drawer.collapsed .drawer-body { display: none; }
+#drawerResize {
+  flex: 0 0 6px;
+  cursor: ns-resize;
+  z-index: 2;
+}
+#drawerResize:hover,
+#drawer.resizing #drawerResize { background: var(--accent); }
+#drawer.collapsed #drawerResize { display: none; }
 .drawer-tabs {
   display: flex;
   align-items: center;

@@ -1,8 +1,7 @@
 // Bundles The Cab Lab's own TypeScript generators (./generators/*)
 // into ESM files the Electron renderer can import. The renderer never
 // re-implements cabinet formulas; it only calls these bundles.
-// These sources are independent of E:\Work\Cursor Project\modules and
-// of the Fusion plugin — do not point this script at those trees.
+// These sources live under generators/. Do not point this script at another tree.
 //
 //   node build-generators.js                 build everything
 //   node build-generators.js overheadCabinet build one entry (the bench does this after a rule change)
@@ -17,6 +16,9 @@ const ENTRIES = [
   { name: "bedroom", entry: path.join(MODULES_DIR, "bedroom", "generator.ts") },
   { name: "bedBox", entry: path.join(MODULES_DIR, "bedBox", "generator.ts") },
   { name: "overheadCabinet", entry: path.join(MODULES_DIR, "overheadCabinet", "generator.ts") },
+  { name: "kitchen", entry: path.join(MODULES_DIR, "kitchen", "generator.ts") },
+  { name: "generalTall", entry: path.join(MODULES_DIR, "generalTall", "generator.ts") },
+  { name: "lounge", entry: path.join(MODULES_DIR, "lounge", "generator.ts") },
   // Shared helpers the bench needs in the browser (pins are read/written there).
   { name: "pins", entry: path.join(MODULES_DIR, "_lib", "pins.ts") },
 ];

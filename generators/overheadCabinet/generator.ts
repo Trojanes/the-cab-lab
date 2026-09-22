@@ -244,7 +244,7 @@ function internalRangehoodDividerProfile(
  * Boards are emitted in their FINAL assembled pose (`boardFrame: "final"`):
  * carcass bottom face z = 0, carcass top z = cabinetHeight, carcass front
  * face y = 0 (doors hang at y = -FPT..0), +Y into the cabinet. No consumer
- * (Fusion adapter, The Cab Lab, nesting) moves or rotates a board afterwards.
+ * moves or rotates a board afterwards.
  *
  * Reference stack for W×Cd×H, CPT = featureWidth, TCH = topClearanceHeight:
  *   BP   z 0..CPT, y 0..Cd
@@ -304,7 +304,7 @@ function legacyToBoards(
       y1: dim("BP.y1", { Cd: P.Cd }, (t) => t.Cd),
       z0: zero("BP.z0"),
       z1: dim("BP.z1", { CPT }, (t) => t.CPT),
-      source: "overhead_geometry",
+      source: "overhead",
     },
   ];
 
@@ -322,7 +322,7 @@ function legacyToBoards(
     y1: dim("T1.y1", { y0: ref("T1.y0"), FPT }, (t) => t.y0 + t.FPT),
     z0: dim("T1.z0", { H: P.H, TCH }, (t) => t.H - t.TCH),
     z1: dim("T1.z1", { H: P.H }, (t) => t.H),
-    source: "overhead_geometry_v7",
+    source: "overhead",
   });
 
   boards.push({
@@ -339,7 +339,7 @@ function legacyToBoards(
     y1: dim("T2.y1", { y0: ref("T2.y0"), CPT }, (t) => t.y0 + t.CPT),
     z0: same("T2.z0", "T1.z0"),
     z1: same("T2.z1", "T1.z1"),
-    source: "overhead_geometry_v7",
+    source: "overhead",
   });
 
   if (geometry.trimmed_vectors.T3.length > 0) {
@@ -360,7 +360,7 @@ function legacyToBoards(
       y1: dim("T3.y1", { rearY: ref("T3.pv.rearY") }, () => t3Depth, { formula: "rearY" }),
       z0: dim("T3.z0", { z1: ref("T3.z1"), CPT }, (t) => t.z1 - t.CPT),
       z1: t3Top,
-      source: "overhead_geometry",
+      source: "overhead",
       profileVector: geometry.trimmed_vectors.T3.map(([x, y]) => ({ x, y })),
     });
   }
@@ -384,7 +384,7 @@ function legacyToBoards(
       y1: t4Y1,
       z0: dim("T4.z0", { H: P.H, top: ref("T4.pv.top") }, () => height - t4Height, { formula: "H - top" }),
       z1: dim("T4.z1", { H: P.H }, (t) => t.H),
-      source: "overhead_geometry",
+      source: "overhead",
       profileVector: geometry.trimmed_vectors.T4.map(([x, z]) => ({ x, z })),
     });
   }
@@ -425,7 +425,7 @@ function legacyToBoards(
       y1: dim(`${id}.y1`, { Cd: P.Cd }, (t) => t.Cd),
       z0: dividerZ0,
       z1: dividerTopZ,
-      source: "overhead_geometry",
+      source: "overhead",
       cutProfileVector:
         dividerProfile.length > 0
           ? dividerProfile.map(([y, z]) => ({ y, z }))
@@ -526,7 +526,7 @@ function legacyToBoards(
       y1: panel.y[1],
       z0: panel.z[0],
       z1: panel.z[1],
-      source: "overhead_geometry_v7",
+      source: "overhead",
       profileVector: [
         { x: 0, z: 0 },
         { x: panel.width, z: 0 },
@@ -819,7 +819,6 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
       debug: {
         phase: "geometry_v1",
         boardFrame: OVERHEAD_BOARD_FRAME,
-        legacyReference: "fusion360-cabinet-generator/core/overhead_geometry.py",
         dividerCenterlines: centerlines,
         provenance: endProvenance(),
       },
@@ -867,7 +866,6 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
     debug: {
       phase: "geometry_v1",
       boardFrame: OVERHEAD_BOARD_FRAME,
-      legacyReference: "fusion360-cabinet-generator/core/overhead_geometry.py",
       dividerCenterlines: centerlines,
       legacyGeometry: geometry,
       svgPreview: generateOHCSvgPreview(geometry, {

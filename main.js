@@ -2,6 +2,29 @@ const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
 
+// A second launch used to open another Chromium on the same profile. It then
+// failed to bind the debug port and could not take the disk cache, and the
+// new window quit. Keep one instance and surface the window that is already open.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.exit(0);
+}
+
+function focusExistingWindows() {
+  const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
+  const main = windows.find((win) => win.getTitle() === "The Cab Lab") || windows[0];
+  if (!main) return;
+  if (main.isMinimized()) main.restore();
+  main.show();
+  main.focus();
+}
+
+if (gotSingleInstanceLock) {
+  app.on("second-instance", () => {
+    focusExistingWindows();
+  });
+}
+
 const JOB_FILTERS = [{ name: "Cab Lab job", extensions: ["json"] }];
 const DXF_FILTERS = [{ name: "DXF drawing", extensions: ["dxf"] }];
 
@@ -118,9 +141,26 @@ const BENCH_LOG_DIR = path.join(LOG_DIR, "bench");
 let benchWin = null;
 const benchQueue = [];
 
+// Renderer MODULES ids that do not match generators/<dir> (keep in sync with
+// renderer/modules.js GENERATOR_DIRS).
+const MODULE_TO_DIR = {
+  kitchenCabinet: "kitchen",
+  generalTallCabinet: "generalTall",
+  loungeGenerator: "lounge",
+};
+const DIR_TO_MODULE = Object.fromEntries(Object.entries(MODULE_TO_DIR).map(([id, dir]) => [dir, id]));
+
+function generatorDirOf(moduleId) {
+  return MODULE_TO_DIR[moduleId] || moduleId;
+}
+
+function moduleIdOfDir(dir) {
+  return DIR_TO_MODULE[dir] || dir;
+}
+
 function generatorFile(moduleId, name) {
   if (!/^[A-Za-z][\w-]*$/.test(String(moduleId))) throw new Error(`bad module id: ${moduleId}`);
-  return path.join(GENERATORS_DIR, moduleId, name);
+  return path.join(GENERATORS_DIR, generatorDirOf(moduleId), name);
 }
 
 function writeAtomic(file, text) {
@@ -188,7 +228,7 @@ ipcMain.handle("bench:modules", () => {
   try {
     return fs.readdirSync(GENERATORS_DIR, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith("_") && fs.existsSync(path.join(GENERATORS_DIR, d.name, "presets.json")))
-      .map((d) => d.name);
+      .map((d) => moduleIdOfDir(d.name));
   } catch (_) { return []; }
 });
 ipcMain.handle("bench:presets:read", (_event, moduleId) => {
@@ -234,7 +274,7 @@ ipcMain.handle("bench:rebuild", async (_event, moduleId) => {
   const t0 = Date.now();
   try {
     const { buildGenerators } = require("./build-generators.js");
-    const built = await buildGenerators([String(moduleId)]);
+    const built = await buildGenerators([generatorDirOf(String(moduleId))]);
     return { ok: true, built, ms: Date.now() - t0 };
   } catch (err) {
     return { ok: false, error: err.message, ms: Date.now() - t0 };
@@ -295,6 +335,7 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  if (!gotSingleInstanceLock) return;
   createWindow();
   // CABLAB_BENCH=1 (or =<moduleId>) opens the bench alongside the app.
   const flag = process.env.CABLAB_BENCH;

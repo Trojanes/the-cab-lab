@@ -98,7 +98,6 @@ export interface OverheadCabinetResult {
     phase: "geometry_v1" | "skeleton_v0";
     /** Boards are already in their assembled pose; consumers must not move them. */
     boardFrame: "final";
-    legacyReference: string;
     dividerCenterlines: number[];
     legacyGeometry?: unknown;
     svgPreview?: string;

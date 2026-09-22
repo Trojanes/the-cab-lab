@@ -1,4 +1,4 @@
-// Browser (floats over the 3D view, top left, see-through — like Fusion's): what
+// Browser (floats over the 3D view, top left, see-through): what
 // is in the job, laid out on the three layers of docs/model-spec.md — module (a
 // placed cabinet) → board → face — plus partition walls and construction planes.
 // It is a browser over

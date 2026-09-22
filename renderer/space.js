@@ -24,6 +24,8 @@ export const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
 controls.screenSpacePanning = true;
+// Scroll zooms along the ray under the cursor, so the point you point at stays put.
+controls.zoomToCursor = true;
 // Left button stays free for selection. Hold the wheel to orbit,
 // right-drag to pan, scroll the wheel to zoom.
 controls.mouseButtons = {

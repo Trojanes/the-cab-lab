@@ -105,6 +105,10 @@ export interface Board {
   notes?: string[];
   /** Outline as emitted: cabinet frame (XY / XZ aligned to the box; YZ cabinet-local). */
   profileVector?: ProfilePoint[];
+  /** Closed loops cut out of the outline, same coordinates as `profileVector`. */
+  profileHoles?: ProfilePoint[][];
+  /** Stacked XY extrusions (a rebated opening). Each slab is already in cabinet XY. */
+  slabs?: Array<{ outline: ProfilePoint[]; holes?: ProfilePoint[][]; z0: number; z1: number }>;
   /** Board-local YZ outline (origin at y0 / z0); may dip below 0 (a tongue). */
   cutProfileVector?: Array<{ y: number; z: number }>;
   profileFeatures?: Array<Record<string, unknown>>;

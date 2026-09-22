@@ -57,7 +57,7 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
 - `renderer/boardGeom.js` — board solids from generator output (outline extrusion or box); shared by the app and the bench
 - `renderer/benchMenu.js` — right-click on a rail module / placed cabinet → opens the generator bench
 - `renderer/bench/` — the generator bench window (see below)
-- `generators/` — Cab Lab's own cabinet generators (TypeScript). Independent of the Fusion plugin.
+- `generators/` — cabinet generators (TypeScript).
 - `generators/_lib/dim.ts` — `dim()` provenance: every board face / outline point records its formula and named terms
 - `generators/_lib/pins.ts` — pins: expected values per preset, checked by the generator tests
 - `generators/<module>/rules.json` + `rules.ts` — rule constants (data + typed wrapper); `presets.json` — golden presets + pins
@@ -273,7 +273,7 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   Handles hide while a board / face is selected inside the cabinet. A dimension that is normally typed (the Bed Box
   length) has a ⇕ button next to its field: press it and a blue double arrow appears just outside that face in 3D —
   drag it back and forth; `Esc`, a selection change or pressing ⇕ again removes it.
-- **Browser** (floats over the top left of the 3D view, see-through like Fusion's; the small caret folds it): Space → every placed cabinet (plus partitions and planes) → its boards
+- **Browser** (floats over the top left of the 3D view, see-through; the small caret folds it): Space → every placed cabinet (plus partitions and planes) → its boards
   (`name · role id · L × W × T`) → its faces (the module's word for them — inside, front, bottom — with what is machined
   into each, and the outline edges folded into one row with their tongue / notch tags). Click a row to select it, the
   caret expands. In 3D the same path is one click per level: cabinet → a board of the selected cabinet → the face under
@@ -313,9 +313,8 @@ opens it at launch. One tab per generator + preset; `+` opens another generator.
   slots), plus the outline edges `E<i>` tagged as tongue / notch. L3 draws the A / B features on the flattened board.
   Face features are pinned too (`pins.faceFeatures`).
 
-Only the Overhead generator carries provenance today; a generator joins the bench when it uses `dim()` for its faces and
-points and ships a `presets.json`. Fusion-copy generators are not connected until they follow the OHC architecture
-(`boardFrame: "final"`, boards only). `CABLAB_BENCH_SNAP=<file.png>` screenshots the bench and quits (for checks).
+A generator joins the bench when it uses `dim()` for its faces and
+points and ships a `presets.json` (`boardFrame: "final"`, boards only). `CABLAB_BENCH_SNAP=<file.png>` screenshots the bench and quits (for checks).
 
 ## Usage log
 
