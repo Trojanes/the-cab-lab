@@ -5,6 +5,7 @@ import * as THREE from "three";
 import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
 import { envelopeFootprint } from "./cabinets3d.js";
+import { localAxes } from "./pose.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
 import { wallSolid, wallParts, wallBoxes } from "./walls.js";
 
@@ -77,14 +78,9 @@ function build() {
 
   for (const cab of getJob().cabinets) {
     const fp = envelopeFootprint(cab, cab.pose);
-    const a = ((cab.pose.rotZ || 0) * Math.PI) / 180;
-    const ex = [Math.cos(a), Math.sin(a), 0];
-    const ey = [-Math.sin(a), Math.cos(a), 0];
-    const dirs = [ex, ex.map((v) => -v), ey, ey.map((v) => -v)];
-    for (const [x, y] of fp.corners) {
-      add(x, y, fp.z0, cab.id, [...dirs, [0, 0, 1]]);
-      add(x, y, fp.z1, cab.id, [...dirs, [0, 0, -1]]);
-    }
+    const dirs = localAxes(cab.pose);
+    const pts = fp.points || fp.corners.map(([x, y]) => [x, y, fp.z0]);
+    for (const [x, y, z] of pts) add(x, y, z, cab.id, dirs);
   }
   // Construction planes: their outline vertices (plane ∩ walls / roof / floor).
   for (const pl of getPlanes()) {

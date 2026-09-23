@@ -3,8 +3,9 @@
 // divider handles exist. The renderer only reads this; formulas stay in the
 // generators.
 import { generateSmallCabinet } from "./gen/smallCabinet.js";
-import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES } from "./gen/bedroom.js";
+import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, setOhcBoundary as setBedroomOhcBoundary, equalOhcZones as bedroomEqualOhcZones, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES, WARDROBE_STYLES as BEDROOM_WARDROBE_STYLES } from "./gen/bedroom.js";
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
+import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
@@ -144,7 +145,9 @@ export const BEDROOM_LAYOUT_LABEL = {
   bootHeight: "Tunnel boot height",
   wardrobeWidth: "Wardrobe width",
   ohcBottom: "Overhead bottom",
+  fixedPanelTop: "Fixed panel top",
 };
+export const BEDROOM_WARDROBE_STYLE = BEDROOM_WARDROBE_STYLES;
 const bedroom = {
   id: "bedroom",
   label: "Bedroom",
@@ -170,7 +173,13 @@ const bedroom = {
       // The wardrobes never close the opening below the bed frame: on a narrow van they start narrower.
       wardrobeWidth: Math.min(BEDROOM_RULES.WARDROBE_WIDTH_DEFAULT_MM.value, Math.floor((round1(W) - BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value) / 2)),
       ohcBottom: BEDROOM_RULES.OHC_BOTTOM_DEFAULT_MM.value,
+      style: "style1",
+      fixedPanelTop: BEDROOM_RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value,
       bedFrame: "queen",
+      ohcZones: (() => {
+        const opening = round1(W) - 2 * Math.min(BEDROOM_RULES.WARDROBE_WIDTH_DEFAULT_MM.value, Math.floor((round1(W) - BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value) / 2));
+        return bedroomEqualOhcZones(opening, 2);
+      })(),
       panelThickness: thickness(stock, "carcass"),
       doorPanelThickness: thickness(stock, "door"), // the wardrobe colour panels
       doorColorName: color.doorColorName,
@@ -203,7 +212,7 @@ const bedroom = {
     return next;
   },
 
-  /** Layout: the four numbers the regions are built from. Clamped by the generator's limits. */
+  /** Layout: the numbers the regions (and Style 1 split) are built from. Clamped by the generator's limits. */
   layoutKeys: BEDROOM_LAYOUT_KEYS,
   layoutLimits(params, key) {
     return bedroomLayoutLimits(params, key);
@@ -263,18 +272,58 @@ const bedroom = {
     const bh = lim("bootHeight");
     const ob = lim("ohcBottom");
     const ww = lim("wardrobeWidth");
-    return [
-      { index: 0, key: "bootHeight", axis: "z", pos: p.bootHeight, min: bh.min, max: bh.max, span: [0, W] },
-      { index: 1, key: "ohcBottom", axis: "z", pos: p.ohcBottom, min: ob.min, max: ob.max, span: [p.wardrobeWidth, W - p.wardrobeWidth] },
-      { index: 2, key: "wardrobeWidth", side: -1, axis: "x", pos: p.wardrobeWidth, min: ww.min, max: ww.max, span: [p.bootHeight, H] },
-      { index: 3, key: "wardrobeWidth", side: 1, axis: "x", pos: round1(W - p.wardrobeWidth), min: W - ww.max, max: W - ww.min, span: [p.bootHeight, H] },
+    const bars = [
+      { index: 0, key: "bootHeight", axis: "z", pos: p.bootHeight, min: bh.min, max: bh.max, span: [0, W], front: 20 },
+      { index: 1, key: "ohcBottom", axis: "z", pos: p.ohcBottom, min: ob.min, max: ob.max, span: [p.wardrobeWidth, W - p.wardrobeWidth], front: 20 },
+      { index: 2, key: "wardrobeWidth", side: -1, axis: "x", pos: p.wardrobeWidth, min: ww.min, max: ww.max, span: [p.bootHeight, H], front: 20 },
+      { index: 3, key: "wardrobeWidth", side: 1, axis: "x", pos: round1(W - p.wardrobeWidth), min: W - ww.max, max: W - ww.min, span: [p.bootHeight, H], front: 20 },
     ];
+    if (p.style === "style1" || p.style == null) {
+      const fp = lim("fixedPanelTop");
+      bars.push(
+        { index: 4, key: "fixedPanelTop", side: -1, axis: "z", pos: p.fixedPanelTop, min: fp.min, max: fp.max, span: [0, p.wardrobeWidth], front: 20 },
+        { index: 5, key: "fixedPanelTop", side: 1, axis: "z", pos: p.fixedPanelTop, min: fp.min, max: fp.max, span: [W - p.wardrobeWidth, W], front: 20 },
+      );
+    }
+    const ohc = result.layout && result.layout.ohc;
+    if (ohc) {
+      ohc.zones.slice(0, -1).forEach((zone, i) => {
+        const next = ohc.zones[i + 1];
+        const start = zone.x0;
+        const total = zone.width + next.width;
+        bars.push({
+          index: bars.length,
+          key: "ohcZone",
+          zoneIndex: i,
+          axis: "x",
+          pos: zone.x1,
+          min: round1(start + 150),
+          max: round1(start + total - 150),
+          span: [p.ohcBottom, H],
+          front: 20,
+        });
+      });
+    }
+    return bars;
+  },
+
+  /** Two or three equal up-flap bays across the opening. */
+  setOhcCount(params, count) {
+    const opening = round1(params.width - 2 * params.wardrobeWidth);
+    return { ...params, ohcZones: bedroomEqualOhcZones(opening, count) };
+  },
+
+  /** Move the centreline between bay `index` and the next bay to cabinet x. */
+  setOhcBoundary(params, index, x) {
+    const zones = setBedroomOhcBoundary(params, index, x);
+    return zones ? { ...params, ohcZones: zones } : params;
   },
 
   /** Move bar `index` to local coordinate `pos` (x or z); returns new params with the layout key it drives changed. */
   setDivider(params, result, index, pos) {
     const d = this.dividers(params, result).find((b) => b.index === index);
     if (!d) return params;
+    if (d.key === "ohcZone") return this.setOhcBoundary(params, d.zoneIndex, Math.round(pos));
     const W = params.width;
     const value = d.key === "wardrobeWidth" ? (d.side > 0 ? W - pos : pos) : pos;
     return setBedroomLayout(params, d.key, Math.round(value));
@@ -358,6 +407,115 @@ const bedBox = {
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],
+};
+
+/**
+ * Bedside table, north-south: a mirrored pair, one against each wall, in
+ * front of the body's room face. Width comes from the body: the wardrobe width,
+ * the show panel standing under the colour panel. Placement drags the height first — it snaps to the underside
+ * of the wardrobe fixed panel — then the depth into the room. `side` says
+ * which wall; the show panel is on the bed side.
+ */
+const bedSideTable = {
+  id: "bedSideTable",
+  label: "Bed Side Table",
+  sub: "pair at the walls",
+  placement: "bedSide",
+  pair: true,
+  requires: "bedroom",
+  attachesTo: "bedroom",
+  handles: [],
+  handlesOnDemand: ["D"],
+  panel: "bedSide",
+  defaultSize: { W: 330, D: BED_SIDE_RULES.DEPTH_DEFAULT_MM.value, H: BEDROOM_RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value },
+  minSize: { W: 80, D: 40, H: 200 },
+
+  defaults(W, D, H, materials) {
+    const { finish } = materialsOf(materials);
+    const color = cabinetColor(finish);
+    return {
+      width: round1(W),
+      depth: round1(D),
+      height: round1(H),
+      side: "left",
+      shelfCenter: round1(H / 2),
+      zones: [{ id: "lower", type: "right_door" }, { id: "upper", type: "drawer" }],
+      clearance: BED_SIDE_RULES.CLEARANCE_MM.value,
+      panelThickness: BED_SIDE_RULES.BOARD_THICKNESS_MM.value,
+      doorPanelThickness: BED_SIDE_RULES.DOOR_THICKNESS_MM.value,
+      carcassColor: color.carcassColor,
+      carcassColorName: color.carcassColorName,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      doorSeries: color.doorSeries,
+      colorSlot: color.colorSlot,
+    };
+  },
+  generate(params) { return generateBedSideTable(params); },
+  frontView(result) { return generateBedSideSvg(result); },
+  envelope(params) { return { W: params.width, D: params.depth, H: params.height }; },
+  setEnvelope(params, { W, D, H }) {
+    const next = { ...params };
+    if (W != null) next.width = round1(W);
+    if (D != null) next.depth = round1(D);
+    if (H != null) next.height = round1(H);
+    return next;
+  },
+  sizeFor(bodyParams) {
+    return {
+      /** Carcass + the show panel under the wardrobe's colour panel = the wardrobe width. */
+      W: round1(bodyParams.wardrobeWidth),
+      /** The show panel matches the colour panel above it. */
+      door: round1(bodyParams.doorPanelThickness || BED_SIDE_RULES.DOOR_THICKNESS_MM.value),
+      H: round1((bodyParams.bootHeight ?? BEDROOM_RULES.BOOT_HEIGHT_DEFAULT_MM.value) + BEDROOM_RULES.WARDROBE_FLOOR_RAISE_MM.value),
+      /** Underside of the Style 1 fixed panel: the wardrobe floor the panel sits on. Height drag snaps here. */
+      snapH: round1((bodyParams.bootHeight ?? BEDROOM_RULES.BOOT_HEIGHT_DEFAULT_MM.value) + BEDROOM_RULES.WARDROBE_FLOOR_RAISE_MM.value),
+    };
+  },
+  attach(params, pose, { cabinets, resolved }) {
+    const body = cabinets.find((c) => c.moduleId === "bedroom");
+    if (!body || !resolved) return null;
+    const { W, door } = this.sizeFor(body.params);
+    const H = params.height;
+    const D = params.depth;
+    const side = params.side === "right" ? "right" : "left";
+    const bodyD = getModule(body.moduleId).envelope(body.params).D;
+    const nextPose = side === "left"
+      ? { x: round1(resolved.bounds.minX + W), y: round1(bodyD + D), z: 0, rotZ: 180 }
+      : { x: round1(resolved.bounds.maxX), y: round1(bodyD + D), z: 0, rotZ: 180 };
+    const lim = bedSideShelfLimits({ height: H, clearance: params.clearance, panelThickness: params.panelThickness });
+    const shelfCenter = round1(Math.max(lim.min, Math.min(lim.max, params.shelfCenter ?? H / 2)));
+    const sameParams = params.width === W && params.height === H && params.shelfCenter === shelfCenter && params.side === side && params.doorPanelThickness === door;
+    const samePose = pose.x === nextPose.x && pose.y === nextPose.y && pose.z === nextPose.z && (pose.rotZ || 0) === 180;
+    return {
+      params: sameParams ? params : { ...params, width: W, height: H, shelfCenter, side, doorPanelThickness: door },
+      pose: samePose ? pose : nextPose,
+    };
+  },
+  /** Copy the shared shelf, depth and clearance onto the other table, flipping door hands. */
+  mirrorParams(source, twin) {
+    const zones = (source.zones || []).map((z) => ({ id: z.id, type: mirrorBedSideZone(z.type) }));
+    const same = twin.shelfCenter === source.shelfCenter && twin.depth === source.depth && twin.height === source.height && twin.clearance === source.clearance
+      && JSON.stringify(twin.zones) === JSON.stringify(zones);
+    if (same) return twin;
+    return { ...twin, shelfCenter: source.shelfCenter, depth: source.depth, height: source.height, clearance: source.clearance, zones };
+  },
+  dividers(params, result) {
+    if (!result || result.validation?.errors?.length) return [];
+    const lim = bedSideShelfLimits(result.params);
+    return [{ index: 0, key: "shelfCenter", axis: "z", pos: result.params.shelfCenter, min: lim.min, max: lim.max, span: [0, result.params.width], front: 20 }];
+  },
+  setDivider(params, _result, _index, pos) {
+    const lim = bedSideShelfLimits(params);
+    const shelfCenter = round1(Math.max(lim.min, Math.min(lim.max, Math.round(pos))));
+    if (shelfCenter === params.shelfCenter) return params;
+    return { ...params, shelfCenter };
+  },
+  zoneTypes: [
+    { id: "drawer", label: "Drawer" },
+    { id: "wall", label: "Door · hinge at the wall" },
+    { id: "bed", label: "Door · hinge at the bed" },
+  ],
 };
 
 /**
@@ -488,6 +646,7 @@ export const MODULES = {
   overheadCabinet,
   bedroom,
   bedBox,
+  bedSideTable,
 };
 
 /**
@@ -502,7 +661,7 @@ export const MODULE_GROUPS = [
     items: [
       { moduleId: "bedroom", label: "Body", sub: "nose volume" },
       { moduleId: "bedBox", label: "Bed Box", sub: "bed base · needs the body" },
-      { id: "bedSideTable", label: "Bed Side Table", sub: "not wired yet", planned: true },
+      { moduleId: "bedSideTable", label: "Bed Side Table", sub: "pair · needs the body" },
     ],
   },
 ];

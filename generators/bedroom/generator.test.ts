@@ -2,12 +2,14 @@ import assert from "node:assert/strict";
 import {
   bedBoxSizeFor,
   bedFrameWidth,
+  equalOhcZones,
   generateBedroom,
   generateBedroomSvgPreview,
   layoutLimits,
   RULES,
   sectionYZ,
   setLayout,
+  setOhcBoundary,
 } from "./generator.ts";
 import { checkPins, countPins, type PresetsFile } from "../_lib/pins.ts";
 import presetsRaw from "./presets.json" with { type: "json" };
@@ -80,12 +82,18 @@ function testLayoutLimitsAndClamping() {
   assert.deepEqual(layoutLimits(p, "ohcBottom"), { min: 398 + RULES.OPENING_HEIGHT_MIN_MM.value, max: 1788 - RULES.OHC_HEIGHT_MIN_MM.value });
   // The wardrobes may close in only until the opening equals the bed frame.
   assert.deepEqual(layoutLimits(p, "wardrobeWidth"), { min: RULES.WARDROBE_WIDTH_MIN_MM.value, max: (2275 - RULES.BED_FRAME_QUEEN_WIDTH_MM.value) / 2 });
+  // Style 1 split: floor (boot + 197) + 80 … T3 top − 4 − 300.
+  assert.deepEqual(layoutLimits(p, "fixedPanelTop"), { min: 398 + 197 + 80, max: 1737.5 - 4 - 300 });
   // setLayout clamps, rounds to 0.1 and returns the same object when nothing changes.
   assert.equal(setLayout(p, "ohcBottom", 5000).ohcBottom, 1638);
   assert.equal(setLayout(p, "bootHeight", 0).bootHeight, 200);
   assert.equal(setLayout(p, "wardrobeWidth", 360.04).wardrobeWidth, 360);
   assert.equal(setLayout(p, "wardrobeWidth", 330), p);
   assert.equal(setLayout(p, "wardrobeWidth", 900).wardrobeWidth, 383.5);
+  assert.equal(setLayout(p, "fixedPanelTop", 50).fixedPanelTop, 398 + 197 + 80);
+  assert.equal(setLayout(p, "fixedPanelTop", 2000).fixedPanelTop, 1737.5 - 4 - 300);
+  // Raising the boot pushes the wardrobe floor through the split — clamp the split up with it.
+  assert.equal(setLayout(p, "bootHeight", 700).fixedPanelTop, 700 + 197 + 80);
   // Symmetry is a rule: one wardrobe width moves both inner faces.
   const r = generateBedroom(setLayout(p, "wardrobeWidth", 360));
   assert.equal(r.zones.find((z) => z.id === "wardrobeL")!.x1, 360);
@@ -101,6 +109,8 @@ function testValidationReportsEveryLimit() {
   assert.match(errs({ wardrobeWidth: 400 }).join(";"), /leave only 1475 mm between them — the queen bed frame needs 1508/);
   assert.match(errs({ ohcBottom: 600 }).join(";"), /only 202 mm between the boot deck and the overhead/);
   assert.match(errs({ ohcBottom: 1700 }).join(";"), /overhead is only 88 mm high/);
+  assert.match(errs({ fixedPanelTop: 600 }).join(";"), /fixed panel top 600 leaves only 5 mm of panel/);
+  assert.match(errs({ fixedPanelTop: 1500 }).join(";"), /fixed panel top 1500 leaves only 233.5 mm of door/);
   // Errors → no regions, no boards, no front view.
   const bad = generateBedroom({ ...p, ohcBottom: 600 } as never);
   assert.equal(bad.zones.length, 0);
@@ -148,7 +158,7 @@ function testTunnelBootBoards() {
   assert.deepEqual([front.y0, front.y1], [741, 756]);
   // The boot region lists its boards; the opening and overhead are still blocks.
   assert.deepEqual(r.zones.find((z) => z.id === "boot")!.boards, ["BOOT_DECK", "BOOT_BACK", "BOOT_FRONT"]);
-  assert.ok(r.zones.filter((z) => z.id === "opening" || z.id === "ohc").every((z) => !z.boards));
+  assert.equal(r.zones.find((z) => z.id === "opening")!.boards, undefined);
   assert.equal(bootBoards.length, 3);
   // Face layer: A / B + four edges each, stock and the room-side annotation.
   for (const b of bootBoards) {
@@ -185,7 +195,26 @@ function testTunnelBootBoards() {
 function testWardrobeTop() {
   const r = generateBedroom(style3.params as never);
   const by = new Map(r.boards.map((b) => [b.id, b]));
-  assert.deepEqual(r.boards.map((b) => b.id).slice(3), ["WARD_L_PANEL", "WARD_R_PANEL", "WARD_L_T3", "WARD_R_T3", "T2", "T1"]);
+  const wardIds = r.boards.map((b) => b.id).filter((id) => !id.startsWith("OHC_"));
+  assert.deepEqual(wardIds.slice(3), ["WARD_L_STRIP", "WARD_R_STRIP", "WARD_L_PANEL", "WARD_R_PANEL", "WARD_L_SHELF", "WARD_R_SHELF", "WARD_L_T3", "WARD_R_T3", "T2", "T1", "WARD_L_FIXED", "WARD_R_FIXED", "WARD_L_DOOR", "WARD_R_DOOR"]);
+  const strip = by.get("WARD_L_STRIP")!;
+  assert.equal(strip.stock!.kind, "carcass");
+  assert.equal(strip.materialThickness, 15);
+  assert.deepEqual([strip.x0, strip.x1, strip.y0, strip.y1, strip.z0], [0, 15, 0, 175, 398]);
+  assert.deepEqual(strip.profileVector!.map((q) => [(q as { y: number }).y, (q as { z: number }).z]), [
+    [0, 398], [175, 398], [175, 604.5], [75, 604.5], [75, 620.5], [175, 620.5], [175, 1749.4], [66, 1773.5], [66, 1738.5], [82, 1738.5], [82, 1722.5], [0, 1722.5],
+  ]);
+  const shelf = by.get("WARD_L_SHELF")!;
+  assert.equal(shelf.stock!.kind, "carcass");
+  assert.deepEqual([shelf.x0, shelf.x1, shelf.y0, shelf.y1, shelf.z0, shelf.z1], [0, 321.5, 0, 756, 605, 620]);
+  assert.deepEqual(shelf.profileVector!.map((q) => [(q as { x: number }).x, (q as { y: number }).y]), [
+    [15.5, 0], [314, 0], [314, 257], [321.5, 257], [321.5, 499], [314, 499], [314, 756], [0, 756], [0, 75], [15.5, 75],
+  ]);
+  const groove = by.get("WARD_L_PANEL")!.faces!.find((f) => f.id === "B")!.features.find((f) => f.id === "GR_SHELF")!;
+  assert.equal(groove.kind, "groove");
+  assert.equal(groove.depth, 8);
+  assert.equal(groove.through, false);
+  assert.deepEqual([by.get("WARD_R_STRIP")!.x0, by.get("WARD_R_STRIP")!.x1], [2260, 2275]);
   // One fixed distance (T2 back 66) + the roof there set the T3 seat: roof(66) = 1788 − 66 × 39 / 177 = 1773.5.
   assert.deepEqual(r.layout.top, { seat: 1722.5, t3Top: 1737.5, roofAtT2: 1773.5, t2Height: 35 });
   // Colour panel: door stock on the opening side, deck → roof, seat in front of the T2 back, pocket behind it.
@@ -219,8 +248,8 @@ function testWardrobeTop() {
   assert.ok(t1.z1 > 1788, "T1 is oversize above the room-face ceiling");
   assert.match(r.validation.warnings.join(";"), /T1 is cut 20 mm above the roof by design/);
   // Regions: wardrobes list their boards; the opening and overhead are still blocks.
-  assert.deepEqual(r.zones.find((z) => z.id === "wardrobeL")!.boards, ["WARD_L_PANEL", "WARD_L_T3"]);
-  assert.equal(r.zones.find((z) => z.id === "ohc")!.boards, undefined);
+  assert.deepEqual(r.zones.find((z) => z.id === "wardrobeL")!.boards, ["WARD_L_STRIP", "WARD_L_PANEL", "WARD_L_SHELF", "WARD_L_T3", "WARD_L_FIXED", "WARD_L_DOOR"]);
+  assert.ok(r.zones.find((z) => z.id === "ohc")!.boards!.length > 0);
   // A steeper roof lowers the whole top; a flat one raises it — the T2 back stays at 66 and T2 stays 35 high.
   const steep = generateBedroom({ ...(style3.params as object), roofProfile: [[0, 1788], [66, 1700], [756, 1150]] } as never);
   assert.equal(steep.layout.top!.seat, 1700 - 36 - 15);
@@ -267,13 +296,117 @@ function testProvenanceNamesTheLayout() {
   assert.equal(e["bedBox.W"].value, 1508);
 }
 
+function testStyle1WardrobeFronts() {
+  const r = generateBedroom(style3.params as never);
+  const by = new Map(r.boards.map((b) => [b.id, b]));
+  assert.deepEqual(r.layout.front, { style: "style1", floorTop: 595, fixedPanelTop: 775, doorBottom: 779, doorTop: 1737.5, clearance: 4 });
+  const fl = by.get("WARD_L_FIXED")!;
+  const fr = by.get("WARD_R_FIXED")!;
+  const dl = by.get("WARD_L_DOOR")!;
+  const dr = by.get("WARD_R_DOOR")!;
+  // Fixed panel: wall → colour-panel opening face, wardrobe floor → the dragged split; hangs at y −16…0.
+  assert.deepEqual([fl.x0, fl.x1, fl.y0, fl.y1, fl.z0, fl.z1], [0, 330, -16, 0, 595, 775]);
+  assert.deepEqual([fr.x0, fr.x1, fr.y0, fr.y1, fr.z0, fr.z1], [1945, 2275, -16, 0, 595, 775]);
+  // Door: wall + 4 → colour panel, split + 4 → T3 top.
+  assert.deepEqual([dl.x0, dl.x1, dl.y0, dl.y1, dl.z0, dl.z1], [4, 330, -16, 0, 779, 1737.5]);
+  assert.deepEqual([dr.x0, dr.x1, dr.y0, dr.y1, dr.z0, dr.z1], [1945, 2271, -16, 0, 779, 1737.5]);
+  for (const b of [fl, fr, dl, dr]) {
+    assert.equal(b.stock!.kind, "door");
+    assert.equal(b.materialThickness, 16);
+    assert.equal(b.profilePlane, "XZ");
+    assert.equal(b.thicknessAxis, "Y");
+    assert.equal(b.faces!.find((f) => f.id === "B")!.semantic, "front");
+    assert.equal(b.faces!.find((f) => f.id === "B")!.normal, "-Y");
+    assert.equal(b.faces!.find((f) => f.id === "A")!.semantic, "inside");
+  }
+  // Three cups on the inside (A = +Y = y = 0): 100 from each end, midway, 22.5 from the wall-side edge.
+  const cups = dl.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "hinge");
+  assert.equal(cups.length, 3);
+  assert.deepEqual(cups.map((c) => c.center), [[22.5, 100], [22.5, 479.3], [22.5, 858.5]]);
+  assert.equal(cups[0]!.diameter, 35);
+  assert.equal(cups[0]!.depth, 12);
+  const cupsR = dr.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "hinge");
+  assert.deepEqual(cupsR.map((c) => c.center), [[303.5, 100], [303.5, 479.3], [303.5, 858.5]]);
+  const e = r.debug.provenance.entries;
+  assert.equal(e["front.floor.z1"].formula, "boot + RAISE");
+  assert.equal(e["front.floor.z1"].terms.RAISE.name, "WARDROBE_FLOOR_RAISE_MM");
+  assert.equal(e["front.door.z0"].formula, "split + CL");
+  assert.equal(e["front.y0"].formula, "-DPT");
+  assert.equal(e["WARD_L_DOOR.y0"].formula, "= front.y0");
+  assert.equal(e["front.door.z1"].formula, "= top.T3.z1");
+  assert.equal(e["WARD_L_DOOR.z1"].formula, "= front.door.z1");
+  // Nook: no wardrobe fronts. The overhead divider is still a boundary.
+  const nook = generateBedroom({ ...(style3.params as object), style: "nook" } as never);
+  assert.equal(nook.layout.front, null);
+  assert.equal(nook.boards.filter((b) => /_(DOOR|FIXED|SHELF)$/.test(b.id)).length, 0);
+  assert.deepEqual(nook.boards.find((b) => b.id === "WARD_L_STRIP")!.profileVector!.slice(1, 3).map((q) => [(q as { y: number }).y, (q as { z: number }).z]), [[175, 398], [175, 1749.4]]);
+  assert.deepEqual([nook.boards.find((b) => b.id === "WARD_L_PANEL")!.x0, nook.boards.find((b) => b.id === "T2")!.y1], [314, 66]);
+  const nookSvg = generateBedroomSvgPreview(nook)!;
+  assert.equal((nookSvg.match(/data-boundary="/g) || []).length, 5);
+  assert.equal((nookSvg.match(/class="front door"/g) || []).length, 0);
+}
+
+function testMiddleOverhead() {
+  const r = generateBedroom(style3.params as never);
+  const by = new Map(r.boards.map((b) => [b.id, b]));
+  assert.ok(r.validation.warnings.some((w) => /bottom panel is cut 18 mm past the roof/.test(w)));
+  assert.equal(r.boards.some((b) => b.id === "T4" || b.id === "OHC_T4"), false);
+  const bp = by.get("OHC_BP")!;
+  const t3 = by.get("OHC_T3")!;
+  // Door underside 1418, panel 30 above, 15 thick. Back is the roof at the panel top (453.5) plus 18.
+  assert.deepEqual([bp.x0, bp.x1, bp.y0, bp.z0, bp.z1], [330, 1945, 0, 1448, 1463]);
+  assert.equal(bp.y1, 471.5);
+  assert.equal(r.layout.ohc!.uprightBack, 453.5);
+  assert.deepEqual([t3.x0, t3.x1, t3.y0, t3.y1, t3.z0, t3.z1], [330, 1945, 0, 188, 1722.5, 1737.5]);
+  // Two equal bays: side panels on the opening faces, one divider on the van centre.
+  assert.deepEqual([by.get("OHC_D0")!.x0, by.get("OHC_D0")!.x1], [330, 345]);
+  assert.deepEqual([by.get("OHC_D1")!.x0, by.get("OHC_D1")!.x1], [1130, 1145]);
+  assert.deepEqual([by.get("OHC_D2")!.x0, by.get("OHC_D2")!.x1], [1930, 1945]);
+  assert.equal(by.get("OHC_D1")!.y1, 453.5);
+  assert.ok(by.get("OHC_D1")!.y1 < bp.y1);
+  // T3 rear notches for this cabinet's three uprights, opening through both ends.
+  const pv = t3.profileVector!.map((q) => [(q as { x: number }).x, (q as { y: number }).y]);
+  assert.ok(pv.some((p) => p[0] === 330 && p[1] === 168));
+  assert.ok(pv.some((p) => p[0] === 1945 && p[1] === 168));
+  assert.ok(pv.some((p) => p[0] === 1129.5 && p[1] === 168));
+  // Groove for the centre divider, and two cups 150 from the outer face / the centreline.
+  const groove = bp.faces!.find((f) => f.id === "A")!.features.find((f) => f.id === "BG_OHC_D1")!;
+  assert.equal(groove.kind, "groove");
+  assert.equal(groove.depth, 7.5);
+  const door = by.get("OHC_FP0")!;
+  assert.deepEqual([door.x0, door.x1, door.y0, door.y1, door.z0, door.z1], [332.5, 1136.3, -16, 0, 1418, 1737.5]);
+  const cups = door.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "hinge");
+  assert.equal(cups.length, 2);
+  assert.equal(cups[0]!.center![0], 147.5);
+  assert.equal(cups[1]!.center![0], 655);
+  assert.equal(cups[0]!.center![1], 297);
+  const svg = generateBedroomSvgPreview(r)!;
+  assert.equal((svg.match(/class="hinge"/g) || []).length, 10);
+  // Three bays: 100 from each door edge, two internal dividers.
+  const three = generateBedroom({ ...(style3.params as object), ohcZones: equalOhcZones(1615, 3) } as never);
+  const d3 = three.boards.find((b) => b.id === "OHC_FP0")!;
+  const cups3 = d3.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "hinge");
+  assert.deepEqual(cups3.map((c) => c.center![0]), [100, round1(d3.x1 - d3.x0 - 100)]);
+  assert.equal(three.boards.filter((b) => b.id.startsWith("OHC_D")).length, 4);
+  const moved = setOhcBoundary(style3.params as never, 0, 1000);
+  assert.equal(moved![0]!.width, 1000 - 330);
+  assert.equal(round1(moved![0]!.width + moved![1]!.width), 1615);
+}
+
+function round1(v: number): number {
+  return Math.round(v * 10) / 10;
+}
+
 function testFrontViewMarksRegionsAndBoundaries() {
   const r = generateBedroom(style3.params as never);
   const svg = generateBedroomSvgPreview(r, { selectedRegion: "opening" })!;
   assert.ok(svg.startsWith("<svg"));
   assert.equal((svg.match(/data-region="/g) || []).length, 5);
-  assert.equal((svg.match(/data-boundary="/g) || []).length, 4);
+  assert.equal((svg.match(/data-boundary="/g) || []).length, 7);
+  assert.equal((svg.match(/data-boundary="ohcZone"/g) || []).length, 1);
   assert.equal((svg.match(/data-boundary="wardrobeWidth"/g) || []).length, 2);
+  assert.equal((svg.match(/data-boundary="fixedPanelTop"/g) || []).length, 2);
+  assert.match(svg, /class="front door"/);
   assert.match(svg, /bed 1508 · 53.5 each side/);
   assert.match(svg, /class="region sel void" data-region="opening"/);
   assert.match(svg, /data-w="2275" data-h="1788"/);
@@ -288,6 +421,8 @@ const tests = [
   testBedFrameSetsTheBedBox,
   testTunnelBootBoards,
   testWardrobeTop,
+  testStyle1WardrobeFronts,
+  testMiddleOverhead,
   testProvenanceCoversEveryBoardFace,
   testProvenanceNamesTheLayout,
   testFrontViewMarksRegionsAndBoundaries,

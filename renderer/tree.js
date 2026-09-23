@@ -3,9 +3,8 @@
 // placed cabinet) → board → face — plus partition walls and construction planes.
 // It is a browser over
 // the generator result (`job.resultFor`), never a second model: nothing here is
-// stored, and selecting a board or a face only narrows the 3D highlight and the
-// right panel's read-out. The cabinet stays the selected object (Move, Face,
-// Delete keep working on it).
+// stored. Selecting a board or a face narrows the 3D highlight. Move uses that
+// choice: a cabinet row moves the module, a board row moves that board.
 import * as job from "./job.js";
 import { getModule } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
