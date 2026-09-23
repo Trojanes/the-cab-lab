@@ -31,7 +31,23 @@ var rules_default = {
   WARDROBE_SHELF_GROOVE_EXTRA_MM: { value: 0.5, doc: "Colour-panel groove is this much deeper than the tongue. Not through the panel." },
   WARDROBE_SHELF_GROOVE_Z_MM: { value: 0.5, doc: "Groove / strip notch is this much taller than the shelf on each side (slot = shelf + 1)." },
   WARDROBE_SHELF_GROOVE_END_MM: { value: 5, doc: "Groove runs this much past the tongue at each end, along the depth. Tongue sits in the middle third of the body depth." },
-  WARDROBE_FLOOR_RAISE_MM: { value: 197, doc: "Wardrobe floor top above the boot deck (Style 3 / Bedroom 1: kick + floor = 197). The Style 1 fixed panel sits on this." },
+  WARDROBE_FLOOR_RAISE_MM: { value: 197, doc: "Wardrobe floor top above the boot deck (Style 3 / Bedroom 1: kick + floor = 197). The Style 1 fixed panel sits on this; the nook opening starts here." },
+  WARDROBE_BASE_THICKNESS_MM: { value: 18, doc: "Nook wardrobe base: the wall kick (boot deck \u2192 floor underside, full depth) and the floor (wall \u2192 colour panel, full depth) are both this structural stock. Style 3 measures 18 / 18." },
+  WARDROBE_NOOK_SHELF_BOTTOM_DEFAULT_MM: { value: 799, doc: "Unused as an input. The nook wardrobe bottom is boot height + WARDROBE_FLOOR_RAISE_MM + WARDROBE_NOOK_CUT_HEIGHT_MM (Style 3: 398 + 197 + 204 = 799). Kept so older jobs still parse." },
+  WARDROBE_NOOK_CUT_HEIGHT_MM: { value: 204, doc: "Height of the U cut through each wardrobe colour panel, from the wardrobe floor top up to the wardrobe bottom (the nook shelf underside, where the door starts). Fixed: it does not drag. Style 3: 595 \u2192 799." },
+  WARDROBE_NOOK_CUT_UPPER_RADIUS_MM: { value: 100, doc: "Upper arc of the U cut, through the colour panel. Centre is this far below the wardrobe bottom, at WARDROBE_NOOK_CUT_UPPER_CENTER_Y from the room face, so the arc crests on the wardrobe bottom. Style 3 measures 100." },
+  WARDROBE_NOOK_CUT_UPPER_CENTER_Y_MM: { value: 502.775, doc: "Y of the upper arc's centre, from the room face toward the nose. The crest of the cut is at this same Y. Style 3 measures 502.775." },
+  WARDROBE_NOOK_CUT_LOWER_RADIUS_MM: { value: 703.374, doc: "Lower arc of the U cut. Tangent to the upper arc. Centre is in front of the room face. Style 3 measures 703.374." },
+  WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM: { value: -92.024, doc: "Y of the lower arc's centre. Negative: 92.024 mm in front of the room face, in the room. Style 3." },
+  WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM: { value: 2.565, doc: "Lower arc centre above the cut's bottom (the wardrobe floor top). Style 3 measures 2.565, so the arc meets the floor almost vertically, 611 mm back." },
+  WARDROBE_NOOK_SHELF_NOSE_GAP_MM: { value: 22, doc: "Nook shelf stops this short of the body depth (the nose), or where the roof meets the shelf top, whichever comes first. Style 3: 734 deep in a 756 body." },
+  WARDROBE_NOOK_MIN_HEIGHT_MM: { value: 100, doc: "Least nook opening height (wardrobe floor top \u2192 shelf underside)." },
+  LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED strip channel width: the T3 main channel and the nook shelf channel. Same insert as the wall overhead / General Tall." },
+  LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED strip channel depth (15 mm board keeps 8.5)." },
+  LED_T3_T1_GAP_MM: { value: 0.5, doc: "T3 top: the main LED channel's back wall stops this short of T1's front face, so the channel sits on the strip of T3 in front of T1. Style 3: T1 front 35 \u2192 channel 20 \u2192 34.5." },
+  LED_T3_BRANCH_WIDTH_MM: { value: 20, doc: "T3 top: the feed branches from the main channel to the rear edge are this wide (wider than the channel: a cable slot). Style 3 measures 20." },
+  LED_T3_BRANCH_END_INSET_MM: { value: 80, doc: "T3 top: one feed branch near each end of every T3, its centre this far from that end. Style 3 varies 59 \u2013 99; the position is not critical." },
+  LED_NOOK_SHELF_FROM_ROOM_FACE_MM: { value: 54, doc: "Nook shelf underside: the LED channel starts this far from the room face and runs to the shelf's rear edge, centred across the shelf. Style 3 measures 54." },
   WARDROBE_DOOR_CLEARANCE_MM: { value: 4, doc: "Reveal around the wardrobe door: wall-side gap, and the vertical gap between the Style 1 fixed panel and the door. Opening side is flush with the colour panel." },
   WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM: { value: 775, doc: "Style 1: top of the fixed panel (the dragged split) when the params give none. Bedroom 1 measures 775; the door starts this + clearance above it." },
   WARDROBE_FIXED_PANEL_MIN_MM: { value: 80, doc: "Least Style 1 fixed-panel height (floor top \u2192 split)." },
@@ -42,8 +58,9 @@ var rules_default = {
   WARDROBE_HINGE_FROM_SIDE_MM: { value: 22.5, doc: "Cup centre from the door's hinge (wall-side) edge. Bedroom 1 measures 22.5 \u2014 a standard 35 mm full-overlay cup. The mounting plate on the wall strip comes later." },
   OHC_DOOR_DROP_MM: { value: 30, doc: "Middle overhead: the up-flap underside (ohcBottom) is this far below the bottom panel. Same drop as the wall overhead." },
   OHC_BP_OVERSIZE_MM: { value: 18, doc: "Bottom panel is cut this much deeper than the uprights, past where the roof meets the panel's top face. The slope cannot be cut on a three-axis router \u2014 trim to the roof on the sliding table saw. Same idea as T1's oversize." },
-  OHC_FEATURE_CLEARANCE_MM: { value: 1, doc: "Extra width of a bottom-panel groove or a T3 notch over the upright thickness (slot = panel + this). Matches the wall overhead." },
-  OHC_T3_NOTCH_DEPTH_MM: { value: 20, doc: "How far the middle T3's rear edge is notched to clear each of this cabinet's own uprights (D0, internal D, DN). Matches the wall overhead T3 notch. Not shared with the wardrobe T3s." },
+  OHC_FEATURE_CLEARANCE_MM: { value: 1, doc: "Extra width of a bottom-panel groove over the upright thickness (slot = panel + this). The T3 notch is wider: OHC_T3_NOTCH_SIDE_CLEARANCE_MM each side." },
+  OHC_T3_NOTCH_SIDE_CLEARANCE_MM: { value: 5, doc: "T3 notch stands this far clear of each face of an upright, so the cutter can enter on both sides. A 15 mm divider is a 25 mm notch, centred on the divider." },
+  OHC_T3_NOTCH_DEPTH_MM: { value: 20, doc: "Unused. The notch used to be 20 mm off the rear edge. It now runs from the rear edge forward to the T3 tail (the lip minus WARDROBE_T3_TAIL_CLEARANCE_MM), which is where the upright rises above the seat." },
   OHC_FRONT_CLEARANCE_MM: { value: 2.5, doc: "Gap between neighbouring overhead doors, and at the outer edges of the run. Matches the wall overhead." },
   OHC_HINGE_FROM_TOP_MM: { value: 22.5, doc: "Up-flap cup centre down from the door top. Two cups, both at this height." },
   OHC_HINGE_FROM_SIDE_2_MM: { value: 150, doc: "Two bays: cup centre from the outer face of each side panel, and from the centre divider's centreline." },
@@ -317,52 +334,153 @@ function faceRef(board2, faces) {
   return { board: board2, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
-// generators/bedroom/ohc.ts
+// generators/bedroom/led.ts
 var EPS = 1e-6;
 function round1(v) {
+  return Math.round(v * 10) / 10;
+}
+function addT3LedChannels(t3, opts, warnings) {
+  const id = t3.id;
+  const K = `${id}.feat.LED_MAIN`;
+  const width = dim(`${K}.u1`, { x1: ref(`${id}.x1`), x0: ref(`${id}.x0`) }, (t) => t.x1 - t.x0);
+  dim(`${K}.u0`, {}, () => 0, { formula: "0" });
+  const v1 = dim(`${K}.v1`, { t1: ref(opts.t1FrontKey), y0: ref(`${id}.y0`), GAP: RULES.LED_T3_T1_GAP_MM }, (t) => t.t1 - t.y0 - t.GAP);
+  const v0 = dim(`${K}.v0`, { v1: ref(`${K}.v1`), W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.v1 - t.W);
+  if (v0 < -EPS) {
+    warnings.push(`${id} LED channel skipped: T1 stands only ${round1(v1 + RULES.LED_GROOVE_WIDTH_MM.value)} mm behind the T3 front \u2014 no room for a ${RULES.LED_GROOVE_WIDTH_MM.value} mm channel`);
+    return;
+  }
+  addFeature(t3, "A", {
+    id: `${id}_LED_MAIN`,
+    kind: "tgroove",
+    u0: 0,
+    u1: round1(width),
+    v0: round1(v0),
+    v1: round1(v1),
+    depth: RULES.LED_GROOVE_DEPTH_MM.value,
+    through: false,
+    for: "led",
+    key: K,
+    source: opts.source
+  });
+  t3.notes = [...t3.notes ?? [], `LED channel on the top: ${RULES.LED_GROOVE_WIDTH_MM.value} \xD7 ${RULES.LED_GROOVE_DEPTH_MM.value} along the front, ${RULES.LED_T3_T1_GAP_MM.value} mm in front of T1; ${RULES.LED_T3_BRANCH_WIDTH_MM.value} wide feed branches to the rear near each end`];
+  const BW = RULES.LED_T3_BRANCH_WIDTH_MM;
+  const INSET = RULES.LED_T3_BRANCH_END_INSET_MM;
+  if (width <= 2 * INSET.value + BW.value) {
+    warnings.push(`${id} LED feed branches skipped: the board is only ${round1(width)} mm wide`);
+    return;
+  }
+  const ends = [
+    ["LED_BRANCH_1", (t) => t.INSET, { INSET }],
+    ["LED_BRANCH_2", (t) => t.width - t.INSET, { width: ref(`${K}.u1`), INSET }]
+  ];
+  for (const [name, centre, terms] of ends) {
+    const KB = `${id}.feat.${name}`;
+    const c = dim(`${KB}.c`, terms, centre);
+    const u0 = dim(`${KB}.u0`, { c: ref(`${KB}.c`), BW }, (t) => t.c - t.BW / 2);
+    const u1 = dim(`${KB}.u1`, { c: ref(`${KB}.c`), BW }, (t) => t.c + t.BW / 2);
+    const rear = opts.rearAt(t3.x0 + u0, t3.x0 + u1);
+    if (rear == null) {
+      warnings.push(`${id} ${name} skipped: no straight rear edge at x ${round1(t3.x0 + u0)} \u2013 ${round1(t3.x0 + u1)}`);
+      continue;
+    }
+    const bv0 = dim(`${KB}.v0`, { main: ref(`${K}.v1`) }, (t) => t.main);
+    const bv1 = dim(`${KB}.v1`, { rear, y0: ref(`${id}.y0`) }, (t) => t.rear - t.y0, { formula: "rear - y0" });
+    if (bv1 - bv0 < EPS) {
+      warnings.push(`${id} ${name} skipped: nothing behind the main channel`);
+      continue;
+    }
+    void c;
+    addFeature(t3, "A", {
+      id: `${id}_${name}`,
+      kind: "tgroove",
+      u0: round1(u0),
+      u1: round1(u1),
+      v0: round1(bv0),
+      v1: round1(bv1),
+      depth: RULES.LED_GROOVE_DEPTH_MM.value,
+      through: false,
+      for: "led",
+      key: KB,
+      source: opts.source
+    });
+  }
+}
+function addNookShelfLed(shelf, source, warnings) {
+  const id = shelf.id;
+  const K = `${id}.feat.LED`;
+  const width = dim(`${K}.width`, { x1: ref(`${id}.x1`), x0: ref(`${id}.x0`) }, (t) => t.x1 - t.x0);
+  const depth = dim(`${K}.depth`, { y1: ref(`${id}.y1`), y0: ref(`${id}.y0`) }, (t) => t.y1 - t.y0);
+  const v0 = dim(`${K}.v0`, { FROM: RULES.LED_NOOK_SHELF_FROM_ROOM_FACE_MM }, (t) => t.FROM);
+  const v1 = dim(`${K}.v1`, { depth: ref(`${K}.depth`) }, (t) => t.depth);
+  if (width < RULES.LED_GROOVE_WIDTH_MM.value + 20 || v1 - v0 < 20) {
+    warnings.push(`${id} LED channel skipped: the shelf is too small for it`);
+    return;
+  }
+  const u0 = dim(`${K}.u0`, { width: ref(`${K}.width`), W: RULES.LED_GROOVE_WIDTH_MM }, (t) => (t.width - t.W) / 2);
+  const u1 = dim(`${K}.u1`, { u0: ref(`${K}.u0`), W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.u0 + t.W);
+  addFeature(shelf, "B", {
+    id: `${id}_LED`,
+    kind: "groove",
+    u0: round1(u0),
+    u1: round1(u1),
+    v0: round1(v0),
+    v1: round1(v1),
+    depth: RULES.LED_GROOVE_DEPTH_MM.value,
+    through: false,
+    for: "led",
+    key: K,
+    source
+  });
+  shelf.notes = [...shelf.notes ?? [], `LED channel on the underside: ${RULES.LED_GROOVE_WIDTH_MM.value} \xD7 ${RULES.LED_GROOVE_DEPTH_MM.value}, centred, from ${RULES.LED_NOOK_SHELF_FROM_ROOM_FACE_MM.value} behind the room face to the rear edge`];
+}
+
+// generators/bedroom/ohc.ts
+var EPS2 = 1e-6;
+function round12(v) {
   return Math.round(v * 10) / 10;
 }
 function normalizeOhcZones(raw, opening) {
   const count = raw && (raw.length === 2 || raw.length === 3) ? raw.length : RULES.OHC_ZONE_COUNT_DEFAULT.value;
   const given = raw && raw.length === count ? raw : [];
   const sum = given.reduce((s, z) => s + (Number.isFinite(z.width) ? z.width : 0), 0);
-  const total = round1(Math.max(0, opening));
-  if (sum <= EPS) {
-    const each = round1(total / count);
+  const total = round12(Math.max(0, opening));
+  if (sum <= EPS2) {
+    const each = round12(total / count);
     return Array.from({ length: count }, (_, i) => ({
       id: `ohc-${i + 1}`,
-      width: i === count - 1 ? round1(total - each * (count - 1)) : each
+      width: i === count - 1 ? round12(total - each * (count - 1)) : each
     }));
   }
   const scale = total / sum;
-  const out = given.map((z, i) => ({ id: z.id || `ohc-${i + 1}`, width: round1(z.width * scale) }));
+  const out = given.map((z, i) => ({ id: z.id || `ohc-${i + 1}`, width: round12(z.width * scale) }));
   const partial = out.slice(0, -1).reduce((s, z) => s + z.width, 0);
-  out[out.length - 1].width = round1(total - partial);
+  out[out.length - 1].width = round12(total - partial);
   return out;
 }
 function setOhcBoundary(raw, index, x) {
-  const W = round1(Number(raw.width) || 0);
-  const ww = round1(Number(raw.wardrobeWidth) || 0);
+  const W = round12(Number(raw.width) || 0);
+  const ww = round12(Number(raw.wardrobeWidth) || 0);
   const x0 = ww;
-  const opening = round1(W - 2 * ww);
+  const opening = round12(W - 2 * ww);
   const zones = normalizeOhcZones(raw.ohcZones, opening).map((z) => ({ ...z }));
   const left = zones[index];
   const right = zones[index + 1];
   if (!left || !right) return null;
-  const start = round1(x0 + zones.slice(0, index).reduce((s, z) => s + z.width, 0));
-  const total = round1(left.width + right.width);
+  const start = round12(x0 + zones.slice(0, index).reduce((s, z) => s + z.width, 0));
+  const total = round12(left.width + right.width);
   const minW = RULES.OHC_ZONE_MIN_MM.value;
-  const at = round1(Math.max(start + minW, Math.min(start + total - minW, Number(x))));
-  left.width = round1(at - start);
-  right.width = round1(total - left.width);
+  const at = round12(Math.max(start + minW, Math.min(start + total - minW, Number(x))));
+  left.width = round12(at - start);
+  right.width = round12(total - left.width);
   return zones;
 }
 function equalOhcZones(opening, count) {
   return normalizeOhcZones(Array.from({ length: count }, (_, i) => ({ id: `ohc-${i + 1}`, width: 1 })), opening);
 }
 function yWhereRoofMeets(roofAt2, depth, z) {
-  if (roofAt2(0) <= z + EPS) return 0;
-  if (roofAt2(depth) >= z - EPS) return round1(depth);
+  if (roofAt2(0) <= z + EPS2) return 0;
+  if (roofAt2(depth) >= z - EPS2) return round12(depth);
   const steps = 40;
   let lo = 0;
   let hi = depth;
@@ -379,35 +497,37 @@ function yWhereRoofMeets(roofAt2, depth, z) {
     if (roofAt2(mid) > z) lo = mid;
     else hi = mid;
   }
-  return round1(hi);
+  return round12(hi);
 }
 function buildBedroomOhc(host) {
   const cpt = host.panelThickness;
   const dpt = host.doorPanelThickness;
   const x0 = host.wardrobeWidth;
-  const x1 = round1(host.width - host.wardrobeWidth);
-  const opening = round1(x1 - x0);
+  const x1 = round12(host.width - host.wardrobeWidth);
+  const opening = round12(x1 - x0);
   const zones = normalizeOhcZones(host.ohcZones, opening);
-  const bpZ0 = round1(host.ohcBottom + RULES.OHC_DOOR_DROP_MM.value);
-  const bpZ1 = round1(bpZ0 + cpt);
+  const bpZ0 = round12(host.ohcBottom + RULES.OHC_DOOR_DROP_MM.value);
+  const bpZ1 = round12(bpZ0 + cpt);
   const uprightBack = yWhereRoofMeets(host.roofAt, host.depth, bpZ1);
-  const bpBack = round1(Math.min(host.depth, uprightBack + RULES.OHC_BP_OVERSIZE_MM.value));
+  const bpBack = round12(Math.min(host.depth, uprightBack + RULES.OHC_BP_OVERSIZE_MM.value));
   const seat = host.seat;
   const t3Top = host.t3Top;
   const t3Depth = RULES.WARDROBE_T3_DEPTH_MM.value;
-  const notchDepth = RULES.OHC_T3_NOTCH_DEPTH_MM.value;
-  const slot = round1(cpt + RULES.OHC_FEATURE_CLEARANCE_MM.value);
-  const tongueH = round1(cpt / 2 - 0.5);
-  const grooveDepth = round1(cpt / 2);
+  const sideClear = RULES.OHC_T3_NOTCH_SIDE_CLEARANCE_MM.value;
+  const notchSlot = round12(cpt + 2 * sideClear);
+  const grooveSlot = round12(cpt + RULES.OHC_FEATURE_CLEARANCE_MM.value);
+  const notchY = round12(RULES.WARDROBE_T2_BACK_MM.value + RULES.WARDROBE_T3_LIP_DEPTH_MM.value - RULES.WARDROBE_T3_TAIL_CLEARANCE_MM.value);
+  const tongueH = round12(cpt / 2 - 0.5);
+  const grooveDepth = round12(cpt / 2);
   const clearance = RULES.OHC_FRONT_CLEARANCE_MM.value;
   const placed = zones.map((z, i) => {
-    const zx0 = round1(x0 + zones.slice(0, i).reduce((s, q) => s + q.width, 0));
-    return { ...z, x0: zx0, x1: round1(zx0 + z.width) };
+    const zx0 = round12(x0 + zones.slice(0, i).reduce((s, q) => s + q.width, 0));
+    return { ...z, x0: zx0, x1: round12(zx0 + z.width) };
   });
   const centers = [
-    round1(x0 + cpt / 2),
+    round12(x0 + cpt / 2),
     ...placed.slice(0, -1).map((z) => z.x1),
-    round1(x1 - cpt / 2)
+    round12(x1 - cpt / 2)
   ];
   const warnings = [];
   if (bpBack > uprightBack + 0.05) {
@@ -445,33 +565,33 @@ function buildBedroomOhc(host) {
   });
   const localNotches = centers.map((c) => {
     const u = c - x0;
-    return [round1(Math.max(0, u - slot / 2)), round1(Math.min(opening, u + slot / 2))];
+    return [round12(Math.max(0, u - notchSlot / 2)), round12(Math.min(opening, u + notchSlot / 2))];
   });
-  t3.profileVector = t3Outline(opening, localNotches, t3Depth, notchDepth).map(([x, y]) => ({ x: round1(x + x0), y: round1(y) }));
-  const tongueY0 = round1(uprightBack / 3 + 5);
-  const tongueY1 = round1(2 * uprightBack / 3 - 5);
-  const grooveY0 = round1(uprightBack / 3);
-  const grooveY1 = round1(2 * uprightBack / 3);
+  t3.profileVector = t3Outline(opening, localNotches, t3Depth, notchY).map(([x, y]) => ({ x: round12(x + x0), y: round12(y) }));
+  const tongueY0 = round12(uprightBack / 3 + 5);
+  const tongueY1 = round12(2 * uprightBack / 3 - 5);
+  const grooveY0 = round12(uprightBack / 3);
+  const grooveY1 = round12(2 * uprightBack / 3);
   const dividers = centers.map((center, i) => {
     const id = `OHC_D${i}`;
     const name = i === 0 ? "Overhead side \xB7 left" : i === centers.length - 1 ? "Overhead side \xB7 right" : `Overhead divider ${i}`;
     const b = board(id, name, "divider", "YZ", "X", cpt, {
-      x0: dim(`${id}.x0`, { c: center, cpt }, (t) => round1(t.c - t.cpt / 2)),
-      x1: dim(`${id}.x1`, { c: center, cpt }, (t) => round1(t.c + t.cpt / 2)),
+      x0: dim(`${id}.x0`, { c: center, cpt }, (t) => round12(t.c - t.cpt / 2)),
+      x1: dim(`${id}.x1`, { c: center, cpt }, (t) => round12(t.c + t.cpt / 2)),
       y0: dim(`${id}.y0`, {}, () => 0, { formula: "0" }),
       y1: dim(`${id}.y1`, { uprightBack: P.uprightBack }, (t) => t.uprightBack),
-      z0: dim(`${id}.z0`, { bpZ1: P.bpZ1, tongueH }, (t) => round1(t.bpZ1 - t.tongueH)),
-      z1: dim(`${id}.z1`, { t3Top: P.t3Top }, (t) => t.t3Top)
+      z0: dim(`${id}.z0`, { bpZ1: P.bpZ1, tongueH }, (t) => round12(t.bpZ1 - t.tongueH)),
+      z1: dim(`${id}.z1`, { roof: round12(host.roofAt(RULES.WARDROBE_T2_BACK_MM.value)) }, (t) => t.roof, { formula: "roof(T2 back)" })
     });
-    b.profileVector = dividerOutline(host.roofAt, uprightBack, bpZ1, tongueH, tongueY0, tongueY1, seat, t3Top, t3Depth, notchDepth);
+    b.profileVector = dividerOutline(host, uprightBack, bpZ1, tongueH, tongueY0, tongueY1, seat, t3Top);
     return b;
   });
   const doors = placed.map((zone, i) => {
     const id = `OHC_FP${i}`;
     const leftEdge = i === 0;
     const rightEdge = i === placed.length - 1;
-    const dx0 = leftEdge ? round1(zone.x0 + clearance) : round1(zone.x0 + clearance / 2);
-    const dx1 = rightEdge ? round1(zone.x1 - clearance) : round1(zone.x1 - clearance / 2);
+    const dx0 = leftEdge ? round12(zone.x0 + clearance) : round12(zone.x0 + clearance / 2);
+    const dx1 = rightEdge ? round12(zone.x1 - clearance) : round12(zone.x1 - clearance / 2);
     return board(id, `Overhead door ${i + 1}`, "front_panel", "XZ", "Y", dpt, {
       x0: dim(`${id}.x0`, { dx0 }, (t) => t.dx0),
       x1: dim(`${id}.x1`, { dx1 }, (t) => t.dx1),
@@ -502,8 +622,8 @@ function buildBedroomOhc(host) {
   }
   centers.forEach((center, i) => {
     const id = `OHC_D${i}`;
-    const gx0 = round1(Math.max(x0, center - slot / 2));
-    const gx1 = round1(Math.min(x1, center + slot / 2));
+    const gx0 = round12(Math.max(x0, center - grooveSlot / 2));
+    const gx1 = round12(Math.min(x1, center + grooveSlot / 2));
     const r = localRect(bp, { x: [gx0, gx1], y: [grooveY0, grooveY1] });
     addFeature(bp, "A", {
       id: `BG_${id}`,
@@ -516,23 +636,23 @@ function buildBedroomOhc(host) {
     });
     const div = dividers[i];
     tagEdges(div, "tongue", {
-      u0: tongueY0 - EPS,
-      u1: tongueY1 + EPS,
-      v0: -EPS,
-      v1: tongueH + EPS
+      u0: tongueY0 - EPS2,
+      u1: tongueY1 + EPS2,
+      v0: -EPS2,
+      v1: tongueH + EPS2
     }, { id: `${id}_TONGUE`, for: "OHC_BP", source: "bedroom.ohc" });
   });
   const fromTop = RULES.OHC_HINGE_FROM_TOP_MM.value;
   doors.forEach((door, i) => {
     const h = door.z1 - door.z0;
-    const v = round1(h - fromTop);
+    const v = round12(h - fromTop);
     const xs = cupXs(door, i, placed.length, x0, x1, placed[i]);
     const faceA = door.faces.find((f) => f.id === "A");
     xs.forEach((cabX, n) => {
       faceA.features.push({
         id: `${door.id}_HINGE_${n}`,
         kind: "hole",
-        center: [round1(cabX - door.x0), v],
+        center: [round12(cabX - door.x0), v],
         diameter: RULES.WARDROBE_HINGE_DIAMETER_MM.value,
         depth: RULES.WARDROBE_HINGE_DEPTH_MM.value,
         through: false,
@@ -542,6 +662,16 @@ function buildBedroomOhc(host) {
       });
     });
   });
+  if (host.led) {
+    addT3LedChannels(t3, {
+      t1FrontKey: host.led.t1FrontKey,
+      rearAt: (bx0, bx1) => {
+        const hit = localNotches.some(([n0, n1]) => bx1 > x0 + n0 - EPS2 && bx0 < x0 + n1 + EPS2);
+        return hit ? notchY : t3Depth;
+      },
+      source: "bedroom.ohc"
+    }, warnings);
+  }
   const joints = [];
   for (const div of dividers) {
     const tongues = div.faces.filter((f) => f.features.some((ft) => ft.kind === "tongue"));
@@ -566,14 +696,13 @@ function buildBedroomOhc(host) {
 function cupXs(door, index, count, x0, x1, zone) {
   if (count === 2) {
     const from2 = RULES.OHC_HINGE_FROM_SIDE_2_MM.value;
-    return index === 0 ? [round1(x0 + from2), round1(zone.x1 - from2)] : [round1(zone.x0 + from2), round1(x1 - from2)];
+    return index === 0 ? [round12(x0 + from2), round12(zone.x1 - from2)] : [round12(zone.x0 + from2), round12(x1 - from2)];
   }
   const from = RULES.OHC_HINGE_FROM_SIDE_3_MM.value;
-  return [round1(door.x0 + from), round1(door.x1 - from)];
+  return [round12(door.x0 + from), round12(door.x1 - from)];
 }
-function t3Outline(width, notches, depth, notchDepth) {
+function t3Outline(width, notches, depth, notchY) {
   const rear = depth;
-  const notchY = round1(depth - notchDepth);
   const ranges = [...notches].sort((a, b) => b[0] - a[0]);
   const o = new Outline("OHC_T3.pv", ["x", "y"]);
   o.add(lit(0), lit(0));
@@ -581,7 +710,7 @@ function t3Outline(width, notches, depth, notchDepth) {
   let guard = 0;
   const pushRear = (x) => o.add(lit(x), lit(rear));
   const pushNotch = (x) => o.add(lit(x), lit(notchY));
-  if (ranges.length && ranges[0][1] >= width - EPS) {
+  if (ranges.length && ranges[0][1] >= width - EPS2) {
     const [nx0] = ranges.shift();
     pushNotch(width);
     pushNotch(nx0);
@@ -595,7 +724,7 @@ function t3Outline(width, notches, depth, notchDepth) {
     pushRear(nx1);
     pushNotch(nx1);
     pushNotch(nx0);
-    if (nx0 <= EPS) {
+    if (nx0 <= EPS2) {
       o.add(lit(0), lit(notchY));
       o.add(lit(0), lit(0));
       return o.points;
@@ -606,27 +735,29 @@ function t3Outline(width, notches, depth, notchDepth) {
   o.add(lit(0), lit(0));
   return o.points;
 }
-function dividerOutline(roofAt2, uprightBack, bpTop, tongueH, tongueY0, tongueY1, seat, t3Top, t3Depth, notchDepth) {
-  const notchY = round1(t3Depth - notchDepth);
+function dividerOutline(host, uprightBack, bpTop, tongueH, tongueY0, tongueY1, seat, t3Top) {
+  const t2Back = RULES.WARDROBE_T2_BACK_MM.value;
+  const lip = round12(t2Back + RULES.WARDROBE_T3_LIP_DEPTH_MM.value);
+  const rail = round12(t3Top + RULES.WARDROBE_T3_CLEARANCE_MM.value);
   const pts = [
     { y: 0, z: bpTop },
     { y: tongueY0, z: bpTop },
-    { y: tongueY0, z: round1(bpTop - tongueH) },
-    { y: tongueY1, z: round1(bpTop - tongueH) },
+    { y: tongueY0, z: round12(bpTop - tongueH) },
+    { y: tongueY1, z: round12(bpTop - tongueH) },
     { y: tongueY1, z: bpTop },
     { y: uprightBack, z: bpTop }
   ];
-  const ys = /* @__PURE__ */ new Set([uprightBack, t3Depth]);
-  for (let i = 0; i <= 8; i += 1) ys.add(round1(t3Depth + (uprightBack - t3Depth) * i / 8));
-  const descending = [...ys].filter((y) => y >= t3Depth - EPS && y < uprightBack - 0.2).sort((a, b) => b - a);
-  for (const y of descending) {
-    const z = round1(Math.min(t3Top, roofAt2(y)));
-    const last = pts[pts.length - 1];
-    if (Math.abs(last.y - y) > EPS || Math.abs(last.z - z) > EPS) pts.push({ y, z });
+  const roof = (y) => round12(host.roofAt(y));
+  pts.push({ y: uprightBack, z: roof(uprightBack) });
+  const breaks = (host.roofProfile || []).map((q) => q[0]).filter((y) => y > t2Back + EPS2 && y < uprightBack - EPS2).sort((a, b) => b - a);
+  for (const y of breaks) pts.push({ y: round12(y), z: roof(y) });
+  if (uprightBack > t2Back + EPS2) {
+    pts.push({ y: t2Back, z: roof(t2Back) });
+    pts.push({ y: t2Back, z: rail });
   }
-  pts.push({ y: notchY, z: round1(Math.min(t3Top, roofAt2(notchY))) });
-  pts.push({ y: notchY, z: round1(Math.min(seat, roofAt2(notchY))) });
-  pts.push({ y: 0, z: round1(Math.min(seat, roofAt2(0))) });
+  if (uprightBack > lip + EPS2) pts.push({ y: lip, z: rail });
+  pts.push({ y: Math.min(lip, uprightBack), z: seat });
+  pts.push({ y: 0, z: seat });
   pts.push({ y: 0, z: bpTop });
   return pts;
 }
@@ -636,15 +767,15 @@ function board(id, name, category, profilePlane, thicknessAxis, materialThicknes
     name,
     category,
     boardType: "panel",
-    materialThickness: round1(materialThickness),
+    materialThickness: round12(materialThickness),
     profilePlane,
     thicknessAxis,
-    x0: round1(f.x0),
-    x1: round1(f.x1),
-    y0: round1(f.y0),
-    y1: round1(f.y1),
-    z0: round1(f.z0),
-    z1: round1(f.z1),
+    x0: round12(f.x0),
+    x1: round12(f.x1),
+    y0: round12(f.y0),
+    y1: round12(f.y1),
+    z0: round12(f.z0),
+    z1: round12(f.z1),
     source: "bedroom.ohc"
   };
 }
@@ -791,7 +922,8 @@ function generateBedroomSvgPreview(result, options = {}) {
   if (showDimensions) {
     const dimText = (x, y, text, anchor = "middle", fill = C.text2) => parts.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="10" fill="${fill}" pointer-events="none">${esc(text)}</text>`);
     const heights = [[0, false], [p.bootHeight, true], [p.ohcBottom, true], [H, false]];
-    if (front && front.style === "style1") heights.push([front.fixedPanelTop, true]);
+    if (front && front.style === "style1" && front.fixedPanelTop != null) heights.push([front.fixedPanelTop, true]);
+    if (front && front.style === "nook" && front.nookShelfBottom != null) heights.push([front.nookShelfBottom, false]);
     for (const [z, drag] of heights) dimText(ox - 6, toY(z), fmt(z), "end", drag ? C.boundary : C.text3);
     const yb = toY(0) + 14;
     dimText(toX(p.wardrobeWidth / 2), yb, fmt(p.wardrobeWidth), "middle", C.boundary);
@@ -805,17 +937,66 @@ function generateBedroomSvgPreview(result, options = {}) {
 // generators/bedroom/generator.ts
 var DEFAULT_CPT = 16;
 var DEFAULT_COLOR = "White Stipple";
-var EPS2 = 1e-6;
+var EPS3 = 1e-6;
 var LAYOUT_KEYS = ["bootHeight", "wardrobeWidth", "ohcBottom", "fixedPanelTop"];
 var WARDROBE_STYLES = {
-  style1: { label: "Style 1 \xB7 door over a fixed panel" },
-  nook: { label: "Nook \xB7 later" }
+  style1: { label: "Style 1 \xB7 door over a fixed panel", layoutKey: "fixedPanelTop" },
+  nook: { label: "Nook \xB7 door over an open shelf", layoutKey: null }
 };
 function normalizeStyle(raw) {
   return raw != null && Object.prototype.hasOwnProperty.call(WARDROBE_STYLES, String(raw)) ? String(raw) : "style1";
 }
-function round12(v) {
+function round13(v) {
   return Math.round(v * 10) / 10;
+}
+function nookCutReach() {
+  const cy = RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM.value;
+  const cz = RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM.value;
+  const rad = RULES.WARDROBE_NOOK_CUT_LOWER_RADIUS_MM.value;
+  return round13(cy + Math.sqrt(rad * rad - cz * cz));
+}
+function nookCutPath(bottomZ, topZ) {
+  const uy = RULES.WARDROBE_NOOK_CUT_UPPER_CENTER_Y_MM.value;
+  const ur = RULES.WARDROBE_NOOK_CUT_UPPER_RADIUS_MM.value;
+  const uz = topZ - ur;
+  const ly = RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM.value;
+  const lz = bottomZ + RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM.value;
+  const lr = RULES.WARDROBE_NOOK_CUT_LOWER_RADIUS_MM.value;
+  const ang = (cy, cz, y, z) => Math.atan2(y - cy, z - cz);
+  const meet = circleMeet(uy, uz, ur, ly, lz, lr);
+  const floorY = ly + Math.sqrt(lr * lr - (bottomZ - lz) ** 2);
+  const samples = (cy, cz, rad, a0, a1) => {
+    const span = a1 - a0;
+    const step = 2 * Math.acos(Math.max(-1, 1 - 0.3 / rad));
+    const n = Math.max(1, Math.ceil(Math.abs(span) / step));
+    const out = [];
+    for (let i = 1; i < n; i += 1) {
+      const a = a0 + span * i / n;
+      out.push({ y: round13(cy + rad * Math.sin(a)), z: round13(cz + rad * Math.cos(a)) });
+    }
+    return out;
+  };
+  return [
+    { y: round13(uy), z: round13(topZ) },
+    ...samples(uy, uz, ur, 0, ang(uy, uz, meet[0], meet[1])),
+    { y: round13(meet[0]), z: round13(meet[1]) },
+    ...samples(ly, lz, lr, ang(ly, lz, meet[0], meet[1]), ang(ly, lz, floorY, bottomZ)),
+    { y: round13(floorY), z: round13(bottomZ) }
+  ];
+}
+function circleMeet(y1, z1, r1, y2, z2, r2) {
+  const dy = y2 - y1;
+  const dz = z2 - z1;
+  const d = Math.hypot(dy, dz);
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+  const py = y1 + a * dy / d;
+  const pz = z1 + a * dz / d;
+  const yA = py + h * -dz / d;
+  const zA = pz + h * dy / d;
+  const yB = py - h * -dz / d;
+  const zB = pz - h * dy / d;
+  return yA > yB ? [yA, zA] : [yB, zB];
 }
 function asNum(v, fallback) {
   const n = Number(v);
@@ -837,7 +1018,7 @@ function normalizeProfile(raw, depth, height) {
   for (const p of raw) {
     const y = Number(Array.isArray(p) ? p[0] : NaN);
     const z = Number(Array.isArray(p) ? p[1] : NaN);
-    if (Number.isFinite(y) && Number.isFinite(z)) pts.push([round12(Math.max(0, Math.min(depth, y))), round12(Math.max(0, z))]);
+    if (Number.isFinite(y) && Number.isFinite(z)) pts.push([round13(Math.max(0, Math.min(depth, y))), round13(Math.max(0, z))]);
   }
   pts.sort((a, b) => a[0] - b[0]);
   if (!pts.length || pts[0][0] > 0) pts.unshift([0, pts.length ? pts[0][1] : height]);
@@ -852,99 +1033,105 @@ function topLine(profile, depth, height, zTop) {
     const [y1, z1] = profile[i + 1];
     if ((z0 - zTop) * (z1 - zTop) < 0) {
       const y = y0 + (zTop - z0) * (y1 - y0) / (z1 - z0);
-      if (y > 0 && y < depth) ys.add(round12(y));
+      if (y > 0 && y < depth) ys.add(round13(y));
     }
   }
-  return [...ys].sort((a, b) => a - b).map((y) => ({ y, z: round12(Math.min(zTop, roofAt(profile, height, y))) }));
+  return [...ys].sort((a, b) => a - b).map((y) => ({ y, z: round13(Math.min(zTop, roofAt(profile, height, y))) }));
 }
 function sectionYZ(profile, depth, height, z0, zTop) {
   const top = topLine(profile, depth, height, zTop);
   const kept = [];
   for (let i = 0; i < top.length; i += 1) {
     const p = top[i];
-    if (p.z > z0 + EPS2) {
+    if (p.z > z0 + EPS3) {
       kept.push(p);
       continue;
     }
     if (kept.length) {
       const a = top[i - 1];
-      const y = a.z - p.z < EPS2 ? p.y : a.y + (a.z - z0) * (p.y - a.y) / (a.z - p.z);
-      kept.push({ y: round12(y), z: round12(z0) });
+      const y = a.z - p.z < EPS3 ? p.y : a.y + (a.z - z0) * (p.y - a.y) / (a.z - p.z);
+      kept.push({ y: round13(y), z: round13(z0) });
     }
     break;
   }
   if (!kept.length) return null;
   const yEnd = kept[kept.length - 1].y;
-  const out = [{ y: 0, z: round12(z0) }, { y: yEnd, z: round12(z0) }];
+  const out = [{ y: 0, z: round13(z0) }, { y: yEnd, z: round13(z0) }];
   for (let i = kept.length - 1; i >= 0; i -= 1) {
     const p = kept[i];
     const last = out[out.length - 1];
-    if (Math.abs(last.y - p.y) > EPS2 || Math.abs(last.z - p.z) > EPS2) out.push(p);
+    if (Math.abs(last.y - p.y) > EPS3 || Math.abs(last.z - p.z) > EPS3) out.push(p);
   }
-  out.push({ y: 0, z: round12(z0) });
+  out.push({ y: 0, z: round13(z0) });
   return out;
 }
 function sectionDepth(outline) {
   return outline ? Math.max(...outline.map((p) => p.y)) : 0;
 }
 function resolve(raw) {
-  const W = round12(asNum(raw.width, 0));
-  const D = round12(asNum(raw.depth, 0));
-  const H = round12(asNum(raw.height, 0));
+  const W = round13(asNum(raw.width, 0));
+  const D = round13(asNum(raw.depth, 0));
+  const H = round13(asNum(raw.height, 0));
   return {
     width: W,
     depth: D,
     height: H,
     roofProfile: normalizeProfile(raw.roofProfile, D, H),
-    bootHeight: round12(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)),
-    wardrobeWidth: round12(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value)),
-    ohcBottom: round12(asNum(raw.ohcBottom, RULES.OHC_BOTTOM_DEFAULT_MM.value)),
+    bootHeight: round13(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)),
+    wardrobeWidth: round13(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value)),
+    ohcBottom: round13(asNum(raw.ohcBottom, RULES.OHC_BOTTOM_DEFAULT_MM.value)),
     style: normalizeStyle(raw.style),
-    fixedPanelTop: round12(asNum(raw.fixedPanelTop, RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value)),
+    fixedPanelTop: round13(asNum(raw.fixedPanelTop, RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value)),
+    nookShelfBottom: nookWardrobeBottom({ bootHeight: round13(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)) }),
+    ledGroove: raw.ledGroove !== false,
     bedFrame: normalizeBedFrame(raw.bedFrame),
-    panelThickness: round12(asNum(raw.panelThickness, DEFAULT_CPT)),
-    doorPanelThickness: round12(asNum(raw.doorPanelThickness, RULES.DOOR_PANEL_THICKNESS_DEFAULT_MM.value)),
-    frontPanelThickness: round12(asNum(raw.frontPanelThickness, 0)),
+    panelThickness: round13(asNum(raw.panelThickness, DEFAULT_CPT)),
+    doorPanelThickness: round13(asNum(raw.doorPanelThickness, RULES.DOOR_PANEL_THICKNESS_DEFAULT_MM.value)),
+    frontPanelThickness: round13(asNum(raw.frontPanelThickness, 0)),
     carcassColor: String(raw.carcassColor || DEFAULT_COLOR),
     doorColor: String(raw.doorColorName || raw.doorColor || DEFAULT_COLOR),
-    ohcZones: normalizeOhcZones(raw.ohcZones, round12(W - 2 * round12(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value))))
+    ohcZones: normalizeOhcZones(raw.ohcZones, round13(W - 2 * round13(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value))))
   };
 }
 function layoutLimits(raw, key) {
   const p = resolve(raw);
   switch (key) {
     case "bootHeight":
-      return { min: RULES.BOOT_HEIGHT_MIN_MM.value, max: round12(p.ohcBottom - RULES.OPENING_HEIGHT_MIN_MM.value) };
+      return { min: RULES.BOOT_HEIGHT_MIN_MM.value, max: round13(p.ohcBottom - RULES.OPENING_HEIGHT_MIN_MM.value) };
     case "ohcBottom":
-      return { min: round12(p.bootHeight + RULES.OPENING_HEIGHT_MIN_MM.value), max: round12(p.height - RULES.OHC_HEIGHT_MIN_MM.value) };
+      return { min: round13(p.bootHeight + RULES.OPENING_HEIGHT_MIN_MM.value), max: round13(p.height - RULES.OHC_HEIGHT_MIN_MM.value) };
     case "wardrobeWidth":
-      return { min: RULES.WARDROBE_WIDTH_MIN_MM.value, max: round12((p.width - bedFrameWidth(p.bedFrame)) / 2) };
+      return { min: RULES.WARDROBE_WIDTH_MIN_MM.value, max: round13((p.width - bedFrameWidth(p.bedFrame)) / 2) };
     case "fixedPanelTop": {
       const floor = wardrobeFloorTop(p);
       const doorTop = t3TopOf(p);
       return {
-        min: round12(floor + RULES.WARDROBE_FIXED_PANEL_MIN_MM.value),
-        max: round12(doorTop - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - RULES.WARDROBE_DOOR_MIN_MM.value)
+        min: round13(floor + RULES.WARDROBE_FIXED_PANEL_MIN_MM.value),
+        max: round13(doorTop - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - RULES.WARDROBE_DOOR_MIN_MM.value)
       };
     }
   }
 }
 function wardrobeFloorTop(p) {
-  return round12(p.bootHeight + RULES.WARDROBE_FLOOR_RAISE_MM.value);
+  return round13(p.bootHeight + RULES.WARDROBE_FLOOR_RAISE_MM.value);
+}
+function nookWardrobeBottom(p) {
+  return round13(wardrobeFloorTop(p) + RULES.WARDROBE_NOOK_CUT_HEIGHT_MM.value);
 }
 function t3TopOf(p) {
-  return round12(roofAt(p.roofProfile, p.height, RULES.WARDROBE_T2_BACK_MM.value) - RULES.WARDROBE_T2_HEIGHT_MM.value - RULES.WARDROBE_T3_CLEARANCE_MM.value);
+  return round13(roofAt(p.roofProfile, p.height, RULES.WARDROBE_T2_BACK_MM.value) - RULES.WARDROBE_T2_HEIGHT_MM.value - RULES.WARDROBE_T3_CLEARANCE_MM.value);
 }
 function setLayout(raw, key, value) {
   const { min, max } = layoutLimits(raw, key);
-  const v = round12(Math.max(min, Math.min(max, Number(value))));
+  const v = round13(Math.max(min, Math.min(max, Number(value))));
   if (raw[key] === v) return raw;
   const next = { ...raw, [key]: v };
-  if (key !== "fixedPanelTop" && normalizeStyle(next.style) === "style1") {
-    const lim = layoutLimits(next, "fixedPanelTop");
-    const fp = round12(asNum(next.fixedPanelTop, RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
-    const clamped = round12(Math.max(lim.min, Math.min(lim.max, fp)));
-    if (clamped !== fp) next.fixedPanelTop = clamped;
+  const own = WARDROBE_STYLES[normalizeStyle(next.style)].layoutKey;
+  if (own && key !== own) {
+    const lim = layoutLimits(next, own);
+    const cur = round13(asNum(next[own], RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
+    const clamped = round13(Math.max(lim.min, Math.min(lim.max, cur)));
+    if (clamped !== cur) next[own] = clamped;
   }
   return next;
 }
@@ -988,7 +1175,7 @@ function generateBedroom(raw) {
   dim("bedBox.x0", { W: P.W, bed: ref("bedBox.W") }, (t) => (t.W - t.bed) / 2);
   dim("bedBox.x1", { x0: ref("bedBox.x0"), bed: ref("bedBox.W") }, (t) => t.x0 + t.bed);
   const bedMargin = dim("layout.bedMargin", { opening: ref("layout.openingWidth"), bed: ref("bedBox.W") }, (t) => (t.opening - t.bed) / 2);
-  const roofMin = round12(Math.min(...profile.map((q) => q[1])));
+  const roofMin = round13(Math.min(...profile.map((q) => q[1])));
   if (W < 600) errors.push("width must be at least 600 mm");
   if (D < 300) errors.push("depth must be at least 300 mm");
   if (H < 600) errors.push("height must be at least 600 mm");
@@ -997,16 +1184,21 @@ function generateBedroom(raw) {
   const lim = (key) => layoutLimits(p, key);
   if (p.bootHeight < lim("bootHeight").min) errors.push(`tunnel boot ${p.bootHeight} is lower than ${RULES.BOOT_HEIGHT_MIN_MM.value} mm`);
   if (p.wardrobeWidth < lim("wardrobeWidth").min) errors.push(`wardrobe ${p.wardrobeWidth} is narrower than ${RULES.WARDROBE_WIDTH_MIN_MM.value} mm`);
-  if (openingW < bedW - EPS2) errors.push(`the wardrobes leave only ${round12(openingW)} mm between them \u2014 the ${BED_FRAMES[p.bedFrame].label.toLowerCase()} bed frame needs ${bedW}`);
-  if (openingH < RULES.OPENING_HEIGHT_MIN_MM.value) errors.push(`only ${round12(openingH)} mm between the boot deck and the overhead (min ${RULES.OPENING_HEIGHT_MIN_MM.value})`);
-  if (ohcH < RULES.OHC_HEIGHT_MIN_MM.value) errors.push(`overhead is only ${round12(ohcH)} mm high at the room face (min ${RULES.OHC_HEIGHT_MIN_MM.value})`);
+  if (openingW < bedW - EPS3) errors.push(`the wardrobes leave only ${round13(openingW)} mm between them \u2014 the ${BED_FRAMES[p.bedFrame].label.toLowerCase()} bed frame needs ${bedW}`);
+  if (openingH < RULES.OPENING_HEIGHT_MIN_MM.value) errors.push(`only ${round13(openingH)} mm between the boot deck and the overhead (min ${RULES.OPENING_HEIGHT_MIN_MM.value})`);
+  if (ohcH < RULES.OHC_HEIGHT_MIN_MM.value) errors.push(`overhead is only ${round13(ohcH)} mm high at the room face (min ${RULES.OHC_HEIGHT_MIN_MM.value})`);
   for (const bay of p.ohcZones) {
-    if (bay.width < RULES.OHC_ZONE_MIN_MM.value - EPS2) errors.push(`overhead bay ${bay.width} is narrower than ${RULES.OHC_ZONE_MIN_MM.value} mm`);
+    if (bay.width < RULES.OHC_ZONE_MIN_MM.value - EPS3) errors.push(`overhead bay ${bay.width} is narrower than ${RULES.OHC_ZONE_MIN_MM.value} mm`);
   }
   if (p.style === "style1") {
     const splitLim = lim("fixedPanelTop");
-    if (p.fixedPanelTop < splitLim.min) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round12(p.fixedPanelTop - wardrobeFloorTop(p))} mm of panel above the wardrobe floor (min ${RULES.WARDROBE_FIXED_PANEL_MIN_MM.value})`);
-    if (p.fixedPanelTop > splitLim.max) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round12(t3TopOf(p) - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - p.fixedPanelTop)} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
+    if (p.fixedPanelTop < splitLim.min) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round13(p.fixedPanelTop - wardrobeFloorTop(p))} mm of panel above the wardrobe floor (min ${RULES.WARDROBE_FIXED_PANEL_MIN_MM.value})`);
+    if (p.fixedPanelTop > splitLim.max) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round13(t3TopOf(p) - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - p.fixedPanelTop)} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
+  }
+  if (p.style === "nook") {
+    const bottom = nookWardrobeBottom(p);
+    const door = round13(t3TopOf(p) - bottom);
+    if (door < RULES.WARDROBE_DOOR_MIN_MM.value) errors.push(`the nook wardrobe bottom ${bottom} leaves only ${door} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
   }
   const zones = [];
   if (!errors.length) {
@@ -1016,7 +1208,7 @@ function generateBedroom(raw) {
         errors.push(`${ZONE_LABEL[id]} has no room under the roof`);
         return;
       }
-      zones.push({ id, label: ZONE_LABEL[id], kind, x0: round12(x0), x1: round12(x1), y0: 0, y1: sectionDepth(outline), z0: round12(z0), z1: round12(roofTop ? H : zTop), roofTop, outlineYZ: outline });
+      zones.push({ id, label: ZONE_LABEL[id], kind, x0: round13(x0), x1: round13(x1), y0: 0, y1: sectionDepth(outline), z0: round13(z0), z1: round13(roofTop ? H : zTop), roofTop, outlineYZ: outline });
     };
     region("boot", "solid", 0, W, 0, bootTop, false);
     region("wardrobeL", "solid", 0, wardLx1, bootTop, H, true);
@@ -1024,12 +1216,12 @@ function generateBedroom(raw) {
     region("opening", "void", wardLx1, wardRx0, bootTop, ohcBot, false);
     region("ohc", "solid", wardLx1, wardRx0, ohcBot, H, true);
     const ohcZone = zones.find((z) => z.id === "ohc");
-    if (ohcZone && ohcZone.y1 < 100) warnings.push(`overhead is only ${round12(ohcZone.y1)} mm deep before the roof cuts it off`);
+    if (ohcZone && ohcZone.y1 < 100) warnings.push(`overhead is only ${round13(ohcZone.y1)} mm deep before the roof cuts it off`);
   }
   const boards = [];
   const joints = [];
   const bootZone = zones.find((z) => z.id === "boot");
-  if (!errors.length && bootZone && roofMin < p.bootHeight - EPS2) errors.push(`the roof comes down to ${roofMin} mm at the nose, below the boot deck (${p.bootHeight}) \u2014 the deck cannot run to the nose`);
+  if (!errors.length && bootZone && roofMin < p.bootHeight - EPS3) errors.push(`the roof comes down to ${roofMin} mm at the nose, below the boot deck (${p.bootHeight}) \u2014 the deck cannot run to the nose`);
   if (!errors.length && bootZone) {
     const CPT = P_cpt(p.panelThickness);
     const deckT = RULES.BOOT_DECK_THICKNESS_MM;
@@ -1082,7 +1274,7 @@ function generateBedroom(raw) {
     const DPT = param({ DPT: p.doorPanelThickness }).DPT;
     const roofFn = (y) => roofAt(profile, H, y);
     const t2Back = dim("top.T2.y1", { T2_BACK: RULES.WARDROBE_T2_BACK_MM }, (t) => t.T2_BACK);
-    const roofAtT2 = dim("top.roofAtT2", { y: ref("top.T2.y1") }, (t) => round12(roofFn(t.y)), { formula: "roof(T2.y1)" });
+    const roofAtT2 = dim("top.roofAtT2", { y: ref("top.T2.y1") }, (t) => round13(roofFn(t.y)), { formula: "roof(T2.y1)" });
     const t3Top = dim("top.T3.z1", { roof: ref("top.roofAtT2"), T2H: RULES.WARDROBE_T2_HEIGHT_MM, CL: RULES.WARDROBE_T3_CLEARANCE_MM }, (t) => t.roof - t.T2H - t.CL);
     const seat = dim("top.seat", { t3Top: ref("top.T3.z1"), T3: RULES.WARDROBE_T3_THICKNESS_MM }, (t) => t.t3Top - t.T3);
     const railZ0 = dim("top.rail.z0", { t3Top: ref("top.T3.z1"), CL: RULES.WARDROBE_T3_CLEARANCE_MM }, (t) => t.t3Top + t.CL);
@@ -1092,32 +1284,46 @@ function generateBedroom(raw) {
     const stripY = dim("wallStrip.y1", { D: P.D, STRIP: RULES.WARDROBE_WALL_STRIP_DEPTH_MM }, (t) => Math.min(t.D, t.STRIP));
     dim("top.T2.y0", { y1: ref("top.T2.y1"), T2T: RULES.WARDROBE_T2_THICKNESS_MM }, (t) => t.y1 - t.T2T);
     const t1Y0 = dim("top.T1.y0", { y1: ref("top.T2.y0"), T1T: RULES.WARDROBE_T1_THICKNESS_MM }, (t) => t.y1 - t.T1T);
-    dim("top.roofAtT1", { y: ref("top.T2.y0") }, (t) => round12(roofFn(t.y)), { formula: "roof(T1.y1)" });
+    dim("top.roofAtT1", { y: ref("top.T2.y0") }, (t) => round13(roofFn(t.y)), { formula: "roof(T1.y1)" });
     dim("top.T1.z1", { roof: ref("top.roofAtT1"), OVER: RULES.WARDROBE_T1_OVERSIZE_MM }, (t) => t.roof + t.OVER);
-    const roofAtLip = round12(roofFn(lipY1));
-    top = { seat: round12(seat), t3Top: round12(t3Top), roofAtT2: round12(roofAtT2), t2Height: round12(roofAtT2 - railZ0) };
-    if (seat - p.bootHeight < RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value) errors.push(`the roof at the T2 back (${round12(roofAtT2)}) leaves only ${round12(seat - p.bootHeight)} mm of colour panel above the boot deck (min ${RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value})`);
-    if (roofAtLip <= railZ0 + EPS2) errors.push(`the roof comes down to ${roofAtLip} mm at the T3 pocket end \u2014 no room for the panel above the pocket`);
-    if (t3Depth > D - EPS2) errors.push(`T3 depth ${round12(t3Depth)} is more than the body depth ${D}`);
-    if (stripY <= lipY1 + EPS2) errors.push(`the wall strip depth ${round12(stripY)} does not reach past the T3 pocket`);
-    if (round12(roofFn(stripY)) <= p.bootHeight + EPS2) errors.push(`the roof comes down to ${round12(roofFn(stripY))} mm at the wall strip's back, below the boot deck`);
-    if (t1Y0 < EPS2) errors.push("the top rails do not fit in front of the T2 back");
+    const roofAtLip = round13(roofFn(lipY1));
+    top = { seat: round13(seat), t3Top: round13(t3Top), roofAtT2: round13(roofAtT2), t2Height: round13(roofAtT2 - railZ0) };
+    if (seat - p.bootHeight < RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value) errors.push(`the roof at the T2 back (${round13(roofAtT2)}) leaves only ${round13(seat - p.bootHeight)} mm of colour panel above the boot deck (min ${RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value})`);
+    if (roofAtLip <= railZ0 + EPS3) errors.push(`the roof comes down to ${roofAtLip} mm at the T3 pocket end \u2014 no room for the panel above the pocket`);
+    if (t3Depth > D - EPS3) errors.push(`T3 depth ${round13(t3Depth)} is more than the body depth ${D}`);
+    if (stripY <= lipY1 + EPS3) errors.push(`the wall strip depth ${round13(stripY)} does not reach past the T3 pocket`);
+    if (round13(roofFn(stripY)) <= p.bootHeight + EPS3) errors.push(`the roof comes down to ${round13(roofFn(stripY))} mm at the wall strip's back, below the boot deck`);
+    if (t1Y0 < EPS3) errors.push("the top rails do not fit in front of the T2 back");
     if (!errors.length) warnings.push(`T1 is cut ${RULES.WARDROBE_T1_OVERSIZE_MM.value} mm above the roof by design \u2014 trim to the roof on site`);
+    const nookOn = p.style === "nook";
+    dim("front.floor.z1", { boot: ref("boot.z1"), RAISE: RULES.WARDROBE_FLOOR_RAISE_MM }, (t) => t.boot + t.RAISE);
+    if (nookOn) {
+      dim("nook.z0", { floor: ref("front.floor.z1") }, (t) => t.floor, { formula: "= front.floor.z1" });
+      dim("nook.z1", { floor: ref("front.floor.z1"), H: RULES.WARDROBE_NOOK_CUT_HEIGHT_MM }, (t) => t.floor + t.H);
+      const reach = nookCutReach();
+      dim("nook.cut.floorY", { reach }, (t) => t.reach, { formula: "lower arc meets the cut bottom" });
+      if (reach > D - EPS3) errors.push(`the nook cut reaches ${reach} mm back and the body is only ${D} deep`);
+    }
     if (!errors.length) {
       const panelOutline = (id) => {
         const o = new Outline(`${id}.pv`, ["y", "z"]);
         const bootZ = ref("boot.z1");
         o.add(lit(0), ex({ bootZ }, (t) => t.bootZ));
         o.add(ex({ D: P.D }, (t) => t.D), ex({ bootZ }, (t) => t.bootZ));
-        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS2 && y < D - EPS2).sort((a, b) => b - a);
-        o.add(ex({ D: P.D }, (t) => t.D), ex({ D: P.D }, (t) => round12(roofFn(t.D)), "roof(D)"));
-        for (const y of breaks) o.add(lit(round12(y)), ex({ y }, (t) => round12(roofFn(t.y)), `roof(${round12(y)})`));
+        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS3 && y < D - EPS3).sort((a, b) => b - a);
+        o.add(ex({ D: P.D }, (t) => t.D), ex({ D: P.D }, (t) => round13(roofFn(t.D)), "roof(D)"));
+        for (const y of breaks) o.add(lit(round13(y)), ex({ y }, (t) => round13(roofFn(t.y)), `roof(${round13(y)})`));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ roof: ref("top.roofAtT2") }, (t) => t.roof));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.seat") }, (t) => t.z));
         o.add(lit(0), ex({ z: ref("top.seat") }, (t) => t.z));
-        return o.points.map(([py, pz]) => ({ y: round12(py), z: round12(pz) }));
+        if (nookOn) {
+          o.add(lit(0), ex({ z: ref("nook.z1") }, (t) => t.z));
+          for (const pt of nookCutPath(ref("nook.z0").value, ref("nook.z1").value)) o.add(lit(pt.y), lit(pt.z));
+          o.add(lit(0), ex({ z: ref("nook.z0") }, (t) => t.z));
+        }
+        return o.points.map(([py, pz]) => ({ y: round13(py), z: round13(pz) }));
       };
       const panelBox = (id, side) => {
         const outline = panelOutline(id);
@@ -1139,8 +1345,18 @@ function generateBedroom(raw) {
       const panelR = panelBox("WARD_R_PANEL", "R");
       const CPT = param({ CPT: p.panelThickness }).CPT;
       const shelfOn = p.style === "style1";
+      if (nookOn) {
+        dim("base.z0", { floor: ref("front.floor.z1"), BASE: RULES.WARDROBE_BASE_THICKNESS_MM }, (t) => t.floor - t.BASE);
+        dim("nook.base.y1", { D: P.D, z: ref("front.floor.z1") }, (t) => yWhereRoofMeets(roofFn, t.D, t.z), { formula: "min(D, y where roof = floor top)" });
+        same("nook.shelf.z0", "nook.z1");
+        dim("nook.shelf.z1", { z0: ref("nook.shelf.z0"), CPT }, (t) => t.z0 + t.CPT);
+        dim("nook.shelf.y1", { D: P.D, GAP: RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM, z: ref("nook.shelf.z1") }, (t) => yWhereRoofMeets(roofFn, t.D - t.GAP, t.z), { formula: "min(D - GAP, y where roof = shelf top)" });
+        if (ref("nook.base.y1").value < 50) errors.push(`the roof comes down to ${round13(roofFn(0))} mm at the room face, below the wardrobe floor (${round13(ref("front.floor.z1").value)})`);
+        if (ref("nook.shelf.y1").value < 50) errors.push(`the roof comes down to ${round13(roofFn(0))} mm at the room face \u2014 the nook shelf (${round13(ref("nook.shelf.z1").value)}) does not fit under it`);
+        else if (ref("nook.shelf.y1").value < D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - 0.5) warnings.push(`the nook shelf stops at ${round13(ref("nook.shelf.y1").value)} where the roof meets it, ${round13(D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - ref("nook.shelf.y1").value)} mm short of the ${RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value} mm nose gap`);
+      }
+      const stripZ0Key = nookOn ? "nook.shelf.z1" : "boot.z1";
       if (shelfOn) {
-        dim("front.floor.z1", { boot: ref("boot.z1"), RAISE: RULES.WARDROBE_FLOOR_RAISE_MM }, (t) => t.boot + t.RAISE);
         dim("shelf.z0", { floor: ref("front.floor.z1"), ABOVE: RULES.WARDROBE_SHELF_ABOVE_FLOOR_MM }, (t) => t.floor + t.ABOVE);
         dim("shelf.z1", { z0: ref("shelf.z0"), CPT }, (t) => t.z0 + t.CPT);
         dim("shelf.notch.z0", { z0: ref("shelf.z0"), CL: RULES.WARDROBE_SHELF_GROOVE_Z_MM }, (t) => t.z0 - t.CL);
@@ -1153,10 +1369,10 @@ function generateBedroom(raw) {
         dim("shelf.tongue.depth", { DPT, TIP: RULES.WARDROBE_SHELF_TONGUE_TIP_MM }, (t) => t.DPT / 2 - t.TIP);
         dim("shelf.groove.depth", { tongue: ref("shelf.tongue.depth"), EXTRA: RULES.WARDROBE_SHELF_GROOVE_EXTRA_MM }, (t) => t.tongue + t.EXTRA);
       }
-      const shelfNotch = shelfOn && RULES.WARDROBE_SHELF_STRIP_SETBACK_MM.value < stripY - EPS2;
+      const shelfNotch = shelfOn && RULES.WARDROBE_SHELF_STRIP_SETBACK_MM.value < stripY - EPS3;
       const stripOutline = (id) => {
         const o = new Outline(`${id}.pv`, ["y", "z"]);
-        const bootZ = ref("boot.z1");
+        const bootZ = ref(stripZ0Key);
         const yBack = () => ex({ y: ref("wallStrip.y1") }, (t) => t.y);
         o.add(lit(0), ex({ bootZ }, (t) => t.bootZ));
         o.add(yBack(), ex({ bootZ }, (t) => t.bootZ));
@@ -1166,15 +1382,15 @@ function generateBedroom(raw) {
           o.add(ex({ y: ref("shelf.notch.y0") }, (t) => t.y), ex({ z: ref("shelf.notch.z1") }, (t) => t.z));
           o.add(yBack(), ex({ z: ref("shelf.notch.z1") }, (t) => t.z));
         }
-        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS2 && y < stripY - EPS2).sort((a, b) => b - a);
-        o.add(yBack(), ex({ y: ref("wallStrip.y1") }, (t) => round12(roofFn(t.y)), "roof(wallStrip.y1)"));
-        for (const y of breaks) o.add(lit(round12(y)), ex({ y }, (t) => round12(roofFn(t.y)), `roof(${round12(y)})`));
+        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS3 && y < stripY - EPS3).sort((a, b) => b - a);
+        o.add(yBack(), ex({ y: ref("wallStrip.y1") }, (t) => round13(roofFn(t.y)), "roof(wallStrip.y1)"));
+        for (const y of breaks) o.add(lit(round13(y)), ex({ y }, (t) => round13(roofFn(t.y)), `roof(${round13(y)})`));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ roof: ref("top.roofAtT2") }, (t) => t.roof));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.seat") }, (t) => t.z));
         o.add(lit(0), ex({ z: ref("top.seat") }, (t) => t.z));
-        return o.points.map(([py, pz]) => ({ y: round12(py), z: round12(pz) }));
+        return o.points.map(([py, pz]) => ({ y: round13(py), z: round13(pz) }));
       };
       const stripBox = (id, side) => {
         const outline = stripOutline(id);
@@ -1186,7 +1402,7 @@ function generateBedroom(raw) {
           x1,
           y0: dim(`${id}.y0`, {}, () => 0, { formula: "0" }),
           y1: same(`${id}.y1`, "wallStrip.y1"),
-          z0: same(`${id}.z0`, "boot.z1"),
+          z0: same(`${id}.z0`, stripZ0Key),
           z1: dim(`${id}.z1`, { H: P.H }, () => zTop, { formula: "max(roof over the strip)" })
         });
         b.profileVector = outline;
@@ -1197,6 +1413,44 @@ function generateBedroom(raw) {
       if (shelfNotch) {
         stripL.notes = ["through notch y 75 \u2192 back, the Style 1 shelf passes to the wall"];
         stripR.notes = stripL.notes;
+      }
+      const nookBoards = [];
+      if (nookOn) {
+        const BASE = RULES.WARDROBE_BASE_THICKNESS_MM;
+        const panelFace = (id, side) => side === "L" ? same(`${id}.x1`, "WARD_L_PANEL.x0") : same(`${id}.x0`, "WARD_R_PANEL.x1");
+        const wall0 = (id) => dim(`${id}.x0`, {}, () => 0, { formula: "0" });
+        const wall1 = (id) => dim(`${id}.x1`, { W: P.W }, (t) => t.W);
+        for (const side of ["L", "R"]) {
+          const name = side === "L" ? "left" : "right";
+          const kickId = `WARD_${side}_KICK`;
+          const kick = boardRect(kickId, `Wardrobe kick \xB7 ${name}`, "kick", "YZ", "X", BASE.value, {
+            x0: side === "L" ? wall0(kickId) : dim(`${kickId}.x0`, { W: P.W, BASE }, (t) => t.W - t.BASE),
+            x1: side === "L" ? dim(`${kickId}.x1`, { BASE }, (t) => t.BASE) : wall1(kickId),
+            y0: dim(`${kickId}.y0`, {}, () => 0, { formula: "0" }),
+            y1: same(`${kickId}.y1`, "nook.base.y1"),
+            z0: same(`${kickId}.z0`, "boot.z1"),
+            z1: same(`${kickId}.z1`, "base.z0")
+          });
+          const floorId = `WARD_${side}_FLOOR`;
+          const floor = boardRect(floorId, `Wardrobe floor \xB7 ${name}`, "floor", "XY", "Z", BASE.value, {
+            x0: side === "L" ? wall0(floorId) : panelFace(floorId, side),
+            x1: side === "L" ? panelFace(floorId, side) : wall1(floorId),
+            y0: dim(`${floorId}.y0`, {}, () => 0, { formula: "0" }),
+            y1: same(`${floorId}.y1`, "nook.base.y1"),
+            z0: same(`${floorId}.z0`, "base.z0"),
+            z1: same(`${floorId}.z1`, "front.floor.z1")
+          });
+          const nookId = `WARD_${side}_NOOK`;
+          const shelf = boardRect(nookId, `Nook shelf \xB7 ${name}`, "shelf", "XY", "Z", p.panelThickness, {
+            x0: side === "L" ? wall0(nookId) : panelFace(nookId, side),
+            x1: side === "L" ? panelFace(nookId, side) : wall1(nookId),
+            y0: dim(`${nookId}.y0`, {}, () => 0, { formula: "0" }),
+            y1: same(`${nookId}.y1`, "nook.shelf.y1"),
+            z0: same(`${nookId}.z0`, "nook.shelf.z0"),
+            z1: same(`${nookId}.z1`, "nook.shelf.z1")
+          });
+          nookBoards.push(kick, floor, shelf);
+        }
       }
       const shelfBoards = [];
       if (shelfOn) {
@@ -1217,7 +1471,7 @@ function generateBedroom(raw) {
             o.add(inset(), lit(0)).add(inset(), ySet()).add(wall(), ySet()).add(wall(), yD()).add(face(), yD());
             o.add(face(), y1t()).add(tip(), y1t()).add(tip(), y0t()).add(face(), y0t()).add(face(), lit(0));
           }
-          return o.points.map(([px, py]) => ({ x: round12(px), y: round12(py) }));
+          return o.points.map(([px, py]) => ({ x: round13(px), y: round13(py) }));
         };
         const shelfBox = (id, side) => {
           const outline = shelfOutline(id, side);
@@ -1254,7 +1508,7 @@ function generateBedroom(raw) {
         const Y1 = ex({ y: ref("top.T3.y1") }, (t) => t.y);
         if (side === "L") o.add(X0, Y0).add(X1, Y0).add(X1, YT).add(XN, YT).add(XN, Y1).add(X0, Y1);
         else o.add(X0, Y0).add(X1, Y0).add(X1, Y1).add(XN, Y1).add(XN, YT).add(X0, YT);
-        b.profileVector = o.points.map(([px, py]) => ({ x: round12(px), y: round12(py) }));
+        b.profileVector = o.points.map(([px, py]) => ({ x: round13(px), y: round13(py) }));
         return b;
       };
       const t3L = t3Box("WARD_L_T3", "L");
@@ -1278,14 +1532,17 @@ function generateBedroom(raw) {
       });
       T1.notes = [`cut ${RULES.WARDROBE_T1_OVERSIZE_MM.value} above the roof \u2014 flat top, trim to the roof slope on site`];
       const frontBoards = [];
-      if (p.style === "style1") {
+      {
         const CL = RULES.WARDROBE_DOOR_CLEARANCE_MM;
-        const floorZ = ref("front.floor.z1").value;
-        const splitZ = dim("front.split.z1", { fixedPanelTop: P.fixedPanelTop }, (t) => t.fixedPanelTop);
-        const doorZ0 = dim("front.door.z0", { split: ref("front.split.z1"), CL }, (t) => t.split + t.CL);
-        const doorZ1 = same("front.door.z1", "top.T3.z1");
-        const y0 = dim("front.y0", { DPT }, (t) => -t.DPT);
-        const y1 = dim("front.y1", {}, () => 0, { formula: "0" });
+        if (shelfOn) {
+          dim("front.split.z1", { fixedPanelTop: P.fixedPanelTop }, (t) => t.fixedPanelTop);
+          dim("front.door.z0", { split: ref("front.split.z1"), CL }, (t) => t.split + t.CL);
+        } else {
+          same("front.door.z0", "nook.shelf.z0");
+        }
+        same("front.door.z1", "top.T3.z1");
+        dim("front.y0", { DPT }, (t) => -t.DPT);
+        dim("front.y1", {}, () => 0, { formula: "0" });
         const frontBox = (id, name, category, side, kind) => {
           const gap = kind === "door";
           const x0 = side === "L" ? gap ? dim(`${id}.x0`, { CL }, (t) => t.CL) : dim(`${id}.x0`, {}, () => 0, { formula: "0" }) : same(`${id}.x0`, "wardrobeR.x0");
@@ -1299,19 +1556,18 @@ function generateBedroom(raw) {
             z1: same(`${id}.z1`, kind === "door" ? "front.door.z1" : "front.split.z1")
           });
         };
-        void floorZ;
-        void splitZ;
-        void doorZ0;
-        void doorZ1;
-        void y0;
-        void y1;
-        const fixedL = frontBox("WARD_L_FIXED", "Wardrobe fixed panel \xB7 left", "front_panel", "L", "fixed");
-        const fixedR = frontBox("WARD_R_FIXED", "Wardrobe fixed panel \xB7 right", "front_panel", "R", "fixed");
-        const doorL = frontBox("WARD_L_DOOR", "Wardrobe door \xB7 left", "front_panel", "L", "door");
-        const doorR = frontBox("WARD_R_DOOR", "Wardrobe door \xB7 right", "front_panel", "R", "door");
-        frontBoards.push(fixedL, fixedR, doorL, doorR);
+        if (shelfOn) {
+          frontBoards.push(
+            frontBox("WARD_L_FIXED", "Wardrobe fixed panel \xB7 left", "front_panel", "L", "fixed"),
+            frontBox("WARD_R_FIXED", "Wardrobe fixed panel \xB7 right", "front_panel", "R", "fixed")
+          );
+        }
+        frontBoards.push(
+          frontBox("WARD_L_DOOR", "Wardrobe door \xB7 left", "front_panel", "L", "door"),
+          frontBox("WARD_R_DOOR", "Wardrobe door \xB7 right", "front_panel", "R", "door")
+        );
       }
-      const wardBoards = [stripL, stripR, panelL, panelR, ...shelfBoards, t3L, t3R, T2, T1, ...frontBoards];
+      const wardBoards = [stripL, stripR, panelL, panelR, ...shelfBoards, ...nookBoards, t3L, t3R, T2, T1, ...frontBoards];
       for (const b of wardBoards) b.role = b.category;
       stripL.zoneId = "wardrobeL";
       panelL.zoneId = "wardrobeL";
@@ -1319,13 +1575,12 @@ function generateBedroom(raw) {
       stripR.zoneId = "wardrobeR";
       panelR.zoneId = "wardrobeR";
       t3R.zoneId = "wardrobeR";
-      for (const b of shelfBoards) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
+      for (const b of [...shelfBoards, ...nookBoards, ...frontBoards]) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
       T2.zoneId = "top";
       T1.zoneId = "top";
-      for (const b of frontBoards) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
-      const shelfIds = (side) => shelfBoards.filter((b) => b.zoneId === (side === "L" ? "wardrobeL" : "wardrobeR")).map((b) => b.id);
-      wardL.boards = ["WARD_L_STRIP", "WARD_L_PANEL", ...shelfIds("L"), "WARD_L_T3", ...frontBoards.filter((b) => b.zoneId === "wardrobeL").map((b) => b.id)];
-      wardR.boards = ["WARD_R_STRIP", "WARD_R_PANEL", ...shelfIds("R"), "WARD_R_T3", ...frontBoards.filter((b) => b.zoneId === "wardrobeR").map((b) => b.id)];
+      const inZone = (list, side) => list.filter((b) => b.zoneId === (side === "L" ? "wardrobeL" : "wardrobeR")).map((b) => b.id);
+      wardL.boards = ["WARD_L_STRIP", "WARD_L_PANEL", ...inZone(shelfBoards, "L"), ...inZone(nookBoards, "L"), "WARD_L_T3", ...inZone(frontBoards, "L")];
+      wardR.boards = ["WARD_R_STRIP", "WARD_R_PANEL", ...inZone(shelfBoards, "R"), ...inZone(nookBoards, "R"), "WARD_R_T3", ...inZone(frontBoards, "R")];
       attachFaces(wardBoards);
       if (shelfOn) {
         const grooveY0 = ref("shelf.groove.y0").value;
@@ -1339,7 +1594,7 @@ function generateBedroom(raw) {
             id: "GR_SHELF",
             kind: "groove",
             ...r,
-            depth: round12(grooveDepth),
+            depth: round13(grooveDepth),
             through: false,
             for: shelfId,
             key: `${panel.id}.feat.SHELF`,
@@ -1348,8 +1603,21 @@ function generateBedroom(raw) {
         }
       }
       for (const b of [panelL, panelR]) b.stock = { kind: "door", thickness: b.materialThickness, colour: p.doorColor };
-      for (const b of [stripL, stripR, ...shelfBoards, t3L, t3R, T2, T1]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
+      for (const b of [stripL, stripR, ...shelfBoards, ...nookBoards, t3L, t3R, T2, T1]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
       for (const b of shelfBoards) annotate(b, "A", { semantic: "top", visible: true, finish: { colour: p.carcassColor } });
+      for (const b of nookBoards) {
+        b.source = "bedroom.nook";
+        if (b.id.endsWith("_KICK")) {
+          annotate(b, b.id.includes("_L_") ? "A" : "B", { semantic: "inside", visible: false });
+          annotate(b, b.id.includes("_L_") ? "B" : "A", { semantic: "wall", visible: false });
+        } else if (b.id.endsWith("_FLOOR")) {
+          annotate(b, "A", { semantic: "top", visible: true, finish: { colour: p.carcassColor } });
+          annotate(b, "B", { semantic: "bottom", visible: false });
+        } else {
+          annotate(b, "A", { semantic: "top", visible: false });
+          annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: p.carcassColor } });
+        }
+      }
       annotate(stripL, "A", { semantic: "inside", visible: true, finish: { colour: p.carcassColor } });
       annotate(stripL, "B", { semantic: "wall", visible: false });
       annotate(stripR, "B", { semantic: "inside", visible: true, finish: { colour: p.carcassColor } });
@@ -1372,7 +1640,7 @@ function generateBedroom(raw) {
         annotate(b, "A", { semantic: "inside", visible: false });
         annotate(b, "B", { semantic: "front", visible: true, finish: { colour: p.doorColor } });
       }
-      if (p.style === "style1") {
+      {
         const fromEnd = RULES.WARDROBE_HINGE_FROM_END_MM;
         const fromSide = RULES.WARDROBE_HINGE_FROM_SIDE_MM;
         for (const door of frontBoards.filter((b) => b.id.endsWith("_DOOR"))) {
@@ -1390,7 +1658,7 @@ function generateBedroom(raw) {
             faceA.features.push({
               id: `${door.id}_HINGE_${i}`,
               kind: "hole",
-              center: [round12(uHinge), round12(v)],
+              center: [round13(uHinge), round13(v)],
               diameter: RULES.WARDROBE_HINGE_DIAMETER_MM.value,
               depth: RULES.WARDROBE_HINGE_DEPTH_MM.value,
               through: false,
@@ -1407,11 +1675,36 @@ function generateBedroom(raw) {
         [stripL, t3L, "WARD_L_T3_strip", false],
         [stripR, t3R, "WARD_R_T3_strip", false]
       ]) {
-        const seatFaces = edgeFacesIn(panel, { u0: -EPS2, u1: lipY1 + EPS2, v0: seat - p.bootHeight - EPS2, v1: seat - p.bootHeight + EPS2 });
+        const seatFaces = edgeFacesIn(panel, { u0: -EPS3, u1: lipY1 + EPS3, v0: seat - p.bootHeight - EPS3, v1: seat - p.bootHeight + EPS3 });
         for (const f of seatFaces) f.features.push({ id: `${panel.id}_SEAT`, kind: "notch", for: t3.id, key: `${panel.id}.pv`, source: "bedroom.wardrobeTop" });
         joints.push(joint(jointId, "butt", faceRef(t3.id, ["B"]), faceRef(panel.id, seatFaces), { hardware: [], rule: "wardrobe_t3_on_panel_seat_v1" }));
         if (!rails) continue;
         for (const rail of [T1, T2]) joints.push(joint(`${rail.id}_${t3.id}`, "face_contact", faceRef(t3.id, ["A"]), faceRef(rail.id, boundaryEdgeFaces(rail, "-Z")), { hardware: [], rule: "wardrobe_rail_on_t3_v1" }));
+      }
+      for (const b of nookBoards) {
+        if (b.id.endsWith("_KICK")) continue;
+        const side = b.id.includes("_L_") ? "L" : "R";
+        const panel = side === "L" ? panelL : panelR;
+        joints.push(joint(`${b.id}_panel`, "butt", faceRef(panel.id, [side === "L" ? "B" : "A"]), faceRef(b.id, boundaryEdgeFaces(b, side === "L" ? "+X" : "-X")), { hardware: [], rule: "nook_board_to_panel_v1" }));
+        if (b.id.endsWith("_NOOK")) {
+          const strip = side === "L" ? stripL : stripR;
+          joints.push(joint(`${strip.id}_${b.id}`, "butt", faceRef(b.id, ["A"]), faceRef(strip.id, boundaryEdgeFaces(strip, "-Z")), { hardware: [], rule: "wall_strip_on_nook_shelf_v1" }));
+        }
+      }
+      if (p.ledGroove) {
+        const yTail = ref("top.T3.tail.y1").value;
+        const yRear = ref("top.T3.y1").value;
+        for (const [t3, side] of [[t3L, "L"], [t3R, "R"]]) {
+          const xn = side === "L" ? panelL.x0 : panelR.x1;
+          const fullDepth = (x0, x1) => side === "L" ? x1 <= xn + EPS3 : x0 >= xn - EPS3;
+          const overPanel = (x0, x1) => side === "L" ? x0 >= xn - EPS3 : x1 <= xn + EPS3;
+          addT3LedChannels(t3, {
+            t1FrontKey: "top.T1.y0",
+            rearAt: (x0, x1) => fullDepth(x0, x1) ? yRear : overPanel(x0, x1) ? yTail : null,
+            source: "bedroom.led"
+          }, warnings);
+        }
+        for (const b of nookBoards) if (b.id.endsWith("_NOOK")) addNookShelfLed(b, "bedroom.led", warnings);
       }
       boards.push(...wardBoards);
     }
@@ -1422,7 +1715,8 @@ function generateBedroom(raw) {
       ...p,
       roofAt: (y) => roofAt(profile, H, y),
       seat: top.seat,
-      t3Top: top.t3Top
+      t3Top: top.t3Top,
+      led: p.ledGroove ? { t1FrontKey: "top.T1.y0" } : null
     });
     boards.push(...ohc.boards);
     joints.push(...ohc.joints);
@@ -1433,22 +1727,29 @@ function generateBedroom(raw) {
   }
   const provenance = endProvenance();
   const layout = {
-    openingWidth: round12(openingW),
-    openingHeight: round12(openingH),
+    openingWidth: round13(openingW),
+    openingHeight: round13(openingH),
     roofMin,
-    ohcHeight: round12(ohcH),
-    bedFrameWidth: round12(bedW),
-    bedMargin: round12(bedMargin),
+    ohcHeight: round13(ohcH),
+    bedFrameWidth: round13(bedW),
+    bedMargin: round13(bedMargin),
     top,
     ohc: ohcInfo,
-    front: p.style === "style1" && top && !errors.length ? {
+    front: !top || errors.length ? null : p.style === "style1" ? {
       style: "style1",
       floorTop: wardrobeFloorTop(p),
       fixedPanelTop: p.fixedPanelTop,
-      doorBottom: round12(p.fixedPanelTop + RULES.WARDROBE_DOOR_CLEARANCE_MM.value),
+      doorBottom: round13(p.fixedPanelTop + RULES.WARDROBE_DOOR_CLEARANCE_MM.value),
       doorTop: top.t3Top,
       clearance: RULES.WARDROBE_DOOR_CLEARANCE_MM.value
-    } : null
+    } : {
+      style: "nook",
+      floorTop: wardrobeFloorTop(p),
+      nookShelfBottom: nookWardrobeBottom(p),
+      doorBottom: nookWardrobeBottom(p),
+      doorTop: top.t3Top,
+      clearance: RULES.WARDROBE_DOOR_CLEARANCE_MM.value
+    }
   };
   return {
     params: p,
@@ -1470,15 +1771,15 @@ function boardRect(id, name, category, profilePlane, thicknessAxis, materialThic
     name,
     category,
     boardType: "panel",
-    materialThickness: round12(materialThickness),
+    materialThickness: round13(materialThickness),
     profilePlane,
     thicknessAxis,
-    x0: round12(f.x0),
-    x1: round12(f.x1),
-    y0: round12(f.y0),
-    y1: round12(f.y1),
-    z0: round12(f.z0),
-    z1: round12(f.z1),
+    x0: round13(f.x0),
+    x1: round13(f.x1),
+    y0: round13(f.y0),
+    y1: round13(f.y1),
+    z0: round13(f.z0),
+    z1: round13(f.z1),
     source: "bedroom"
   };
 }
@@ -1493,6 +1794,7 @@ export {
   generateBedroom,
   generateBedroomSvgPreview,
   layoutLimits,
+  nookWardrobeBottom,
   normalizeOhcZones,
   roofAt,
   sectionYZ,
