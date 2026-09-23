@@ -146,6 +146,7 @@ export const BEDROOM_LAYOUT_LABEL = {
   wardrobeWidth: "Wardrobe width",
   ohcBottom: "Overhead bottom",
   fixedPanelTop: "Fixed panel top",
+  nookShelfBottom: "Nook shelf bottom",
 };
 export const BEDROOM_WARDROBE_STYLE = BEDROOM_WARDROBE_STYLES;
 const bedroom = {
@@ -175,6 +176,8 @@ const bedroom = {
       ohcBottom: BEDROOM_RULES.OHC_BOTTOM_DEFAULT_MM.value,
       style: "style1",
       fixedPanelTop: BEDROOM_RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value,
+      nookShelfBottom: BEDROOM_RULES.WARDROBE_NOOK_SHELF_BOTTOM_DEFAULT_MM.value,
+      ledGroove: true, // LED channels on the T3 tops (and the nook shelf underside)
       bedFrame: "queen",
       ohcZones: (() => {
         const opening = round1(W) - 2 * Math.min(BEDROOM_RULES.WARDROBE_WIDTH_DEFAULT_MM.value, Math.floor((round1(W) - BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value) / 2));
@@ -278,11 +281,13 @@ const bedroom = {
       { index: 2, key: "wardrobeWidth", side: -1, axis: "x", pos: p.wardrobeWidth, min: ww.min, max: ww.max, span: [p.bootHeight, H], front: 20 },
       { index: 3, key: "wardrobeWidth", side: 1, axis: "x", pos: round1(W - p.wardrobeWidth), min: W - ww.max, max: W - ww.min, span: [p.bootHeight, H], front: 20 },
     ];
-    if (p.style === "style1" || p.style == null) {
-      const fp = lim("fixedPanelTop");
+    // Style 1 only: the fixed-panel split. Nook's wardrobe bottom is computed from the boot and does not drag.
+    const styleKey = (BEDROOM_WARDROBE_STYLES[p.style] || BEDROOM_WARDROBE_STYLES.style1).layoutKey;
+    if (styleKey) {
+      const fp = lim(styleKey);
       bars.push(
-        { index: 4, key: "fixedPanelTop", side: -1, axis: "z", pos: p.fixedPanelTop, min: fp.min, max: fp.max, span: [0, p.wardrobeWidth], front: 20 },
-        { index: 5, key: "fixedPanelTop", side: 1, axis: "z", pos: p.fixedPanelTop, min: fp.min, max: fp.max, span: [W - p.wardrobeWidth, W], front: 20 },
+        { index: 4, key: styleKey, side: -1, axis: "z", pos: p[styleKey], min: fp.min, max: fp.max, span: [0, p.wardrobeWidth], front: 20 },
+        { index: 5, key: styleKey, side: 1, axis: "z", pos: p[styleKey], min: fp.min, max: fp.max, span: [W - p.wardrobeWidth, W], front: 20 },
       );
     }
     const ohc = result.layout && result.layout.ohc;

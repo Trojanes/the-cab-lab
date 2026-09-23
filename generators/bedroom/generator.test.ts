@@ -6,6 +6,7 @@ import {
   generateBedroom,
   generateBedroomSvgPreview,
   layoutLimits,
+  nookWardrobeBottom,
   RULES,
   sectionYZ,
   setLayout,
@@ -335,15 +336,122 @@ function testStyle1WardrobeFronts() {
   assert.equal(e["WARD_L_DOOR.y0"].formula, "= front.y0");
   assert.equal(e["front.door.z1"].formula, "= top.T3.z1");
   assert.equal(e["WARD_L_DOOR.z1"].formula, "= front.door.z1");
-  // Nook: no wardrobe fronts. The overhead divider is still a boundary.
+}
+
+function testNookWardrobe() {
   const nook = generateBedroom({ ...(style3.params as object), style: "nook" } as never);
-  assert.equal(nook.layout.front, null);
-  assert.equal(nook.boards.filter((b) => /_(DOOR|FIXED|SHELF)$/.test(b.id)).length, 0);
-  assert.deepEqual(nook.boards.find((b) => b.id === "WARD_L_STRIP")!.profileVector!.slice(1, 3).map((q) => [(q as { y: number }).y, (q as { z: number }).z]), [[175, 398], [175, 1749.4]]);
-  assert.deepEqual([nook.boards.find((b) => b.id === "WARD_L_PANEL")!.x0, nook.boards.find((b) => b.id === "T2")!.y1], [314, 66]);
+  assert.deepEqual(nook.validation.errors, []);
+  const by = new Map(nook.boards.map((b) => [b.id, b]));
+  assert.deepEqual(nook.layout.front, { style: "nook", floorTop: 595, nookShelfBottom: 799, doorBottom: 799, doorTop: 1737.5, clearance: 4 });
+  // No fixed panel, no Style 1 shelf; the base (kick + floor) and the nook shelf instead.
+  assert.equal(nook.boards.filter((b) => /_(FIXED|SHELF)$/.test(b.id)).length, 0);
+  assert.deepEqual(nook.zones.find((z) => z.id === "wardrobeL")!.boards, ["WARD_L_STRIP", "WARD_L_PANEL", "WARD_L_KICK", "WARD_L_FLOOR", "WARD_L_NOOK", "WARD_L_T3", "WARD_L_DOOR"]);
+  const kick = by.get("WARD_L_KICK")!;
+  assert.deepEqual([kick.x0, kick.x1, kick.y0, kick.y1, kick.z0, kick.z1, kick.materialThickness], [0, 18, 0, 756, 398, 577, 18]);
+  const floor = by.get("WARD_L_FLOOR")!;
+  assert.deepEqual([floor.x0, floor.x1, floor.y0, floor.y1, floor.z0, floor.z1], [0, 314, 0, 756, 577, 595]);
+  const shelf = by.get("WARD_L_NOOK")!;
+  assert.deepEqual([shelf.x0, shelf.x1, shelf.y0, shelf.y1, shelf.z0, shelf.z1, shelf.materialThickness], [0, 314, 0, 734, 799, 814, 15]);
+  assert.equal(shelf.stock!.kind, "carcass");
+  const kickR = by.get("WARD_R_KICK")!;
+  const shelfR = by.get("WARD_R_NOOK")!;
+  assert.deepEqual([kickR.x0, kickR.x1, shelfR.x0, shelfR.x1], [2257, 2275, 1961, 2275]);
+  // The wall strip stands on the shelf (no Style 1 notch); the colour panel is unchanged.
+  const strip = by.get("WARD_L_STRIP")!;
+  assert.equal(strip.z0, 814);
+  assert.deepEqual(strip.profileVector!.slice(0, 3).map((q) => [(q as { y: number }).y, (q as { z: number }).z]), [[0, 814], [175, 814], [175, 1749.4]]);
+  assert.deepEqual([by.get("WARD_L_PANEL")!.x0, by.get("WARD_L_PANEL")!.z0, by.get("T2")!.y1], [314, 398, 66]);
+  // Door from the shelf underside to the T3 top, same width and cups as Style 1.
+  const door = by.get("WARD_L_DOOR")!;
+  assert.deepEqual([door.x0, door.x1, door.y0, door.y1, door.z0, door.z1], [4, 330, -16, 0, 799, 1737.5]);
+  const cups = door.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "hinge");
+  assert.deepEqual(cups.map((c) => c.center), [[22.5, 100], [22.5, 469.3], [22.5, 838.5]]);
+  // LED channel under the shelf: 14.5 × 6.5, centred, from 54 to the rear edge.
+  const led = shelf.faces!.find((f) => f.id === "B")!.features.find((f) => f.for === "led")!;
+  assert.deepEqual([led.kind, led.u0, led.u1, led.v0, led.v1, led.depth, led.through], ["groove", 149.8, 164.3, 54, 734, 6.5, false]);
+  assert.equal(shelf.faces!.find((f) => f.id === "A")!.features.some((f) => f.for === "led"), false);
+  // Joints: floor and shelf butt the colour panel; the strip stands on the shelf.
+  assert.ok(nook.joints.some((j) => j.id === "WARD_L_NOOK_panel" && j.a.board === "WARD_L_PANEL" && j.a.faces[0] === "B"));
+  assert.ok(nook.joints.some((j) => j.id === "WARD_L_STRIP_WARD_L_NOOK"));
+  // The wardrobe bottom is boot + 197 + 204. It is not a drag; raising the boot raises it.
+  assert.equal(nookWardrobeBottom({ bootHeight: 398 }), 799);
+  assert.equal(nookWardrobeBottom(setLayout(nook.params, "bootHeight", 418)), 819);
+  // Colour panel: the U is cut through the room edge.
+  const cut = by.get("WARD_L_PANEL")!.profileVector!.map((q) => [(q as { y: number }).y, (q as { z: number }).z]);
+  const near = (y: number, z: number) => cut.some(([py, pz]) => Math.abs(py - y) < 0.6 && Math.abs(pz - z) < 0.6);
+  assert.ok(near(0, 799), "room face at the wardrobe bottom");
+  assert.ok(near(502.8, 799), "crest of the upper arc");
+  assert.ok(near(611.3, 595), "lower arc meeting the floor");
+  assert.ok(near(0, 595), "back to the room face along the floor");
+  assert.equal(cut.some(([py, pz]) => py === 0 && pz > 595.5 && pz < 798.5), false);
+  // Provenance: the shelf underside is the cut top; the strip stands on the shelf top.
+  const e = nook.debug.provenance.entries;
+  assert.equal(e["WARD_L_NOOK.z0"].formula, "= nook.shelf.z0");
+  assert.equal(e["nook.shelf.z0"].formula, "= nook.z1");
+  assert.equal(e["nook.z1"].formula, "floor + H");
+  assert.equal(e["nook.z1"].terms.H.name, "WARDROBE_NOOK_CUT_HEIGHT_MM");
+  assert.equal(e["WARD_L_STRIP.z0"].formula, "= nook.shelf.z1");
+  assert.equal(e["WARD_L_NOOK.y1"].value, 734);
+  assert.equal(e["nook.shelf.y1"].terms.GAP.name, "WARDROBE_NOOK_SHELF_NOSE_GAP_MM");
+  // Front view: the nook line on each wardrobe, doors drawn, no fixed panel.
   const nookSvg = generateBedroomSvgPreview(nook)!;
   assert.equal((nookSvg.match(/data-boundary="/g) || []).length, 5);
-  assert.equal((nookSvg.match(/class="front door"/g) || []).length, 0);
+  assert.equal((nookSvg.match(/data-boundary="nookShelfBottom"/g) || []).length, 0);
+  assert.equal((nookSvg.match(/data-boundary="fixedPanelTop"/g) || []).length, 0);
+  assert.equal((nookSvg.match(/class="front door"/g) || []).length, 2);
+  assert.equal((nookSvg.match(/class="front fixed"/g) || []).length, 0);
+  // A nose that drops through the shelf trims the shelf to the roof. It does not refuse the body.
+  // Logged 2026-09-23 seq 24: depth 770, roof 1800 → 737, shelf top 814, roof at y 748 is 786.6.
+  const sloped = generateBedroom({
+    ...(style3.params as object),
+    style: "nook",
+    width: 2100,
+    depth: 770,
+    height: 1800,
+    roofProfile: [[0, 1800], [191, 1758], [425, 1515], [770, 737]],
+    wardrobeWidth: 296,
+  } as never);
+  assert.deepEqual(sloped.validation.errors, []);
+  const slopedShelf = sloped.boards.find((b) => b.id === "WARD_L_NOOK")!;
+  assert.ok(slopedShelf.y1 < 770 - 22, `shelf ran to ${slopedShelf.y1}, into the roof`);
+  assert.ok(slopedShelf.y1 > 700);
+  assert.ok(sloped.validation.warnings.some((w) => /nook shelf stops at/.test(w)));
+  assert.equal(sloped.boards.find((b) => b.id === "WARD_L_FLOOR")!.y1, 770);
+}
+
+function testLedChannels() {
+  const r = generateBedroom(style3.params as never);
+  const by = new Map(r.boards.map((b) => [b.id, b]));
+  const ledOn = (id: string) => by.get(id)!.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "led");
+  // Wardrobe T3 (left, 330 wide): main channel 20 → 34.5 (T1 front 35 − 0.5), full width; two 20 mm branches
+  // centred 80 from each end, from the channel's back wall to the rear edge 188.
+  const l = ledOn("WARD_L_T3");
+  assert.deepEqual(l.map((f) => [f.id, f.kind, f.u0, f.u1, f.v0, f.v1, f.depth]), [
+    ["WARD_L_T3_LED_MAIN", "tgroove", 0, 330, 20, 34.5, 6.5],
+    ["WARD_L_T3_LED_BRANCH_1", "tgroove", 70, 90, 34.5, 188, 6.5],
+    ["WARD_L_T3_LED_BRANCH_2", "tgroove", 240, 260, 34.5, 188, 6.5],
+  ]);
+  assert.ok(l.every((f) => f.through === false));
+  // Right T3 mirrors in cabinet x (board x0 1945): the branches stay in its full-depth part (x ≥ 1961).
+  const rr = ledOn("WARD_R_T3");
+  assert.deepEqual(rr.map((f) => [f.u0, f.u1, f.v1]), [[0, 330, 34.5], [70, 90, 188], [240, 260, 188]]);
+  // Middle T3 (1615 wide): same channel, branches 80 from its own ends, clear of the rear notches.
+  const m = ledOn("OHC_T3");
+  assert.deepEqual(m.map((f) => [f.u0, f.u1, f.v0, f.v1]), [[0, 1615, 20, 34.5], [70, 90, 34.5, 188], [1525, 1545, 34.5, 188]]);
+  assert.equal(by.get("OHC_T3")!.faces!.find((f) => f.id === "B")!.features.some((f) => f.for === "led"), false);
+  // Provenance: the channel is placed from T1's front and the rule constants.
+  const e = r.debug.provenance.entries;
+  assert.equal(e["WARD_L_T3.feat.LED_MAIN.v1"].formula, "t1 - y0 - GAP");
+  assert.equal(e["WARD_L_T3.feat.LED_MAIN.v1"].terms.t1.ref, "top.T1.y0");
+  assert.equal(e["WARD_L_T3.feat.LED_MAIN.v0"].terms.W.name, "LED_GROOVE_WIDTH_MM");
+  assert.equal(e["OHC_T3.feat.LED_BRANCH_2.c"].formula, "width - INSET");
+  assert.equal(e["OHC_T3.feat.LED_BRANCH_1.u1"].terms.BW.name, "LED_T3_BRANCH_WIDTH_MM");
+  // Off: no channel anywhere, boards otherwise identical.
+  const off = generateBedroom({ ...(style3.params as object), ledGroove: false } as never);
+  assert.equal(off.boards.flatMap((b) => b.faces!.flatMap((f) => f.features)).some((f) => f.for === "led"), false);
+  assert.deepEqual(off.boards.map((b) => [b.id, b.x0, b.x1, b.y0, b.y1, b.z0, b.z1]), r.boards.map((b) => [b.id, b.x0, b.x1, b.y0, b.y1, b.z0, b.z1]));
+  assert.equal(off.params.ledGroove, false);
+  assert.equal(r.params.ledGroove, true);
 }
 
 function testMiddleOverhead() {
@@ -364,11 +472,18 @@ function testMiddleOverhead() {
   assert.deepEqual([by.get("OHC_D2")!.x0, by.get("OHC_D2")!.x1], [1930, 1945]);
   assert.equal(by.get("OHC_D1")!.y1, 453.5);
   assert.ok(by.get("OHC_D1")!.y1 < bp.y1);
-  // T3 rear notches for this cabinet's three uprights, opening through both ends.
+  // T3 notches clear each upright by 5 mm a side, from the rear edge forward to the tail (77).
   const pv = t3.profileVector!.map((q) => [(q as { x: number }).x, (q as { y: number }).y]);
-  assert.ok(pv.some((p) => p[0] === 330 && p[1] === 168));
-  assert.ok(pv.some((p) => p[0] === 1945 && p[1] === 168));
-  assert.ok(pv.some((p) => p[0] === 1129.5 && p[1] === 168));
+  assert.ok(pv.some((p) => p[0] === 330 && p[1] === 77));
+  assert.ok(pv.some((p) => p[0] === 1945 && p[1] === 77));
+  assert.ok(pv.some((p) => p[0] === 1125 && p[1] === 77));
+  assert.ok(pv.some((p) => p[0] === 1150 && p[1] === 77));
+  // The upright's top is the colour panel's: seat to the lip, pocket back to the T2 back, then the roof.
+  const div = by.get("OHC_D0")!.profileVector!.map((q) => [(q as { y: number }).y, (q as { z: number }).z]);
+  for (const pt of [[0, 1722.5], [82, 1722.5], [82, 1738.5], [66, 1738.5], [66, 1773.5]]) {
+    assert.ok(div.some(([y, z]) => y === pt[0] && z === pt[1]), `OHC_D0 missing ${pt}`);
+  }
+  assert.equal(by.get("OHC_D0")!.z1, 1773.5);
   // Groove for the centre divider, and two cups 150 from the outer face / the centreline.
   const groove = bp.faces!.find((f) => f.id === "A")!.features.find((f) => f.id === "BG_OHC_D1")!;
   assert.equal(groove.kind, "groove");
@@ -422,6 +537,8 @@ const tests = [
   testTunnelBootBoards,
   testWardrobeTop,
   testStyle1WardrobeFronts,
+  testNookWardrobe,
+  testLedChannels,
   testMiddleOverhead,
   testProvenanceCoversEveryBoardFace,
   testProvenanceNamesTheLayout,

@@ -1207,11 +1207,6 @@ function bedFrame() {
   const bodyD = bodyMod.envelope(body.params).D;
   return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, minX: sp.bounds.minX, maxX: sp.bounds.maxX, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id, size: bodyMod.bedBoxSize(body.params), bodyParams: body.params };
 }
-function bedT(e, axis) {
-  const f = bedFrame();
-  const dir = axis === "x" ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-  return closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(f.cx, f.y, 0), dir); // t = signed distance from (cx, bodyD)
-}
 function bedBoxBox() {
   const f = bedFrame();
   return { x0: f.cx - bed.W / 2, y0: f.y, z0: 0, W: bed.W, D: bed.D, H: bed.H, max: { W: bed.W, D: f.maxD, H: bed.H } };
@@ -1264,7 +1259,12 @@ function bedDepth(e) {
   if (bed.locked.D != null) D = bed.locked.D;
   else if (e) {
     const snap = nearestAxisAlign(e.clientX, e.clientY, { x: f.cx, y: f.y, z: 0 }, "y", +1, { exclude: bed.editId });
-    if (snap) { D = snap.value - f.y; label = snap.label; } else D = job.snap(bedT(e, "y"));
+    if (snap) { D = snap.value - f.y; label = snap.label; }
+    else {
+      // The room-side face stands on the floor point under the cursor.
+      const hit = planePointAt(e.clientX, e.clientY, threePlane("z", 0));
+      D = hit ? hit.y - f.y : bed.D;
+    }
   } else D = bed.D;
   if (D > f.maxD) { D = f.maxD; clamped = "back wall"; }
   if (D < mod.minSize.D) { D = mod.minSize.D; clamped = `minimum ${mod.minSize.D}`; }
@@ -1277,14 +1277,14 @@ function bedDepth(e) {
     if (fp.z0 >= bed.H - 0.5) continue;
     if (!lanes.some(([x0, x1]) => fp.maxX > x0 + 0.5 && fp.minX < x1 - 0.5)) continue;
     const room = fp.minY - f.y;
-    if (room >= mod.minSize.D && room < D - 0.5) { D = Math.floor(room / 10) * 10; clamped = c.id; label = null; }
+    if (room >= mod.minSize.D && room < D - 0.5) { D = room; clamped = c.id; label = null; }
   }
   bed.D = D;
   bed.snapLabel = label;
   bed.clamped = clamped;
 }
 
-/** Height of the pair, from the floor. Snaps onto the underside of the wardrobe fixed panel. */
+/** Height of the pair, from the floor. The top edge sits on the cursor; it snaps when the cursor is on the fixed panel's underside. */
 function bedHeight(e) {
   const mod = getModule(bed.moduleId);
   const f = bedFrame();
@@ -1293,20 +1293,33 @@ function bedHeight(e) {
   let clamped = null;
   if (bed.locked.H != null) H = bed.locked.H;
   else if (e) {
-    const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(f.minX + bed.W / 2, f.y, 0), new THREE.Vector3(0, 0, 1));
-    H = job.snap(Math.max(0, t));
+    // The body's room face, so the top edge of the ghost is the point under the cursor.
+    const hit = planePointAt(e.clientX, e.clientY, threePlane("y", f.y));
+    H = hit ? Math.max(0, hit.z) : bed.H;
   } else H = bed.H;
   const roof = f.bodyParams.height;
   if (H > roof) { H = roof; clamped = "roof"; }
   if (H < mod.minSize.H) { H = mod.minSize.H; clamped = `minimum ${mod.minSize.H}`; }
-  if (bed.locked.H == null && bed.snapH != null) {
-    const pt = toClient(f.minX + bed.W / 2, f.y, bed.snapH);
-    const near = e && !pt.behind && Math.hypot(e.clientX - pt.x, e.clientY - pt.y) <= SNAP_RADIUS_PX * uiScale();
-    if (near || Math.abs(H - bed.snapH) <= 15) { H = bed.snapH; label = "fixed panel bottom"; clamped = null; }
+  if (bed.locked.H == null && bed.snapH != null && e && nearScreenSeg(e.clientX, e.clientY, { x: f.minX, y: f.y, z: bed.snapH }, { x: f.maxX, y: f.y, z: bed.snapH })) {
+    H = bed.snapH;
+    label = "fixed panel bottom";
+    clamped = null;
   }
   bed.H = H;
   bed.snapLabel = label;
   bed.clamped = clamped;
+}
+
+/** Cursor within the snap radius of a segment on screen. */
+function nearScreenSeg(clientX, clientY, a, b) {
+  const pa = toClient(a.x, a.y, a.z);
+  const pb = toClient(b.x, b.y, b.z);
+  if (pa.behind || pb.behind) return false;
+  const dx = pb.x - pa.x;
+  const dy = pb.y - pa.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((clientX - pa.x) * dx + (clientY - pa.y) * dy) / len2)) : 0;
+  return Math.hypot(clientX - (pa.x + t * dx), clientY - (pa.y + t * dy)) <= SNAP_RADIUS_PX * uiScale();
 }
 
 function drawBedBox(e) {

@@ -4,7 +4,8 @@
  * The envelope (width = van, depth from the room face, roof profile) comes
  * from the space and the placement. Inside it the layout is four numbers —
  * `bootHeight`, `wardrobeWidth` (both sides: symmetric by rule), `ohcBottom`,
- * Style 1 `fixedPanelTop` — and a bed frame / wardrobe-front style (`style1` | `nook`).
+ * Style 1 `fixedPanelTop`. Nook's wardrobe bottom is boot + 197 + 204 and does not drag.
+ * A bed frame and a wardrobe-front style (`style1` | `nook`), and the LED option (`ledGroove`, default on).
  * From those the generator lays out
  *
  *   boot        the tunnel boot, wall to wall, floor → bootHeight   (solid)
@@ -24,12 +25,16 @@
  *                   Tongue into the colour panel; through the wall strip behind y 75
  *   WARD_L/R_PANEL · WARD_L/R_T3 · T2 · T1   colour panel and top (unchanged)
  *   WARD_L/R_FIXED  Style 1 fixed panel: wall → colour panel, wardrobe floor → split
- *   WARD_L/R_DOOR   Style 1 door: hangs at y −DPT…0, wall + 4 mm → colour panel,
- *                   split + 4 mm → T3 top; three Ø35 × 12 cups on face A
+ *   WARD_L/R_DOOR   door: hangs at y −DPT…0, wall + 4 mm → colour panel, up to the T3 top;
+ *                   Style 1 from split + 4 mm, nook from the nook shelf underside;
+ *                   three Ø35 × 12 cups on face A
+ *   WARD_L/R_KICK · WARD_L/R_FLOOR   nook base: wall kick on the deck, floor on it (top = boot + 197)
+ *   WARD_L/R_NOOK   nook shelf: underside = boot + 197 + 204, wall → colour panel, 22 short of the
+ *                   nose; LED channel underneath. The wall strip stands on it (no Style 1 notch)
  *
  * The middle overhead (OHC_BP, OHC_T3, OHC_D*, OHC_FP*) is its own cabinet between
- * the wardrobes: no T4, T1/T2 stay the shared rails. Nook emits no wardrobe fronts.
- * Wardrobe base and shelf are still later. The deck sits on the two uprights.
+ * the wardrobes: no T4, T1/T2 stay the shared rails. `ledGroove` (default on) cuts the
+ * LED channels into the three T3 tops (`led.ts`). The deck sits on the two uprights.
  *
  * Coordinates: X left→right, Y room face (0) → nose (depth), Z floor→top.
  */
@@ -50,7 +55,8 @@ import type {
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same } from "../_lib/dim.ts";
 import { addFeature, annotate, attachFaces, boundaryEdgeFaces, edgeFacesIn, faceRef, joint, localRect, type Joint } from "../_lib/model.ts";
-import { buildBedroomOhc, equalOhcZones, normalizeOhcZones, setOhcBoundary } from "./ohc.ts";
+import { buildBedroomOhc, equalOhcZones, normalizeOhcZones, setOhcBoundary, yWhereRoofMeets } from "./ohc.ts";
+import { addNookShelfLed, addT3LedChannels } from "./led.ts";
 
 export { RULES } from "./rules.ts";
 export { equalOhcZones, normalizeOhcZones, setOhcBoundary };
@@ -62,10 +68,10 @@ const EPS = 1e-6;
 
 export const LAYOUT_KEYS: BedroomLayoutKey[] = ["bootHeight", "wardrobeWidth", "ohcBottom", "fixedPanelTop"];
 
-/** Wardrobe front construction. Style 1 is the no-nook door + fixed panel; nook is a later typed door bottom. */
-export const WARDROBE_STYLES: Record<WardrobeStyle, { label: string }> = {
-  style1: { label: "Style 1 · door over a fixed panel" },
-  nook: { label: "Nook · later" },
+/** Wardrobe front construction. Style 1 drags the fixed-panel split. Nook's wardrobe bottom is computed and does not drag. */
+export const WARDROBE_STYLES: Record<WardrobeStyle, { label: string; layoutKey: BedroomLayoutKey | null }> = {
+  style1: { label: "Style 1 · door over a fixed panel", layoutKey: "fixedPanelTop" },
+  nook: { label: "Nook · door over an open shelf", layoutKey: null },
 };
 function normalizeStyle(raw: unknown): WardrobeStyle {
   return raw != null && Object.prototype.hasOwnProperty.call(WARDROBE_STYLES, String(raw)) ? (String(raw) as WardrobeStyle) : "style1";
@@ -74,6 +80,65 @@ function normalizeStyle(raw: unknown): WardrobeStyle {
 function round1(v: number): number {
   return Math.round(v * 10) / 10;
 }
+
+/** How far the nook U reaches back along the floor. A constant: the lower arc meeting the cut bottom. */
+function nookCutReach(): number {
+  const cy = R.WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM.value;
+  const cz = R.WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM.value;
+  const rad = R.WARDROBE_NOOK_CUT_LOWER_RADIUS_MM.value;
+  return round1(cy + Math.sqrt(rad * rad - cz * cz));
+}
+
+/**
+ * The U's back edge, from its crest on the wardrobe bottom down to where it
+ * meets the floor. Two tangent arcs, chord error about 0.3 mm. Y from the room
+ * face, Z absolute.
+ */
+function nookCutPath(bottomZ: number, topZ: number): Array<{ y: number; z: number }> {
+  const uy = R.WARDROBE_NOOK_CUT_UPPER_CENTER_Y_MM.value;
+  const ur = R.WARDROBE_NOOK_CUT_UPPER_RADIUS_MM.value;
+  const uz = topZ - ur;
+  const ly = R.WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM.value;
+  const lz = bottomZ + R.WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM.value;
+  const lr = R.WARDROBE_NOOK_CUT_LOWER_RADIUS_MM.value;
+  const ang = (cy: number, cz: number, y: number, z: number) => Math.atan2(y - cy, z - cz);
+  const meet = circleMeet(uy, uz, ur, ly, lz, lr);
+  const floorY = ly + Math.sqrt(lr * lr - (bottomZ - lz) ** 2);
+  const samples = (cy: number, cz: number, rad: number, a0: number, a1: number) => {
+    const span = a1 - a0;
+    const step = 2 * Math.acos(Math.max(-1, 1 - 0.3 / rad));
+    const n = Math.max(1, Math.ceil(Math.abs(span) / step));
+    const out: Array<{ y: number; z: number }> = [];
+    for (let i = 1; i < n; i += 1) {
+      const a = a0 + (span * i) / n;
+      out.push({ y: round1(cy + rad * Math.sin(a)), z: round1(cz + rad * Math.cos(a)) });
+    }
+    return out;
+  };
+  return [
+    { y: round1(uy), z: round1(topZ) },
+    ...samples(uy, uz, ur, 0, ang(uy, uz, meet[0], meet[1])),
+    { y: round1(meet[0]), z: round1(meet[1]) },
+    ...samples(ly, lz, lr, ang(ly, lz, meet[0], meet[1]), ang(ly, lz, floorY, bottomZ)),
+    { y: round1(floorY), z: round1(bottomZ) },
+  ];
+}
+
+function circleMeet(y1: number, z1: number, r1: number, y2: number, z2: number, r2: number): [number, number] {
+  const dy = y2 - y1;
+  const dz = z2 - z1;
+  const d = Math.hypot(dy, dz);
+  const a = (r1 * r1 - r2 * r2 + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, r1 * r1 - a * a));
+  const py = y1 + (a * dy) / d;
+  const pz = z1 + (a * dz) / d;
+  const yA = py + (h * -dz) / d;
+  const zA = pz + (h * dy) / d;
+  const yB = py - (h * -dz) / d;
+  const zB = pz - (h * dy) / d;
+  return yA > yB ? [yA, zA] : [yB, zB];
+}
+
 function asNum(v: unknown, fallback: number): number {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
@@ -174,6 +239,8 @@ function resolve(raw: BedroomParams): BedroomResolvedParams {
     ohcBottom: round1(asNum(raw.ohcBottom, R.OHC_BOTTOM_DEFAULT_MM.value)),
     style: normalizeStyle(raw.style),
     fixedPanelTop: round1(asNum(raw.fixedPanelTop, R.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value)),
+    nookShelfBottom: nookWardrobeBottom({ bootHeight: round1(asNum(raw.bootHeight, R.BOOT_HEIGHT_DEFAULT_MM.value)) }),
+    ledGroove: raw.ledGroove !== false,
     bedFrame: normalizeBedFrame(raw.bedFrame),
     panelThickness: round1(asNum(raw.panelThickness, DEFAULT_CPT)),
     doorPanelThickness: round1(asNum(raw.doorPanelThickness, R.DOOR_PANEL_THICKNESS_DEFAULT_MM.value)),
@@ -210,9 +277,14 @@ export function layoutLimits(raw: BedroomParams, key: BedroomLayoutKey): { min: 
   }
 }
 
-/** Wardrobe floor top (the Style 1 fixed panel sits on this): boot deck + the raise. */
+/** Wardrobe floor top (the Style 1 fixed panel sits on this; the nook U cut starts here): boot deck + the raise. */
 export function wardrobeFloorTop(p: { bootHeight: number }): number {
   return round1(p.bootHeight + R.WARDROBE_FLOOR_RAISE_MM.value);
+}
+
+/** Nook wardrobe bottom (U-cut top, shelf underside, door start): floor top + the fixed cut height. */
+export function nookWardrobeBottom(p: { bootHeight: number }): number {
+  return round1(wardrobeFloorTop(p) + R.WARDROBE_NOOK_CUT_HEIGHT_MM.value);
 }
 
 /** T3 top from the roof at the T2 back — same formula the generator records. */
@@ -226,12 +298,13 @@ export function setLayout(raw: BedroomParams, key: BedroomLayoutKey, value: numb
   const v = round1(Math.max(min, Math.min(max, Number(value))));
   if (raw[key] === v) return raw;
   const next: BedroomParams = { ...raw, [key]: v };
-  // Raising the boot (or the T3 seat, via a later roof bind) can push the split out of range.
-  if (key !== "fixedPanelTop" && normalizeStyle(next.style) === "style1") {
-    const lim = layoutLimits(next, "fixedPanelTop");
-    const fp = round1(asNum(next.fixedPanelTop, R.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
-    const clamped = round1(Math.max(lim.min, Math.min(lim.max, fp)));
-    if (clamped !== fp) next.fixedPanelTop = clamped;
+  // Raising the boot (or the T3 seat, via a later roof bind) can push the style's own line out of range.
+  const own = WARDROBE_STYLES[normalizeStyle(next.style)].layoutKey;
+  if (own && key !== own) {
+    const lim = layoutLimits(next, own);
+    const cur = round1(asNum(next[own], R.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
+    const clamped = round1(Math.max(lim.min, Math.min(lim.max, cur)));
+    if (clamped !== cur) next[own] = clamped;
   }
   return next;
 }
@@ -314,6 +387,11 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     const splitLim = lim("fixedPanelTop");
     if (p.fixedPanelTop < splitLim.min) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round1(p.fixedPanelTop - wardrobeFloorTop(p))} mm of panel above the wardrobe floor (min ${R.WARDROBE_FIXED_PANEL_MIN_MM.value})`);
     if (p.fixedPanelTop > splitLim.max) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round1(t3TopOf(p) - R.WARDROBE_DOOR_CLEARANCE_MM.value - p.fixedPanelTop)} mm of door under T3 (min ${R.WARDROBE_DOOR_MIN_MM.value})`);
+  }
+  if (p.style === "nook") {
+    const bottom = nookWardrobeBottom(p);
+    const door = round1(t3TopOf(p) - bottom);
+    if (door < R.WARDROBE_DOOR_MIN_MM.value) errors.push(`the nook wardrobe bottom ${bottom} leaves only ${door} mm of door under T3 (min ${R.WARDROBE_DOOR_MIN_MM.value})`);
   }
   const zones: BedroomZone[] = [];
   if (!errors.length) {
@@ -422,6 +500,18 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     if (t1Y0 < EPS) errors.push("the top rails do not fit in front of the T2 back");
     if (!errors.length) warnings.push(`T1 is cut ${R.WARDROBE_T1_OVERSIZE_MM.value} mm above the roof by design — trim to the roof on site`);
 
+    const nookOn = p.style === "nook";
+    // Wardrobe floor top for both styles. Nook's wardrobe bottom is a fixed 204 above it, and the
+    // colour panel is cut through between the two.
+    dim("front.floor.z1", { boot: ref("boot.z1"), RAISE: R.WARDROBE_FLOOR_RAISE_MM }, (t) => t.boot + t.RAISE);
+    if (nookOn) {
+      dim("nook.z0", { floor: ref("front.floor.z1") }, (t) => t.floor, { formula: "= front.floor.z1" });
+      dim("nook.z1", { floor: ref("front.floor.z1"), H: R.WARDROBE_NOOK_CUT_HEIGHT_MM }, (t) => t.floor + t.H);
+      const reach = nookCutReach();
+      dim("nook.cut.floorY", { reach }, (t) => t.reach, { formula: "lower arc meets the cut bottom" });
+      if (reach > D - EPS) errors.push(`the nook cut reaches ${reach} mm back and the body is only ${D} deep`);
+    }
+
     if (!errors.length) {
     /** Colour panel section (cabinet y, z), counter-clockwise: deck → nose → roof back to the T2 back → pocket → seat → room face. */
     const panelOutline = (id: string): ProfilePoint[] => {
@@ -439,6 +529,12 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
       o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
       o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.seat") }, (t) => t.z));
       o.add(lit(0), ex({ z: ref("top.seat") }, (t) => t.z));
+      // Nook: a through U taken out of the room edge, floor top → wardrobe bottom.
+      if (nookOn) {
+        o.add(lit(0), ex({ z: ref("nook.z1") }, (t) => t.z));
+        for (const pt of nookCutPath(ref("nook.z0").value, ref("nook.z1").value)) o.add(lit(pt.y), lit(pt.z));
+        o.add(lit(0), ex({ z: ref("nook.z0") }, (t) => t.z));
+      }
       return o.points.map(([py, pz]) => ({ y: round1(py), z: round1(pz) }));
     };
     const panelBox = (id: string, side: "L" | "R") => {
@@ -467,8 +563,21 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     // so the strip outline can be cut before the shelf board is emitted.
     const CPT = param({ CPT: p.panelThickness }).CPT;
     const shelfOn = p.style === "style1";
+    if (nookOn) {
+      // Base (kick + floor, one thickness) and the shelf over the nook; the wall strip stands on the shelf.
+      // Each runs toward the nose until its own rule (full depth / 22 short) or until the roof meets its top,
+      // whichever comes first. A sloping nose must not refuse the whole body.
+      dim("base.z0", { floor: ref("front.floor.z1"), BASE: R.WARDROBE_BASE_THICKNESS_MM }, (t) => t.floor - t.BASE);
+      dim("nook.base.y1", { D: P.D, z: ref("front.floor.z1") }, (t) => yWhereRoofMeets(roofFn, t.D, t.z), { formula: "min(D, y where roof = floor top)" });
+      same("nook.shelf.z0", "nook.z1");
+      dim("nook.shelf.z1", { z0: ref("nook.shelf.z0"), CPT }, (t) => t.z0 + t.CPT);
+      dim("nook.shelf.y1", { D: P.D, GAP: R.WARDROBE_NOOK_SHELF_NOSE_GAP_MM, z: ref("nook.shelf.z1") }, (t) => yWhereRoofMeets(roofFn, t.D - t.GAP, t.z), { formula: "min(D - GAP, y where roof = shelf top)" });
+      if (ref("nook.base.y1").value < 50) errors.push(`the roof comes down to ${round1(roofFn(0))} mm at the room face, below the wardrobe floor (${round1(ref("front.floor.z1").value)})`);
+      if (ref("nook.shelf.y1").value < 50) errors.push(`the roof comes down to ${round1(roofFn(0))} mm at the room face — the nook shelf (${round1(ref("nook.shelf.z1").value)}) does not fit under it`);
+      else if (ref("nook.shelf.y1").value < D - R.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - 0.5) warnings.push(`the nook shelf stops at ${round1(ref("nook.shelf.y1").value)} where the roof meets it, ${round1(D - R.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - ref("nook.shelf.y1").value)} mm short of the ${R.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value} mm nose gap`);
+    }
+    const stripZ0Key = nookOn ? "nook.shelf.z1" : "boot.z1";
     if (shelfOn) {
-      dim("front.floor.z1", { boot: ref("boot.z1"), RAISE: R.WARDROBE_FLOOR_RAISE_MM }, (t) => t.boot + t.RAISE);
       dim("shelf.z0", { floor: ref("front.floor.z1"), ABOVE: R.WARDROBE_SHELF_ABOVE_FLOOR_MM }, (t) => t.floor + t.ABOVE);
       dim("shelf.z1", { z0: ref("shelf.z0"), CPT }, (t) => t.z0 + t.CPT);
       dim("shelf.notch.z0", { z0: ref("shelf.z0"), CL: R.WARDROBE_SHELF_GROOVE_Z_MM }, (t) => t.z0 - t.CL);
@@ -483,11 +592,12 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     }
     const shelfNotch = shelfOn && R.WARDROBE_SHELF_STRIP_SETBACK_MM.value < stripY - EPS;
 
-    // Wall strip: the colour panel's front profile, carcass, against the side wall, only STRIP deep, down to the boot deck.
+    // Wall strip: the colour panel's front profile, carcass, against the side wall, only STRIP deep, down to the
+    // boot deck (Style 1) or standing on the nook shelf (nook).
     // Style 1 cuts a through notch in the back of the strip so the shelf can pass to the wall.
     const stripOutline = (id: string): ProfilePoint[] => {
       const o = new Outline(`${id}.pv`, ["y", "z"]);
-      const bootZ = ref("boot.z1");
+      const bootZ = ref(stripZ0Key);
       const yBack = () => ex({ y: ref("wallStrip.y1") }, (t) => t.y);
       o.add(lit(0), ex({ bootZ }, (t) => t.bootZ));
       o.add(yBack(), ex({ bootZ }, (t) => t.bootZ));
@@ -520,7 +630,7 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
         x0, x1,
         y0: dim(`${id}.y0`, {}, () => 0, { formula: "0" }),
         y1: same(`${id}.y1`, "wallStrip.y1"),
-        z0: same(`${id}.z0`, "boot.z1"),
+        z0: same(`${id}.z0`, stripZ0Key),
         z1: dim(`${id}.z1`, { H: P.H }, () => zTop, { formula: "max(roof over the strip)" }),
       });
       b.profileVector = outline;
@@ -531,6 +641,48 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     if (shelfNotch) {
       stripL.notes = ["through notch y 75 → back, the Style 1 shelf passes to the wall"];
       stripR.notes = stripL.notes;
+    }
+
+    // Nook base and shelf, one set each side. Kick: wall upright on the deck, full depth. Floor: on the
+    // kick, wall → the colour panel's wall-side face, full depth. Shelf: wall → colour panel, 22 short of
+    // the nose, its underside the dragged line the door starts on.
+    const nookBoards: Board[] = [];
+    if (nookOn) {
+      const BASE = R.WARDROBE_BASE_THICKNESS_MM;
+      const panelFace = (id: string, side: "L" | "R") => side === "L" ? same(`${id}.x1`, "WARD_L_PANEL.x0") : same(`${id}.x0`, "WARD_R_PANEL.x1");
+      const wall0 = (id: string) => dim(`${id}.x0`, {}, () => 0, { formula: "0" });
+      const wall1 = (id: string) => dim(`${id}.x1`, { W: P.W }, (t) => t.W);
+      for (const side of ["L", "R"] as const) {
+        const name = side === "L" ? "left" : "right";
+        const kickId = `WARD_${side}_KICK`;
+        const kick = boardRect(kickId, `Wardrobe kick · ${name}`, "kick", "YZ", "X", BASE.value, {
+          x0: side === "L" ? wall0(kickId) : dim(`${kickId}.x0`, { W: P.W, BASE }, (t) => t.W - t.BASE),
+          x1: side === "L" ? dim(`${kickId}.x1`, { BASE }, (t) => t.BASE) : wall1(kickId),
+          y0: dim(`${kickId}.y0`, {}, () => 0, { formula: "0" }),
+          y1: same(`${kickId}.y1`, "nook.base.y1"),
+          z0: same(`${kickId}.z0`, "boot.z1"),
+          z1: same(`${kickId}.z1`, "base.z0"),
+        });
+        const floorId = `WARD_${side}_FLOOR`;
+        const floor = boardRect(floorId, `Wardrobe floor · ${name}`, "floor", "XY", "Z", BASE.value, {
+          x0: side === "L" ? wall0(floorId) : panelFace(floorId, side),
+          x1: side === "L" ? panelFace(floorId, side) : wall1(floorId),
+          y0: dim(`${floorId}.y0`, {}, () => 0, { formula: "0" }),
+          y1: same(`${floorId}.y1`, "nook.base.y1"),
+          z0: same(`${floorId}.z0`, "base.z0"),
+          z1: same(`${floorId}.z1`, "front.floor.z1"),
+        });
+        const nookId = `WARD_${side}_NOOK`;
+        const shelf = boardRect(nookId, `Nook shelf · ${name}`, "shelf", "XY", "Z", p.panelThickness, {
+          x0: side === "L" ? wall0(nookId) : panelFace(nookId, side),
+          x1: side === "L" ? panelFace(nookId, side) : wall1(nookId),
+          y0: dim(`${nookId}.y0`, {}, () => 0, { formula: "0" }),
+          y1: same(`${nookId}.y1`, "nook.shelf.y1"),
+          z0: same(`${nookId}.z0`, "nook.shelf.z0"),
+          z1: same(`${nookId}.z1`, "nook.shelf.z1"),
+        });
+        nookBoards.push(kick, floor, shelf);
+      }
     }
 
     // Style 1 shelf, one each side. Plan (left): clear of the strip for the front setback,
@@ -629,18 +781,23 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     });
     T1.notes = [`cut ${R.WARDROBE_T1_OVERSIZE_MM.value} above the roof — flat top, trim to the roof slope on site`];
 
-    // Style 1 fronts hang at y −DPT..0 (the room-face elevation is y = 0; the door is in front of it).
-    // Fixed panel: wall → colour-panel opening face, wardrobe floor → the dragged split.
-    // Door: wall + clearance → colour-panel opening face, split + clearance → T3 top; three cups on the inside.
+    // Fronts hang at y −DPT..0 (the room-face elevation is y = 0; the door is in front of it).
+    // Style 1 — fixed panel: wall → colour-panel opening face, wardrobe floor → the dragged split;
+    //           door: wall + clearance → colour-panel opening face, split + clearance → T3 top.
+    // Nook    — door only, from the nook shelf underside (the dragged line) → T3 top; the nook below stays open.
+    // Three hinge cups on the inside of every door.
     const frontBoards: Board[] = [];
-    if (p.style === "style1") {
+    {
       const CL = R.WARDROBE_DOOR_CLEARANCE_MM;
-      const floorZ = ref("front.floor.z1").value;
-      const splitZ = dim("front.split.z1", { fixedPanelTop: P.fixedPanelTop }, (t) => t.fixedPanelTop);
-      const doorZ0 = dim("front.door.z0", { split: ref("front.split.z1"), CL }, (t) => t.split + t.CL);
-      const doorZ1 = same("front.door.z1", "top.T3.z1");
-      const y0 = dim("front.y0", { DPT }, (t) => -t.DPT);
-      const y1 = dim("front.y1", {}, () => 0, { formula: "0" });
+      if (shelfOn) {
+        dim("front.split.z1", { fixedPanelTop: P.fixedPanelTop }, (t) => t.fixedPanelTop);
+        dim("front.door.z0", { split: ref("front.split.z1"), CL }, (t) => t.split + t.CL);
+      } else {
+        same("front.door.z0", "nook.shelf.z0");
+      }
+      same("front.door.z1", "top.T3.z1");
+      dim("front.y0", { DPT }, (t) => -t.DPT);
+      dim("front.y1", {}, () => 0, { formula: "0" });
       const frontBox = (id: string, name: string, category: string, side: "L" | "R", kind: "door" | "fixed") => {
         const gap = kind === "door";
         const x0 = side === "L"
@@ -657,24 +814,27 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
           z1: same(`${id}.z1`, kind === "door" ? "front.door.z1" : "front.split.z1"),
         });
       };
-      void floorZ; void splitZ; void doorZ0; void doorZ1; void y0; void y1;
-      const fixedL = frontBox("WARD_L_FIXED", "Wardrobe fixed panel · left", "front_panel", "L", "fixed");
-      const fixedR = frontBox("WARD_R_FIXED", "Wardrobe fixed panel · right", "front_panel", "R", "fixed");
-      const doorL = frontBox("WARD_L_DOOR", "Wardrobe door · left", "front_panel", "L", "door");
-      const doorR = frontBox("WARD_R_DOOR", "Wardrobe door · right", "front_panel", "R", "door");
-      frontBoards.push(fixedL, fixedR, doorL, doorR);
+      if (shelfOn) {
+        frontBoards.push(
+          frontBox("WARD_L_FIXED", "Wardrobe fixed panel · left", "front_panel", "L", "fixed"),
+          frontBox("WARD_R_FIXED", "Wardrobe fixed panel · right", "front_panel", "R", "fixed"),
+        );
+      }
+      frontBoards.push(
+        frontBox("WARD_L_DOOR", "Wardrobe door · left", "front_panel", "L", "door"),
+        frontBox("WARD_R_DOOR", "Wardrobe door · right", "front_panel", "R", "door"),
+      );
     }
 
-    const wardBoards: Board[] = [stripL, stripR, panelL, panelR, ...shelfBoards, t3L, t3R, T2, T1, ...frontBoards];
+    const wardBoards: Board[] = [stripL, stripR, panelL, panelR, ...shelfBoards, ...nookBoards, t3L, t3R, T2, T1, ...frontBoards];
     for (const b of wardBoards) b.role = b.category;
     stripL.zoneId = "wardrobeL"; panelL.zoneId = "wardrobeL"; t3L.zoneId = "wardrobeL";
     stripR.zoneId = "wardrobeR"; panelR.zoneId = "wardrobeR"; t3R.zoneId = "wardrobeR";
-    for (const b of shelfBoards) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
+    for (const b of [...shelfBoards, ...nookBoards, ...frontBoards]) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
     T2.zoneId = "top"; T1.zoneId = "top";
-    for (const b of frontBoards) b.zoneId = b.id.includes("_L_") ? "wardrobeL" : "wardrobeR";
-    const shelfIds = (side: "L" | "R") => shelfBoards.filter((b) => b.zoneId === (side === "L" ? "wardrobeL" : "wardrobeR")).map((b) => b.id);
-    wardL.boards = ["WARD_L_STRIP", "WARD_L_PANEL", ...shelfIds("L"), "WARD_L_T3", ...frontBoards.filter((b) => b.zoneId === "wardrobeL").map((b) => b.id)];
-    wardR.boards = ["WARD_R_STRIP", "WARD_R_PANEL", ...shelfIds("R"), "WARD_R_T3", ...frontBoards.filter((b) => b.zoneId === "wardrobeR").map((b) => b.id)];
+    const inZone = (list: Board[], side: "L" | "R") => list.filter((b) => b.zoneId === (side === "L" ? "wardrobeL" : "wardrobeR")).map((b) => b.id);
+    wardL.boards = ["WARD_L_STRIP", "WARD_L_PANEL", ...inZone(shelfBoards, "L"), ...inZone(nookBoards, "L"), "WARD_L_T3", ...inZone(frontBoards, "L")];
+    wardR.boards = ["WARD_R_STRIP", "WARD_R_PANEL", ...inZone(shelfBoards, "R"), ...inZone(nookBoards, "R"), "WARD_R_T3", ...inZone(frontBoards, "R")];
     attachFaces(wardBoards);
     if (shelfOn) {
       const grooveY0 = ref("shelf.groove.y0").value;
@@ -697,8 +857,22 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
       }
     }
     for (const b of [panelL, panelR]) b.stock = { kind: "door", thickness: b.materialThickness, colour: p.doorColor };
-    for (const b of [stripL, stripR, ...shelfBoards, t3L, t3R, T2, T1]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
+    for (const b of [stripL, stripR, ...shelfBoards, ...nookBoards, t3L, t3R, T2, T1]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
     for (const b of shelfBoards) annotate(b, "A", { semantic: "top", visible: true, finish: { colour: p.carcassColor } });
+    for (const b of nookBoards) {
+      b.source = "bedroom.nook";
+      if (b.id.endsWith("_KICK")) {
+        // The kick's inner face looks into the nook under the floor; the outer face is against the wall.
+        annotate(b, b.id.includes("_L_") ? "A" : "B", { semantic: "inside", visible: false });
+        annotate(b, b.id.includes("_L_") ? "B" : "A", { semantic: "wall", visible: false });
+      } else if (b.id.endsWith("_FLOOR")) {
+        annotate(b, "A", { semantic: "top", visible: true, finish: { colour: p.carcassColor } });
+        annotate(b, "B", { semantic: "bottom", visible: false });
+      } else {
+        annotate(b, "A", { semantic: "top", visible: false });
+        annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: p.carcassColor } });
+      }
+    }
     // The strip's inner face looks into the wardrobe; the outer face is against the wall.
     annotate(stripL, "A", { semantic: "inside", visible: true, finish: { colour: p.carcassColor } });
     annotate(stripL, "B", { semantic: "wall", visible: false });
@@ -721,7 +895,7 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
       annotate(b, "A", { semantic: "inside", visible: false });
       annotate(b, "B", { semantic: "front", visible: true, finish: { colour: p.doorColor } });
     }
-    if (p.style === "style1") {
+    {
       const fromEnd = R.WARDROBE_HINGE_FROM_END_MM;
       const fromSide = R.WARDROBE_HINGE_FROM_SIDE_MM;
       for (const door of frontBoards.filter((b) => b.id.endsWith("_DOOR"))) {
@@ -766,6 +940,34 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
       // T1 / T2 stand on T3 (with the clearance): face contact, not a joint that holds anything.
       for (const rail of [T1, T2]) joints.push(joint(`${rail.id}_${t3.id}`, "face_contact", faceRef(t3.id, ["A"]), faceRef(rail.id, boundaryEdgeFaces(rail, "-Z")), { hardware: [], rule: "wardrobe_rail_on_t3_v1" }));
     }
+    // Nook: the shelf and the floor butt against the wall and the colour panel; the strip stands on the shelf.
+    for (const b of nookBoards) {
+      if (b.id.endsWith("_KICK")) continue;
+      const side = b.id.includes("_L_") ? "L" : "R";
+      const panel = side === "L" ? panelL : panelR;
+      joints.push(joint(`${b.id}_panel`, "butt", faceRef(panel.id, [side === "L" ? "B" : "A"]), faceRef(b.id, boundaryEdgeFaces(b, side === "L" ? "+X" : "-X")), { hardware: [], rule: "nook_board_to_panel_v1" }));
+      if (b.id.endsWith("_NOOK")) {
+        const strip = side === "L" ? stripL : stripR;
+        joints.push(joint(`${strip.id}_${b.id}`, "butt", faceRef(b.id, ["A"]), faceRef(strip.id, boundaryEdgeFaces(strip, "-Z")), { hardware: [], rule: "wall_strip_on_nook_shelf_v1" }));
+      }
+    }
+    // LED channels: the three T3 tops (main channel in front of T1, a feed branch near each end) and
+    // the nook shelf underside. Off with `ledGroove: false`.
+    if (p.ledGroove) {
+      const yTail = ref("top.T3.tail.y1").value;
+      const yRear = ref("top.T3.y1").value;
+      for (const [t3, side] of [[t3L, "L"], [t3R, "R"]] as Array<[Board, "L" | "R"]>) {
+        const xn = side === "L" ? panelL.x0 : panelR.x1; // the panel's wall-side face: over the panel T3 only has its tail
+        const fullDepth = (x0: number, x1: number) => (side === "L" ? x1 <= xn + EPS : x0 >= xn - EPS);
+        const overPanel = (x0: number, x1: number) => (side === "L" ? x0 >= xn - EPS : x1 <= xn + EPS);
+        addT3LedChannels(t3, {
+          t1FrontKey: "top.T1.y0",
+          rearAt: (x0, x1) => (fullDepth(x0, x1) ? yRear : overPanel(x0, x1) ? yTail : null),
+          source: "bedroom.led",
+        }, warnings);
+      }
+      for (const b of nookBoards) if (b.id.endsWith("_NOOK")) addNookShelfLed(b, "bedroom.led", warnings);
+    }
     boards.push(...wardBoards);
     }
   }
@@ -778,6 +980,7 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
       roofAt: (y) => roofAt(profile, H, y),
       seat: top.seat,
       t3Top: top.t3Top,
+      led: p.ledGroove ? { t1FrontKey: "top.T1.y0" } : null,
     });
     boards.push(...ohc.boards);
     joints.push(...ohc.joints);
@@ -797,16 +1000,25 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     bedMargin: round1(bedMargin),
     top,
     ohc: ohcInfo,
-    front: p.style === "style1" && top && !errors.length
-      ? {
-        style: "style1",
-        floorTop: wardrobeFloorTop(p),
-        fixedPanelTop: p.fixedPanelTop,
-        doorBottom: round1(p.fixedPanelTop + R.WARDROBE_DOOR_CLEARANCE_MM.value),
-        doorTop: top.t3Top,
-        clearance: R.WARDROBE_DOOR_CLEARANCE_MM.value,
-      }
-      : null,
+    front: !top || errors.length
+      ? null
+      : p.style === "style1"
+        ? {
+          style: "style1",
+          floorTop: wardrobeFloorTop(p),
+          fixedPanelTop: p.fixedPanelTop,
+          doorBottom: round1(p.fixedPanelTop + R.WARDROBE_DOOR_CLEARANCE_MM.value),
+          doorTop: top.t3Top,
+          clearance: R.WARDROBE_DOOR_CLEARANCE_MM.value,
+        }
+        : {
+          style: "nook",
+          floorTop: wardrobeFloorTop(p),
+          nookShelfBottom: nookWardrobeBottom(p),
+          doorBottom: nookWardrobeBottom(p),
+          doorTop: top.t3Top,
+          clearance: R.WARDROBE_DOOR_CLEARANCE_MM.value,
+        },
   };
   return {
     params: p,

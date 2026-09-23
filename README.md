@@ -226,7 +226,7 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   height** (the boot deck, wall to wall), **wardrobe width** (side wall → inner face, the same both sides: symmetric
   by rule), **overhead bottom**, the **bed frame** (queen = 1508, a product size: the opening between the
   wardrobes must take it, so the wardrobes stop at `(W − 1508) / 2`), and the **wardrobe style** (`style1` default,
-  `nook` later): `boot` · `wardrobe L / R`
+  `nook`): `boot` · `wardrobe L / R`
   (boot deck → roof, cut to the roof profile) · the **mattress opening** between them (a void — not a part, just what
   the deck, the wardrobe faces and the overhead underside leave free) · `ohc` above it (to the roof). The **tunnel
   boot is boards**: `BOOT_DECK` (18 mm rule stock, wall to wall × full depth, top at the boot height) resting on two
@@ -242,8 +242,16 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   front view is still the y = 0 elevation): `WARD_L/R_FIXED` from the wardrobe floor (`bootHeight` + 197) up to the
   dragged **fixed-panel top** (default 775), wall to the colour panel; `WARD_L/R_DOOR` from that split + 4 mm to the
   T3 top, 4 mm off the wall and flush with the colour panel on the opening side; three Ø35 × 12 hinge cups on the
-  inside face, 100 from each end and midway, 22.5 from the wall-side edge. Nook is a later typed door bottom — no
-  fronts yet. The **middle overhead** is its own cabinet in the opening (up flaps only, two or three bays, default two equal): `OHC_BP` (15 mm, 30 above the door underside, grooved for the uprights, cut 18 mm past the roof and trimmed on site), `OHC_D0`… side panels and one divider per extra bay (tongue into the bottom panel, roof-cut behind T3), `OHC_T3` (same depth and height as the wardrobe T3s, notched only for this cabinet's uprights) and `OHC_FP*` doors at y −16…0. Two bays: hinge cups 150 from the side-panel outer faces and the centre divider; three bays: 100 from each door edge. No T4 — T1 and T2 stay the shared wall-to-wall rails. The opening is still a void. The overhead used to be a block; it is these boards now. The other region (opening) is still drawn from its roof-cut section
+  inside face, 100 from each end and midway, 22.5 from the wall-side edge. **Nook** (Style 3) replaces the fixed panel
+  and the floor + 10 shelf with an open nook: `WARD_L/R_KICK` (18, wall upright on the deck, full depth) and
+  `WARD_L/R_FLOOR` (18, wall → colour panel, top = boot + 197) make the base; `WARD_L/R_NOOK` (15) is the shelf whose
+  underside is the wardrobe bottom, boot + 197 + 204 (Style 3: 799, not dragged) — the door hangs from it
+  to the T3 top with the same width and cups, the nook below stays open to the room, the shelf stops 22 short of the
+  nose and the wall strip stands on it (no Style 1 notch). **LED channels** (`ledGroove`, a checkbox, default on):
+  every T3 top (`WARD_L/R_T3`, `OHC_T3`) gets a 14.5 × 6.5 main channel along its front whose back wall is 0.5 in
+  front of T1 (Style 3: y 20 → 34.5) and a 20 mm wide feed branch near each end (centre 80 from that end) to the
+  rear edge; the nook shelf underside gets one 14.5 × 6.5 channel centred across it from 54 behind the room face to
+  its rear edge. Off = no channels, boards otherwise identical. The **middle overhead** is its own cabinet in the opening (up flaps only, two or three bays, default two equal): `OHC_BP` (15 mm, 30 above the door underside, grooved for the uprights, cut 18 mm past the roof and trimmed on site), `OHC_D0`… side panels and one divider per extra bay (tongue into the bottom panel; above the T3 seat the outline is the wardrobe colour panel's — seat to the lip, the pocket, then the roof), `OHC_T3` (same depth and height as the wardrobe T3s, notched for this cabinet's uprights with 5 mm clear of each face, forward to the tail at y 77) and `OHC_FP*` doors at y −16…0. Two bays: hinge cups 150 from the side-panel outer faces and the centre divider; three bays: 100 from each door edge. No T4 — T1 and T2 stay the shared wall-to-wall rails. The opening is still a void. The overhead used to be a block; it is these boards now. The other region (opening) is still drawn from its roof-cut section
   (`zones[].outlineYZ`); a region that lists `boards` is drawn as those boards. Selecting the body turns the
   right panel into its **editor page** (wide): the generator's **2D front elevation** from the room — click a region to
   select it (a second click in 3D does the same, `Esc` climbs back), **drag an orange boundary** (boot deck, wardrobe
@@ -252,9 +260,9 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   overhead / bed-margin / front numbers,
   a card for the selected region and the body-level fields folded below. The same boundaries are the orange bars in
   3D on the room face (standoff 20 mm so they sit in front of the doors, spanning only their region). Limits and defaults are rules (`generators/bedroom/rules.json`:
-  Style 3 = boot 398, wardrobes 330, overhead from 1418, queen frame 1508, Style 1 split 775; minimum opening height 500); every
+  Style 3 = boot 398, wardrobes 330, overhead from 1418, queen frame 1508, Style 1 split 775, nook shelf bottom 799; minimum opening height 500); every
   region face goes through `dim()`, so the bench can show `wardrobeR.x0 = W − wardrobeWidth`. Pins:
-  `generators/bedroom/presets.json` (`style3`, `flat-roof`), test `generators/bedroom/generator.test.ts`.
+  `generators/bedroom/presets.json` (`style3`, `style3-nook`, `flat-roof`), test `generators/bedroom/generator.test.ts`.
   Generator: `generators/bedroom/generator.ts`.
 - Type-ins: `Tab` or a digit opens W / D / H. Values may be `1110`, `+50`, `-20`, `*2`, `/2`, `max`, or `1110,560,720`
   (comma fills the next fields). Plain numbers apply live; expressions apply on `Tab` / `Enter`.

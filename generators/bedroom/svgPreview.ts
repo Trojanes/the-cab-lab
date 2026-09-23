@@ -7,8 +7,9 @@
  * face), in the 3D colours: carcass stock, door stock see-through so the
  * carcass behind a door still reads. The five regions sit underneath as faint
  * pick areas with `data-region` so the panel can select them. The layout
- * boundaries — boot deck, wardrobe inner faces, overhead underside, Style 1
- * fixed-panel split, overhead bays — carry `data-boundary` (the layout key),
+ * boundaries — boot deck, wardrobe inner faces, overhead underside, the style's
+ * own line (Style 1 fixed-panel split / nook shelf underside), overhead bays —
+ * carry `data-boundary` (the layout key),
  * `data-axis` (x | z) and `data-side` (−1 | 1 for the mirrored pair) so the
  * panel can drag them. The root `<svg>` carries the mm → px mapping
  * (`data-scale`, `data-ox`, `data-oy`, `data-w`, `data-h`).
@@ -192,8 +193,8 @@ export function generateBedroomSvgPreview(result: BedroomResult, options: Bedroo
   boundary("wardrobeWidth", "x", 1, toX(W - p.wardrobeWidth), toY(p.bootHeight), toX(W - p.wardrobeWidth), toY(H));
   boundary("ohcBottom", "z", 0, toX(p.wardrobeWidth), toY(p.ohcBottom), toX(W - p.wardrobeWidth), toY(p.ohcBottom));
   if (front && front.style === "style1") {
-    boundary("fixedPanelTop", "z", -1, toX(0), toY(front.fixedPanelTop), toX(p.wardrobeWidth), toY(front.fixedPanelTop));
-    boundary("fixedPanelTop", "z", 1, toX(W - p.wardrobeWidth), toY(front.fixedPanelTop), toX(W), toY(front.fixedPanelTop));
+    boundary("fixedPanelTop", "z", -1, toX(0), toY(front.fixedPanelTop!), toX(p.wardrobeWidth), toY(front.fixedPanelTop!));
+    boundary("fixedPanelTop", "z", 1, toX(W - p.wardrobeWidth), toY(front.fixedPanelTop!), toX(W), toY(front.fixedPanelTop!));
   }
   const ohc = result.layout.ohc;
   if (ohc) {
@@ -207,7 +208,8 @@ export function generateBedroomSvgPreview(result: BedroomResult, options: Bedroo
       parts.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="10" fill="${fill}" pointer-events="none">${esc(text)}</text>`);
     // Heights down the left edge: the draggable ones in the boundary colour.
     const heights: Array<[number, boolean]> = [[0, false], [p.bootHeight, true], [p.ohcBottom, true], [H, false]];
-    if (front && front.style === "style1") heights.push([front.fixedPanelTop, true]);
+    if (front && front.style === "style1" && front.fixedPanelTop != null) heights.push([front.fixedPanelTop, true]);
+    if (front && front.style === "nook" && front.nookShelfBottom != null) heights.push([front.nookShelfBottom, false]);
     for (const [z, drag] of heights) dimText(ox - 6, toY(z), fmt(z), "end", drag ? C.boundary : C.text3);
     // Widths along the bottom.
     const yb = toY(0) + 14;

@@ -580,17 +580,29 @@ function renderBedroom(cab, mod, result, shared) {
     ]),
     el("label", { class: "field" }, [
       el("span", { text: "Wardrobe style" }),
-      el("select", { title: "Style 1: door over a fixed panel, split is draggable. Nook: a later typed door bottom.", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, style: v }); log("bedroom.layout.set", { id: cab.id, key: "style", from: p.style || "style1", to: v, how: "select", changed: v !== (p.style || "style1") }); } },
+      el("select", { title: "Style 1: door over a fixed panel, the split is draggable. Nook: door over an open nook with a shelf, the shelf underside is draggable.", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, style: v }); log("bedroom.layout.set", { id: cab.id, key: "style", from: p.style || "style1", to: v, how: "select", changed: v !== (p.style || "style1") }); } },
         Object.entries(BEDROOM_WARDROBE_STYLE).map(([id, s]) => el("option", { value: id, text: s.label, selected: (p.style || "style1") === id }))),
     ]),
-    (p.style || "style1") === "style1" ? layoutField("fixedPanelTop", "Fixed panel top", "split: door starts this + 4 mm") : el("div", { class: "empty small", text: "Nook door bottom is a later typed value — fronts are not generated yet." }),
+    (p.style || "style1") === "nook"
+      ? (info && info.front ? kv("Wardrobe bottom", `${Math.round(info.front.nookShelfBottom)} · boot + 401, not dragged`) : null)
+      : layoutField("fixedPanelTop", "Fixed panel top", "split: door starts this + 4 mm"),
+    el("label", { class: "field check" }, [
+      el("span", { text: "LED channels" }),
+      el("input", { type: "checkbox", checked: p.ledGroove !== false, title: "14.5 × 6.5 channel along the front of every T3 top (0.5 in front of T1) with a 20 mm feed branch near each end; in the nook style also one under each nook shelf.", onchange: (e) => {
+        const on = !!e.target.checked;
+        job.setParams(cab.id, { ...p, ledGroove: on });
+        log("bedroom.layout.set", { id: cab.id, key: "ledGroove", from: p.ledGroove !== false, to: on, how: "toggle", changed: on !== (p.ledGroove !== false) });
+      } }),
+    ]),
     info ? kv("Mattress opening", `${Math.round(info.openingWidth)} wide × ${Math.round(info.openingHeight)} high · ${Math.round(info.bedMargin)} beside the bed each side`) : null,
     info ? kv("Overhead at the room face", `${Math.round(info.ohcHeight)} high`) : null,
     info && info.ohc ? kv("Overhead bays", `${info.ohc.zones.map((z) => Math.round(z.width * 10) / 10).join(" + ")} · bottom panel to ${Math.round(info.ohc.bpBack)}`) : null,
     info ? kv("Bed box", `${Math.round(mod.bedBoxSize(rp).W)} wide × ${Math.round(mod.bedBoxSize(rp).H)} high · from the bed frame and the boot`) : null,
     info && info.top ? kv("Wardrobe top", `T3 seat ${Math.round(info.top.seat)} · roof ${Math.round(info.top.roofAtT2)} at the T2 back · T2 ${Math.round(info.top.t2Height)} high`) : null,
-    info && info.front ? kv("Wardrobe fronts", `door ${Math.round(info.front.doorBottom)}–${Math.round(info.front.doorTop)} · fixed panel ${Math.round(info.front.floorTop)}–${Math.round(info.front.fixedPanelTop)} · clearance ${info.front.clearance}`) : null,
-    el("div", { class: "empty small", text: "Drag a boundary in the front view (10 mm, Shift = 1 mm) or type here. Style 1: the orange line on each wardrobe is the fixed-panel top. The wardrobes stop where the opening equals the bed frame. Width, depth and roof come from the vehicle." }),
+    info && info.front ? kv("Wardrobe fronts", info.front.style === "nook"
+      ? `door ${Math.round(info.front.doorBottom)}–${Math.round(info.front.doorTop)} · nook open ${Math.round(info.front.floorTop)}–${Math.round(info.front.nookShelfBottom)} · wall gap ${info.front.clearance}`
+      : `door ${Math.round(info.front.doorBottom)}–${Math.round(info.front.doorTop)} · fixed panel ${Math.round(info.front.floorTop)}–${Math.round(info.front.fixedPanelTop)} · clearance ${info.front.clearance}`) : null,
+    el("div", { class: "empty small", text: `Drag a boundary in the front view (10 mm, Shift = 1 mm) or type here. ${(p.style || "style1") === "nook" ? "Nook: the wardrobe bottom is boot + 401 and does not drag; the door starts there." : "The orange line on each wardrobe is the fixed-panel top — the door starts 4 mm above it."} The wardrobes stop where the opening equals the bed frame. Width, depth and roof come from the vehicle.` }),
   ].filter(Boolean));
 
   // Selected region card.
@@ -614,7 +626,9 @@ function renderBedroom(cab, mod, result, shared) {
           : zone.id === "ohc"
             ? "Its own bottom panel, side panels and dividers, a T3 notched for those uprights, and up-flap doors. T1 and T2 are the shared rails. No rear T4. The bottom panel is cut long — trim it to the roof."
           : zone.boards && zone.boards.length
-            ? "Colour panel and T3, plus Style 1 the door (hangs in front of the room face) and the fixed panel under it. T1 / T2 run wall to wall on the T3s. Wall side, base and shelf come next."
+            ? ((p.style || "style1") === "nook"
+              ? "Wall strip, colour panel, kick and floor, the nook shelf (LED channel underneath) and the door from the shelf underside to T3. The nook under the shelf stays open to the room. T1 / T2 run wall to wall on the T3s."
+              : "Wall strip, colour panel, the shelf 10 above the wardrobe floor, T3, the door (hangs in front of the room face) and the fixed panel under it. T1 / T2 run wall to wall on the T3s.")
             : "One block for now — its boards come in a later version, each bounded by this region's faces." }),
     ].filter(Boolean));
   }

@@ -16,6 +16,7 @@ import type { Board, Joint, OhcLayout, OhcZone, ProfilePoint } from "./types.ts"
 import { RULES as R } from "./rules.ts";
 import { Outline, dim, lit, param, same } from "../_lib/dim.ts";
 import { addFeature, annotate, attachFaces, faceRef, joint, localRect, tagEdges } from "../_lib/model.ts";
+import { addT3LedChannels } from "./led.ts";
 
 const EPS = 1e-6;
 
@@ -39,6 +40,8 @@ export interface OhcHost {
   roofAt: (y: number) => number;
   seat: number;
   t3Top: number;
+  /** LED channels on this T3's top: the provenance key of T1's front. Null = none. */
+  led?: { t1FrontKey: string } | null;
 }
 
 /** Two or three bays whose widths sum to `opening`, last one absorbing the remainder. */
@@ -126,8 +129,11 @@ export function buildBedroomOhc(host: OhcHost): BuiltOhc {
   const seat = host.seat;
   const t3Top = host.t3Top;
   const t3Depth = R.WARDROBE_T3_DEPTH_MM.value;
-  const notchDepth = R.OHC_T3_NOTCH_DEPTH_MM.value;
-  const slot = round1(cpt + R.OHC_FEATURE_CLEARANCE_MM.value);
+  const sideClear = R.OHC_T3_NOTCH_SIDE_CLEARANCE_MM.value;
+  const notchSlot = round1(cpt + 2 * sideClear);
+  const grooveSlot = round1(cpt + R.OHC_FEATURE_CLEARANCE_MM.value);
+  // The upright rises above the seat at the lip. The notch comes forward another 5 mm (the T3 tail clearance) so the cutter clears that face too.
+  const notchY = round1(R.WARDROBE_T2_BACK_MM.value + R.WARDROBE_T3_LIP_DEPTH_MM.value - R.WARDROBE_T3_TAIL_CLEARANCE_MM.value);
   const tongueH = round1(cpt / 2 - 0.5);
   const grooveDepth = round1(cpt / 2);
   const clearance = R.OHC_FRONT_CLEARANCE_MM.value;
@@ -173,9 +179,9 @@ export function buildBedroomOhc(host: OhcHost): BuiltOhc {
   });
   const localNotches = centers.map((c) => {
     const u = c - x0;
-    return [round1(Math.max(0, u - slot / 2)), round1(Math.min(opening, u + slot / 2))] as [number, number];
+    return [round1(Math.max(0, u - notchSlot / 2)), round1(Math.min(opening, u + notchSlot / 2))] as [number, number];
   });
-  t3.profileVector = t3Outline(opening, localNotches, t3Depth, notchDepth).map(([x, y]) => ({ x: round1(x + x0), y: round1(y) }));
+  t3.profileVector = t3Outline(opening, localNotches, t3Depth, notchY).map(([x, y]) => ({ x: round1(x + x0), y: round1(y) }));
 
   // --- uprights ----------------------------------------------------------------------
   const tongueY0 = round1(uprightBack / 3 + 5);
@@ -191,9 +197,9 @@ export function buildBedroomOhc(host: OhcHost): BuiltOhc {
       y0: dim(`${id}.y0`, {}, () => 0, { formula: "0" }),
       y1: dim(`${id}.y1`, { uprightBack: P.uprightBack }, (t) => t.uprightBack),
       z0: dim(`${id}.z0`, { bpZ1: P.bpZ1, tongueH }, (t) => round1(t.bpZ1 - t.tongueH)),
-      z1: dim(`${id}.z1`, { t3Top: P.t3Top }, (t) => t.t3Top),
+      z1: dim(`${id}.z1`, { roof: round1(host.roofAt(R.WARDROBE_T2_BACK_MM.value)) }, (t) => t.roof, { formula: "roof(T2 back)" }),
     });
-    b.profileVector = dividerOutline(host.roofAt, uprightBack, bpZ1, tongueH, tongueY0, tongueY1, seat, t3Top, t3Depth, notchDepth);
+    b.profileVector = dividerOutline(host, uprightBack, bpZ1, tongueH, tongueY0, tongueY1, seat, t3Top);
     return b;
   });
 
@@ -237,8 +243,8 @@ export function buildBedroomOhc(host: OhcHost): BuiltOhc {
   // Grooves in the top of the bottom panel, one per upright.
   centers.forEach((center, i) => {
     const id = `OHC_D${i}`;
-    const gx0 = round1(Math.max(x0, center - slot / 2));
-    const gx1 = round1(Math.min(x1, center + slot / 2));
+    const gx0 = round1(Math.max(x0, center - grooveSlot / 2));
+    const gx1 = round1(Math.min(x1, center + grooveSlot / 2));
     const r = localRect(bp, { x: [gx0, gx1], y: [grooveY0, grooveY1] });
     addFeature(bp, "A", {
       id: `BG_${id}`,
@@ -280,6 +286,18 @@ export function buildBedroomOhc(host: OhcHost): BuiltOhc {
     });
   });
 
+  // LED channels on the T3 top. A feed branch that lands in a notch stops at the notch front.
+  if (host.led) {
+    addT3LedChannels(t3, {
+      t1FrontKey: host.led.t1FrontKey,
+      rearAt: (bx0, bx1) => {
+        const hit = localNotches.some(([n0, n1]) => bx1 > x0 + n0 - EPS && bx0 < x0 + n1 + EPS);
+        return hit ? notchY : t3Depth;
+      },
+      source: "bedroom.ohc",
+    }, warnings);
+  }
+
   const joints: Joint[] = [];
   for (const div of dividers) {
     const tongues = div.faces!.filter((f) => f.features.some((ft) => ft.kind === "tongue"));
@@ -313,9 +331,8 @@ function cupXs(door: Board, index: number, count: number, x0: number, x1: number
   return [round1(door.x0 + from), round1(door.x1 - from)];
 }
 
-function t3Outline(width: number, notches: Array<[number, number]>, depth: number, notchDepth: number): Array<[number, number]> {
+function t3Outline(width: number, notches: Array<[number, number]>, depth: number, notchY: number): Array<[number, number]> {
   const rear = depth;
-  const notchY = round1(depth - notchDepth);
   const ranges = [...notches].sort((a, b) => b[0] - a[0]);
   const o = new Outline("OHC_T3.pv", ["x", "y"]);
   o.add(lit(0), lit(0));
@@ -350,7 +367,7 @@ function t3Outline(width: number, notches: Array<[number, number]>, depth: numbe
 }
 
 function dividerOutline(
-  roofAt: (y: number) => number,
+  host: OhcHost,
   uprightBack: number,
   bpTop: number,
   tongueH: number,
@@ -358,10 +375,10 @@ function dividerOutline(
   tongueY1: number,
   seat: number,
   t3Top: number,
-  t3Depth: number,
-  notchDepth: number,
 ): ProfilePoint[] {
-  const notchY = round1(t3Depth - notchDepth);
+  const t2Back = R.WARDROBE_T2_BACK_MM.value;
+  const lip = round1(t2Back + R.WARDROBE_T3_LIP_DEPTH_MM.value);
+  const rail = round1(t3Top + R.WARDROBE_T3_CLEARANCE_MM.value);
   const pts: ProfilePoint[] = [
     { y: 0, z: bpTop },
     { y: tongueY0, z: bpTop },
@@ -370,18 +387,19 @@ function dividerOutline(
     { y: tongueY1, z: bpTop },
     { y: uprightBack, z: bpTop },
   ];
-  // Roof from the upright's back up to where it clears T3's top, then flat across the notch.
-  const ys = new Set<number>([uprightBack, t3Depth]);
-  for (let i = 0; i <= 8; i += 1) ys.add(round1(t3Depth + ((uprightBack - t3Depth) * i) / 8));
-  const descending = [...ys].filter((y) => y >= t3Depth - EPS && y < uprightBack - 0.2).sort((a, b) => b - a);
-  for (const y of descending) {
-    const z = round1(Math.min(t3Top, roofAt(y)));
-    const last = pts[pts.length - 1]!;
-    if (Math.abs(last.y - y) > EPS || Math.abs(last.z - z) > EPS) pts.push({ y, z });
+  // Above the seat the upright is the wardrobe colour panel's front profile: roof back to the
+  // T2 back, down to the pocket, the pocket out to the lip, down to the seat, the seat to the room face.
+  const roof = (y: number) => round1(host.roofAt(y));
+  pts.push({ y: uprightBack, z: roof(uprightBack) });
+  const breaks = (host.roofProfile || []).map((q) => q[0]).filter((y) => y > t2Back + EPS && y < uprightBack - EPS).sort((a, b) => b - a);
+  for (const y of breaks) pts.push({ y: round1(y), z: roof(y) });
+  if (uprightBack > t2Back + EPS) {
+    pts.push({ y: t2Back, z: roof(t2Back) });
+    pts.push({ y: t2Back, z: rail });
   }
-  pts.push({ y: notchY, z: round1(Math.min(t3Top, roofAt(notchY))) });
-  pts.push({ y: notchY, z: round1(Math.min(seat, roofAt(notchY))) });
-  pts.push({ y: 0, z: round1(Math.min(seat, roofAt(0))) });
+  if (uprightBack > lip + EPS) pts.push({ y: lip, z: rail });
+  pts.push({ y: Math.min(lip, uprightBack), z: seat });
+  pts.push({ y: 0, z: seat });
   pts.push({ y: 0, z: bpTop });
   return pts;
 }

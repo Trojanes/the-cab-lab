@@ -548,6 +548,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .field input:disabled { color: var(--text-2); }
 .field.readonly input { color: var(--text-2); border-style: dashed; cursor: default; }
 .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+/* An on / off option (LED channels): the box sits at the right edge of the value column. */
+.field.check input[type="checkbox"] { width: 16px; height: 16px; padding: 0; justify-self: end; accent-color: var(--accent); cursor: pointer; }
 /* A dimension that can also be dragged in 3D: the ⇕ toggle arms an arrow handle on the cabinet. */
 .field.with-drag { grid-template-columns: 1fr 96px 22px; gap: 6px; }
 .field.with-drag button.icon.drag { width: 22px; height: 24px; font-size: 13px; color: var(--text-2); border: 1px solid var(--line-strong); }

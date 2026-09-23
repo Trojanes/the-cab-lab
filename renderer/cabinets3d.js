@@ -37,7 +37,7 @@ const voidEdgeSelMat = new THREE.LineBasicMaterial({ color: 0x6fa0f0 });
 const voidPickMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
 // Hinge-cup mark. The bore is on the inside face; a ring on both faces of the door so it reads from the room and from inside.
 const hingeMat = new THREE.MeshBasicMaterial({ color: 0x243044, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
-// Groove mark. The cut is blind, into one face. A dark floor sits in the pocket; an outline on both big faces so it reads from the room as well as from inside.
+// Groove mark. The cut is blind, into one face: a dark floor in the pocket and an outline on that face only — the other face is untouched.
 const grooveLineMat = new THREE.LineBasicMaterial({ color: 0x2c241c });
 const grooveFloorMat = new THREE.MeshBasicMaterial({ color: 0x2c241c, transparent: true, opacity: 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 
@@ -508,7 +508,7 @@ function grooveLoop(group, U, V, T, u0, u1, v0, v1, t) {
   group.add(line);
 }
 
-/** Dark floor in the pocket, and the slot outline on both big faces. Display only. */
+/** Dark floor in the pocket and the slot outline, on the machined face only. Display only. */
 function addGrooveMarks(group, b) {
   const axes = PLANE_AXES[b.profilePlane];
   if (!axes || !b.faces) return;
@@ -518,7 +518,6 @@ function addGrooveMarks(group, b) {
     if (face.id !== "A" && face.id !== "B") continue;
     const sign = face.id === "A" ? 1 : -1;
     const tFace = sign === 1 ? b[`${T}1`] : b[`${T}0`];
-    const tOther = sign === 1 ? b[`${T}0`] : b[`${T}1`];
     for (const ft of face.features || []) {
       if ((ft.kind !== "groove" && ft.kind !== "tgroove") || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
       const u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
@@ -527,7 +526,6 @@ function addGrooveMarks(group, b) {
       const v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
       if (u1 - u0 < 0.5 || v1 - v0 < 0.5) continue;
       grooveLoop(group, U, V, T, u0, u1, v0, v1, tFace + sign * 0.6);
-      grooveLoop(group, U, V, T, u0, u1, v0, v1, tOther - sign * 0.6);
       const depth = Math.min(ft.depth || 0, thick - 0.4);
       if (!(depth > 0.4)) continue;
       const size = { x: 0.4, y: 0.4, z: 0.4 };
