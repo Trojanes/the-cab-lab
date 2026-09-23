@@ -1,7 +1,7 @@
 // Right panel: shows the space when nothing is selected, otherwise the
 // selected cabinet's params. Every edit writes into job.js and regenerates.
 import * as job from "./job.js";
-import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, BEDROOM_LAYOUT_LABEL } from "./modules.js";
+import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, BEDROOM_LAYOUT_LABEL, BEDROOM_WARDROBE_STYLE } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
 import { openSpaceDialog } from "./spaceDialog.js";
 import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
@@ -505,8 +505,9 @@ function renderBedroom(cab, mod, result, shared) {
     const key = g.getAttribute("data-boundary");
     const axis = g.getAttribute("data-axis");
     const side = Number(g.getAttribute("data-side") || 0);
+    const zoneIndex = Number(g.getAttribute("data-index") || 0);
     const params0 = cab.params;
-    const from = params0[key];
+    const from = key === "ohcZone" ? params0.ohcZones : params0[key];
     const before = job.snapshot();
     // mm ↔ px: the SVG carries its own mapping; the container may be scaled to the panel width.
     const toMm = (clientX, clientY) => {
@@ -528,7 +529,8 @@ function renderBedroom(cab, mod, result, shared) {
     const move = (ev) => {
       const step = ev.shiftKey ? 1 : 10;
       const v = Math.round(valueAt(toMm(ev.clientX, ev.clientY)) / step) * step;
-      job.setParams(cab.id, mod.setLayout(params0, key, v), { history: false });
+      const next = key === "ohcZone" ? mod.setOhcBoundary(params0, zoneIndex, v) : mod.setLayout(params0, key, v);
+      job.setParams(cab.id, next, { history: false });
     };
     const end = (ev) => {
       front.removeEventListener("pointermove", move);
@@ -539,7 +541,7 @@ function renderBedroom(cab, mod, result, shared) {
       bedroomDrag = null;
       const changed = job.commitSnapshot(before);
       const now = job.getSelected();
-      log("bedroom.layout.drag", { id: cab.id, key, side: side || undefined, from, to: now ? now.params[key] : null, changed, where: "front view" });
+      log("bedroom.layout.drag", { id: cab.id, key, side: side || undefined, from, to: now ? (key === "ohcZone" ? now.params.ohcZones : now.params[key]) : null, changed, where: "front view" });
       renderPanel();
     };
     front.addEventListener("pointermove", move);
@@ -550,24 +552,57 @@ function renderBedroom(cab, mod, result, shared) {
   // Layout fields: the four numbers, each with the range the other three leave it.
   const layoutField = (key, label, hint) => {
     const lim = mod.layoutLimits(p, key);
-    const field = numField(`${label} (mm)`, p[key], (v) => setLayout(key, v, "type"), { step: 10, min: 0 });
+    const field = numField(`${label} (mm)`, p[key] ?? rp[key], (v) => setLayout(key, v, "type"), { step: 10, min: 0 });
     field.title = `${lim.min} … ${lim.max} mm${hint ? ` · ${hint}` : ""}`;
     return field;
   };
   const layoutSection = section("Layout · symmetric left / right", [
     layoutField("bootHeight", "Tunnel boot height", "top of the boot deck"),
     layoutField("wardrobeWidth", "Wardrobe width, each side", "side wall → inner face"),
-    layoutField("ohcBottom", "Overhead bottom", "underside of the overhead block"),
+    layoutField("ohcBottom", "Overhead door bottom", "up-flap underside; the bottom panel is 30 above"),
+    el("label", { class: "field" }, [
+      el("span", { text: "Overhead bays" }),
+      el("select", { title: "Up flaps only. Two is the Style 3 split; three uses the 100 mm hinge inset.", onchange: (e) => {
+        const n = Number(e.target.value);
+        e.target.blur();
+        const before = info && info.ohc ? info.ohc.zones.length : 2;
+        job.setParams(cab.id, mod.setOhcCount(p, n));
+        log("bedroom.layout.set", { id: cab.id, key: "ohcZones", from: before, to: n, how: "select", changed: n !== before });
+      } }, [
+        el("option", { value: "2", text: "2 · up flaps", selected: (info && info.ohc ? info.ohc.zones.length : 2) === 2 }),
+        el("option", { value: "3", text: "3 · up flaps", selected: (info && info.ohc ? info.ohc.zones.length : 2) === 3 }),
+      ]),
+    ]),
     el("label", { class: "field" }, [
       el("span", { text: "Bed frame" }),
       el("select", { title: "A product size: the opening must take it and the bed box is exactly this wide", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, bedFrame: v }); log("bedroom.layout.set", { id: cab.id, key: "bedFrame", from: p.bedFrame, to: v, how: "select", changed: v !== p.bedFrame }); } },
         [el("option", { value: "queen", text: `Queen · ${info ? Math.round(info.bedFrameWidth) : 1508} wide`, selected: true })]),
     ]),
+    el("label", { class: "field" }, [
+      el("span", { text: "Wardrobe style" }),
+      el("select", { title: "Style 1: door over a fixed panel, the split is draggable. Nook: door over an open nook with a shelf, the shelf underside is draggable.", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, style: v }); log("bedroom.layout.set", { id: cab.id, key: "style", from: p.style || "style1", to: v, how: "select", changed: v !== (p.style || "style1") }); } },
+        Object.entries(BEDROOM_WARDROBE_STYLE).map(([id, s]) => el("option", { value: id, text: s.label, selected: (p.style || "style1") === id }))),
+    ]),
+    (p.style || "style1") === "nook"
+      ? (info && info.front ? kv("Wardrobe bottom", `${Math.round(info.front.nookShelfBottom)} · boot + 401, not dragged`) : null)
+      : layoutField("fixedPanelTop", "Fixed panel top", "split: door starts this + 4 mm"),
+    el("label", { class: "field check" }, [
+      el("span", { text: "LED channels" }),
+      el("input", { type: "checkbox", checked: p.ledGroove !== false, title: "14.5 × 6.5 channel along the front of every T3 top (0.5 in front of T1) with a 20 mm feed branch near each end; in the nook style also one under each nook shelf.", onchange: (e) => {
+        const on = !!e.target.checked;
+        job.setParams(cab.id, { ...p, ledGroove: on });
+        log("bedroom.layout.set", { id: cab.id, key: "ledGroove", from: p.ledGroove !== false, to: on, how: "toggle", changed: on !== (p.ledGroove !== false) });
+      } }),
+    ]),
     info ? kv("Mattress opening", `${Math.round(info.openingWidth)} wide × ${Math.round(info.openingHeight)} high · ${Math.round(info.bedMargin)} beside the bed each side`) : null,
     info ? kv("Overhead at the room face", `${Math.round(info.ohcHeight)} high`) : null,
+    info && info.ohc ? kv("Overhead bays", `${info.ohc.zones.map((z) => Math.round(z.width * 10) / 10).join(" + ")} · bottom panel to ${Math.round(info.ohc.bpBack)}`) : null,
     info ? kv("Bed box", `${Math.round(mod.bedBoxSize(rp).W)} wide × ${Math.round(mod.bedBoxSize(rp).H)} high · from the bed frame and the boot`) : null,
     info && info.top ? kv("Wardrobe top", `T3 seat ${Math.round(info.top.seat)} · roof ${Math.round(info.top.roofAtT2)} at the T2 back · T2 ${Math.round(info.top.t2Height)} high`) : null,
-    el("div", { class: "empty small", text: "Drag a boundary in the front view (10 mm, Shift = 1 mm) or type here. The wardrobes stop where the opening equals the bed frame. Width, depth and roof come from the vehicle." }),
+    info && info.front ? kv("Wardrobe fronts", info.front.style === "nook"
+      ? `door ${Math.round(info.front.doorBottom)}–${Math.round(info.front.doorTop)} · nook open ${Math.round(info.front.floorTop)}–${Math.round(info.front.nookShelfBottom)} · wall gap ${info.front.clearance}`
+      : `door ${Math.round(info.front.doorBottom)}–${Math.round(info.front.doorTop)} · fixed panel ${Math.round(info.front.floorTop)}–${Math.round(info.front.fixedPanelTop)} · clearance ${info.front.clearance}`) : null,
+    el("div", { class: "empty small", text: `Drag a boundary in the front view (10 mm, Shift = 1 mm) or type here. ${(p.style || "style1") === "nook" ? "Nook: the wardrobe bottom is boot + 401 and does not drag; the door starts there." : "The orange line on each wardrobe is the fixed-panel top — the door starts 4 mm above it."} The wardrobes stop where the opening equals the bed frame. Width, depth and roof come from the vehicle.` }),
   ].filter(Boolean));
 
   // Selected region card.
@@ -588,8 +623,12 @@ function renderBedroom(cab, mod, result, shared) {
         ? "Not a part: what the boot deck, the wardrobe inner faces and the overhead underside leave free. The bed frame stands here and the bed box continues it into the room."
         : zone.id === "boot"
           ? "Made of boards: the deck on top, an upright on the room face and one at the nose, all wall to wall. Click a board id or a board in 3D to read it."
+          : zone.id === "ohc"
+            ? "Its own bottom panel, side panels and dividers, a T3 notched for those uprights, and up-flap doors. T1 and T2 are the shared rails. No rear T4. The bottom panel is cut long — trim it to the roof."
           : zone.boards && zone.boards.length
-            ? "So far: the colour panel (door stock, colour into the opening; cut down to the T3 seat in front of the T2 back, pocket for T3's tail) and T3. T1 / T2 run wall to wall on the T3s. Wall side, base, shelf and door come next."
+            ? ((p.style || "style1") === "nook"
+              ? "Wall strip, colour panel, kick and floor, the nook shelf (LED channel underneath) and the door from the shelf underside to T3. The nook under the shelf stays open to the room. T1 / T2 run wall to wall on the T3s."
+              : "Wall strip, colour panel, the shelf 10 above the wardrobe floor, T3, the door (hangs in front of the room face) and the fixed panel under it. T1 / T2 run wall to wall on the T3s.")
             : "One block for now — its boards come in a later version, each bounded by this region's faces." }),
     ].filter(Boolean));
   }
@@ -726,6 +765,12 @@ function renderCabinet(cab) {
 
   const board = boardSection();
 
+  if (mod.panel === "bedSide") {
+    renderBedSide(cab, mod, result, { checks, remove, board, setEnv });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
+
   // Bed box: stands in the body's mattress opening — W (bed frame) and H (boot) from the body, only the length is free.
   const bedChildren = [
     el("div", { class: "panel-head" }, [
@@ -786,6 +831,114 @@ function renderCabinet(cab) {
   ];
   panel.replaceChildren(...(mod.placement === "bedBox" ? bedChildren : boxChildren).filter(Boolean));
   fillDrawer(result, errors, warnings);
+}
+
+function bedSideChoice(side, type) {
+  if (type === "drawer") return "drawer";
+  const towardWall = side === "left" ? "right_door" : "left_door";
+  return type === towardWall ? "wall" : "bed";
+}
+function bedSideType(side, choice) {
+  if (choice === "drawer") return "drawer";
+  if (choice === "wall") return side === "left" ? "right_door" : "left_door";
+  return side === "left" ? "left_door" : "right_door";
+}
+
+let bedSideDrag = null; // { cabId, refresh } while the shelf line is dragged in the front view
+
+function renderBedSide(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const side = p.side === "right" ? "right" : "left";
+  const lim = mod.dividers(p, result)[0];
+  // A drag in progress: redraw the SVG in place and keep the container (and its listeners) alive.
+  if (bedSideDrag && bedSideDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    bedSideDrag.refresh();
+    return;
+  }
+  const setShelf = (z) => {
+    job.setParams(cab.id, { ...p, shelfCenter: z });
+    log("bedside.shelf", { id: cab.id, side, from: p.shelfCenter, to: z });
+  };
+  const setZone = (index, choice) => {
+    const zones = (p.zones || []).map((z) => ({ ...z }));
+    zones[index] = { ...zones[index], type: bedSideType(side, choice) };
+    job.setParams(cab.id, { ...p, zones });
+    log("bedside.zone", { id: cab.id, side, index, type: zones[index].type });
+  };
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => { front.innerHTML = mod.frontView(job.resultFor(cab.id)) || ""; };
+  drawFront();
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    if (!g || !front.querySelector("svg") || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const before = job.snapshot();
+    const from = p.shelfCenter;
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    bedSideDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const svg = front.querySelector("svg");
+      if (!svg) return;
+      const rect = svg.getBoundingClientRect();
+      const k = Number(svg.getAttribute("width")) / rect.width;
+      const scale = Number(svg.dataset.scale);
+      const oy = Number(svg.dataset.oy);
+      const H = Number(svg.dataset.h);
+      const z = H - ((ev.clientY - rect.top) * k - oy) / scale;
+      const step = ev.shiftKey ? 1 : 10;
+      job.setParams(cab.id, mod.setDivider(p, result, 0, Math.round(z / step) * step), { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      bedSideDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("bedside.shelf", { id: cab.id, side, from, to: now ? now.params.shelfCenter : null, changed, where: "front view" });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+  const zoneSelect = (index, label) => {
+    const type = (p.zones && p.zones[index] && p.zones[index].type) || "drawer";
+    const choice = bedSideChoice(side, type);
+    return el("label", { class: "field" }, [
+      el("span", { text: label }),
+      el("select", { onchange: (e) => { e.target.blur(); setZone(index, e.target.value); } }, [
+        el("option", { value: "drawer", text: "Drawer", selected: choice === "drawer" }),
+        el("option", { value: "wall", text: "Door · hinge at the wall", selected: choice === "wall" }),
+        el("option", { value: "bed", text: "Door · hinge at the bed", selected: choice === "bed" }),
+      ]),
+    ]);
+  };
+  panel.replaceChildren(
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: `Bed side · ${side}` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · the other table mirrors this · ${result?.boards?.length || 0} boards` }),
+    ]),
+    shared.board,
+    section("Front view", [
+      front,
+      el("div", { class: "zs-hint", text: "Drag the orange line to move the middle shelf · Shift = 1 mm" }),
+    ]),
+    section("Layout", [
+      numField("Width (mm)", env.W, () => {}, { readOnly: "The body's wardrobe width: the door-stock side panel stands under the colour panel." }),
+      numField("Into the room (mm)", env.D, shared.setEnv("D")),
+      numField("Top (mm)", env.H, shared.setEnv("H")),
+      numField("Middle shelf centre (mm)", p.shelfCenter, setShelf, { step: 10, min: lim ? lim.min : 0, max: lim ? lim.max : env.H }),
+      zoneSelect(0, "Lower"),
+      zoneSelect(1, "Upper"),
+      el("div", { class: "empty small", text: "No back. Each shelf's tongues go through the carcass sides over the middle third of the depth. The bed-side panel is door stock, under the colour panel; the fronts cover it. Removing one table removes both." }),
+    ]),
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  );
 }
 
 /** Checks + Boards tabs of the bottom drawer for a generated cabinet. */
@@ -949,7 +1102,7 @@ function renderWall(w) {
 export function renderPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
-  const wide = !!sel && ["ohc", "bedroom"].includes(getModule(sel.moduleId).panel);
+  const wide = !!sel && ["ohc", "bedroom", "bedSide"].includes(getModule(sel.moduleId).panel);
   panel.classList.toggle("wide", wide);
   app.classList.toggle("wide-right", wide);
   if (sel) renderCabinet(sel);

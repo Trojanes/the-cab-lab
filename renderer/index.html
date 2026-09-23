@@ -42,7 +42,7 @@
     </header>
 
     <div id="cmdbar">
-      <button class="tb icon" data-action="move" title="Move (M) — click a grab point, then a target · Ctrl+click copies" disabled aria-label="Move">
+      <button class="tb icon" data-action="move" title="Move (M) — Free drags the arrows, Face lines up two faces, Point lands a corner on a point · Module or Panel · Enter confirms" disabled aria-label="Move">
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
           <path d="M8 1.5 V14.5 M1.5 8 H14.5"/>
           <path d="M8 1.5 L6 3.5 M8 1.5 L10 3.5"/>
@@ -78,7 +78,7 @@
       </button>
       <div class="rail-title">Modules</div>
       <div id="moduleList"></div>
-      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face. Overhead starts on a ceiling edge.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · O face · R rotate · F frame · Del remove · Esc cancel</div>
+      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face. Overhead starts on a ceiling edge.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · O face · R rotate 90° · F frame · Del remove · Esc cancel</div>
     </aside>
 
     <main id="center">
@@ -133,6 +133,17 @@
           <span class="browser-title">Job</span>
         </div>
         <div id="jobTree" title="Module → board → face · click selects, the caret expands · Esc climbs back up"></div>
+      </div>
+      <div id="moveCard" class="hidden">
+        <div class="move-card-title">Move</div>
+        <div class="move-kind">
+          <label class="move-opt"><input type="radio" name="moveKind" value="free"> Free</label>
+          <label class="move-opt"><input type="radio" name="moveKind" value="face"> Face</label>
+          <label class="move-opt"><input type="radio" name="moveKind" value="point"> Point</label>
+        </div>
+        <label class="move-opt"><input type="radio" name="moveTarget" value="module"> Module</label>
+        <label class="move-opt"><input type="radio" name="moveTarget" value="panel"> Panel</label>
+        <div class="move-note" data-move-note></div>
       </div>
       <div id="dimInputs" class="hidden">
         <label data-dim="W"><span>W</span><input type="text" inputmode="decimal" tabindex="-1" spellcheck="false"></label>

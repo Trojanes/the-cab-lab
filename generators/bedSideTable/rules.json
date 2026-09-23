@@ -1,0 +1,14 @@
+{
+  "BOARD_THICKNESS_MM": { "value": 15, "doc": "Side panels and shelves. Style 3 / Bedroom 1 measure 15." },
+  "DOOR_THICKNESS_MM": { "value": 16, "doc": "Fronts (drawer or door) and the bed-side show panel, which stands outside the carcass under the wardrobe's colour panel. Style 3 / Bedroom 1 measure 16." },
+  "TOP_ABOVE_BOOT_MM": { "value": 4.5, "doc": "Unused for the table height. The top follows the body's fixed-panel top (the panel under the wardrobe door), not the boot." },
+  "DEPTH_DEFAULT_MM": { "value": 145, "doc": "How far the table stands into the room from the body's room face, when nothing else is set. Style 3 measures 145." },
+  "GROOVE_CLEARANCE_MM": { "value": 1, "doc": "Side slot is this much taller than the shelf (15 → 16): 0.5 above and below for the middle shelf; for the top and bottom shelves, whose slot reaches the side's edge, the whole 1 mm is toward the inside." },
+  "ROUTER_DIAMETER_MM": { "value": 10, "doc": "The side slot runs this much further than the tongue along the depth, 5 mm past each end. The tongue itself is the middle third of the depth and goes through the side to its outer face." },
+  "CLEARANCE_MM": { "value": 2.5, "doc": "The shared side clearance around the fronts: above the floor, between the two fronts (centred on the shelf line), under the top, and at both side edges. The fronts cover the shelves and the show panel. 2.5 or 3, whichever the job uses." },
+  "ZONE_MIN_MM": { "value": 80, "doc": "Least clear height of a drawer or door zone." },
+  "HINGE_DIAMETER_MM": { "value": 35, "doc": "Door cup diameter." },
+  "HINGE_DEPTH_MM": { "value": 12, "doc": "Door cup depth from the inside face." },
+  "HINGE_FROM_END_MM": { "value": 22.5, "doc": "Cup centre from the top and from the bottom of a bedside door. Not measured from a model — chosen because a bedside zone is under 200 high and the wardrobe's 100 would put the two cups on top of each other. Confirm on the next model." },
+  "HINGE_FROM_SIDE_MM": { "value": 22.5, "doc": "Cup centre from the hinge edge." }
+}

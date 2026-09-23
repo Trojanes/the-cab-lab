@@ -1,8 +1,10 @@
 // Board solids from generator output. Shared by the app (cabinets3d.js) and the
 // generator bench so both draw the same board the same way. Display only: a
 // board with an outline is extruded from it, otherwise it is its bounding box.
+// A groove is a pocket of the feature's depth — the board is not a boolean,
+// the pocket is just how that face feature is drawn.
 import * as THREE from "three";
-import { mergeGeometries } from "three/addons/utils/BufferGeometryUtils.js";
+import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
 
 function closedPath(points, map) {
   const pts = points.map(map);
@@ -88,14 +90,194 @@ export function boardOutline(b) {
   return null;
 }
 
-/**
- * Board solid: its outline extruded through its thickness when it has one,
- * else `{ geo: null, cut: false }` (draw the bounding box).
- */
 function shiftXY(points, dx, dy) {
   return points.map((p) => ({ x: p.x + dx, y: p.y + dy }));
 }
 
+const AXES_OF = { YZ: ["y", "z", "x"], XZ: ["x", "z", "y"], XY: ["x", "y", "z"] };
+
+/** Ray-cast point-in-polygon in the board's profile plane; `poly` and the point use the same axis keys. */
+function insideOutline(poly, U, V, u, v) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const ui = poly[i][U], vi = poly[i][V], uj = poly[j][U], vj = poly[j][V];
+    if ((vi > v) !== (vj > v) && u < ((uj - ui) * (v - vi)) / (vj - vi) + ui) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * Grooves / T-grooves on one big face, as closed loops in the cabinet frame.
+ * `outline` (when the board has one) drops any loop that would leave the board —
+ * a pocket cannot open into a notch; the groove marks still show it.
+ */
+function grooveLoops(b, faceId, outline = null) {
+  const face = (b.faces || []).find((f) => f.id === faceId);
+  if (!face) return [];
+  const [U, V] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const U0 = b[`${U}0`], U1 = b[`${U}1`], V0 = b[`${V}0`], V1 = b[`${V}1`];
+  const loops = [];
+  for (const ft of face.features || []) {
+    if ((ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
+    if (!Number.isFinite(ft.u0) || !Number.isFinite(ft.v0) || !(ft.depth > 0.2)) continue;
+    let u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
+    let u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
+    let v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);
+    let v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
+    // A hole that touches the board edge is not a hole. Pull it just inside.
+    const land = 0.4;
+    if (u0 <= U0 + 0.3) u0 = U0 + land;
+    if (u1 >= U1 - 0.3) u1 = U1 - land;
+    if (v0 <= V0 + 0.3) v0 = V0 + land;
+    if (v1 >= V1 - 0.3) v1 = V1 - land;
+    if (u1 - u0 < 0.8 || v1 - v0 < 0.8) continue;
+    if (outline) {
+      const corners = [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+      // Test a hair inside each corner so a loop flush with the outline edge still counts as inside.
+      const cu = (u0 + u1) / 2, cv = (v0 + v1) / 2;
+      const ok = corners.every(([u, v]) => insideOutline(outline, U, V, u + Math.sign(cu - u) * 0.2, v + Math.sign(cv - v) * 0.2));
+      if (!ok) continue;
+    }
+    loops.push({ depth: ft.depth, u0, u1, v0, v1 });
+  }
+  const p = (u, v) => (b.profilePlane === "XY" ? { x: u, y: v } : b.profilePlane === "XZ" ? { x: u, z: v } : { y: u, z: v });
+  return mergeTGrooves(loops).map((g) => ({ depth: g.depth, loop: g.pts.map(([u, v]) => p(u, v)) }));
+}
+
+/**
+ * Rectangles that touch edge to edge (a T-groove: the main channel and the
+ * branches that start on its back wall) become one outline, so the cap has one
+ * hole instead of two holes sharing an edge — which the triangulation drops.
+ */
+function mergeTGrooves(rects) {
+  const eq = (a, c) => Math.abs(a - c) < 0.05;
+  const used = new Set();
+  const out = [];
+  for (let i = 0; i < rects.length; i += 1) {
+    if (used.has(i)) continue;
+    const s = rects[i];
+    const behind = []; // branches starting on the stem's v1 wall
+    const ahead = []; // branches ending on the stem's v0 wall
+    for (let j = 0; j < rects.length; j += 1) {
+      if (j === i || used.has(j)) continue;
+      const r = rects[j];
+      if (!eq(r.depth, s.depth) || r.u0 < s.u0 - 0.05 || r.u1 > s.u1 + 0.05) continue;
+      if (eq(r.v0, s.v1)) behind.push(j);
+      else if (eq(r.v1, s.v0)) ahead.push(j);
+    }
+    if (!behind.length && !ahead.length) {
+      out.push({ depth: s.depth, pts: [[s.u0, s.v0], [s.u1, s.v0], [s.u1, s.v1], [s.u0, s.v1]] });
+      continue;
+    }
+    used.add(i);
+    for (const j of [...behind, ...ahead]) used.add(j);
+    const pts = [];
+    // Counter-clockwise: along v0 from u0 to u1 (dipping into the branches ahead), up the u1 side,
+    // back along v1 from u1 to u0 (rising into the branches behind), down the u0 side.
+    pts.push([s.u0, s.v0]);
+    for (const j of ahead.sort((a, c) => rects[a].u0 - rects[c].u0)) {
+      const r = rects[j];
+      pts.push([r.u0, s.v0], [r.u0, r.v0], [r.u1, r.v0], [r.u1, s.v0]);
+    }
+    pts.push([s.u1, s.v0], [s.u1, s.v1]);
+    for (const j of behind.sort((a, c) => rects[c].u1 - rects[a].u1)) {
+      const r = rects[j];
+      pts.push([r.u1, s.v1], [r.u1, r.v1], [r.u0, r.v1], [r.u0, s.v1]);
+    }
+    pts.push([s.u0, s.v1]);
+    // Drop repeated points (a branch flush with the stem's end).
+    const clean = pts.filter((q, k) => k === 0 || !(eq(q[0], pts[k - 1][0]) && eq(q[1], pts[k - 1][1])));
+    if (eq(clean[0][0], clean[clean.length - 1][0]) && eq(clean[0][1], clean[clean.length - 1][1])) clean.pop();
+    out.push({ depth: s.depth, pts: clean });
+  }
+  return out;
+}
+
+function boxOutline(b) {
+  if (b.profilePlane === "XY") return [{ x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }];
+  if (b.profilePlane === "XZ") return [{ x: b.x0, z: b.z0 }, { x: b.x1, z: b.z0 }, { x: b.x1, z: b.z1 }, { x: b.x0, z: b.z1 }];
+  return [{ y: b.y0, z: b.z0 }, { y: b.y1, z: b.z0 }, { y: b.y1, z: b.z1 }, { y: b.y0, z: b.z1 }];
+}
+
+function extrudeSlab(b, outline, holes, t0, t1) {
+  if (b.profilePlane === "XY") return prismXY(outline, t0, t1, holes);
+  if (b.profilePlane === "XZ") return prismXZ(outline, t0, t1, holes);
+  return prismYZ(outline, t0, t1, holes);
+}
+
+/**
+ * A board with grooves: the uncut core, plus a cap on each machined face whose
+ * thickness is the groove depth and whose holes are the grooves. Looking at
+ * that face, the core shows through — the pocket floor. Works on a plain box
+ * and on an outlined board (a T3 with its LED channels) alike.
+ */
+function pocketGeometry(b) {
+  const shaped = boardOutline(b);
+  const onA = grooveLoops(b, "A", shaped);
+  const onB = grooveLoops(b, "B", shaped);
+  if (!onA.length && !onB.length) return null;
+  const [, , T] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const t0 = b[`${T}0`], t1 = b[`${T}1`];
+  const thick = t1 - t0;
+  const depthA = onA.length ? Math.min(Math.max(...onA.map((g) => g.depth)), thick - 0.6) : 0;
+  const depthB = onB.length ? Math.min(Math.max(...onB.map((g) => g.depth)), thick - depthA - 0.6) : 0;
+  if (!(depthA > 0.2) && !(depthB > 0.2)) return null;
+  const outline = shaped || boxOutline(b);
+  const geos = [];
+  const mid0 = t0 + depthB;
+  const mid1 = t1 - depthA;
+  if (mid1 - mid0 > 0.2) geos.push(extrudeSlab(b, outline, [], mid0, mid1));
+  if (depthA > 0.2) geos.push(extrudeSlab(b, outline, onA.map((g) => g.loop), mid1, t1));
+  if (depthB > 0.2) geos.push(extrudeSlab(b, outline, onB.map((g) => g.loop), t0, t0 + depthB));
+  const merged = mergeGeometries(geos.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+  if (!merged) return null;
+  const welded = mergeVertices(merged, 0.05);
+  welded.computeVertexNormals();
+  return welded;
+}
+
+/**
+ * Through cutouts on the big faces (a mortise, a lock slot) as closed loops in
+ * the cabinet frame. A `radius` rounds the corners; radius = half the short
+ * side is a stadium.
+ */
+function throughLoops(b) {
+  const [U, V] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const p = (u, v) => (b.profilePlane === "XY" ? { x: u, y: v } : b.profilePlane === "XZ" ? { x: u, z: v } : { y: u, z: v });
+  const loops = [];
+  for (const face of b.faces || []) {
+    if (face.id !== "A" && face.id !== "B") continue;
+    for (const ft of face.features || []) {
+      if (ft.kind !== "cutout" || !ft.through || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
+      const u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
+      const u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
+      const v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);
+      const v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
+      if (u1 - u0 < 0.5 || v1 - v0 < 0.5) continue;
+      const r = Math.max(0, Math.min(Number(ft.radius) || 0, (u1 - u0) / 2, (v1 - v0) / 2));
+      if (r < 0.05) { loops.push([p(u0, v0), p(u1, v0), p(u1, v1), p(u0, v1)]); continue; }
+      const pts = [];
+      const corner = (cu, cv, a0) => {
+        for (let i = 0; i <= 8; i += 1) {
+          const a = a0 + (Math.PI / 2) * (i / 8);
+          pts.push(p(cu + r * Math.cos(a), cv + r * Math.sin(a)));
+        }
+      };
+      corner(u1 - r, v0 + r, -Math.PI / 2);
+      corner(u1 - r, v1 - r, 0);
+      corner(u0 + r, v1 - r, Math.PI / 2);
+      corner(u0 + r, v0 + r, Math.PI);
+      loops.push(pts);
+    }
+  }
+  return loops;
+}
+
+/**
+ * Board solid: its outline extruded through its thickness when it has one,
+ * else a plain box. Grooves are pockets of the recorded depth; through
+ * cutouts are holes in the extrusion.
+ */
 export function boardGeometry(b) {
   if (b.profilePlane === "XY" && b.thicknessAxis === "Z" && b.slabs && b.slabs.length) {
     const { dx, dy } = xyShift(b);
@@ -108,14 +290,15 @@ export function boardGeometry(b) {
     const geo = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
     return { geo, cut: true };
   }
-  const outline = boardOutline(b);
+  const pocket = pocketGeometry(b);
+  if (pocket) return { geo: pocket, cut: true };
+  const holes = throughLoops(b);
+  const outline = boardOutline(b) || (holes.length ? boxOutline(b) : null);
   if (!outline) return { geo: null, cut: false };
-  if (b.profilePlane === "YZ") return { geo: prismYZ(outline, b.x0, b.x1), cut: true };
-  if (b.profilePlane === "XY") return { geo: prismXY(outline, b.z0, b.z1, boardHoles(b)), cut: true };
-  return { geo: prismXZ(outline, b.y0, b.y1), cut: true };
+  if (b.profilePlane === "YZ") return { geo: prismYZ(outline, b.x0, b.x1, holes), cut: true };
+  if (b.profilePlane === "XY") return { geo: prismXY(outline, b.z0, b.z1, holes), cut: true };
+  return { geo: prismXZ(outline, b.y0, b.y1, holes), cut: true };
 }
-
-const AXES_OF = { YZ: ["y", "z", "x"], XZ: ["x", "z", "y"], XY: ["x", "y", "z"] };
 
 /**
  * Highlight sheet for one face of a board (cabinet frame), `thick` mm proud of

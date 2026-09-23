@@ -2,12 +2,13 @@
 // wireframe, and (when selected) resize / divider handles. Nothing here
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
-import { scene, camera } from "./space.js";
+import { scene, camera, canvas } from "./space.js";
 import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
 import { prismYZ, boardGeometry, boxMesh, boxEdges, faceSheetGeometry } from "./boardGeom.js";
 import { faceAtHit } from "./boardModel.js";
+import { worldOf, boardOverride, nominalBoardPoint } from "./pose.js";
 
 export const HANDLE_SIZE = 44;
 
@@ -34,6 +35,11 @@ const dividerMat = new THREE.MeshBasicMaterial({ color: 0xe0a34f });
 const voidEdgeMat = new THREE.LineBasicMaterial({ color: 0x8a8378, transparent: true, opacity: 0.7 });
 const voidEdgeSelMat = new THREE.LineBasicMaterial({ color: 0x6fa0f0 });
 const voidPickMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0, depthWrite: false });
+// Hinge-cup mark. The bore is on the inside face; a ring on both faces of the door so it reads from the room and from inside.
+const hingeMat = new THREE.MeshBasicMaterial({ color: 0x243044, transparent: true, opacity: 0.85, side: THREE.DoubleSide, depthWrite: false });
+// Groove mark. The cut is blind, into one face: a dark floor in the pocket and an outline on that face only — the other face is untouched.
+const grooveLineMat = new THREE.LineBasicMaterial({ color: 0x2c241c });
+const grooveFloorMat = new THREE.MeshBasicMaterial({ color: 0x2c241c, transparent: true, opacity: 0.7, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
 
 const root = new THREE.Group();
 root.name = "cabinets";
@@ -57,22 +63,22 @@ export function envelopeBox(cab, result) {
 }
 
 function transformBox(box, pose) {
-  const a = ((pose.rotZ || 0) * Math.PI) / 180;
-  const c = Math.cos(a);
-  const s = Math.sin(a);
-  const corners = [[box.x0, box.y0], [box.x1, box.y0], [box.x1, box.y1], [box.x0, box.y1]].map(([lx, ly]) => [
-    pose.x + lx * c - ly * s,
-    pose.y + lx * s + ly * c,
-  ]);
-  const xs = corners.map((p) => p[0]);
-  const ys = corners.map((p) => p[1]);
-  const z0 = (box.z0 ?? 0) + pose.z;
-  const z1 = (box.z1 ?? 0) + pose.z;
+  const z0 = box.z0 ?? 0;
+  const z1 = box.z1 ?? 0;
+  const locals = [
+    [box.x0, box.y0, z0], [box.x1, box.y0, z0], [box.x1, box.y1, z0], [box.x0, box.y1, z0],
+    [box.x0, box.y0, z1], [box.x1, box.y0, z1], [box.x1, box.y1, z1], [box.x0, box.y1, z1],
+  ];
+  const points = locals.map((p) => worldOf(pose, p));
+  const xs = points.map((p) => p[0]);
+  const ys = points.map((p) => p[1]);
+  const zs = points.map((p) => p[2]);
   return {
     id: box.id,
-    corners,
+    points,
+    corners: [[points[0][0], points[0][1]], [points[1][0], points[1][1]], [points[2][0], points[2][1]], [points[3][0], points[3][1]]],
     minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys),
-    z0, z1,
+    z0: Math.min(...zs), z1: Math.max(...zs),
   };
 }
 
@@ -129,8 +135,9 @@ export function slabOutline(profile, depth) {
 }
 
 export function applyPose(group, pose) {
-  group.position.set(pose.x, pose.y, pose.z);
-  group.rotation.set(0, 0, (pose.rotZ || 0) * Math.PI / 180);
+  group.position.set(pose.x || 0, pose.y || 0, pose.z || 0);
+  group.rotation.order = "XYZ";
+  group.rotation.set((pose.rotX || 0) * Math.PI / 180, (pose.rotY || 0) * Math.PI / 180, (pose.rotZ || 0) * Math.PI / 180);
   group.updateMatrixWorld(true);
 }
 
@@ -199,19 +206,23 @@ function buildGroup(cab) {
       // A board with an outline (robe side cut to the roof, an OHC divider / T3 / T4 with its notches) is drawn
       // from that outline, not its bounding box.
       const { geo, cut } = boardGeometry(b);
+      const holder = new THREE.Group();
       const mesh = cut ? new THREE.Mesh(geo, mat) : boxMesh(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
       mesh.userData = { kind: "board", cabId: cab.id, boardId: b.id };
-      group.add(mesh);
+      holder.add(mesh);
       const lineMat = dim ? edgeDimMat : edgeMat;
-      group.add(cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), lineMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, lineMat));
+      holder.add(cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), lineMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, lineMat));
+      addHingeMarks(holder, b);
+      addGrooveMarks(holder, b);
       if (isSel && sub && sub.face) {
         const sheetGeo = faceSheetGeometry(b, sub.face);
         if (sheetGeo) {
           const sheet = new THREE.Mesh(sheetGeo, faceSelMat);
           sheet.renderOrder = 8;
-          group.add(sheet);
+          holder.add(sheet);
         }
       }
+      group.add(boardPivot(holder, b, cab));
     }
   } else if (!allRegions.length) {
     // Invalid params: show the envelope as a red ghost so it can still be fixed.
@@ -231,7 +242,8 @@ function buildGroup(cab) {
   group.add(envLines);
 
   // Handles only while the cabinet itself is selected: reading a board / face hides them.
-  if (selected && !getSubSelection()) {
+  // Move draws its own triad and hides these so the two don't fight for the click.
+  if (selected && !getSubSelection() && !moveOpen) {
     const handles = new THREE.Group();
     handles.name = "handles";
     const s = HANDLE_SIZE;
@@ -264,8 +276,9 @@ function buildGroup(cab) {
         const len = span[1] - span[0] + 8;
         const mid = (span[0] + span[1]) / 2;
         const bar = new THREE.Mesh(vertical ? new THREE.BoxGeometry(6, 8, len) : new THREE.BoxGeometry(len, 6, 8), dividerMat);
-        if (vertical) bar.position.set(d.pos, env.y0 - 4, mid);
-        else bar.position.set(mid, env.y0 - 4, d.pos);
+        const standOff = d.front != null ? d.front : 4;
+        if (vertical) bar.position.set(d.pos, env.y0 - standOff, mid);
+        else bar.position.set(mid, env.y0 - standOff, d.pos);
         bar.userData = { kind: "handle", cabId: cab.id, handle: { type: "divider", ...d } };
         bar.renderOrder = 20;
         handles.add(bar);
@@ -279,12 +292,36 @@ function buildGroup(cab) {
 }
 
 /**
+ * A board's Move override: shift and rotate about its centre, in the cabinet frame.
+ * Geometry stays in nominal cabinet coordinates; the pivot carries the nudge, so a
+ * zero override draws the board where the generator put it.
+ */
+function boardPivot(holder, b, cab) {
+  const o = boardOverride(cab.overrides?.boards?.[b.id]);
+  const c = [(b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2];
+  const pivot = new THREE.Group();
+  pivot.position.set(c[0] + o.x, c[1] + o.y, c[2] + o.z);
+  pivot.rotation.order = "XYZ";
+  pivot.rotation.set(o.rotX * Math.PI / 180, o.rotY * Math.PI / 180, o.rotZ * Math.PI / 180);
+  holder.position.set(-c[0], -c[1], -c[2]);
+  pivot.add(holder);
+  return pivot;
+}
+
+/**
  * On-demand handle (`mod.handlesOnDemand`): the panel arms one dimension of the
  * selected cabinet and a double arrow appears in 3D along that axis; dragging
  * it works exactly like the cube handles. It disappears on Esc, when the
  * selection changes, or when armed again (toggle). `{ cabId, type }` or null.
  */
 let armedHandle = null;
+/** Move is open: the resize cubes stay hidden so the triad gets the click. */
+let moveOpen = false;
+export function setMoveOpen(on) {
+  if (moveOpen === on) return;
+  moveOpen = on;
+  syncCabinets();
+}
 export function armHandle(cabId, type) {
   armedHandle = armedHandle && armedHandle.cabId === cabId && armedHandle.type === type ? null : { cabId, type };
   syncCabinets();
@@ -359,8 +396,8 @@ export function setHandleHover(mesh, hovered) {
 
 /**
  * The face of a board a raycast hit landed on: `{ cabId, boardId, faceId }` (faceId null when
- * the board has no faces or the hit is not a board). Normal and point are taken into the
- * cabinet frame; the board meshes carry no rotation of their own.
+ * the board has no faces or the hit is not a board). The point is taken back into the board's
+ * nominal cabinet frame, undoing a Move override, so it still matches the generator's box.
  */
 export function faceUnderHit(hit) {
   const ud = hit?.object?.userData;
@@ -370,17 +407,107 @@ export function faceUnderHit(hit) {
   if (!group || !board) return { cabId: ud.cabId, boardId: ud.boardId, faceId: null };
   const n = hit.face ? hit.face.normal.clone() : new THREE.Vector3(0, 0, 1);
   const p = group.worldToLocal(hit.point.clone());
-  return { cabId: ud.cabId, boardId: ud.boardId, faceId: faceAtHit(board, { x: n.x, y: n.y, z: n.z }, { x: p.x, y: p.y, z: p.z }) };
+  const cab = getJob().cabinets.find((c) => c.id === ud.cabId);
+  const center = [(board.x0 + board.x1) / 2, (board.y0 + board.y1) / 2, (board.z0 + board.z1) / 2];
+  const nom = nominalBoardPoint([p.x, p.y, p.z], center, cab?.overrides?.boards?.[board.id]);
+  return { cabId: ud.cabId, boardId: ud.boardId, faceId: faceAtHit(board, { x: n.x, y: n.y, z: n.z }, { x: nom[0], y: nom[1], z: nom[2] }) };
+}
+
+// --- Move triad -----------------------------------------------------------------
+// World-aligned, drawn at the target's centre: red X, green Y, blue Z.
+// One arrow and one ring per axis. Local size is 1 along the arrow; layoutMoveTriad
+// scales it so the arrow stays about the same size on screen.
+
+const TRIAD_ARROW = 1;
+const AXIS_COLOR = { x: 0xe24b4b, y: 0x3cba54, z: 0x4f86e0 };
+const AXIS_DIR = {
+  x: new THREE.Vector3(1, 0, 0),
+  y: new THREE.Vector3(0, 1, 0),
+  z: new THREE.Vector3(0, 0, 1),
+};
+
+const moveRoot = new THREE.Group();
+moveRoot.name = "move-triad";
+moveRoot.visible = false;
+moveRoot.renderOrder = 40;
+scene.add(moveRoot);
+
+function triadMat(axis) {
+  return new THREE.MeshBasicMaterial({ color: AXIS_COLOR[axis], depthTest: false, transparent: true, opacity: 0.95 });
+}
+
+function addArrow(axis) {
+  const mat = triadMat(axis);
+  const g = new THREE.Group();
+  const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.055, 0.58, 10), mat);
+  const head = new THREE.Mesh(new THREE.ConeGeometry(0.11, 0.22, 12), mat);
+  shaft.position.y = 0.22 + 0.29;
+  head.position.y = 0.22 + 0.58 + 0.11;
+  const ud = { kind: "moveAxis", axis, op: "translate" };
+  shaft.userData = ud;
+  head.userData = ud;
+  shaft.renderOrder = 40;
+  head.renderOrder = 40;
+  g.add(shaft, head);
+  g.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), AXIS_DIR[axis]);
+  moveRoot.add(g);
+}
+
+function addRing(axis) {
+  const mat = triadMat(axis);
+  const ring = new THREE.Mesh(new THREE.TorusGeometry(0.34, 0.032, 8, 40), mat);
+  if (axis === "x") ring.rotation.y = Math.PI / 2;
+  else if (axis === "y") ring.rotation.x = Math.PI / 2;
+  ring.userData = { kind: "moveAxis", axis, op: "rotate" };
+  ring.renderOrder = 40;
+  moveRoot.add(ring);
+}
+
+for (const axis of ["x", "y", "z"]) {
+  addArrow(axis);
+  addRing(axis);
+}
+
+let moveHover = [];
+export function setMoveHover(mesh) {
+  for (const m of moveHover) m.material.color.setHex(AXIS_COLOR[m.userData.axis]);
+  moveHover = [];
+  if (!mesh || mesh.userData.kind !== "moveAxis") return;
+  const parts = mesh.parent && mesh.userData.op === "translate" ? mesh.parent.children : [mesh];
+  for (const m of parts) {
+    if (!m.material || !m.userData) continue;
+    m.material.color.setHex(0xfff4c2);
+    moveHover.push(m);
+  }
+}
+
+/** Put the triad at a world point, or hide it when the target is not chosen yet. */
+export function placeMoveTriad(point) {
+  if (!point) { moveRoot.visible = false; setMoveHover(null); return; }
+  moveRoot.visible = true;
+  moveRoot.position.set(point[0], point[1], point[2]);
+  layoutMoveTriad();
+}
+export function hideMoveTriad() {
+  placeMoveTriad(null);
+}
+export function layoutMoveTriad() {
+  if (!moveRoot.visible) return;
+  const dist = Math.max(camera.position.distanceTo(moveRoot.position), 400);
+  const h = canvas.clientHeight || 800;
+  const worldPerPx = 2 * Math.tan((camera.fov * Math.PI / 180) / 2) * dist / h;
+  moveRoot.scale.setScalar((52 * worldPerPx) / TRIAD_ARROW);
 }
 
 /** All meshes that can be picked with the left button. */
 export function pickables() {
   const out = [];
   const take = (o) => {
-    if (o.isMesh && o.userData && (o.userData.kind === "board" || o.userData.kind === "handle" || o.userData.kind === "cplane")) out.push(o);
+    if (o.isMesh && o.userData && (o.userData.kind === "board" || o.userData.kind === "handle" || o.userData.kind === "cplane" || o.userData.kind === "moveAxis")) out.push(o);
   };
   root.traverse(take);
   cplaneRoot.traverse(take);
+  moveRoot.traverse(take);
   return out;
 }
 
@@ -393,15 +520,105 @@ scene.add(ghost);
 const ghostEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x4f86e0 }));
 ghostEdges.visible = false;
 scene.add(ghostEdges);
+const ghostB = new THREE.Mesh(new THREE.BoxGeometry(1, 1, 1), ghostMat);
+ghostB.visible = false;
+scene.add(ghostB);
+const ghostBEdges = new THREE.LineSegments(new THREE.EdgesGeometry(new THREE.BoxGeometry(1, 1, 1)), new THREE.LineBasicMaterial({ color: 0x4f86e0 }));
+ghostBEdges.visible = false;
+scene.add(ghostBEdges);
+
+/**
+ * Ø35 (or whatever the feature says) rings at each hinge cup. Doors are XZ boards;
+ * face-local (u, v) is (x, z) from the board origin. One ring on each big face.
+ */
+const PLANE_AXES = { XY: ["x", "y", "z"], XZ: ["x", "z", "y"], YZ: ["y", "z", "x"] };
+
+function grooveLoop(group, U, V, T, u0, u1, v0, v1, t) {
+  const pts = [[u0, v0], [u1, v0], [u1, v1], [u0, v1], [u0, v0]].map(([u, v]) => {
+    const p = new THREE.Vector3();
+    p[U] = u;
+    p[V] = v;
+    p[T] = t;
+    return p;
+  });
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), grooveLineMat);
+  line.userData = { kind: "groove" };
+  group.add(line);
+}
+
+/** Dark floor in the pocket and the slot outline, on the machined face only. Display only. */
+function addGrooveMarks(group, b) {
+  const axes = PLANE_AXES[b.profilePlane];
+  if (!axes || !b.faces) return;
+  const [U, V, T] = axes;
+  const thick = Math.abs(b[`${T}1`] - b[`${T}0`]);
+  for (const face of b.faces) {
+    if (face.id !== "A" && face.id !== "B") continue;
+    const sign = face.id === "A" ? 1 : -1;
+    const tFace = sign === 1 ? b[`${T}1`] : b[`${T}0`];
+    for (const ft of face.features || []) {
+      if ((ft.kind !== "groove" && ft.kind !== "tgroove") || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
+      const u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
+      const u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
+      const v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);
+      const v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
+      if (u1 - u0 < 0.5 || v1 - v0 < 0.5) continue;
+      grooveLoop(group, U, V, T, u0, u1, v0, v1, tFace + sign * 0.6);
+      const depth = Math.min(ft.depth || 0, thick - 0.4);
+      if (!(depth > 0.4)) continue;
+      const size = { x: 0.4, y: 0.4, z: 0.4 };
+      const pos = { x: 0, y: 0, z: 0 };
+      size[U] = Math.max(u1 - u0 - 0.6, 0.4);
+      size[V] = Math.max(v1 - v0 - 0.6, 0.4);
+      size[T] = 0.6;
+      pos[U] = (u0 + u1) / 2;
+      pos[V] = (v0 + v1) / 2;
+      pos[T] = tFace - sign * (depth - 0.4);
+      const fill = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), grooveFloorMat);
+      fill.position.set(pos.x, pos.y, pos.z);
+      fill.renderOrder = 3;
+      fill.userData = { kind: "groove" };
+      group.add(fill);
+    }
+  }
+}
+
+function addHingeMarks(group, b) {
+  if (b.profilePlane !== "XZ" || b.thicknessAxis !== "Y" || !b.faces) return;
+  const face = b.faces.find((f) => f.id === "A");
+  if (!face) return;
+  for (const ft of face.features || []) {
+    if (ft.kind !== "hole" || ft.for !== "hinge" || !ft.center) continue;
+    const radius = (ft.diameter || 35) / 2;
+    const x = b.x0 + ft.center[0];
+    const z = b.z0 + ft.center[1];
+    for (const y of [b.y0 - 0.8, b.y1 + 0.8]) {
+      const mark = new THREE.Mesh(new THREE.RingGeometry(radius - 1.2, radius, 40), hingeMat);
+      mark.rotation.x = -Math.PI / 2;
+      mark.position.set(x, y, z);
+      mark.userData = { kind: "hinge" };
+      group.add(mark);
+    }
+  }
+}
 
 /** Axis-aligned preview box from min corner (x0, y0, z0). `clamped` turns the outline orange. */
-export function showGhost(x0, y0, z0, W, D, H, { clamped = false } = {}) {
+export function showGhost(x0, y0, z0, W, D, H, { clamped = false, also = null } = {}) {
   for (const m of [ghost, ghostEdges]) {
     m.visible = true;
     m.scale.set(Math.max(W, 1), Math.max(D, 1), Math.max(H, 1));
     m.position.set(x0 + W / 2, y0 + D / 2, z0 + H / 2);
   }
   ghostEdges.material.color.setHex(clamped ? 0xf0a050 : 0x4f86e0);
+  ghostB.visible = !!also;
+  ghostBEdges.visible = !!also;
+  if (also) {
+    for (const m of [ghostB, ghostBEdges]) {
+      m.scale.set(Math.max(also.W, 1), Math.max(also.D, 1), Math.max(also.H, 1));
+      m.position.set(also.x0 + also.W / 2, also.y0 + also.D / 2, also.z0 + also.H / 2);
+    }
+    ghostBEdges.material.color.setHex(clamped ? 0xf0a050 : 0x4f86e0);
+  }
 }
 
 /** Working-face hint: a translucent sheet over the face the box will be drawn on. */
@@ -476,6 +693,8 @@ export function hideAlignLines() {
 export function hideGhost() {
   ghost.visible = false;
   ghostEdges.visible = false;
+  ghostB.visible = false;
+  ghostBEdges.visible = false;
   hideNoseGhost();
   hideWidthRect();
 }

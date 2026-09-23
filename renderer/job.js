@@ -255,15 +255,18 @@ function makeId() {
   return id;
 }
 
-export function addCabinet(moduleId, pose, size, extraParams) {
-  pushHistory();
+export function addCabinet(moduleId, pose, size, extra) {
+  const opts = extra && Object.prototype.hasOwnProperty.call(extra, "history")
+    ? extra
+    : { history: true, params: extra || null };
+  if (opts.history !== false) pushHistory();
   const mod = getModule(moduleId);
   const s = { ...mod.defaultSize, ...size };
   const cab = {
     id: makeId(),
     moduleId,
     pose: { x: 0, y: 0, z: 0, rotZ: 0, ...pose },
-    params: { ...mod.defaults(s.W, s.D, s.H, { finish: job.finish, stock: job.stock }), ...extraParams },
+    params: { ...mod.defaults(s.W, s.D, s.H, { finish: job.finish, stock: job.stock }), ...(opts.params || {}) },
   };
   bindToSpace(cab);
   job.cabinets.push(cab);
@@ -401,13 +404,16 @@ export function removeWall(id) {
 }
 
 export function removeCabinet(id) {
-  const i = job.cabinets.findIndex((c) => c.id === id);
-  if (i < 0) return;
+  const cab = job.cabinets.find((c) => c.id === id);
+  if (!cab) return;
+  const mod = getModule(cab.moduleId);
+  const twin = mod && mod.pair ? job.cabinets.find((c) => c.moduleId === cab.moduleId && c.id !== id) : null;
   pushHistory();
-  log("cabinet.remove", { id, moduleId: job.cabinets[i].moduleId });
-  job.cabinets.splice(i, 1);
+  log("cabinet.remove", { id, moduleId: cab.moduleId, twin: twin ? twin.id : null });
+  job.cabinets = job.cabinets.filter((c) => c.id !== id && (!twin || c.id !== twin.id));
   invalidate(id);
-  if (selectedId === id) { selectedId = null; subSel = null; }
+  if (twin) invalidate(twin.id);
+  if (selectedId === id || (twin && selectedId === twin.id)) { selectedId = null; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -431,6 +437,15 @@ export function setParams(id, params, { history = true } = {}) {
     log("cabinet.params", { id, params });
   }
   updateCabinet(id, (cab) => { cab.params = params; });
+  const cab = job.cabinets.find((c) => c.id === id);
+  const mod = cab && getModule(cab.moduleId);
+  if (cab && mod && mod.pair && mod.mirrorParams) {
+    const twin = job.cabinets.find((c) => c.moduleId === cab.moduleId && c.id !== id);
+    if (twin) {
+      const next = mod.mirrorParams(cab.params, twin.params);
+      if (next !== twin.params) updateCabinet(twin.id, (c) => { c.params = next; });
+    }
+  }
 }
 
 export function setPose(id, pose, { history = true } = {}) {

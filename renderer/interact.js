@@ -4,11 +4,13 @@
 //   armed      (module picked) hover shows the face under the cursor and snaps to corners · click → anchor
 //   face       a zero-thickness rectangle is drawn on that face (floor, ceiling, wall, cabinet face) · click → corner
 //   extrude    the rectangle is pulled along the face normal, away from the solid only · click / Enter → create
-//   move       (M) click a grab point, then a target point; ΔX/ΔY/ΔZ type-ins; Ctrl+click copies
+//   move       (M) one command. The card picks Free (arrows and rings), Face
+//              (two faces, same direction) or Point (a corner onto a point).
+//              Module moves the cabinet, Panel moves one board. Enter confirms.
 //   orient     (O / Face) click a side of a cabinet → its doors face that way (pending, orange);
 //              click elsewhere or Enter confirms · Esc restores
 //
-// At every step Tab / a digit opens the type-ins (W D H or ΔX ΔY ΔZ). Values may
+// At every step of drawing a box, Tab / a digit opens the type-ins (W D H). Values may
 // be expressions: 1110 · +50 · -20 · *2 · /2 · max · 1110,560,720 (comma fills the next fields).
 // The cursor tooltip always says what the snap / inference / clamp is doing.
 // Every edit writes pose or params through job.js and lets the generator redraw.
@@ -22,16 +24,19 @@ import {
   pickables, groupFor, envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, setHandleHover, faceUnderHit, disarmHandle,
   showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showLoungeGhost, hideLoungeGhost, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
   showFaceHint, hideFaceHint, flashFaceHint,
+  setMoveOpen, placeMoveTriad, hideMoveTriad, layoutMoveTriad, setMoveHover,
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
   pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, drawableOn, extrudeRoom, inPlaneAxes, axisVector, AXES,
-  INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale,
+  INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
 import { wallPickables, solidBoxes } from "./walls3d.js";
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
+import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, boardCornerLocals } from "./pose.js";
+import { faceLabel } from "./boardModel.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
 const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
@@ -41,6 +46,8 @@ const AXIS_OF = { W: "x", D: "y", H: "z" };
 let placing = null; // moduleId while armed
 let rb = null; // placement in progress (face / extrude step)
 let move = null; // move command
+let align = null; // face align: module (whole cabinet) or panel (one board)
+let pointAlign = null; // point align: translate so two points coincide, no rotation
 let orient = null; // Face command: { id, pose0, before, pending: face | null }
 let retype = null; // keyboard re-size of the last created cabinet
 let nose = null; // nose placement (Bedroom): { moduleId, step: ready | drag, editId, D, t0, locked, snapLabel, clamped }
@@ -68,7 +75,11 @@ function emitMode() {
 }
 export function getMode() {
   if (drag) return "handle";
-  if (move) return move.step === "grab" ? "move.grab" : "move.drop";
+  if (move) {
+    if (move.kind === "face") return align?.source ? "move.face.target" : "move.face";
+    if (move.kind === "point") return pointAlign?.source ? "move.point.target" : "move.point";
+    return "move";
+  }
   if (orient) return orient.pending ? "orient.pending" : "orient.pick";
   if (nose) return nose.step === "ready" ? "nose.ready" : "nose.drag";
   if (bed) return `bedbox.${bed.step}`;
@@ -90,8 +101,10 @@ export function getLoungeStyle() {
 export function armPlacement(moduleId) {
   if (!job.hasSpace()) { log("place.arm.blocked", { moduleId, reason: "no space" }); return; }
   if (getModule(moduleId).placement === "nose") { startNose(moduleId); return; }
-  if (getModule(moduleId).placement === "bedBox") { startBedBox(moduleId); return; }
+  if (getModule(moduleId).placement === "bedBox" || getModule(moduleId).placement === "bedSide") { startBedBox(moduleId); return; }
   cancelMove();
+  cancelAlign();
+  cancelPointAlign();
   cancelOrient();
   cancelNose();
   cancelBedBox();
@@ -139,6 +152,8 @@ function pick(clientX, clientY) {
   const ray = rayFromClient(clientX, clientY);
   const rc = new THREE.Raycaster(ray.origin, ray.direction);
   const hits = rc.intersectObjects([...pickables(), ...wallPickables()], false);
+  const triad = hits.find((h) => h.object.userData.kind === "moveAxis");
+  if (triad) return triad;
   const handle = hits.find((h) => h.object.userData.kind === "handle");
   return handle || hits[0] || null;
 }
@@ -917,6 +932,8 @@ export function startNose(moduleId) {
   if (!sp) return;
   const mod = getModule(moduleId);
   cancelMove();
+  cancelAlign();
+  cancelPointAlign();
   cancelOrient();
   cancelNose();
   cancelBedBox();
@@ -1071,6 +1088,8 @@ export function startPlane() {
   if (cplane) { cancelPlane(); return; }
   if (!job.hasSpace()) { log("plane.blocked", { reason: "no space" }); return; }
   cancelMove();
+  cancelAlign();
+  cancelPointAlign();
   cancelOrient();
   cancelNose();
   cancelBedBox();
@@ -1198,12 +1217,7 @@ function bedFrame() {
   if (!sp || !body) return null;
   const bodyMod = getModule(body.moduleId);
   const bodyD = bodyMod.envelope(body.params).D;
-  return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id, size: bodyMod.bedBoxSize(body.params) };
-}
-function bedT(e, axis) {
-  const f = bedFrame();
-  const dir = axis === "x" ? new THREE.Vector3(1, 0, 0) : new THREE.Vector3(0, 1, 0);
-  return closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(f.cx, f.y, 0), dir); // t = signed distance from (cx, bodyD)
+  return { cx: (sp.bounds.minX + sp.bounds.maxX) / 2, y: bodyD, minX: sp.bounds.minX, maxX: sp.bounds.maxX, maxW: sp.bounds.maxX - sp.bounds.minX, maxD: sp.bounds.maxY - bodyD, bodyId: body.id, size: bodyMod.bedBoxSize(body.params), bodyParams: body.params };
 }
 function bedBoxBox() {
   const f = bedFrame();
@@ -1213,8 +1227,11 @@ function bedBoxBox() {
 export function startBedBox(moduleId) {
   const mod = getModule(moduleId);
   const f = bedFrame();
-  if (!f) { log("bedbox.blocked", { moduleId, reason: "no body" }); return; }
+  const pair = mod.placement === "bedSide";
+  if (!f) { log(pair ? "bedside.blocked" : "bedbox.blocked", { moduleId, reason: "no body" }); return; }
   cancelMove();
+  cancelAlign();
+  cancelPointAlign();
   cancelOrient();
   cancelNose();
   cancelBedBox();
@@ -1222,23 +1239,26 @@ export function startBedBox(moduleId) {
   cancelPlane();
   endRetype(false);
   if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
-  const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
+  const existing = (mod.single || pair) ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
   const env = existing ? mod.envelope(existing.params) : null;
+  const table = pair ? mod.sizeFor(f.bodyParams) : null;
   bed = {
-    moduleId, step: "depth", editId: existing ? existing.id : null,
-    W: f.size.W, D: env ? env.D : mod.defaultSize.D, H: f.size.H,
-    locked: { D: null }, snapLabel: null, clamped: null, lastClient: null,
+    moduleId, step: pair ? "height" : "depth", pair, editId: existing ? existing.id : null,
+    W: table ? table.W : f.size.W, D: env ? env.D : mod.defaultSize.D, H: table ? table.H : f.size.H,
+    snapH: table ? table.snapH : null,
+    locked: { D: null, H: null }, snapLabel: null, clamped: null, lastClient: null,
   };
+  if (env && pair) bed.H = env.H;
   job.select(existing ? existing.id : null);
   canvas.style.cursor = "crosshair";
   setDimNames(["W", "D", "H"]);
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) {
     dimLabels[k].classList.remove("focused", "locked");
-    dimLabels[k].classList.toggle("hidden", k !== "D");
+    dimLabels[k].classList.toggle("hidden", pair ? k !== "H" : k !== "D");
   }
   drawBedBox(null);
-  log("bedbox.arm", { moduleId, editId: bed.editId, bodyId: f.bodyId, bodyDepth: f.y, W: bed.W, D: bed.D, H: bed.H, from: "body: bed frame width, bootHeight" });
+  log(bed.pair ? "bedside.arm" : "bedbox.arm", { moduleId, editId: bed.editId, bodyId: f.bodyId, bodyDepth: f.y, W: bed.W, D: bed.D, H: bed.H, snapH: bed.snapH, pair: bed.pair || undefined, from: bed.pair ? "height first, snaps to the fixed panel bottom, then depth" : "body: bed frame width, bootHeight" });
   emitMode();
 }
 
@@ -1252,65 +1272,154 @@ function bedDepth(e) {
   if (bed.locked.D != null) D = bed.locked.D;
   else if (e) {
     const snap = nearestAxisAlign(e.clientX, e.clientY, { x: f.cx, y: f.y, z: 0 }, "y", +1, { exclude: bed.editId });
-    if (snap) { D = snap.value - f.y; label = snap.label; } else D = job.snap(bedT(e, "y"));
+    if (snap) { D = snap.value - f.y; label = snap.label; }
+    else {
+      // The room-side face stands on the floor point under the cursor.
+      const hit = planePointAt(e.clientX, e.clientY, threePlane("z", 0));
+      D = hit ? hit.y - f.y : bed.D;
+    }
   } else D = bed.D;
   if (D > f.maxD) { D = f.maxD; clamped = "back wall"; }
   if (D < mod.minSize.D) { D = mod.minSize.D; clamped = `minimum ${mod.minSize.D}`; }
-  const x0 = f.cx - bed.W / 2;
-  const x1 = f.cx + bed.W / 2;
+  const lanes = bed.pair
+    ? [[f.minX, f.minX + bed.W], [f.maxX - bed.W, f.maxX]]
+    : [[f.cx - bed.W / 2, f.cx + bed.W / 2]];
   for (const c of job.getJob().cabinets) {
-    if (c.id === bed.editId || c.id === f.bodyId) continue;
+    if (c.id === bed.editId || c.id === f.bodyId || c.moduleId === bed.moduleId) continue;
     const fp = envelopeFootprint(c, c.pose);
-    if (fp.maxX <= x0 + 0.5 || fp.minX >= x1 - 0.5 || fp.z0 >= bed.H - 0.5) continue; // not in the bed's lane
+    if (fp.z0 >= bed.H - 0.5) continue;
+    if (!lanes.some(([x0, x1]) => fp.maxX > x0 + 0.5 && fp.minX < x1 - 0.5)) continue;
     const room = fp.minY - f.y;
-    if (room >= mod.minSize.D && room < D - 0.5) { D = Math.floor(room / 10) * 10; clamped = c.id; label = null; }
+    if (room >= mod.minSize.D && room < D - 0.5) { D = room; clamped = c.id; label = null; }
   }
   bed.D = D;
   bed.snapLabel = label;
   bed.clamped = clamped;
 }
 
+/** Height of the pair, from the floor. The top edge sits on the cursor; it snaps when the cursor is on the fixed panel's underside. */
+function bedHeight(e) {
+  const mod = getModule(bed.moduleId);
+  const f = bedFrame();
+  let H;
+  let label = null;
+  let clamped = null;
+  if (bed.locked.H != null) H = bed.locked.H;
+  else if (e) {
+    // The body's room face, so the top edge of the ghost is the point under the cursor.
+    const hit = planePointAt(e.clientX, e.clientY, threePlane("y", f.y));
+    H = hit ? Math.max(0, hit.z) : bed.H;
+  } else H = bed.H;
+  const roof = f.bodyParams.height;
+  if (H > roof) { H = roof; clamped = "roof"; }
+  if (H < mod.minSize.H) { H = mod.minSize.H; clamped = `minimum ${mod.minSize.H}`; }
+  if (bed.locked.H == null && bed.snapH != null && e && nearScreenSeg(e.clientX, e.clientY, { x: f.minX, y: f.y, z: bed.snapH }, { x: f.maxX, y: f.y, z: bed.snapH })) {
+    H = bed.snapH;
+    label = "fixed panel bottom";
+    clamped = null;
+  }
+  bed.H = H;
+  bed.snapLabel = label;
+  bed.clamped = clamped;
+}
+
+/** Cursor within the snap radius of a segment on screen. */
+function nearScreenSeg(clientX, clientY, a, b) {
+  const pa = toClient(a.x, a.y, a.z);
+  const pb = toClient(b.x, b.y, b.z);
+  if (pa.behind || pb.behind) return false;
+  const dx = pb.x - pa.x;
+  const dy = pb.y - pa.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((clientX - pa.x) * dx + (clientY - pa.y) * dy) / len2)) : 0;
+  return Math.hypot(clientX - (pa.x + t * dx), clientY - (pa.y + t * dy)) <= SNAP_RADIUS_PX * uiScale();
+}
+
 function drawBedBox(e) {
-  const b = bedBoxBox();
-  showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: !!bed.clamped });
-  if (document.activeElement !== dimInputs.D) dimInputs.D.value = Math.round(bed.D);
-  dimLabels.D.classList.toggle("locked", bed.locked.D != null);
+  const f = bedFrame();
+  const b = bed.pair
+    ? { x0: f.minX, y0: f.y, z0: 0, W: bed.W, D: bed.D, H: bed.H }
+    : bedBoxBox();
+  const also = bed.pair ? { x0: f.maxX - bed.W, y0: f.y, z0: 0, W: bed.W, D: bed.D, H: bed.H } : null;
+  showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: !!bed.clamped, also });
+  const field = bed.pair && bed.step === "height" ? "H" : "D";
+  if (document.activeElement !== dimInputs[field]) dimInputs[field].value = Math.round(bed[field]);
+  dimLabels[field].classList.toggle("locked", bed.locked[field] != null);
   positionDimInputs(b);
   if (!e) return;
   const lines = [
-    `D ${Math.round(bed.D)} from the body · W ${Math.round(bed.W)} (bed frame) × H ${Math.round(bed.H)} (boot)`,
+    bed.pair && bed.step === "height"
+      ? `H ${Math.round(bed.H)} · two tables · snaps at the fixed panel bottom ${Math.round(bed.snapH)}`
+      : bed.pair
+        ? `D ${Math.round(bed.D)} from the body · two tables · H ${Math.round(bed.H)}`
+        : `D ${Math.round(bed.D)} from the body · W ${Math.round(bed.W)} (bed frame) × H ${Math.round(bed.H)} (boot)`,
     bed.snapLabel,
     bed.clamped ? `Stopped at ${bed.clamped}` : null,
-    bed.editId ? "Click or Enter to apply · Esc cancels" : "Click or Enter to create · Esc cancels",
+    bed.pair && bed.step === "height"
+      ? "Click or Enter for the depth"
+      : bed.editId ? "Click or Enter to apply · Esc cancels" : "Click or Enter to create · Esc cancels",
   ];
-  showTip(e.clientX, e.clientY, lines, bed.clamped ? "warn" : bed.locked.D != null ? "lock" : "");
+  showTip(e.clientX, e.clientY, lines, bed.clamped ? "warn" : bed.locked[field] != null ? "lock" : "");
 }
 
 function updateBedBox(e) {
   if (e) bed.lastClient = { x: e.clientX, y: e.clientY };
-  bedDepth(e);
+  if (bed.pair && bed.step === "height") bedHeight(e);
+  else bedDepth(e);
   drawBedBox(e);
 }
 
 function finishBedBox(how) {
   if (!bed) return;
+  if (bed.pair && bed.step === "height") {
+    bedHeight(null);
+    bed.step = "depth";
+    bed.snapLabel = null;
+    bed.clamped = null;
+    for (const k of DIM_ORDER) dimLabels[k].classList.toggle("hidden", k !== "D");
+    log("bedside.height", { H: bed.H, snap: bed.H === bed.snapH ? "fixed panel bottom" : null, how });
+    drawBedBox(null);
+    emitMode();
+    return;
+  }
   const b = bed;
   const mod = getModule(b.moduleId);
   bedDepth(null);
   const f = bedFrame();
-  const pose = { x: f.cx + b.W / 2, y: f.y + b.D, z: 0, rotZ: 180 };
   bed = null;
   let id = b.editId;
   let changed = true;
-  if (id) {
-    const before = job.snapshot();
-    job.updateCabinet(id, (c) => { c.params = mod.setEnvelope(c.params, { W: b.W, D: b.D, H: b.H }); c.pose = pose; });
-    changed = job.commitSnapshot(before);
+  if (b.pair) {
+    const poseFor = (side) => side === "left"
+      ? { x: f.minX + b.W, y: f.y + b.D, z: 0, rotZ: 180 }
+      : { x: f.maxX, y: f.y + b.D, z: 0, rotZ: 180 };
+    const existing = job.getJob().cabinets.filter((c) => c.moduleId === b.moduleId);
+    if (existing.length) {
+      const before = job.snapshot();
+      for (const c of existing) job.updateCabinet(c.id, (cab) => { cab.params = mod.setEnvelope(cab.params, { W: b.W, D: b.D, H: b.H }); cab.pose = poseFor(cab.params.side); });
+      changed = job.commitSnapshot(before);
+      id = existing[0].id;
+    } else {
+      const left = job.addCabinet(b.moduleId, poseFor("left"), { W: b.W, D: b.D, H: b.H }, { params: { side: "left" } });
+      const right = job.addCabinet(b.moduleId, poseFor("right"), { W: b.W, D: b.D, H: b.H }, {
+        history: false,
+        params: { side: "right", zones: [{ id: "lower", type: "left_door" }, { id: "upper", type: "drawer" }] },
+      });
+      id = left.id;
+    }
   } else {
-    id = job.addCabinet(b.moduleId, pose, { W: b.W, D: b.D, H: b.H }).id;
+    const pose = { x: f.cx + b.W / 2, y: f.y + b.D, z: 0, rotZ: 180 };
+    if (id) {
+      const before = job.snapshot();
+      job.updateCabinet(id, (c) => { c.params = mod.setEnvelope(c.params, { W: b.W, D: b.D, H: b.H }); c.pose = pose; });
+      changed = job.commitSnapshot(before);
+    } else {
+      id = job.addCabinet(b.moduleId, pose, { W: b.W, D: b.D, H: b.H }).id;
+    }
   }
   const cab = job.getJob().cabinets.find((c) => c.id === id);
-  log("bedbox.finish", { moduleId: b.moduleId, id, how, bodyId: f.bodyId, W: b.W, D: b.D, H: b.H, locked: b.locked, snap: b.snapLabel, clamped: b.clamped, edited: !!b.editId, changed, pose: cab ? cab.pose : pose, envelope: cab ? mod.envelope(cab.params) : null });
+  const pose = cab ? cab.pose : null;
+  log(b.pair ? "bedside.finish" : "bedbox.finish", { moduleId: b.moduleId, id, how, bodyId: f.bodyId, W: b.W, D: b.D, H: b.H, locked: b.locked, snap: b.snapLabel, clamped: b.clamped, edited: !!b.editId, changed, pair: b.pair || undefined, pose, envelope: cab ? mod.envelope(cab.params) : null });
   clearPreview();
   canvas.style.cursor = "";
   job.select(id);
@@ -1321,7 +1430,7 @@ export function cancelBedBox() {
   if (!bed) return;
   const b = bed;
   bed = null;
-  log("bedbox.cancel", { moduleId: b.moduleId, editId: b.editId, step: b.step, W: b.W, D: b.D });
+  log(b.pair ? "bedside.cancel" : "bedbox.cancel", { moduleId: b.moduleId, editId: b.editId, step: b.step, W: b.W, D: b.D });
   clearPreview();
   canvas.style.cursor = "";
   emitMode();
@@ -1743,9 +1852,132 @@ function loungeBack() {
 
 // --- move command -----------------------------------------------------------------
 
+const moveCard = document.getElementById("moveCard");
+const MOVE_KEYS = ["x", "y", "z", "rotX", "rotY", "rotZ"];
+
+function moveRound(v) {
+  return Math.round((v || 0) * 10) / 10;
+}
+function cloneOverrides(overrides) {
+  return overrides ? JSON.parse(JSON.stringify(overrides)) : undefined;
+}
+function moveCab() {
+  return move && job.getJob().cabinets.find((c) => c.id === move.id);
+}
+function envelopeCenter(cab) {
+  const env = envelopeBox(cab, job.resultFor(cab.id));
+  return [(env.x0 + env.x1) / 2, (env.y0 + env.y1) / 2, (env.z0 + env.z1) / 2];
+}
+/** A module whose pose is rewritten from the bedroom body cannot be moved as a whole. */
+function modulePoseLocked(cab) {
+  return !!getModule(cab.moduleId).attach;
+}
+function worldAxis(axis) {
+  return axis === "x" ? new THREE.Vector3(1, 0, 0) : axis === "y" ? new THREE.Vector3(0, 1, 0) : new THREE.Vector3(0, 0, 1);
+}
+
+function writeBoardOverride(cab, boardId, override) {
+  const clean = {};
+  for (const k of MOVE_KEYS) {
+    const v = moveRound(override[k]);
+    if (Math.abs(v) >= 0.05) clean[k] = v;
+  }
+  const boards = { ...(cab.overrides?.boards || {}) };
+  if (Object.keys(clean).length) boards[boardId] = clean;
+  else delete boards[boardId];
+  const rest = { ...(cab.overrides || {}) };
+  delete rest.boards;
+  if (Object.keys(boards).length) cab.overrides = { ...rest, boards };
+  else cab.overrides = Object.keys(rest).length ? rest : undefined;
+}
+
+/** Put the cabinet back to where this Move started. Switching target does this too. */
+function restoreMove() {
+  const cab = moveCab();
+  if (!cab) return;
+  const pose = { ...move.pose0 };
+  const overrides = cloneOverrides(move.overrides0);
+  const norm = poseOf(pose);
+  const samePose = MOVE_KEYS.every((k) => (cab.pose[k] || 0) === (norm[k] || 0));
+  const sameOv = JSON.stringify(cab.overrides || null) === JSON.stringify(overrides || null);
+  if (samePose && sameOv) return;
+  move.applying = true;
+  job.updateCabinet(move.id, (c) => {
+    c.pose = pose;
+    if (overrides) c.overrides = overrides;
+    else delete c.overrides;
+  });
+  move.applying = false;
+}
+
+/** World centre of whatever the triad is driving, or null until a board is chosen. */
+function moveTargetPoint(cab) {
+  if (!cab) return null;
+  if (move.target === "panel") {
+    if (!move.boardId) return null;
+    const b = (job.resultFor(cab.id)?.boards || []).find((x) => x.id === move.boardId);
+    if (!b) return null;
+    const o = boardOverride(cab.overrides?.boards?.[b.id]);
+    return worldOf(cab.pose, [(b.x0 + b.x1) / 2 + o.x, (b.y0 + b.y1) / 2 + o.y, (b.z0 + b.z1) / 2 + o.z]);
+  }
+  return worldOf(cab.pose, envelopeCenter(cab));
+}
+
+function refreshMoveUi() {
+  if (!move) return;
+  const cab = moveCab();
+  for (const input of moveCard.querySelectorAll('input[name="moveKind"]')) input.checked = input.value === (move.kind || "free");
+  for (const input of moveCard.querySelectorAll('input[name="moveTarget"]')) input.checked = input.value === move.target;
+  const note = moveCard.querySelector("[data-move-note]");
+  const boards = cab ? (job.resultFor(cab.id)?.boards || []) : [];
+  if (move.kind === "face") {
+    if (move.target === "panel" && !align?.source) note.textContent = "Click the board face that should move, then the face it lines up with.";
+    else if (!align?.source) note.textContent = "Click the face that should move, then the face it lines up with.";
+    else if (move.target === "panel") note.textContent = `${align.source.boardId} ${align.source.faceId} moves. Click the face to align it to.`;
+    else note.textContent = `${align.source.boardId} ${align.source.faceId} moves the cabinet. Click the face to align it to.`;
+    hideMoveTriad();
+    canvas.style.cursor = "crosshair";
+    return;
+  }
+  if (move.kind === "point") {
+    if (!pointAlign?.source) note.textContent = move.target === "panel"
+      ? "Click a corner of the board that should move, then the point it lands on."
+      : "Click a corner of the cabinet that should move, then the point it lands on.";
+    else note.textContent = move.target === "panel"
+      ? `${pointAlign.source.boardId} moves. Click the point it should land on.`
+      : "The cabinet moves. Click the point that corner should land on.";
+    hideMoveTriad();
+    canvas.style.cursor = "crosshair";
+    return;
+  }
+  hideFaceHint();
+  if (move.target === "module" && cab && modulePoseLocked(cab)) note.textContent = "This module follows the Bedroom body. Choose Panel to move one board.";
+  else if (move.target === "panel" && !boards.length) note.textContent = "This module has no boards to move.";
+  else if (move.target === "panel" && !move.boardId) note.textContent = "Click a board of this cabinet.";
+  else if (move.target === "panel") note.textContent = `${move.boardId} · drag an arrow or a ring · Enter confirms · Esc cancels`;
+  else note.textContent = "Drag an arrow or a ring · Enter confirms · Ctrl+Enter copies · Esc cancels";
+  placeMoveTriad(moveTargetPoint(cab));
+  canvas.style.cursor = "";
+}
+
+function endMoveChrome() {
+  hideMoveTriad();
+  setMoveHover(null);
+  setMoveOpen(false);
+  moveCard.classList.add("hidden");
+  hideFaceHint();
+  hideSnapMarker();
+  hideInference();
+  canvas.style.cursor = "";
+}
+
 export function startMove(id = job.getSelectedId()) {
   const cab = id && job.getJob().cabinets.find((c) => c.id === id);
   if (!cab) return;
+  if (move) {
+    if (move.id === id) { cancelMove(); return; }
+    cancelMove();
+  }
   if (placing) disarm();
   cancelOrient();
   cancelNose();
@@ -1753,42 +1985,188 @@ export function startMove(id = job.getSelectedId()) {
   cancelLounge();
   cancelPlane();
   endRetype(false);
-  move = { id, step: "grab", pose0: { ...cab.pose }, before: job.snapshot(), grab: null, locked: { W: null, D: null, H: null }, ctx: null, target: null, clamped: [] };
-  job.select(id);
-  canvas.style.cursor = "crosshair";
-  log("move.start", { id, pose: move.pose0 });
+  const sub = job.getSubSelection();
+  const boardId = sub && sub.cabId === id ? sub.boardId : null;
+  move = {
+    id, target: boardId ? "panel" : "module", kind: "free", boardId: boardId || null,
+    pose0: { ...cab.pose }, overrides0: cloneOverrides(cab.overrides),
+    before: job.snapshot(), applying: true, drag: null, clamped: [],
+  };
+  if (boardId) job.select(id, { boardId, faceId: sub.faceId || null });
+  else job.select(id);
+  move.applying = false;
+  setMoveOpen(true);
+  moveCard.classList.remove("hidden");
+  log("move.start", { id, kind: "free", target: move.target, boardId: move.boardId, pose: move.pose0 });
+  refreshMoveUi();
   emitMode();
 }
 
-function moveGrab(p) {
-  move.grab = { x: p.x, y: p.y, z: p.z };
-  move.step = "drop";
-  move.ctx = {
-    plane: { axis: "z", value: p.z }, free3d: true, exclude: move.id,
-    anchorPoint: { x: p.x, y: p.y, z: p.z, dirs: AXIS_DIRS, sources: ["grab"] },
-    lastPoint: null, inference: null,
-  };
-  setDimNames(["ΔX", "ΔY", "ΔZ"]);
-  dimBox.classList.remove("hidden");
-  for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked", "hidden");
+/** The card's Module / Panel choice. Switching throws away the drag that has not been confirmed. */
+function setMoveTarget(target) {
+  if (!move || move.drag) { refreshMoveUi(); return; }
+  if (move.target === target) return;
+  restoreMove();
+  move.target = target;
+  move.boardId = null;
+  move.applying = true;
+  job.select(move.id);
+  move.applying = false;
+  if (align) { align.mode = target; align.source = null; hideFaceHint(); }
+  if (pointAlign) { pointAlign.mode = target; pointAlign.source = null; hideSnapMarker(); hideInference(); }
+  log("move.target", { id: move.id, kind: move.kind, target, boardId: null });
+  refreshMoveUi();
+  emitMode();
+}
+
+/** Free / Face / Point — different ways to choose what moves. One Move command either way. */
+function setMoveKind(kind) {
+  if (!move || move.drag) { refreshMoveUi(); return; }
+  if ((move.kind || "free") === kind) return;
+  restoreMove();
+  move.kind = kind;
+  align = null;
+  pointAlign = null;
   hideFaceHint();
-  clearTrace();
-  log("move.grab", { id: move.id, grab: move.grab, feature: !!p.feature });
+  hideSnapMarker();
+  hideInference();
+  if (kind === "face") align = { mode: move.target, source: null, before: move.before, applying: false };
+  if (kind === "point") pointAlign = { mode: move.target, source: null, before: move.before };
+  log("move.kind", { id: move.id, kind, target: move.target });
+  refreshMoveUi();
   emitMode();
 }
 
-/** Pose for the current target, clamped so the envelope stays in the space. */
-function movePose() {
-  const cab = job.getJob().cabinets.find((c) => c.id === move.id);
-  const t = move.target || move.grab;
-  const delta = {
-    x: move.locked.W ?? job.snap(t.x - move.grab.x),
-    y: move.locked.D ?? job.snap(t.y - move.grab.y),
-    // A ceiling-hung module keeps its height: it slides along the ceiling only.
-    z: getModule(cab.moduleId).placement === "ceiling" ? 0 : (move.locked.H ?? job.snap(t.z - move.grab.z)),
+/**
+ * The browser and the 3D view share one selection. In Panel mode a board click
+ * (after a Module → Panel switch, a fresh click) becomes the thing the triad drives.
+ */
+function syncMoveSelection() {
+  if (!move || move.applying || move.drag || align?.applying) return;
+  const cab = job.getSelected();
+  if (!cab) return;
+  if (move.kind === "face" || move.kind === "point") {
+    if (cab.id === move.id) return;
+    restoreMove();
+    move.id = cab.id;
+    move.pose0 = { ...cab.pose };
+    move.overrides0 = cloneOverrides(cab.overrides);
+    if (align) align.source = null;
+    if (pointAlign) pointAlign.source = null;
+    refreshMoveUi();
+    return;
+  }
+  if (cab.id !== move.id) {
+    restoreMove();
+    move.id = cab.id;
+    move.pose0 = { ...cab.pose };
+    move.overrides0 = cloneOverrides(cab.overrides);
+    move.boardId = null;
+  }
+  if (move.target !== "panel") { refreshMoveUi(); return; }
+  const boardId = job.getSubSelection()?.boardId || null;
+  if (boardId === move.boardId) { refreshMoveUi(); return; }
+  restoreMove();
+  move.boardId = boardId;
+  log("move.target", { id: move.id, target: "panel", boardId });
+  refreshMoveUi();
+}
+
+function planeVector(e, center, axis) {
+  const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(axis, center);
+  const hit = planePointAt(e.clientX, e.clientY, plane);
+  if (!hit) return null;
+  const v = hit.sub(center);
+  v.addScaledVector(axis, -v.dot(axis));
+  if (v.lengthSq() < 1) return null;
+  return v.normalize();
+}
+
+function beginMoveDrag(e, ud) {
+  const cab = moveCab();
+  if (!cab) return;
+  if (move.target === "panel" && !move.boardId) return;
+  if (move.target === "module" && modulePoseLocked(cab)) return;
+  const point = moveTargetPoint(cab);
+  if (!point) return;
+  const center = new THREE.Vector3(point[0], point[1], point[2]);
+  const axis = worldAxis(ud.axis);
+  move.drag = {
+    op: ud.op, axis: ud.axis, center,
+    basePose: poseOf(cab.pose),
+    baseOverride: boardOverride(cab.overrides?.boards?.[move.boardId]),
+    t0: ud.op === "translate" ? closestTOnLine(e.clientX, e.clientY, center, axis) : 0,
+    v0: ud.op === "rotate" ? planeVector(e, center.clone(), axis) : null,
   };
-  const { pose, clamped } = clampPoseToSpace(cab, { ...move.pose0, x: move.pose0.x + delta.x, y: move.pose0.y + delta.y, z: move.pose0.z + delta.z });
-  return { pose, delta: { x: pose.x - move.pose0.x, y: pose.y - move.pose0.y, z: pose.z - move.pose0.z }, clamped };
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = "grabbing";
+}
+
+function applyMoveDrag(e) {
+  const d = move.drag;
+  const cab = moveCab();
+  if (!cab || !d) return;
+  if (d.op === "translate") {
+    const delta = job.snap(closestTOnLine(e.clientX, e.clientY, d.center, worldAxis(d.axis)) - d.t0);
+    if (move.target === "module") {
+      const { pose, clamped } = clampPoseToSpace(cab, translatePose(d.basePose, d.axis, delta));
+      move.clamped = clamped;
+      job.updateCabinet(move.id, (c) => { c.pose = pose; });
+    } else {
+      move.clamped = [];
+      const o = translateBoardOverride(d.basePose, d.baseOverride, d.axis, delta);
+      job.updateCabinet(move.id, (c) => { writeBoardOverride(c, move.boardId, o); });
+    }
+  } else {
+    const v1 = planeVector(e, d.center.clone(), worldAxis(d.axis));
+    if (d.v0 && v1) {
+      const cross = new THREE.Vector3().crossVectors(d.v0, v1);
+      const angle = Math.round(Math.atan2(cross.dot(worldAxis(d.axis)), d.v0.dot(v1)) * 180 / Math.PI);
+      if (move.target === "module") {
+        const raw = rotatePoseAbout(d.basePose, d.axis, angle, envelopeCenter(cab));
+        for (const k of MOVE_KEYS) raw[k] = moveRound(raw[k]);
+        const { pose, clamped } = clampPoseToSpace(cab, raw);
+        move.clamped = clamped;
+        job.updateCabinet(move.id, (c) => { c.pose = pose; });
+      } else {
+        move.clamped = [];
+        const o = rotateBoardOverride(d.basePose, d.baseOverride, d.axis, angle);
+        job.updateCabinet(move.id, (c) => { writeBoardOverride(c, move.boardId, o); });
+      }
+    }
+  }
+  refreshMoveUi();
+  const lines = moveTip(cab, e);
+  const warn = (move.clamped || []).length || lines.some((line) => line.startsWith("Overlaps"));
+  showTip(e.clientX, e.clientY, lines, warn ? "warn" : "");
+}
+
+function moveTip(cab, e) {
+  const lines = [];
+  if (move.target === "module") {
+    const p0 = poseOf(move.pose0);
+    const p = poseOf(cab.pose);
+    lines.push(`ΔX ${Math.round(p.x - p0.x)}  ΔY ${Math.round(p.y - p0.y)}  ΔZ ${Math.round(p.z - p0.z)}`);
+    lines.push(`rot ${Math.round(p.rotX)}  ${Math.round(p.rotY)}  ${Math.round(p.rotZ)}`);
+    for (const c of move.clamped || []) lines.push(`Stopped at ${c}`);
+    const ov = overlaps(cab, cab.pose);
+    if (ov.length) lines.push(`Overlaps ${ov.join(", ")}`);
+    if (e.ctrlKey) lines.push("Ctrl+Enter: copy");
+  } else if (move.boardId) {
+    const was = boardOverride(move.overrides0?.boards?.[move.boardId]);
+    const o = boardOverride(cab.overrides?.boards?.[move.boardId]);
+    lines.push(`${move.boardId}  Δ ${Math.round(o.x - was.x)}  ${Math.round(o.y - was.y)}  ${Math.round(o.z - was.z)}`);
+    lines.push(`rot ${Math.round(o.rotX)}  ${Math.round(o.rotY)}  ${Math.round(o.rotZ)}`);
+  }
+  return lines;
+}
+
+function endMoveDrag(e) {
+  if (!move || !move.drag) return;
+  move.drag = null;
+  if (e) try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+  canvas.style.cursor = "";
+  hideTip();
 }
 
 /** Shift a pose back inside the space bounds; names the boundaries that stopped it. */
@@ -1804,10 +2182,14 @@ function clampPoseToSpace(cab, pose0) {
     if (fp.minY < b.minY) { pose.y += b.minY - fp.minY; clamped.push("front wall"); }
     if (fp.maxY > b.maxY) { pose.y -= fp.maxY - b.maxY; clamped.push("back wall"); }
     if (fp.z0 < 0) { pose.z -= fp.z0; clamped.push("floor"); }
-    // The roof over the new footprint (after the XY shifts above), not one flat height.
-    const fp2 = envelopeFootprint(cab, pose);
-    const roof = minClearHeight(sp, fp2.minY, fp2.maxY);
-    if (fp2.z1 > roof) { pose.z -= fp2.z1 - roof; clamped.push(roofName(sp, fp2.minY, fp2.maxY)); }
+    // A roof-aware body (the bedroom) is already cut to the roof by its generator.
+    // Its envelope is as tall as the highest point, so clamping that box under the
+    // lowest roof over the footprint shoves the whole body through the floor.
+    if (!getModule(cab.moduleId).roofAware) {
+      const fp2 = envelopeFootprint(cab, pose);
+      const roof = minClearHeight(sp, fp2.minY, fp2.maxY);
+      if (fp2.z1 > roof) { pose.z -= fp2.z1 - roof; clamped.push(roofName(sp, fp2.minY, fp2.maxY)); }
+    }
   }
   return { pose, clamped };
 }
@@ -1829,64 +2211,473 @@ function wallHits(cab, pose) {
   return overlaps(cab, pose).filter((id) => walls.has(id));
 }
 
-function updateMove(tipAt) {
-  const { pose, delta, clamped } = movePose();
-  move.clamped = clamped;
-  const cab = job.getJob().cabinets.find((c) => c.id === move.id);
-  if (cab.pose.x !== pose.x || cab.pose.y !== pose.y || cab.pose.z !== pose.z) job.updateCabinet(move.id, (c) => { c.pose = pose; });
-  const vals = { W: delta.x, D: delta.y, H: delta.z };
-  for (const k of DIM_ORDER) {
-    if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(vals[k]);
-    dimLabels[k].classList.toggle("locked", move.locked[k] != null);
-  }
-  placeMoveLabels(cab, pose);
-  if (tipAt) {
-    const lines = [...(tipAt.tip || []), `ΔX ${Math.round(delta.x)}  ΔY ${Math.round(delta.y)}  ΔZ ${Math.round(delta.z)}`];
-    for (const c of clamped) lines.push(`Stopped at ${c}`);
-    const ov = overlaps(cab, pose);
-    if (ov.length) lines.push(`Overlaps ${ov.join(", ")}`);
-    if (tipAt.ctrlKey) lines.push("Ctrl: copy");
-    showTip(tipAt.clientX, tipAt.clientY, lines, clamped.length || ov.length ? "warn" : "");
-  }
-}
-
-function placeMoveLabels(cab, pose) {
-  const fp = envelopeFootprint(cab, pose);
-  positionDimInputs({ x0: fp.minX, y0: fp.minY, z0: fp.z0, W: fp.maxX - fp.minX, D: fp.maxY - fp.minY, H: fp.z1 - fp.z0 });
-}
-
 function finishMove(copy) {
-  if (!move || move.step !== "drop") return;
-  const { pose, delta, clamped } = movePose();
+  if (!move) return;
+  endMoveDrag();
   const m = move;
+  const cab = moveCab();
+  const mod = cab && getModule(cab.moduleId);
+  const locked = !!(mod && mod.attach);
+  align = null;
+  pointAlign = null;
   move = null;
-  flushTrace("move.trace");
-  const cab = job.getJob().cabinets.find((c) => c.id === m.id);
-  if (copy) {
-    // Put the original back, then add a twin at the new pose (one undo step).
-    job.updateCabinet(m.id, (c) => { c.pose = { ...m.pose0 }; });
+  if (copy && cab && m.target === "module" && !locked) {
+    const pose = poseOf(cab.pose);
+    const overrides = cloneOverrides(cab.overrides);
     const params = JSON.parse(JSON.stringify(cab.params));
-    const twin = job.addCabinet(cab.moduleId, pose, getModule(cab.moduleId).envelope(params));
-    job.updateCabinet(twin.id, (c) => { c.params = params; });
-    log("move.copy", { from: m.id, to: twin.id, pose, delta, clamped });
+    job.updateCabinet(m.id, (c) => {
+      c.pose = { ...m.pose0 };
+      if (m.overrides0) c.overrides = cloneOverrides(m.overrides0);
+      else delete c.overrides;
+    });
+    const twin = job.addCabinet(cab.moduleId, pose, mod.envelope(params));
+    job.updateCabinet(twin.id, (c) => {
+      c.params = params;
+      c.pose = pose;
+      if (overrides) c.overrides = overrides;
+    });
+    log("move.copy", { from: m.id, to: twin.id, pose, target: "module" });
   } else {
     const changed = job.commitSnapshot(m.before);
-    log("move.finish", { id: m.id, from: m.pose0, to: pose, delta, clamped, changed });
+    log("move.finish", {
+      id: m.id, kind: m.kind || "free", how: "enter", target: m.target, boardId: m.boardId || null,
+      from: m.pose0, to: cab ? poseOf(cab.pose) : null,
+      override: m.target === "panel" && m.boardId ? boardOverride(cab?.overrides?.boards?.[m.boardId]) : null,
+      clamped: m.clamped || [], changed,
+    });
   }
+  endMoveChrome();
   clearPreview();
-  canvas.style.cursor = "";
   emitMode();
 }
 
 export function cancelMove() {
   if (!move) return;
   const m = move;
+  endMoveDrag();
+  restoreMove();
+  align = null;
+  pointAlign = null;
   move = null;
-  job.updateCabinet(m.id, (c) => { c.pose = { ...m.pose0 }; });
-  log("move.cancel", { id: m.id, step: m.step });
+  log("move.cancel", { id: m.id, kind: m.kind || "free", target: m.target, boardId: m.boardId || null });
+  endMoveChrome();
+  hideFaceHint();
+  hideSnapMarker();
+  hideInference();
   clearPreview();
-  canvas.style.cursor = "";
   emitMode();
+}
+
+moveCard.addEventListener("change", (e) => {
+  if (e.target.name === "moveKind") setMoveKind(e.target.value);
+  else if (e.target.name === "moveTarget") setMoveTarget(e.target.value);
+});
+moveCard.addEventListener("keydown", (e) => {
+  if (!move) return;
+  if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finishMove(e.ctrlKey); }
+  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); cancelMove(); }
+});
+for (const type of ["pointerdown", "pointerup", "wheel", "contextmenu", "dblclick"]) {
+  moveCard.addEventListener(type, (e) => e.stopPropagation());
+}
+job.onChange((kind) => {
+  if (!move || move.applying) return;
+  if (kind === "selection") syncMoveSelection();
+  else if (kind === "job" && !move.drag && !moveCab()) cancelMove();
+});
+
+// --- face align -------------------------------------------------------------------
+//
+// Inventor flush (对齐): the first face moves onto the second face's plane.
+// Normals must already point the same way. Module slides the whole cabinet;
+// Panel slides only that board. The second face stays where it is.
+// This is a page of Move (M), not its own command.
+
+function alignCab(id) {
+  return job.getJob().cabinets.find((c) => c.id === id) || null;
+}
+
+function boardWorldPlane(cab, boardId, faceId) {
+  const board = (job.resultFor(cab.id)?.boards || []).find((b) => b.id === boardId);
+  const face = board?.faces?.find((f) => f.id === faceId);
+  const local = board && face ? boardFaceLocal(board, face, cab.overrides?.boards?.[boardId]) : null;
+  const plane = worldPlane(cab.pose, local);
+  if (!plane) return null;
+  return { ...plane, cabId: cab.id, boardId, faceId, label: `${board.name || boardId} · ${faceLabel(face)}` };
+}
+
+function fixedWorldPlane(hit) {
+  if (!hit) return null;
+  if (hit.kind === "board") {
+    const cab = alignCab(hit.cabId);
+    return cab ? boardWorldPlane(cab, hit.boardId, hit.faceId) : null;
+  }
+  const f = hit.face;
+  const i = f.axis === "x" ? 0 : f.axis === "y" ? 1 : 2;
+  const normal = [0, 0, 0];
+  normal[i] = f.dir > 0 ? 1 : -1;
+  const point = [hit.point.x, hit.point.y, hit.point.z];
+  point[i] = f.value;
+  return { point, normal, label: f.label, source: f.source };
+}
+
+function alignHit(e) {
+  const hit = pick(e.clientX, e.clientY);
+  const ud = hit?.object?.userData;
+  if (ud?.kind === "board" && ud.boardId) {
+    const face = faceUnderHit(hit);
+    if (face?.faceId) return { kind: "board", cabId: face.cabId, boardId: face.boardId, faceId: face.faceId };
+  }
+  const pf = pickFace(e.clientX, e.clientY);
+  if (pf) return { kind: "plane", face: pf.face, point: pf.point };
+  return null;
+}
+
+function axisHint(plane, around) {
+  if (!plane) return null;
+  let ax = -1;
+  for (let i = 0; i < 3; i += 1) if (Math.abs(plane.normal[i]) > 0.99) ax = i;
+  if (ax < 0) return null;
+  const name = ["x", "y", "z"][ax];
+  const p = around || plane.point;
+  const ext = { x: [p[0] - 160, p[0] + 160], y: [p[1] - 160, p[1] + 160], z: [p[2] - 160, p[2] + 160] };
+  ext[name] = [p[ax], p[ax]];
+  return { axis: name, value: p[ax], dir: plane.normal[ax] > 0 ? 1 : -1, ext };
+}
+
+function sourcePlane() {
+  if (!align?.source) return null;
+  const cab = alignCab(align.source.cabId);
+  return cab ? boardWorldPlane(cab, align.source.boardId, align.source.faceId) : null;
+}
+
+function refreshAlignUi() {
+  if (!align) return;
+  align.mode = move?.target || align.mode;
+  refreshMoveUi();
+  const hint = axisHint(sourcePlane());
+  if (hint) showFaceHint(hint, { tone: align.source ? "pending" : "" });
+  else if (!align.source) hideFaceHint();
+}
+
+/** Face and point alignment are pages of Move, not separate commands. */
+export function startAlign() {
+  if (!move) startMove();
+  if (move) setMoveKind("face");
+}
+
+function setAlignMode(mode) {
+  if (!align || align.mode === mode) return;
+  align.mode = mode;
+  align.source = null;
+  const id = job.getSelectedId();
+  if (id && alignCab(id)) {
+    align.applying = true;
+    job.select(id);
+    align.applying = false;
+  }
+  log("align.mode", { mode });
+  refreshAlignUi();
+  emitMode();
+}
+
+function endAlignChrome() {
+  hideFaceHint();
+  hideTip();
+}
+
+export function cancelAlign() {
+  if (!align) return;
+  const a = align;
+  align = null;
+  log("align.cancel", { mode: a.mode, source: a.source });
+  endAlignChrome();
+  emitMode();
+}
+
+function finishAlign(hit, e) {
+  const srcRef = align.source;
+  const cab = alignCab(srcRef.cabId);
+  const source = cab && boardWorldPlane(cab, srcRef.boardId, srcRef.faceId);
+  const target = fixedWorldPlane(hit);
+  const tipAt = e ? { x: e.clientX, y: e.clientY } : null;
+  const refuse = (reason) => {
+    log("align.blocked", { reason, mode: align.mode, source: srcRef, fixed: target?.label || null });
+    if (tipAt) showTip(tipAt.x, tipAt.y, [reason], "warn");
+  };
+  if (!cab || !source || !target) { refuse("that face has no plane"); return; }
+  if (align.mode === "module" && target.cabId === cab.id) { refuse("pick a face on something else"); return; }
+  if (align.mode === "panel" && target.cabId === cab.id && target.boardId === srcRef.boardId) { refuse("pick a face on a different board"); return; }
+  if (align.mode === "module" && modulePoseLocked(cab)) { refuse("this module follows the Bedroom body — use Panel"); return; }
+  const fit = alignTranslation(source, target);
+  if (!fit.ok) { refuse(fit.reason); return; }
+  const mode = align.mode;
+  let clamped = [];
+  if (mode === "module") {
+    const raw = translatePoseBy(cab.pose, fit.delta);
+    for (const k of ["x", "y", "z"]) raw[k] = moveRound(raw[k]);
+    const stopped = clampPoseToSpace(cab, raw);
+    clamped = stopped.clamped;
+    job.updateCabinet(cab.id, (c) => { c.pose = stopped.pose; });
+  } else {
+    const o = translateBoardOverrideBy(cab.pose, cab.overrides?.boards?.[srcRef.boardId], fit.delta);
+    job.updateCabinet(cab.id, (c) => { writeBoardOverride(c, srcRef.boardId, o); });
+  }
+  log("align.finish", {
+    mode, source: srcRef, fixed: target.label, gap: Math.round(fit.gap * 10) / 10,
+    delta: fit.delta.map((v) => Math.round(v * 10) / 10), clamped,
+  });
+  align.source = null;
+  const hint = axisHint(target);
+  hideTip();
+  if (hint) flashFaceHint(hint);
+  else hideFaceHint();
+  refreshMoveUi();
+  emitMode();
+}
+
+function alignClick(e) {
+  const hit = alignHit(e);
+  if (!align.source) {
+    if (!hit || hit.kind !== "board") {
+      showTip(e.clientX, e.clientY, [align.mode === "panel" ? "Click a board face" : "Click a face on the cabinet that should move"], "warn");
+      return;
+    }
+    align.source = { cabId: hit.cabId, boardId: hit.boardId, faceId: hit.faceId };
+    align.mode = move.target;
+    if (hit.cabId !== move.id) {
+      restoreMove();
+      const next = alignCab(hit.cabId);
+      if (next) {
+        move.id = next.id;
+        move.pose0 = { ...next.pose };
+        move.overrides0 = cloneOverrides(next.overrides);
+      }
+    }
+    align.applying = true;
+    job.select(hit.cabId, { boardId: hit.boardId, faceId: hit.faceId });
+    align.applying = false;
+    log("align.pick", { which: "moving", mode: align.mode, ...align.source });
+    refreshAlignUi();
+    emitMode();
+    return;
+  }
+  if (!hit) return;
+  if (hit.kind === "board" && hit.cabId === align.source.cabId && hit.boardId === align.source.boardId && hit.faceId === align.source.faceId) return;
+  finishAlign(hit, e);
+}
+
+function alignHover(e) {
+  const hit = alignHit(e);
+  const plane = hit?.kind === "board"
+    ? boardWorldPlane(alignCab(hit.cabId), hit.boardId, hit.faceId)
+    : fixedWorldPlane(hit);
+  const lines = [align.source
+    ? (align.mode === "panel" ? "Click the face to align this board to" : "Click the face to align this cabinet to")
+    : (align.mode === "panel" ? "Click the board face that should move" : "Click the face that should move")];
+  if (plane?.label) lines.push(plane.label);
+  if (align.source && plane) {
+    const fit = alignTranslation(sourcePlane(), plane);
+    if (fit.ok) lines.push(`move ${Math.round(fit.gap)} mm`);
+    else if (fit.reason) lines.push(fit.reason);
+  }
+  showTip(e.clientX, e.clientY, lines, align.source && plane && !alignTranslation(sourcePlane(), plane).ok ? "warn" : "");
+  const hint = axisHint(plane) || axisHint(sourcePlane());
+  if (hint) showFaceHint(hint, { tone: !plane && align.source ? "pending" : "" });
+  else refreshAlignUi();
+}
+
+// --- point align ------------------------------------------------------------------
+//
+// Fusion point-to-point: translate, never rotate, so the first point lands on
+// the second. Module slides the whole cabinet; Panel slides only that board.
+// Two points on the same rigid piece cannot be brought together this way.
+// A page of Move (M).
+
+function pointOnMovingBody(pt) {
+  if (!pointAlign?.source || !pt?.cabId) return false;
+  if (pointAlign.mode === "panel") return pt.cabId === pointAlign.source.cabId && pt.boardId === pointAlign.source.boardId;
+  return pt.cabId === pointAlign.source.cabId;
+}
+
+function nearestOwnedPoint(clientX, clientY) {
+  const max = SNAP_RADIUS_PX * uiScale();
+  let best = null;
+  let bestD = max;
+  for (const cab of job.getJob().cabinets) {
+    for (const b of job.resultFor(cab.id)?.boards || []) {
+      const locals = boardCornerLocals(b, cab.overrides?.boards?.[b.id]);
+      for (const local of locals) {
+        const w = worldOf(cab.pose, local);
+        const c = toClient(w[0], w[1], w[2]);
+        if (c.behind) continue;
+        const d = Math.hypot(c.x - clientX, c.y - clientY);
+        if (d < bestD) {
+          bestD = d;
+          best = { x: w[0], y: w[1], z: w[2], cabId: cab.id, boardId: b.id, label: `${b.name || b.id} corner`, kind: "board" };
+        }
+      }
+    }
+  }
+  return best ? { ...best, dist: bestD } : null;
+}
+
+/** The point under the cursor: a board corner, or (for the target) a space / cabinet snap point. */
+function pointHit(clientX, clientY, { ownedOnly = false } = {}) {
+  const owned = nearestOwnedPoint(clientX, clientY);
+  if (ownedOnly) return owned;
+  const snap = nearestSnap(clientX, clientY);
+  let snapD = Infinity;
+  if (snap) {
+    const c = toClient(snap.x, snap.y, snap.z);
+    if (!c.behind) snapD = Math.hypot(c.x - clientX, c.y - clientY);
+  }
+  if (owned && (!snap || owned.dist <= snapD)) return owned;
+  if (snap && snapD <= SNAP_RADIUS_PX * uiScale()) {
+    return { x: snap.x, y: snap.y, z: snap.z, label: describePoint(snap), kind: "snap", sources: snap.sources };
+  }
+  return null;
+}
+
+function refreshPointUi() {
+  if (!pointAlign) return;
+  pointAlign.mode = move?.target || pointAlign.mode;
+  refreshMoveUi();
+  if (pointAlign.source) showSnapMarker(pointAlign.source.x, pointAlign.source.y, pointAlign.source.z, { feature: true });
+}
+
+/** Point alignment is a page of Move. */
+export function startPointAlign() {
+  if (!move) startMove();
+  if (move) setMoveKind("point");
+}
+
+function setPointMode(mode) {
+  if (!pointAlign || pointAlign.mode === mode) return;
+  pointAlign.mode = mode;
+  pointAlign.source = null;
+  hideSnapMarker();
+  const id = job.getSelectedId();
+  if (id && alignCab(id)) job.select(id);
+  log("pointalign.mode", { mode });
+  refreshPointUi();
+  emitMode();
+}
+
+function endPointChrome() {
+  hideSnapMarker();
+  hideInference();
+  hideTip();
+}
+
+export function cancelPointAlign() {
+  if (!pointAlign) return;
+  const p = pointAlign;
+  pointAlign = null;
+  log("pointalign.cancel", { mode: p.mode, source: p.source });
+  endPointChrome();
+  emitMode();
+}
+
+function finishPointAlign(target, e) {
+  const src = pointAlign.source;
+  if (pointOnMovingBody(target)) {
+    const reason = pointAlign.mode === "panel" ? "that point is on the same board" : "that point is on the same cabinet";
+    log("pointalign.blocked", { reason, mode: pointAlign.mode, source: src, fixed: target.label });
+    showTip(e.clientX, e.clientY, [reason], "warn");
+    return;
+  }
+  const cab = alignCab(src.cabId);
+  if (!cab) return;
+  if (pointAlign.mode === "module" && modulePoseLocked(cab)) {
+    log("pointalign.blocked", { reason: "this module follows the Bedroom body — use Panel", mode: "module", source: src });
+    showTip(e.clientX, e.clientY, ["This module follows the Bedroom body — use Panel"], "warn");
+    return;
+  }
+  const delta = [target.x - src.x, target.y - src.y, target.z - src.z];
+  const mode = pointAlign.mode;
+  let clamped = [];
+  if (mode === "module") {
+    const raw = translatePoseBy(cab.pose, delta);
+    for (const k of ["x", "y", "z"]) raw[k] = moveRound(raw[k]);
+    const stopped = clampPoseToSpace(cab, raw);
+    clamped = stopped.clamped;
+    job.updateCabinet(cab.id, (c) => { c.pose = stopped.pose; });
+  } else {
+    const o = translateBoardOverrideBy(cab.pose, cab.overrides?.boards?.[src.boardId], delta);
+    job.updateCabinet(cab.id, (c) => { writeBoardOverride(c, src.boardId, o); });
+  }
+  log("pointalign.finish", {
+    mode, source: { cabId: src.cabId, boardId: src.boardId, x: src.x, y: src.y, z: src.z },
+    fixed: { label: target.label, x: target.x, y: target.y, z: target.z },
+    delta: delta.map((v) => Math.round(v * 10) / 10), clamped,
+  });
+  pointAlign.source = null;
+  hideInference();
+  hideTip();
+  refreshMoveUi();
+  emitMode();
+}
+
+function pointClick(e) {
+  if (!pointAlign.source) {
+    const hit = pointHit(e.clientX, e.clientY, { ownedOnly: true });
+    if (!hit) {
+      showTip(e.clientX, e.clientY, [pointAlign.mode === "panel" ? "Click a corner of a board" : "Click a corner of a cabinet"], "warn");
+      return;
+    }
+    pointAlign.source = { cabId: hit.cabId, boardId: hit.boardId, x: hit.x, y: hit.y, z: hit.z, label: hit.label };
+    pointAlign.mode = move.target;
+    if (hit.cabId !== move.id) {
+      restoreMove();
+      const next = alignCab(hit.cabId);
+      if (next) {
+        move.id = next.id;
+        move.pose0 = { ...next.pose };
+        move.overrides0 = cloneOverrides(next.overrides);
+      }
+    }
+    job.select(hit.cabId, { boardId: hit.boardId });
+    log("pointalign.pick", { which: "moving", mode: pointAlign.mode, cabId: hit.cabId, boardId: hit.boardId, x: hit.x, y: hit.y, z: hit.z });
+    refreshPointUi();
+    emitMode();
+    return;
+  }
+  const hit = pointHit(e.clientX, e.clientY);
+  if (!hit) {
+    showTip(e.clientX, e.clientY, ["Click the point to land on"], "warn");
+    return;
+  }
+  finishPointAlign(hit, e);
+}
+
+function pointHover(e) {
+  const hit = pointAlign.source ? pointHit(e.clientX, e.clientY) : pointHit(e.clientX, e.clientY, { ownedOnly: true });
+  const src = pointAlign.source;
+  if (src && hit && !pointOnMovingBody(hit)) {
+    const dx = hit.x - src.x;
+    const dy = hit.y - src.y;
+    const dz = hit.z - src.z;
+    const len = Math.hypot(dx, dy, dz) || 1;
+    showSnapMarker(src.x, src.y, src.z, { feature: true });
+    showInference({ x: src.x, y: src.y, z: src.z }, { x: hit.x, y: hit.y, z: hit.z }, [dx / len, dy / len, dz / len]);
+  } else {
+    hideInference();
+    if (hit) showSnapMarker(hit.x, hit.y, hit.z, { feature: true });
+    else if (src) showSnapMarker(src.x, src.y, src.z, { feature: true });
+    else hideSnapMarker();
+  }
+  const lines = [src
+    ? (pointAlign.mode === "panel" ? "Click the point this board corner should land on" : "Click the point this corner should land on")
+    : (pointAlign.mode === "panel" ? "Click a corner of the board that should move" : "Click a corner of the cabinet that should move")];
+  if (hit) {
+    lines.push(hit.label);
+    if (src) {
+      if (pointOnMovingBody(hit)) lines.push(pointAlign.mode === "panel" ? "On the same board" : "On the same cabinet");
+      else lines.push(`Δ ${Math.round(hit.x - src.x)}  ${Math.round(hit.y - src.y)}  ${Math.round(hit.z - src.z)}`);
+    }
+  }
+  showTip(e.clientX, e.clientY, lines, hit && pointOnMovingBody(hit) ? "warn" : "");
 }
 
 // --- orientation ---------------------------------------------------------------------
@@ -1982,20 +2773,17 @@ export function defaultSide(b, excludeId = null) {
   return pool.slice().sort((a, c) => score(c) - score(a))[0];
 }
 
-/** Pose with rotZ = `rotZ`, rotated about the envelope centre so the cabinet stays where it is. */
+/** Pose turned `rotZ - current` degrees about world Z through the envelope centre, so R stays a 90° yaw. */
 function poseRotatedTo(cab, rotZ) {
   const env = envelopeBox(cab, job.resultFor(cab.id));
-  const cx = (env.x0 + env.x1) / 2;
-  const cy = (env.y0 + env.y1) / 2;
-  const a0 = ((cab.pose.rotZ || 0) * Math.PI) / 180;
-  const a1 = (rotZ * Math.PI) / 180;
-  const wx = cab.pose.x + cx * Math.cos(a0) - cy * Math.sin(a0);
-  const wy = cab.pose.y + cx * Math.sin(a0) + cy * Math.cos(a0);
+  const center = [(env.x0 + env.x1) / 2, (env.y0 + env.y1) / 2, (env.z0 + env.z1) / 2];
+  const next = rotatePoseAbout(cab.pose, "z", rotZ - (cab.pose.rotZ || 0), center);
   return {
-    ...cab.pose,
-    rotZ: ((rotZ % 360) + 360) % 360,
-    x: job.snap(wx - (cx * Math.cos(a1) - cy * Math.sin(a1))),
-    y: job.snap(wy - (cx * Math.sin(a1) + cy * Math.cos(a1))),
+    ...poseOf(cab.pose),
+    ...next,
+    x: job.snap(next.x),
+    y: job.snap(next.y),
+    z: job.snap(next.z),
   };
 }
 
@@ -2020,6 +2808,8 @@ function pickSideFace(clientX, clientY, onlyId = null) {
 export function startOrient(id = job.getSelectedId()) {
   if (placing) disarm();
   cancelMove();
+  cancelAlign();
+  cancelPointAlign();
   cancelNose();
   cancelBedBox();
   cancelLounge();
@@ -2213,12 +3003,19 @@ canvas.addEventListener("pointerdown", (e) => {
 
   if (lounge) { loungeClick(e); return; }
 
+  if (align) { alignClick(e); return; }
+
+  if (pointAlign) { pointClick(e); return; }
+
   if (move) {
-    if (move.step === "grab") {
-      const p = cursorPoint(e.clientX, e.clientY);
-      if (p) moveGrab(p);
-    } else {
-      finishMove(e.ctrlKey);
+    const hit = pick(e.clientX, e.clientY);
+    const ud = hit && hit.object.userData;
+    if (ud && ud.kind === "moveAxis") { beginMoveDrag(e, ud); return; }
+    if (move.target === "panel" && ud && ud.kind === "board" && ud.boardId && ud.cabId === move.id && ud.boardId !== move.boardId) {
+      move.applying = true;
+      job.select(move.id, { boardId: ud.boardId });
+      move.applying = false;
+      syncMoveSelection();
     }
     return;
   }
@@ -2311,14 +3108,23 @@ canvas.addEventListener("pointermove", (e) => {
   if (bed) return updateBedBox(e);
   if (lounge) return updateLounge(e);
 
+  if (align) return alignHover(e);
+
+  if (pointAlign) return pointHover(e);
+
   if (move) {
-    if (move.step === "grab") return hoverArmed(e, "Grab point");
-    const p = resolveCursor(e, move.ctx);
-    if (!p) return;
-    move.target = { x: p.x, y: p.y, z: p.z };
-    traceSample({ cx: Math.round(e.clientX), cy: Math.round(e.clientY), x: Math.round(p.x), y: Math.round(p.y), z: Math.round(p.z), kind: p.kind, dir: p.inference ? p.inference.dir : undefined });
-    drawResolved(p);
-    updateMove({ clientX: e.clientX, clientY: e.clientY, tip: p.tip, ctrlKey: e.ctrlKey });
+    if (move.drag) return applyMoveDrag(e);
+    const hit = pick(e.clientX, e.clientY);
+    const ud = hit && hit.object.userData;
+    if (ud && ud.kind === "moveAxis") {
+      setMoveHover(hit.object);
+      canvas.style.cursor = "grab";
+      showTip(e.clientX, e.clientY, [ud.op === "rotate" ? `Rotate ${ud.axis.toUpperCase()}` : `Move ${ud.axis.toUpperCase()}`]);
+    } else {
+      setMoveHover(null);
+      canvas.style.cursor = move.target === "panel" && !move.boardId ? "crosshair" : "";
+      hideTip();
+    }
     return;
   }
 
@@ -2423,11 +3229,11 @@ function endDrag(e) {
   hideTip();
   emitMode();
 }
-canvas.addEventListener("pointerup", endDrag);
-canvas.addEventListener("pointercancel", endDrag);
+canvas.addEventListener("pointerup", (e) => { endDrag(e); endMoveDrag(e); });
+canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); });
 
 canvas.addEventListener("pointerleave", () => {
-  if ((placing && !rb) || (move && move.step === "grab")) { hideSnapMarker(); hideFaceHint(); hideTip(); }
+  if (placing && !rb) { hideSnapMarker(); hideFaceHint(); hideTip(); }
   if (orient) { const pend = pendingFace(); if (pend) showFaceHint(pend, { tone: "pending" }); else hideFaceHint(); hideTip(); }
   if (nose || bed || cplane || lounge) hideTip();
 });
@@ -2447,10 +3253,7 @@ function cursorFor(handle) {
   else if (lounge) { const b = loungeDimBox(); if (b) positionDimInputs(b); }
   else if (cplane && cplane.step === "offset") positionDimInputs(planeBox());
   else if (retype) updateRetype();
-  else if (move && move.step === "drop") {
-    const cab = job.getJob().cabinets.find((c) => c.id === move.id);
-    if (cab) placeMoveLabels(cab, cab.pose); // labels only; no job writes per frame
-  }
+  else if (move) layoutMoveTriad();
   requestAnimationFrame(tickDims);
 })();
 
@@ -2468,7 +3271,7 @@ function focusedDim() {
 function typableDims() {
   if (cplane) return ["W"];
   if (nose) return ["D"];
-  if (bed) return ["D"];
+  if (bed) return bed.pair && bed.step === "height" ? ["H"] : ["D"];
   if (lounge) {
     if (lounge.step === "face") return ["W", "D"];
     if (lounge.step === "width") return ["W"];
@@ -2520,7 +3323,6 @@ function currentDim(k) {
     }
     return 0;
   }
-  if (move && move.step === "drop") { const d = movePose().delta; return { W: d.x, D: d.y, H: d.z }[k]; }
   if (retype) return retypeBox()[k];
   return 0;
 }
@@ -2528,7 +3330,10 @@ function maxDim(k) {
   if (rb) return placementBox().max[k];
   if (cplane) return cplane.face ? extrudeRoom(cplane.face) : null;
   if (nose) return k === "D" ? noseLength() : null;
-  if (bed) return bedBoxBox().max[k] ?? null;
+  if (bed) {
+    if (bed.pair && bed.step === "height" && k === "H") return bedFrame()?.bodyParams.height ?? null;
+    return bedBoxBox().max[k] ?? null;
+  }
   return null;
 }
 
@@ -2553,10 +3358,19 @@ function setTyped(k, v) {
     log("lounge.typein", { step: lounge.step, dim: k, value: dimInputs[k].value, locked: lounge.locks[k] });
     updateLounge(lounge.lastClient);
   } else if (bed) {
+    if (bed.pair && bed.step === "height") {
+      if (k !== "H") return;
+      const min = getModule(bed.moduleId).minSize.H;
+      bed.locked.H = v != null && v >= min ? v : null;
+      log("bedside.typein", { dim: k, value: dimInputs.H.value, locked: bed.locked.H, step: bed.step });
+      bedHeight(null);
+      drawBedBox(null);
+      return;
+    }
     if (k !== "D") return; // W and H come from the body
     const min = getModule(bed.moduleId).minSize.D;
     bed.locked.D = v != null && v >= min ? v : null;
-    log("bedbox.typein", { dim: k, value: dimInputs.D.value, locked: bed.locked.D, step: bed.step });
+    log(bed.pair ? "bedside.typein" : "bedbox.typein", { dim: k, value: dimInputs.D.value, locked: bed.locked.D, step: bed.step });
     bedDepth(null);
     drawBedBox(null);
   } else if (nose) {
@@ -2569,10 +3383,6 @@ function setTyped(k, v) {
     rb.locked[k] = v != null && v >= min ? v : null;
     log("place.typein", { dim: k, value: dimInputs[k].value, locked: rb.locked[k] });
     updatePlacement(null);
-  } else if (move && move.step === "drop") {
-    move.locked[k] = v != null ? v : null;
-    log("move.typein", { dim: k, value: dimInputs[k].value, locked: move.locked[k] });
-    updateMove(null);
   } else if (retype) {
     if (v != null) applyRetype(k, v);
     log("retype.typein", { dim: k, value: dimInputs[k].value });
@@ -2653,7 +3463,13 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  const typing = rb || (move && move.step === "drop") || retype || nose || bed || lounge || (cplane && cplane.step === "offset");
+  if (move) {
+    if (e.key === "Enter") { e.preventDefault(); finishMove(e.ctrlKey); return; }
+    if (e.key === "Escape") { cancelMove(); return; }
+  }
+  if (align && e.key === "Escape") { cancelAlign(); return; }
+  if (pointAlign && e.key === "Escape") { cancelPointAlign(); return; }
+  const typing = rb || retype || nose || bed || lounge || (cplane && cplane.step === "offset");
 
   if (typing) {
     if (e.key === "Tab") {
@@ -2696,6 +3512,8 @@ window.addEventListener("keydown", (e) => {
   }
   if (e.key === "Escape") {
     if (move) cancelMove();
+    else if (align) cancelAlign();
+    else if (pointAlign) cancelPointAlign();
     else if (cplane) cancelPlane();
     else if (placing) disarm();
     else if (disarmHandle()) log("handle.arm", { id: job.getSelectedId(), on: false, how: "esc" }); // an on-demand arrow goes first

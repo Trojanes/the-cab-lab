@@ -275,6 +275,33 @@ button:disabled { cursor: default; opacity: 0.45; }
 /* The floor plan sheet covers the viewport: the browser steps aside (tree.js watches the sheet). */
 #browser.fp-open { display: none; }
 
+/* Move: module or one board. Sits beside the browser so the triad stays in view. */
+#moveCard, #alignCard, #pointCard {
+  position: absolute;
+  top: 36px;
+  left: 292px;
+  z-index: 5;
+  width: 230px;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+}
+.move-kind { display: flex; gap: 10px; }
+.move-card-title { font-size: 11px; font-weight: 600; color: var(--text-2); }
+.move-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--text);
+}
+.move-note { font-size: 11px; line-height: 1.35; color: var(--text-3); }
+
 /* ---------- center ---------- */
 
 #center {
@@ -530,6 +557,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .field input:disabled { color: var(--text-2); }
 .field.readonly input { color: var(--text-2); border-style: dashed; cursor: default; }
 .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+/* An on / off option (LED channels): the box sits at the right edge of the value column. */
+.field.check input[type="checkbox"] { width: 16px; height: 16px; padding: 0; justify-self: end; accent-color: var(--accent); cursor: pointer; }
 /* A dimension that can also be dragged in 3D: the ⇕ toggle arms an arrow handle on the cabinet. */
 .field.with-drag { grid-template-columns: 1fr 96px 22px; gap: 6px; }
 .field.with-drag button.icon.drag { width: 22px; height: 24px; font-size: 13px; color: var(--text-2); border: 1px solid var(--line-strong); }
@@ -880,11 +909,11 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .ohc-front { border-radius: var(--radius); overflow: hidden; background: #f8fbff; }
 .ohc-front svg { display: block; width: 100%; height: auto; }
 
-/* Bedroom body front view: regions are clickable, orange boundaries draggable. */
-.bedroom-front { border-radius: var(--radius); overflow: hidden; background: #f8fbff; touch-action: none; }
+/* Bedroom body front view: the boards in the 3D colours on the panel's dark ground; regions underneath are clickable, orange boundaries draggable. */
+.bedroom-front { border-radius: var(--radius); overflow: hidden; background: #1d2025; border: 1px solid var(--line); touch-action: none; }
 .bedroom-front svg { display: block; width: 100%; height: auto; }
 .bedroom-front .region { cursor: pointer; }
-.bedroom-front .region:hover { filter: brightness(0.96); }
+.bedroom-front .region:hover { fill: rgba(79, 134, 224, 0.16); }
 .bedroom-front .boundary[data-axis="x"] { cursor: ew-resize; }
 .bedroom-front .boundary[data-axis="z"] { cursor: ns-resize; }
 .bedroom-front .boundary:hover line:first-child, .bedroom-front .boundary.active line:first-child { stroke: #fff; stroke-width: 3; }

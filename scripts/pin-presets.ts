@@ -25,6 +25,7 @@ const GENERATORS: Record<string, () => Promise<(params: Record<string, unknown>)
   kitchen: async () => (await import("../generators/kitchen/generator.ts")).generateKitchenCabinet as never,
   generalTall: async () => (await import("../generators/generalTall/generator.ts")).generateGeneralTall as never,
   lounge: async () => (await import("../generators/lounge/generator.ts")).generateLounge as never,
+  bedSideTable: async () => (await import("../generators/bedSideTable/generator.ts")).generateBedSideTable as never,
 };
 const load = GENERATORS[moduleId];
 if (!load) {

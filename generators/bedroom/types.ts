@@ -42,8 +42,18 @@ export interface BedroomParams {
   bootHeight?: number;
   /** Wardrobe width from the side wall to its inner face; the same on both sides. */
   wardrobeWidth?: number;
-  /** Underside of the overhead block above the floor. */
+  /** Door underside of the middle overhead. The bottom panel sits 30 mm above this. */
   ohcBottom?: number;
+  /** Middle overhead bays, left to right. Widths sum to the opening. Two or three, up flaps only. */
+  ohcZones?: OhcZone[];
+  /** Wardrobe front construction. `style1` = door over a fixed panel (draggable split); `nook` = door over an open nook with a shelf. */
+  style?: WardrobeStyle;
+  /** Style 1: top of the fixed panel (the dragged split on the room-face elevation). Door starts this + clearance above it. */
+  fixedPanelTop?: number;
+  /** Ignored. The nook wardrobe bottom is boot + 197 + 204. Older jobs may still carry this. */
+  nookShelfBottom?: number;
+  /** LED channels on the T3 tops (and the nook shelf underside). Default on when omitted. */
+  ledGroove?: boolean;
   /** Bed frame the opening is laid out for; its width is a rule constant (queen 1508). */
   bedFrame?: BedFrame;
 
@@ -58,9 +68,16 @@ export interface BedroomParams {
   doorColorName?: string;
 }
 
-export type BedroomLayoutKey = "bootHeight" | "wardrobeWidth" | "ohcBottom";
+export type BedroomLayoutKey = "bootHeight" | "wardrobeWidth" | "ohcBottom" | "fixedPanelTop";
+/** One middle-overhead bay. Widths are centreline to centreline and sum to the opening. */
+export interface OhcZone {
+  id: string;
+  width: number;
+}
 /** Bed frame products. Double comes later. */
 export type BedFrame = "queen";
+/** Wardrobe front construction. Style 1 is the no-nook door + fixed panel; nook is the door over an open shelf. */
+export type WardrobeStyle = "style1" | "nook";
 
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
 export type { Face, FaceFeature, Joint } from "../_lib/model.ts";
@@ -72,11 +89,27 @@ export type { Face, FaceFeature, Joint } from "../_lib/model.ts";
  *   BOOT_FRONT     the boot upright at the nose end of the body
  *   WARD_L_PANEL   wardrobe colour panel (door stock) on the opening side, boot deck → roof,
  *   WARD_R_PANEL   cut down to the T3 seat in front of the T2 back, with T3's pocket
+ *   WARD_L/R_STRIP wall strip (carcass) against the side wall, 175 deep, boot deck → the
+ *                  same top profile as the colour panel, stopped at that depth.
+ *                  Style 1: through notch so the shelf can pass
+ *   WARD_L/R_SHELF Style 1 shelf (carcass): 10 above the wardrobe floor, full depth,
+ *                  tongue into the colour panel, through the wall strip behind y 75
  *   WARD_L_T3      T3 over each wardrobe: on the seat, across the colour panel for its tail,
  *   WARD_R_T3      notched back to the panel's wall side beyond it
  *   T2 / T1        the rear / front top rails, wall to wall, standing on the T3s
- * The rest of the wardrobe (wall side, base, shelf, door), the overhead and the bed box
- * (its own module) come in later versions.
+ *   WARD_L/R_DOOR  Style 1 door: hangs at y −FPT..0, wall gap + flush with the colour panel,
+ *                  T3 top → fixedPanelTop + clearance; three hinge cups on the inside
+ *   WARD_L/R_FIXED Style 1 fixed panel (not a door): same Y, wall to colour panel, floor → split
+ *   WARD_L/R_KICK  Nook base: wall upright (18) on the boot deck under the floor, full depth
+ *   WARD_L/R_FLOOR Nook base: the wardrobe floor (18), wall → colour panel, full depth, top = boot + 197
+ *   WARD_L/R_NOOK  Nook shelf (carcass): underside = boot + 197 + 204 (not dragged),
+ *                  wall → colour panel, 22 short of the nose; LED channel on its underside.
+ *                  The colour panel is cut through with the fixed U between the floor top and this underside.
+ *   OHC_BP         middle overhead bottom panel (grooved for the uprights; cut long, trim to the roof)
+ *   OHC_T3         middle overhead's own T3: same depth and Z as the wardrobe T3s, notched for its uprights
+ *   OHC_D0..Dn     side panels and internal dividers (tongue into BP, roof-cut behind T3). No T4
+ *   OHC_FP0..      up flaps, hanging at y −FPT..0
+ * The rest of the wardrobe (base, shelf) and the bed box (its own module) come later.
  */
 export interface Board extends ModelBoard {
   /** The layout region this board belongs to (`top` = the wall-to-wall top rails). */
@@ -122,12 +155,17 @@ export interface BedroomResolvedParams {
   bootHeight: number;
   wardrobeWidth: number;
   ohcBottom: number;
+  style: WardrobeStyle;
+  fixedPanelTop: number;
+  nookShelfBottom: number;
+  ledGroove: boolean;
   bedFrame: BedFrame;
   panelThickness: number;
   doorPanelThickness: number;
   frontPanelThickness: number;
   carcassColor: string;
   doorColor: string;
+  ohcZones: OhcZone[];
 }
 
 /** Derived numbers the panel shows (never typed by the user). */
@@ -146,6 +184,30 @@ export interface BedroomLayoutInfo {
   bedMargin: number;
   /** Wardrobe top: the T3 seat height, T3 top, roof at the T2 back and T2's height there. */
   top: { seat: number; t3Top: number; roofAtT2: number; t2Height: number } | null;
+  /** Wardrobe fronts on the room-face elevation (null when the top failed). Style 1 carries the split; nook the shelf underside. */
+  front: {
+    style: WardrobeStyle;
+    floorTop: number;
+    fixedPanelTop?: number;
+    nookShelfBottom?: number;
+    doorBottom: number;
+    doorTop: number;
+    clearance: number;
+  } | null;
+  /** Middle overhead. Null when the body failed to generate. */
+  ohc: OhcLayout | null;
+}
+
+/** Middle overhead, derived. Bays are up flaps; T1/T2 stay the shared wall-to-wall rails. */
+export interface OhcLayout {
+  zones: Array<OhcZone & { x0: number; x1: number }>;
+  /** Centreline of D0, each internal divider, and DN. */
+  centers: number[];
+  bpZ0: number;
+  bpZ1: number;
+  uprightBack: number;
+  bpBack: number;
+  oversize: number;
 }
 
 export interface BedroomResult {

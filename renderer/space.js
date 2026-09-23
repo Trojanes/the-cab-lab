@@ -2,6 +2,7 @@
 // Millimetres, Z up, right-handed. This file only displays.
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
+import { grabPan, grabZoom, placeOrbitTarget, wheelZoomScale } from "./grab.js";
 
 const GRID_MINOR_MM = 100;
 const GRID_MAJOR_MM = 1000;
@@ -23,15 +24,18 @@ export const canvas = renderer.domElement;
 export const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
 controls.dampingFactor = 0.08;
+const orbitDamping = controls.dampingFactor;
 controls.screenSpacePanning = true;
 // Scroll zooms along the ray under the cursor, so the point you point at stays put.
 controls.zoomToCursor = true;
 // Left button stays free for selection. Hold the wheel to orbit,
-// right-drag to pan, scroll the wheel to zoom.
+// right-drag to pan, scroll the wheel to zoom. Zoom is the grab below,
+// not OrbitControls' dolly (that one scales to the orbit centre).
+controls.enableZoom = false;
 controls.mouseButtons = {
   LEFT: null,
   MIDDLE: THREE.MOUSE.ROTATE,
-  RIGHT: THREE.MOUSE.PAN,
+  RIGHT: null,
 };
 
 scene.add(new THREE.AmbientLight(0xffffff, 0.6));
@@ -292,6 +296,118 @@ export function rayFromClient(clientX, clientY) {
   raycaster.setFromCamera(ndc, camera);
   return raycaster.ray;
 }
+
+// --- grab -----------------------------------------------------------------
+// Pan and zoom stick to the surface under the cursor. OrbitControls measured
+// both from the orbit centre, which a deep zoom leaves just in front of the
+// lens, so a long drag of a far board barely moved. Orbit still eases out;
+// a pan does not.
+
+const _grabFwd = new THREE.Vector3();
+const _grabPt = new THREE.Vector3();
+
+function grabMaterial(obj) {
+  return Array.isArray(obj.material) ? obj.material[0] : obj.material;
+}
+
+/** Boards, walls, floor, roof. Not handles, the triad, the origin dot, or overlays drawn on top. */
+function isGrabSurface(obj) {
+  if (!obj.isMesh || !obj.visible) return false;
+  const kind = obj.userData && obj.userData.kind;
+  if (kind === "handle" || kind === "moveAxis") return false;
+  if (obj.name === "origin") return false;
+  const mat = grabMaterial(obj);
+  if (!mat || mat.opacity === 0 || mat.depthTest === false) return false;
+  return true;
+}
+
+/** Translucent room shell (wall, roof). The floor is opaque and stays a grab surface. */
+function isRoomGhost(obj) {
+  const mat = grabMaterial(obj);
+  if (!mat || !mat.transparent || mat.opacity >= 0.5) return false;
+  let p = obj;
+  while (p) {
+    if (p.name === "space") return true;
+    p = p.parent;
+  }
+  return false;
+}
+
+/** The first solid under the cursor, or null when the click is on empty space. */
+function grabPoint(clientX, clientY) {
+  // lookAt leaves the world matrix one step behind the quaternion. Refresh it
+  // before the ray, or the grab dollys along the previous frame's view.
+  camera.updateMatrixWorld();
+  rayFromClient(clientX, clientY);
+  const hits = raycaster.intersectObjects(scene.children, true);
+  camera.getWorldDirection(_grabFwd);
+  let ghost = null;
+  for (const h of hits) {
+    if (!isGrabSurface(h.object)) continue;
+    const viewDepth = _grabPt.copy(h.point).sub(camera.position).dot(_grabFwd);
+    if (viewDepth < camera.near) continue;
+    const rec = { rayDist: h.distance, viewDepth };
+    // A see-through wall sits in front of the cabinet. Grab the cabinet; the
+    // wall only counts when nothing solid is behind it.
+    if (isRoomGhost(h.object)) { if (!ghost) ghost = rec; continue; }
+    return rec;
+  }
+  return ghost;
+}
+
+function modifierDown(e) {
+  return e.shiftKey || e.ctrlKey || e.metaKey;
+}
+
+let grabDrag = null;
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.button === 2 && !modifierDown(e)) {
+    const hit = grabPoint(e.clientX, e.clientY);
+    const depth = hit ? hit.viewDepth : camera.position.distanceTo(controls.target);
+    placeOrbitTarget(camera, controls.target, depth);
+    grabDrag = { x: e.clientX, y: e.clientY, depth };
+    return;
+  }
+  // Shift/Ctrl + middle button is OrbitControls' pan. Give it the same depth, and
+  // apply it in one step so it does not coast behind the cursor.
+  if (e.button === 1 && modifierDown(e)) {
+    const hit = grabPoint(e.clientX, e.clientY);
+    placeOrbitTarget(camera, controls.target, hit ? hit.viewDepth : camera.position.distanceTo(controls.target));
+    controls.dampingFactor = 1;
+    return;
+  }
+  if (e.button === 1) {
+    const hit = grabPoint(e.clientX, e.clientY);
+    if (hit) placeOrbitTarget(camera, controls.target, hit.viewDepth);
+  }
+}, true);
+
+canvas.addEventListener("pointermove", (e) => {
+  if (!grabDrag) return;
+  if ((e.buttons & 2) === 0) { grabDrag = null; return; }
+  const dx = e.clientX - grabDrag.x;
+  const dy = e.clientY - grabDrag.y;
+  grabDrag.x = e.clientX;
+  grabDrag.y = e.clientY;
+  grabPan(camera, controls.target, dx, dy, grabDrag.depth, canvas.clientHeight || 1);
+}, true);
+
+function endGrab() {
+  grabDrag = null;
+  controls.dampingFactor = orbitDamping;
+}
+canvas.addEventListener("pointerup", (e) => { if (e.button === 2 || e.button === 1) endGrab(); }, true);
+canvas.addEventListener("pointercancel", endGrab, true);
+
+canvas.addEventListener("wheel", (e) => {
+  e.preventDefault();
+  if (grabDrag) return;
+  const hit = grabPoint(e.clientX, e.clientY);
+  const dist = hit ? hit.rayDist : camera.position.distanceTo(controls.target);
+  grabZoom(camera, controls.target, ndc.x, ndc.y, dist, wheelZoomScale(e));
+  controls.update();
+}, { capture: true, passive: false });
 
 const hit = new THREE.Vector3();
 export function planePointAt(clientX, clientY, plane) {
