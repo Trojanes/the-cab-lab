@@ -796,7 +796,7 @@ const generalTallCabinet = {
   minSize: { W: 400, D: 350, H: 800 },
   defaults(W, D, H, materials) {
     const { stock } = materialsOf(materials);
-    return {
+    const base = {
       cabinetWidth: W,
       cabinetDepth: D,
       cabinetHeight: H,
@@ -804,12 +804,28 @@ const generalTallCabinet = {
       frontPanelThickness: thickness(stock, "door"),
       topSystem: { style: "style_1", frontRailHeight: 40 },
       bottomSystem: { style: "style_1", frontRailHeight: 53 },
-      zones: [
+    };
+    // The stack must sum to exactly H: boards anchored to a zone top (VD, fronts)
+    // pierce the top system when zones overflow, and float when they underflow.
+    // Try 3 / 2 / 1 zones; keep the first candidate whose slack zone still gets
+    // its 300 mm minimum without fitTallCabinetHeight pushing the height back up.
+    const zoneSets = [
+      [
         { id: "zone-1", type: "side_door", height: Math.max(200, Math.round(H * 0.3)) },
         { id: "zone-2", type: "drawer", height: 300 },
-        { id: "zone-3", type: "double_door", height: Math.max(300, Math.round(H * 0.47)), verticalDivider: true },
+        { id: "zone-3", type: "double_door", height: 300, verticalDivider: true },
       ],
-    };
+      [
+        { id: "zone-1", type: "side_door", height: Math.max(200, Math.round(H * 0.35)) },
+        { id: "zone-2", type: "double_door", height: 300, verticalDivider: true },
+      ],
+      [{ id: "zone-1", type: "double_door", height: 300, verticalDivider: true }],
+    ];
+    for (const zones of zoneSets) {
+      const fitted = fitTallCabinetHeight({ ...base, zones }, H);
+      if (fitted.cabinetHeight <= H + 0.05) return { ...fitted, cabinetHeight: H };
+    }
+    return fitTallCabinetHeight({ ...base, zones: zoneSets[2] }, H);
   },
   generate(params) {
     return generateGeneralTall(params);
@@ -822,6 +838,14 @@ const generalTallCabinet = {
 
   envelope(params) {
     return { W: params.cabinetWidth, D: params.cabinetDepth, H: params.cabinetHeight };
+  },
+  /**
+   * Repair stored params on load: the zone stack must sum to cabinetHeight,
+   * else zone-anchored boards (VD, fronts) pierce or float off the top system.
+   * fitTallCabinetHeight is idempotent on already-fitted params.
+   */
+  normalizeParams(params) {
+    return params?.zones?.length ? fitTallCabinetHeight(params, params.cabinetHeight ?? 2000) : params;
   },
   setEnvelope(params, { W, D, H }) {
     const next = { ...params };

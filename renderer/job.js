@@ -42,6 +42,11 @@ function migrate(obj) {
   obj.walls = (Array.isArray(obj.walls) ? obj.walls : []).map(normalizeWall).filter(Boolean);
   obj.finish = normalizeFinish(obj.finish);
   obj.stock = normalizeStock(obj.stock);
+  // Module-level params repair (e.g. tall zones re-fitted to cabinetHeight).
+  obj.cabinets = (Array.isArray(obj.cabinets) ? obj.cabinets : []).map((cab) => {
+    const normalize = getModule(cab.moduleId)?.normalizeParams;
+    return normalize ? { ...cab, params: normalize(cab.params || {}) } : cab;
+  });
   return obj;
 }
 

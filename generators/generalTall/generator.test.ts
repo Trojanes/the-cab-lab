@@ -79,14 +79,14 @@ const UI: GTParams = {
   assert.deepEqual(place(r, "B1"), { x0: 0, x1: 600, y0: 39, y1: 55, z0: 0, z1: 53 });
   assert.deepEqual(place(r, "B3"), { x0: 0, x1: 600, y0: 0, y1: 150, z0: 53, z1: 69 });
 
-  // H 支撑：mid 与 full_zi[984,999] 冲突移动（§8.8 推导）；uiDefault midDepth=568 → y[150,418]
+  // H 支撑：mid 锚定 VD 区下沿隔板上沿 [998,1098]；uiDefault midDepth=568 → y[150,418]
   assert.deepEqual(place(r, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
-  // H mid 移动：H13/H24 → [883,983]（below）；H34 → [998,1098]（above）
-  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 883, z1: 983 });
-  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 883, z1: 983 });
+  // H mid 锚定 VD 区下沿隔板上沿：三件共面 [998,1098]（boundary-zone-3 z1=999 −1）
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
+  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 998, z1: 1098 });
   assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
 
   // VD（§8.7）：core 心 300（mw=600）→ x[292.5,307.5]；底舌 991.5
@@ -461,8 +461,8 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 2100, z1: 2200 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
-  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 883, z1: 983 });
-  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 883, z1: 983 });
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
+  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 998, z1: 1098 });
   assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
 
   const shorter = fitTallCabinetHeight(UI, 1800);
@@ -470,7 +470,7 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   const rs = generateGeneralTall(shorter);
   assert.deepEqual(place(rs, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1744 });
   assert.deepEqual(place(rs, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1700, z1: 1800 });
-  assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 883, z1: 983 });
+  assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
   assert.deepEqual(place(rs, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
 
   const crushed = fitTallCabinetHeight(UI, 1000);

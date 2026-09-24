@@ -337,6 +337,8 @@ avoidance_horizontal [16,584, 384,584, 385,400]（XY/Z）；Avoidance_Vertical [
 
 ### 8.8 H mid 与 Zi 冲突移动（baseParams：side 930 + drawer 500 + open 600）
 
+**VD 区锚定（优先于本节冲突移动）**：存在 double_door+verticalDivider 区且其下沿为 full_zi/shortened_zi 时，三件中撑不取柜高正中，而是锚在该隔板上沿共面成环——z = [zi.z1−1, zi.z1+99]（uiDefault：boundary-zone-3 z1=999 → [998,1098]，双门区内）。柜高差额全进该区时隔板不动，中撑随隔板不动。无此隔板才走下面的居中+冲突移动。
+
 full_zi z[1000,1015] 与 H mid [1000,1100] 冲突（overlap [1000,1014]）：H13_mid/H24_mid 移至 **[899,999]**（below，newZ0=899=zi.z0−101）；H34_mid 移至 **[1014,1114]**（above）；warnings "Stage 2 movement evaluated"。shortened_zi 同规则。half_zi 仅检测不移动（"half Zi movement rule deferred"，板保持 [1000,1100]）。越界跳过：below newZ0=−1 → 不动；above newZ1=301>CH300 → 不动（H34_mid 保持 [114,214]）。
 
 ### 8.9 冰箱（冰箱参数集）

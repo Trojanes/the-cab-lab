@@ -648,20 +648,18 @@ export function generateGeneralTall(input: GTParams): GTResult {
     { name: "H24_mid", z0: r2(CH / 2 - Hspan / 2), z1: r2(CH / 2 + Hspan / 2) },
     { name: "H34_mid", z0: r2(CH / 2 - Hspan / 2), z1: r2(CH / 2 + Hspan / 2) },
   ];
-  // 双门竖分隔的下沿隔板是中撑的基准：H13/H24 贴隔板下，H34 贴隔板上。柜高只加在这一层时隔板不动，中撑留在隔板上。
+  // 双门竖分隔的下沿隔板是中撑的基准：三件中撑在隔板上沿共面成环（双门区内），
+  // 随隔板定而不随柜高动；侧撑落进下方区（抽屉）是错的。
   const vdZone = [...zoneItems].reverse().find((zi) => zi.zone.type === "double_door" && zi.zone.verticalDivider === true);
   const vdShelf = vdZone
     ? boundaries.find((b) => b.id === `boundary-${vdZone.zone.id}` && (b.boundaryType === "full_zi" || b.boundaryType === "shortened_zi"))
     : undefined;
   if (vdShelf) {
-    const below1 = r2(vdShelf.z0 - 1);
     const above0 = r2(vdShelf.z1 - 1);
     for (const h of hMid) {
-      if (h.name === "H34_mid") { h.z0 = above0; h.z1 = r2(above0 + Hspan); }
-      else { h.z1 = below1; h.z0 = r2(below1 - Hspan); }
+      h.z0 = above0; h.z1 = r2(above0 + Hspan);
     }
   }
-  // 没有这块隔板时，仍按柜高正中，再对压住的 full_zi 让开（§8.8）
   const hZiConflicts: string[] = [];
   for (const zi of boundaries) {
     if (zi.boundaryType !== "full_zi" && zi.boundaryType !== "shortened_zi") {

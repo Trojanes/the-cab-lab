@@ -1565,16 +1565,10 @@ function generateGeneralTall(input) {
   const vdZone = [...zoneItems].reverse().find((zi) => zi.zone.type === "double_door" && zi.zone.verticalDivider === true);
   const vdShelf = vdZone ? boundaries.find((b) => b.id === `boundary-${vdZone.zone.id}` && (b.boundaryType === "full_zi" || b.boundaryType === "shortened_zi")) : void 0;
   if (vdShelf) {
-    const below1 = r2(vdShelf.z0 - 1);
     const above0 = r2(vdShelf.z1 - 1);
     for (const h of hMid) {
-      if (h.name === "H34_mid") {
-        h.z0 = above0;
-        h.z1 = r2(above0 + Hspan);
-      } else {
-        h.z1 = below1;
-        h.z0 = r2(below1 - Hspan);
-      }
+      h.z0 = above0;
+      h.z1 = r2(above0 + Hspan);
     }
   }
   const hZiConflicts = [];
