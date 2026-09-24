@@ -86,6 +86,9 @@ export interface KitchenParams {
   bottomClearanceStyle?: string;
   frontClearance?: number;
   lockEnabled?: boolean;
+  /** Door colour name on the fronts' room face. Default Gloss White. */
+  doorColor?: string;
+  doorColorName?: string;
   columns: KitchenColumn[];
   wheelAvoidances?: WheelAvoidance[];
   vPanelMachiningPreferences?: MachiningPreference[];

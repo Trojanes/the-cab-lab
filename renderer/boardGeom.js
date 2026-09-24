@@ -287,8 +287,13 @@ export function boardGeometry(b) {
       slab.z1,
       (slab.holes || []).map((hole) => shiftXY(hole, dx, dy)),
     ));
-    const geo = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
-    return { geo, cut: true };
+    // Weld the hole's triangulation so a half-depth step does not leave a
+    // crease across the face. The hole itself stays: only coincident vertices merge.
+    const merged = geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+    if (!merged) return { geo: null, cut: true };
+    const welded = mergeVertices(merged, 1e-4);
+    welded.computeVertexNormals();
+    return { geo: welded, cut: true };
   }
   const pocket = pocketGeometry(b);
   if (pocket) return { geo: pocket, cut: true };
@@ -355,6 +360,26 @@ export function boxMesh(x0, x1, y0, y1, z0, z1, mat) {
   return mesh;
 }
 
+/** Edge lines of the board outline only. A groove is a hole in the solid; edging that mesh also draws the triangulator's bridge from the hole out to the rim. */
+function outlineSolid(b) {
+  if (b.profilePlane === "XY" && b.thicknessAxis === "Z" && b.slabs && b.slabs.length) {
+    const { dx, dy } = xyShift(b);
+    const geos = b.slabs.map((slab) => prismXY(shiftXY(slab.outline, dx, dy), slab.z0, slab.z1));
+    return geos.length === 1 ? geos[0] : mergeGeometries(geos, false);
+  }
+  const outline = boardOutline(b);
+  if (!outline) return null;
+  if (b.profilePlane === "YZ") return prismYZ(outline, b.x0, b.x1);
+  if (b.profilePlane === "XY") return prismXY(outline, b.z0, b.z1);
+  return prismXZ(outline, b.y0, b.y1);
+}
+
+export function boardEdges(b, mat) {
+  const solid = outlineSolid(b);
+  if (!solid) return boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
+  return new THREE.LineSegments(new THREE.EdgesGeometry(solid), mat);
+}
+
 export function boxEdges(x0, x1, y0, y1, z0, z1, mat) {
   const geo = new THREE.EdgesGeometry(new THREE.BoxGeometry(x1 - x0, y1 - y0, z1 - z0));
   const lines = new THREE.LineSegments(geo, mat);
@@ -366,6 +391,6 @@ export function boxEdges(x0, x1, y0, y1, z0, z1, mat) {
 export function boardMesh(b, mat, edgeMat) {
   const { geo, cut } = boardGeometry(b);
   const mesh = cut ? new THREE.Mesh(geo, mat) : boxMesh(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
-  const edges = cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), edgeMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, edgeMat);
+  const edges = boardEdges(b, edgeMat);
   return { mesh, edges, cut };
 }

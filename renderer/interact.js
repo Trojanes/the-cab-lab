@@ -17,7 +17,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine, floorPointAt, frame } from "./space.js";
 import * as job from "./job.js";
-import { getModule, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL } from "./modules.js";
+import { getModule, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, DIM_OF_AXIS } from "./modules.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { getPreset } from "./presets.js";
 import {
@@ -25,6 +25,7 @@ import {
   showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showLoungeGhost, hideLoungeGhost, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
   showFaceHint, hideFaceHint, flashFaceHint,
   setMoveOpen, placeMoveTriad, hideMoveTriad, layoutMoveTriad, setMoveHover,
+  setResizeState, pickEnvelopeFace, envelopeFaceWorld, setEnvelopeDrag,
 } from "./cabinets3d.js";
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, describePoint, faceGuide,
@@ -53,6 +54,7 @@ let retype = null; // keyboard re-size of the last created cabinet
 let nose = null; // nose placement (Bedroom): { moduleId, step: ready | drag, editId, D, t0, locked, snapLabel, clamped }
 let bed = null; // bed box placement: { moduleId, step: width | depth, editId, W, D, H, locked: {W, D}, snapLabel, clamped }
 let lounge = null; // lounge placement: { style: I|L|U, step, a, b, depth, roomSign, side, wing, height, locked }
+let lshape = null; // lounge L in 3D: { step: box | edge | pull, box, front, frame, lit, end, len, locked, snap, clamped, lastClient }
 let cplane = null; // construction plane: { step: pick | offset, face, offset, locked, snapLabel, clamped }
 let lastSize = null; // { moduleId, W, D, H } of the last created box
 let lastCreated = null; // cabinet id that digits re-type while still armed
@@ -75,6 +77,7 @@ function emitMode() {
 }
 export function getMode() {
   if (drag) return "handle";
+  if (resize) return resize.drag ? "resize.drag" : resize.face ? "resize.face" : "resize.pick";
   if (move) {
     if (move.kind === "face") return align?.source ? "move.face.target" : "move.face";
     if (move.kind === "point") return pointAlign?.source ? "move.point.target" : "move.point";
@@ -85,6 +88,7 @@ export function getMode() {
   if (bed) return `bedbox.${bed.step}`;
   if (lounge) return `lounge.${lounge.step}`;
   if (cplane) return cplane.step === "pick" ? "plane.pick" : "plane.offset";
+  if (lshape && lshape.step !== "box") return `lounge.${lshape.step}`;
   if (rb) return rb.step;
   if (placing) return "armed";
   return "idle";
@@ -93,13 +97,14 @@ export function getPlacingModule() {
   return placing || (nose ? nose.moduleId : null) || (bed ? bed.moduleId : null) || (lounge ? lounge.moduleId : null);
 }
 export function getLoungeStyle() {
-  return lounge ? lounge.style : null;
+  return lounge ? lounge.style : lshape ? "L" : null;
 }
 
 // --- arm / disarm ----------------------------------------------------------------
 
 export function armPlacement(moduleId) {
   if (!job.hasSpace()) { log("place.arm.blocked", { moduleId, reason: "no space" }); return; }
+  endResize("tool off");
   if (getModule(moduleId).placement === "nose") { startNose(moduleId); return; }
   if (getModule(moduleId).placement === "bedBox" || getModule(moduleId).placement === "bedSide") { startBedBox(moduleId); return; }
   cancelMove();
@@ -113,6 +118,7 @@ export function armPlacement(moduleId) {
   endRetype(false);
   placing = moduleId;
   rb = null;
+  lshape = null;
   lastCreated = null;
   log("place.arm", { moduleId });
   job.select(null);
@@ -124,11 +130,12 @@ export function disarm() {
   if (bed) { cancelBedBox(); return; }
   if (lounge) { cancelLounge(); return; }
   if (cplane) { cancelPlane(); return; }
-  if (placing) log("place.disarm", { moduleId: placing, step: rb && rb.step });
+  if (placing) log("place.disarm", { moduleId: placing, step: rb ? rb.step : lshape ? `lounge.${lshape.step}` : null });
   clearTrace();
   endRetype(false);
   placing = null;
   rb = null;
+  lshape = null;
   lastCreated = null;
   clearPreview();
   canvas.style.cursor = "";
@@ -191,9 +198,9 @@ function floorFace() {
  */
 function cursorPoint(clientX, clientY, { exclude = null } = {}) {
   if (ceilingMode()) {
-    // Overhead: the anchor is a feature point on a ceiling ∩ wall line, nothing else.
+    // Overhead: a feature point where the ceiling meets a wall, a cabinet's outer box, or a partition.
     const snap = nearestSnap(clientX, clientY, { exclude, filter: onCeilingLine });
-    if (!snap) return { none: true, tip: ["Overhead starts on a ceiling edge", "Click a corner where a wall meets the ceiling (or an overhead's top corner there)"] };
+    if (!snap) return { none: true, tip: ["Overhead starts on a ceiling edge", "Click a corner where the ceiling meets a wall, a cabinet, or a partition"] };
     const all = allowedCeilingFaces(snap, facesOnPoint(snap));
     const visible = facesAtPoint(snap, clientX, clientY).filter((f) => all.includes(f));
     const face = preferDrawable(visible) || ceilingFace() || preferDrawable(all);
@@ -346,6 +353,8 @@ function currentTerm() {
 }
 /** Minimum box size along each world axis (keys W/D/H = x/y/z; the depth includes the fronts). */
 function minSizes(mod, term = currentTerm()) {
+  // Lounge L main box: either horizontal edge may run along the wall.
+  if (lshape) return { W: L_MIN_BOX, D: L_MIN_BOX, H: mod.minSize.H };
   const out = {};
   for (const a of AXES) out[DIM_OF[a]] = mod.minSize[term[a]] + (term[a] === "D" ? FRONT_THICKNESS_DEFAULT : 0);
   return out;
@@ -361,11 +370,12 @@ function presetSize(moduleId, axis, term = currentTerm()) {
 
 // --- ceiling-hung placement (Overhead) ------------------------------------------------
 //
-// The anchor is a feature point on a ceiling ∩ wall line; that wall is the
-// cabinet's back, W runs along it, the doors face the room and the top stays
-// on the ceiling (the box can only grow down). Three faces may hold the 2D
-// rectangle: the ceiling (W×D, pull H down), the back wall (W×H, pull D into
-// the room) or a face perpendicular to the wall — the adjacent wall at a corner
+// The anchor is a feature point where the flat ceiling meets a solid: a space
+// wall, a cabinet's outer box, or a partition (extended up to the roof). That
+// face is the cabinet's back, W runs along it, the doors face the room and the
+// top stays on the ceiling (the box can only grow down). Three faces may hold
+// the 2D rectangle: the ceiling (W×D, pull H down), the back face (W×H, pull D
+// into the room) or a face perpendicular to it — the adjacent wall at a corner
 // or a neighbour's side (D×H, pull W along the wall).
 
 function ceilingMode() {
@@ -374,7 +384,7 @@ function ceilingMode() {
 function ceilingFace() {
   return facePlanes().find((f) => f.source === "space" && f.axis === "z" && f.dir < 0) || null;
 }
-/** Walls of the space the point lies on: { axis, value, dir (into the room), label }. */
+/** Solids the point lies on: space walls, plus a cabinet's outer box or a partition. { axis, value, dir (into the room), label }. */
 function wallsAt(p) {
   const sp = job.getSpace();
   if (!sp) return [];
@@ -385,9 +395,14 @@ function wallsAt(p) {
   if (walls.has(1) && Math.abs(p.x - b.maxX) < 0.5) out.push({ axis: "x", value: b.maxX, dir: -1, label: "Right wall" });
   if (walls.has(0) && Math.abs(p.y - b.minY) < 0.5) out.push({ axis: "y", value: b.minY, dir: 1, label: "Front wall" });
   if (walls.has(2) && Math.abs(p.y - b.maxY) < 0.5) out.push({ axis: "y", value: b.maxY, dir: -1, label: "Back wall" });
+  for (const f of facesOnPoint(p)) {
+    if (f.axis === "z" || f.source === "space") continue;
+    if (out.some((w) => w.axis === f.axis && Math.abs(w.value - f.value) < 0.5 && w.dir === f.dir)) continue;
+    out.push({ axis: f.axis, value: f.value, dir: f.dir, label: f.label });
+  }
   return out;
 }
-/** On the flat ceiling and on at least one wall. */
+/** On the flat ceiling and on at least one wall, cabinet box, or partition. */
 function onCeilingLine(p) {
   const sp = job.getSpace();
   if (!sp || Math.abs(p.z - sp.height) > 0.5) return false;
@@ -855,6 +870,7 @@ function finishPlacement(how) {
     how += ".preset";
   }
   const b = placementBox();
+  if (lshape) { beginLoungeEdge(b, how); return; }
   // Minimums in module terms: W/D depend on which side gets the doors.
   const mod = getModule(placing);
   const side = ceilingMode() ? ceilingSide(b, rb.walls, rb.plane) : defaultSide(b);
@@ -940,7 +956,7 @@ export function startNose(moduleId) {
   cancelLounge();
   cancelPlane();
   endRetype(false);
-  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
   // One per vehicle: picking the module again edits the existing slab's depth.
   const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
   const D = existing
@@ -1087,6 +1103,7 @@ function planeBox() {
 export function startPlane() {
   if (cplane) { cancelPlane(); return; }
   if (!job.hasSpace()) { log("plane.blocked", { reason: "no space" }); return; }
+  endResize("tool off");
   cancelMove();
   cancelAlign();
   cancelPointAlign();
@@ -1095,7 +1112,7 @@ export function startPlane() {
   cancelBedBox();
   cancelLounge();
   endRetype(false);
-  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
   cplane = { step: "pick", face: null, offset: 0, locked: null, snapLabel: null, clamped: null };
   canvas.style.cursor = "crosshair";
   log("plane.arm");
@@ -1238,7 +1255,7 @@ export function startBedBox(moduleId) {
   cancelLounge();
   cancelPlane();
   endRetype(false);
-  if (placing) { placing = null; rb = null; lastCreated = null; clearPreview(); }
+  if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
   const existing = (mod.single || pair) ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
   const env = existing ? mod.envelope(existing.params) : null;
   const table = pair ? mod.sizeFor(f.bodyParams) : null;
@@ -1450,6 +1467,7 @@ function freshLounge(style) {
 
 export function startLounge(style) {
   if (!job.hasSpace()) { log("lounge.arm.blocked", { style, reason: "no space" }); return; }
+  if (style === "L") { startLoungeL(); return; }
   cancelMove();
   cancelOrient();
   cancelNose();
@@ -1457,7 +1475,7 @@ export function startLounge(style) {
   if (lounge) cancelLounge();
   cancelPlane();
   endRetype(false);
-  if (placing) { placing = null; rb = null; lastCreated = null; }
+  if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; }
   lounge = freshLounge(style);
   clearPreview();
   job.select(null);
@@ -1850,6 +1868,386 @@ function loungeBack() {
   updateLounge(lounge.lastClient);
 }
 
+// --- lounge L (3D): main box, then one wing ---------------------------------------
+//
+//   box    the usual box placement draws the main box: corner → rectangle on a face → pull
+//   edge   one of the two vertical edges of its room face is lit (the nearer one) · click
+//   pull   the wing comes out of that face into the room; along the wall it is as wide as
+//          the main box is deep, the pull snaps to that depth · click / Enter creates
+// The room face is one of the two long sides: the one not against a wall or a solid,
+// else the one toward the middle of the room. Only the outer L envelope is decided
+// here; the generator lays out the boards.
+
+const L_MIN_BOX = 300;
+
+function startLoungeL() {
+  armPlacement("loungeGenerator");
+  if (placing !== "loungeGenerator") return;
+  lshape = { step: "box" };
+  log("lounge.arm", { style: "L" });
+  emitMode();
+}
+
+function loungeFront(b) {
+  const axis = b.W >= b.D ? "y" : "x";
+  const free = SIDES.filter((s) => s.axis === axis && !sideBlocked(b, s));
+  if (free.length === 1) return free[0];
+  const sp = job.getSpace();
+  if (!sp) return { axis, dir: -1 };
+  const lo = axis === "x" ? sp.bounds.minX : sp.bounds.minY;
+  const hi = axis === "x" ? sp.bounds.maxX : sp.bounds.maxY;
+  const c = axis === "x" ? b.x0 + b.W / 2 : b.y0 + b.D / 2;
+  return { axis, dir: c > (lo + hi) / 2 ? -1 : 1 };
+}
+
+/** The main box in wall terms: `u` along the wall, `n` through the room face at `face`. */
+function loungeFrame(b, front) {
+  const n = front.axis;
+  const u = n === "x" ? "y" : "x";
+  const lo = { x: b.x0, y: b.y0 };
+  const size = { x: b.W, y: b.D };
+  return {
+    n, u,
+    face: front.dir > 0 ? lo[n] + size[n] : lo[n],
+    u0: lo[u], u1: lo[u] + size[u],
+    length: size[u], depth: size[n],
+    z0: b.z0, H: b.H,
+  };
+}
+
+function loungeEdgeBase(fr, end) {
+  return { [fr.u]: end === "hi" ? fr.u1 : fr.u0, [fr.n]: fr.face, z: fr.z0 };
+}
+
+/** LEFT / RIGHT as seen from the room (the generator's lPosition). */
+function loungeEndSide(front, end) {
+  const rotZ = rotZFacing(front.axis, front.dir);
+  const rad = (rotZ * Math.PI) / 180;
+  const localX = Math.round(front.axis === "y" ? Math.cos(rad) : Math.sin(rad));
+  return (end === "hi") === (localX > 0) ? "RIGHT" : "LEFT";
+}
+
+function loungeWingBox(fr, front, end, len, wide) {
+  const w0 = end === "hi" ? fr.u1 - wide : fr.u0;
+  const n0 = front.dir > 0 ? fr.face : fr.face - len;
+  const r = { [fr.u]: [w0, w0 + wide], [fr.n]: [n0, n0 + len] };
+  return { x0: r.x[0], x1: r.x[1], y0: r.y[0], y1: r.y[1], z0: fr.z0, z1: fr.z0 + fr.H };
+}
+
+/** Inner edge of the wing: a vertical line inset `wide` from the chosen end, along the wall. */
+function loungeSideLine(fr, end, wide) {
+  const p = { [fr.u]: end === "hi" ? fr.u1 - wide : fr.u0 + wide, [fr.n]: fr.face, z: fr.z0 };
+  return { a: p, b: { ...p, z: fr.z0 + fr.H } };
+}
+
+function loungeMainBox(b) {
+  return { x0: b.x0, x1: b.x0 + b.W, y0: b.y0, y1: b.y0 + b.D, z0: b.z0, z1: b.z0 + b.H };
+}
+
+function screenSegDist(clientX, clientY, a, b) {
+  const pa = toClient(a.x, a.y, a.z);
+  const pb = toClient(b.x, b.y, b.z);
+  if (pa.behind || pb.behind) return Infinity;
+  const dx = pb.x - pa.x;
+  const dy = pb.y - pa.y;
+  const len2 = dx * dx + dy * dy;
+  const t = len2 ? Math.max(0, Math.min(1, ((clientX - pa.x) * dx + (clientY - pa.y) * dy) / len2)) : 0;
+  return Math.hypot(clientX - (pa.x + t * dx), clientY - (pa.y + t * dy));
+}
+
+function beginLoungeEdge(b, how) {
+  const front = loungeFront(b);
+  const fr = loungeFrame(b, front);
+  if (!(fr.length > fr.depth + LOUNGE_MIN)) {
+    log("place.blocked", { moduleId: placing, reason: "lounge main box not longer than deep", box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H } });
+    const at = rb && rb.lastClient;
+    showTip(at ? at.x : 0, at ? at.y : 0, [`Main box ${Math.round(fr.length)} long, ${Math.round(fr.depth)} deep`, "It must be longer than deep: the wing takes its depth at one end"], "warn");
+    return;
+  }
+  flushTrace("place.trace");
+  log("lounge.box", {
+    style: "L", how,
+    anchor: rb.anchor, corner: rb.corner, locked: rb.locked,
+    plane: { axis: rb.plane.axis, value: rb.plane.value, dir: rb.plane.dir, label: rb.plane.label },
+    extrude: rb.ext ? { len: rb.ext.len, label: rb.ext.label } : null,
+    clamped: b.clamped, box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H },
+    front: { axis: front.axis, dir: front.dir }, length: fr.length, depth: fr.depth,
+  });
+  const at = rb.lastClient;
+  rb = null;
+  clearPreview();
+  lshape = {
+    step: "edge", box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H }, front, frame: fr,
+    lit: "hi", end: null, wide: 0, len: 0, locked: null, snap: false, clamped: null,
+    lastClient: at ? { clientX: at.x, clientY: at.y } : null,
+  };
+  emitMode();
+  updateLoungeL(null);
+}
+
+/** Wing width along the wall, inward from the chosen end. Snaps when it passes the main depth; any other value stays. */
+function loungeWide(e) {
+  const fr = lshape.frame;
+  const inward = lshape.end === "hi" ? -1 : 1;
+  const origin = lshape.end === "hi" ? fr.u1 : fr.u0;
+  const base = loungeEdgeBase(fr, lshape.end);
+  let wide = lshape.locked != null ? lshape.locked : lshape.wide;
+  let snap = false;
+  if (e) {
+    const ray = rayFromClient(e.clientX, e.clientY);
+    if (Math.abs(ray.direction[fr.u]) <= 0.985) {
+      const dirV = axisVector(fr.u, inward);
+      const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(dirV[0], dirV[1], dirV[2]));
+      const raw = Math.max(0, Math.min(fr.length - LOUNGE_MIN, job.snap(t)));
+      if (lshape.locked == null || Math.abs(raw - lshape.locked) > 40) {
+        lshape.locked = null;
+        wide = raw;
+      }
+      if (Math.abs(wide - fr.depth) <= 40 && fr.depth <= fr.length - LOUNGE_MIN) { wide = fr.depth; snap = true; }
+    }
+  }
+  lshape.wide = wide;
+  lshape.snap = snap;
+  lshape.clamped = null;
+  return { origin, inward };
+}
+
+/** The wing's pull out of the room face: cursor → length, snapped to the main depth, stopped by the space and solids. */
+function loungePull(e) {
+  const fr = lshape.frame;
+  const { front } = lshape;
+  const base = loungeEdgeBase(fr, lshape.end);
+  let len = lshape.locked != null ? lshape.locked : lshape.len;
+  let snap = false;
+  if (e) {
+    const ray = rayFromClient(e.clientX, e.clientY);
+    if (Math.abs(ray.direction[fr.n]) <= 0.985) {
+      const dirV = axisVector(fr.n, front.dir);
+      const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(dirV[0], dirV[1], dirV[2]));
+      const raw = Math.max(0, job.snap(t));
+      // A typed length holds until the cursor actually leaves it.
+      if (lshape.locked == null || Math.abs(raw - lshape.locked) > 40) {
+        lshape.locked = null;
+        len = raw;
+      }
+      if (Math.abs(len - fr.depth) <= 40) { len = fr.depth; snap = true; }
+    }
+  }
+  let clamped = null;
+  const room = roomFrom(base)[fr.n];
+  const maxLen = front.dir > 0 ? room.pos : room.neg;
+  if (len > maxLen) { len = maxLen; clamped = WALL_NAME[fr.n][front.dir > 0 ? 1 : 0]; snap = false; }
+  const wide = lshape.wide;
+  const w0 = lshape.end === "hi" ? fr.u1 - wide : fr.u0;
+  const anchor = { [fr.u]: w0, [fr.n]: fr.face, z: fr.z0 };
+  const blocked = stopAtCabinets(anchor, { [fr.u]: wide, [fr.n]: len, z: fr.H }, { [fr.u]: 1, [fr.n]: front.dir, z: 1 }, fr.n, [fr.n]);
+  if (blocked[fr.n]) { len = blocked[fr.n].size; clamped = blocked[fr.n].id; snap = false; }
+  lshape.len = len;
+  lshape.snap = snap;
+  lshape.clamped = clamped;
+  return { maxLen };
+}
+
+function loungeWingDimBox() {
+  const w = loungeWingBox(lshape.frame, lshape.front, lshape.end, Math.max(lshape.len, 1), Math.max(lshape.wide, 1));
+  return { x0: w.x0, y0: w.y0, z0: w.z0, W: w.x1 - w.x0, D: w.y1 - w.y0, H: w.z1 - w.z0 };
+}
+
+function updateLoungeL(e) {
+  if (!lshape || lshape.step === "box") return;
+  if (e) lshape.lastClient = e;
+  const fr = lshape.frame;
+  const { front } = lshape;
+  const main = loungeMainBox(lshape.box);
+  const dims = `${Math.round(fr.length)} × ${Math.round(fr.depth)} × ${Math.round(fr.H)}`;
+  if (lshape.step === "edge") {
+    const ev = e || lshape.lastClient;
+    if (ev) {
+      const dist = (end) => {
+        const p = loungeEdgeBase(fr, end);
+        return screenSegDist(ev.clientX, ev.clientY, p, { ...p, z: fr.z0 + fr.H });
+      };
+      lshape.lit = dist("lo") <= dist("hi") ? "lo" : "hi";
+    }
+    const edgeOf = (end) => {
+      const p = loungeEdgeBase(fr, end);
+      return { a: p, b: { ...p, z: fr.z0 + fr.H } };
+    };
+    const other = lshape.lit === "hi" ? "lo" : "hi";
+    showLoungeGhost([main], [edgeOf(other), edgeOf(lshape.lit)]);
+    hideSnapMarker();
+    if (ev) {
+      const side = loungeEndSide(front, lshape.lit) === "RIGHT" ? "Right" : "Left";
+      showTip(ev.clientX, ev.clientY, [`Lounge L · main box ${dims}`, `${side} end — click: the wing turns here`, "Esc: redraw the main box"]);
+    }
+    return;
+  }
+  if (lshape.step === "wide") {
+    loungeWide(e);
+    const clicked = loungeEdgeBase(fr, lshape.end);
+    const side = loungeSideLine(fr, lshape.end, lshape.wide);
+    showLoungeGhost([main], [
+      { a: clicked, b: { ...clicked, z: fr.z0 + fr.H } },
+      side,
+    ]);
+    if (lshape.snap) showSnapMarker(side.a.x, side.a.y, side.a.z + fr.H / 2, { feature: true });
+    else hideSnapMarker();
+    if (document.activeElement !== dimInputs.D) dimInputs.D.value = String(Math.round(lshape.wide));
+    dimLabels.D.classList.toggle("locked", lshape.locked != null);
+    const mark = loungeWingBox(fr, front, lshape.end, 1, Math.max(lshape.wide, 1));
+    positionDimInputs({ x0: mark.x0, y0: mark.y0, z0: mark.z0, W: mark.x1 - mark.x0, D: mark.y1 - mark.y0, H: mark.z1 - mark.z0 });
+    const ev = e || lshape.lastClient;
+    if (ev) {
+      showTip(ev.clientX, ev.clientY, [
+        `Wing width ${Math.round(lshape.wide)}`,
+        lshape.snap ? `snapped to main depth ${Math.round(fr.depth)} — drag past it for another width` : `drag the side line · snaps near ${Math.round(fr.depth)}`,
+        lshape.locked != null ? `L locked ${Math.round(lshape.locked)}` : "Tab types L",
+        "click or Enter confirms the width · Esc: back to the edge",
+      ], lshape.locked != null ? "lock" : "");
+    }
+    return;
+  }
+  loungePull(e);
+  const base = loungeEdgeBase(fr, lshape.end);
+  const edgeOf = (end) => {
+    const p = loungeEdgeBase(fr, end);
+    return { a: p, b: { ...p, z: fr.z0 + fr.H } };
+  };
+  const boxes = [main];
+  if (lshape.len >= 1) boxes.push(loungeWingBox(fr, front, lshape.end, lshape.len, lshape.wide));
+  const other = lshape.end === "hi" ? "lo" : "hi";
+  showLoungeGhost(boxes, [edgeOf(other), edgeOf(lshape.end)]);
+  if (lshape.snap) {
+    const dirV = axisVector(fr.n, front.dir);
+    showSnapMarker(base.x + dirV[0] * lshape.len, base.y + dirV[1] * lshape.len, base.z, { feature: true });
+  } else hideSnapMarker();
+  if (document.activeElement !== dimInputs.D) dimInputs.D.value = String(Math.round(lshape.len));
+  dimLabels.D.classList.toggle("locked", lshape.locked != null);
+  positionDimInputs(loungeWingDimBox());
+  const ev = e || lshape.lastClient;
+  if (ev) {
+    const lines = [
+      `Wing ${Math.round(lshape.len)} out · ${Math.round(lshape.wide)} wide`,
+      lshape.snap ? `= main depth ${Math.round(fr.depth)}` : null,
+      lshape.clamped ? `Stopped at ${lshape.clamped}` : null,
+      lshape.locked != null ? `L locked ${Math.round(lshape.locked)}` : null,
+      "click / Enter creates · Esc: back to the edge",
+    ];
+    showTip(ev.clientX, ev.clientY, lines, lshape.clamped ? "warn" : lshape.locked != null ? "lock" : "");
+  }
+}
+
+function loungeLClick(e) {
+  if (e) lshape.lastClient = e;
+  if (lshape.step === "edge") {
+    if (e) updateLoungeL(e);
+    lshape.end = lshape.lit;
+    lshape.step = "wide";
+    lshape.wide = 0;
+    lshape.len = 0;
+    lshape.locked = null;
+    log("lounge.edge", { style: "L", end: lshape.end, side: loungeEndSide(lshape.front, lshape.end), edge: loungeEdgeBase(lshape.frame, lshape.end) });
+    hideTip();
+    setDimNames(["W", "L", "H"]);
+    dimBox.classList.remove("hidden");
+    for (const k of DIM_ORDER) dimLabels[k].classList.toggle("hidden", k !== "D");
+    emitMode();
+    updateLoungeL(e);
+    return;
+  }
+  if (lshape.step === "wide") {
+    if (e) updateLoungeL(e);
+    if (!(lshape.wide >= LOUNGE_MIN)) {
+      const ev = lshape.lastClient;
+      if (ev) showTip(ev.clientX, ev.clientY, [`Wing width ${Math.round(lshape.wide)} — drag the side line, or Tab to type L`], "warn");
+      return;
+    }
+    lshape.step = "pull";
+    lshape.len = 0;
+    lshape.locked = null;
+    lshape.snap = false;
+    log("lounge.width", { style: "L", end: lshape.end, wide: lshape.wide, snap: Math.abs(lshape.wide - lshape.frame.depth) < 0.5 });
+    emitMode();
+    updateLoungeL(e);
+    return;
+  }
+  if (lshape.step === "pull") {
+    if (e) updateLoungeL(e);
+    finishLoungeL("click");
+  }
+}
+
+function finishLoungeL(how) {
+  if (!lshape || lshape.step !== "pull") return;
+  const fr = lshape.frame;
+  const { front, box } = lshape;
+  if (how === "enter" && lshape.locked == null && lshape.len < LOUNGE_MIN) {
+    // Enter before pulling: the wing comes out as far as the main box is deep.
+    lshape.locked = fr.depth;
+    loungePull(null);
+    lshape.locked = null;
+    how = "enter.default";
+  }
+  const len = lshape.len;
+  if (!(len >= LOUNGE_MIN)) {
+    const ev = lshape.lastClient;
+    log("lounge.blocked", { style: "L", reason: "wing shorter than minimum", len, min: LOUNGE_MIN, clamped: lshape.clamped });
+    if (ev) showTip(ev.clientX, ev.clientY, [`Wing ${Math.round(len)} — pull it at least ${LOUNGE_MIN} out`, lshape.clamped ? `Stopped at ${lshape.clamped}` : null], "warn");
+    return;
+  }
+  // The L's outer box: the main box grown out of its room face by the wing.
+  const env = { ...box };
+  if (front.axis === "x") { env.W = box.W + len; if (front.dir < 0) env.x0 = box.x0 - len; }
+  else { env.D = box.D + len; if (front.dir < 0) env.y0 = box.y0 - len; }
+  const fit = fitBoxFacing(env, front, 0);
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const lPosition = loungeEndSide(front, lshape.end);
+  const params = {
+    style: "L_SHAPE",
+    height: r1(fit.H),
+    mainWidth: r1(fit.W),
+    mainDepth: r1(fr.depth),
+    lWidth: r1(fit.D),
+    lDepth: r1(lshape.wide),
+    lPosition,
+  };
+  const pose = { ...fit.pose, x: r1(fit.pose.x), y: r1(fit.pose.y), z: r1(fit.pose.z) };
+  const cab = job.addCabinet("loungeGenerator", pose, { W: params.mainWidth, D: params.lWidth, H: params.height }, params);
+  log("lounge.finish", {
+    style: "L", id: cab.id, how,
+    box, front: { axis: front.axis, dir: front.dir }, end: lshape.end, lPosition,
+    wing: { len, snap: lshape.snap, locked: lshape.locked, clamped: lshape.clamped },
+    params, pose,
+  });
+  if (!poseFits(cab, cab.pose)) log("place.unfit", { id: cab.id, pose: cab.pose });
+  lshape = { step: "box" };
+  clearPreview();
+  canvas.style.cursor = "crosshair";
+  emitMode();
+}
+
+function loungeLBack() {
+  if (!lshape) return;
+  if (lshape.step === "pull") {
+    lshape.step = "wide";
+    lshape.len = 0;
+    lshape.locked = null;
+    clearPreview();
+  } else if (lshape.step === "wide") {
+    lshape.step = "edge";
+    lshape.end = null;
+    lshape.wide = 0;
+    lshape.locked = null;
+    clearPreview();
+  } else if (lshape.step === "edge") {
+    lshape = { step: "box" };
+    clearPreview();
+  }
+  log("lounge.back", { style: "L", step: lshape.step });
+  emitMode();
+  updateLoungeL(lshape.lastClient || null);
+}
+
 // --- move command -----------------------------------------------------------------
 
 const moveCard = document.getElementById("moveCard");
@@ -1978,6 +2376,7 @@ export function startMove(id = job.getSelectedId()) {
     if (move.id === id) { cancelMove(); return; }
     cancelMove();
   }
+  endResize("tool off");
   if (placing) disarm();
   cancelOrient();
   cancelNose();
@@ -2806,6 +3205,7 @@ function pickSideFace(clientX, clientY, onlyId = null) {
 
 /** Face command: click a side of a cabinet; its doors move to that side (pending) until confirmed. The box never moves. */
 export function startOrient(id = job.getSelectedId()) {
+  endResize("tool off");
   if (placing) disarm();
   cancelMove();
   cancelAlign();
@@ -2926,6 +3326,210 @@ export function cancelOrient() {
   emitMode();
 }
 
+// --- resize: pull one envelope face ----------------------------------------------------
+//
+// One command for every module: click a face of a cabinet's box, drag the arrow on it.
+// The opposite face stays; the module decides which faces it offers (`resizeFaces`) and
+// what its zones do (`resizeFace`). One drag = one undo step.
+
+let resize = null; // { face: { cabId, axis, dir } | null, drag: null | {...} }
+
+const SIDE_LABEL = { "x-": "left side", "x+": "right side", "y-": "front", "y+": "back", "z-": "bottom", "z+": "top" };
+const sideKey = (f) => `${f.axis}${f.dir > 0 ? "+" : "-"}`;
+const resizeFacesOf = (mod) => mod.resizeFaces || [];
+
+export function startResize() {
+  if (resize) { endResize("toggle"); return; }
+  if (!job.getJob().cabinets.length) return;
+  if (placing) disarm();
+  cancelMove();
+  cancelAlign();
+  cancelPointAlign();
+  cancelOrient();
+  cancelNose();
+  cancelBedBox();
+  cancelLounge();
+  cancelPlane();
+  endRetype(false);
+  resize = { face: null, drag: null };
+  setResizeState(true, null);
+  canvas.style.cursor = "crosshair";
+  log("resize.start", {});
+  emitMode();
+}
+
+export function endResize(how = "esc") {
+  if (!resize) return;
+  const r = resize;
+  resize = null;
+  setResizeState(false);
+  clearPreview();
+  canvas.style.cursor = "";
+  log("resize.exit", { how, face: r.face });
+  emitMode();
+}
+
+function resizeFaceLabel(f) {
+  return SIDE_LABEL[sideKey(f)];
+}
+
+function resizeHover(e) {
+  const hit = pick(e.clientX, e.clientY);
+  const ud = hit && hit.object.userData;
+  if (ud && ud.kind === "handle" && ud.handle.type === "resize") {
+    setHandleHover(hit.object, true);
+    hoverHandle = hit.object;
+    canvas.style.cursor = "grab";
+    const cab = job.getJob().cabinets.find((c) => c.id === ud.cabId);
+    const env = getModule(cab.moduleId).envelope(cab.params);
+    showTip(e.clientX, e.clientY, [`Drag: ${resizeFaceLabel(ud.handle)} · ${DIM_OF_AXIS[ud.handle.axis]} ${Math.round(env[DIM_OF_AXIS[ud.handle.axis]])}`, "The opposite face stays"]);
+    return;
+  }
+  if (hoverHandle) { setHandleHover(hoverHandle, false); hoverHandle = null; }
+  const f = pickEnvelopeFace(rayFromClient(e.clientX, e.clientY));
+  const chosen = resize.face && job.getJob().cabinets.find((c) => c.id === resize.face.cabId);
+  const chosenHint = chosen ? envelopeFaceWorld(chosen, resize.face.axis, resize.face.dir) : null;
+  if (!f) {
+    if (chosenHint) showFaceHint(chosenHint, { tone: "pending" }); else hideFaceHint();
+    canvas.style.cursor = "crosshair";
+    showTip(e.clientX, e.clientY, [resize.face ? "Drag the arrow · click another face · Esc ends" : "Click a face of a module"]);
+    return;
+  }
+  const cab = job.getJob().cabinets.find((c) => c.id === f.cabId);
+  const mod = getModule(cab.moduleId);
+  const ok = resizeFacesOf(mod).includes(sideKey(f));
+  const same = resize.face && resize.face.cabId === f.cabId && resize.face.axis === f.axis && resize.face.dir === f.dir;
+  showFaceHint(envelopeFaceWorld(cab, f.axis, f.dir), { tone: same ? "pending" : ok ? "" : "warn" });
+  canvas.style.cursor = ok ? "pointer" : "not-allowed";
+  const env = mod.envelope(cab.params);
+  showTip(e.clientX, e.clientY, ok
+    ? [`${mod.label} · ${resizeFaceLabel(f)} · ${DIM_OF_AXIS[f.axis]} ${Math.round(env[DIM_OF_AXIS[f.axis]])}`, "Click to put the arrow on it"]
+    : [`${mod.label} · ${resizeFaceLabel(f)} stays`, resizeFacesOf(mod).length ? `Pullable: ${resizeFacesOf(mod).map((k) => SIDE_LABEL[k]).join(", ")}` : "This module has no pullable face"], ok ? "" : "warn");
+}
+
+function resizeClick(e) {
+  const hit = pick(e.clientX, e.clientY);
+  const ud = hit && hit.object.userData;
+  if (ud && ud.kind === "handle" && ud.handle.type === "resize") { beginResizeDrag(e, hit, ud); return; }
+  const f = pickEnvelopeFace(rayFromClient(e.clientX, e.clientY));
+  if (!f) return;
+  const cab = job.getJob().cabinets.find((c) => c.id === f.cabId);
+  const mod = getModule(cab.moduleId);
+  const face = { cabId: f.cabId, axis: f.axis, dir: f.dir };
+  if (!resizeFacesOf(mod).includes(sideKey(f))) {
+    log("resize.blocked", { id: cab.id, moduleId: cab.moduleId, face: { axis: f.axis, dir: f.dir, label: resizeFaceLabel(f) }, reason: "face is fixed", pullable: resizeFacesOf(mod) });
+    return;
+  }
+  resize.face = face;
+  job.select(cab.id);
+  setResizeState(true, face);
+  log("resize.face", { id: cab.id, moduleId: cab.moduleId, face: { axis: f.axis, dir: f.dir, label: resizeFaceLabel(f) }, envelope: mod.envelope(cab.params) });
+  resizeHover(e);
+  emitMode();
+}
+
+function beginResizeDrag(e, hit, ud) {
+  const cab = job.getJob().cabinets.find((c) => c.id === ud.cabId);
+  if (!cab) return;
+  const group = groupFor(cab.id);
+  const face = { axis: ud.handle.axis, dir: ud.handle.dir };
+  const dir = localAxisWorld(group, face.axis).multiplyScalar(face.dir);
+  const origin = hit.object.getWorldPosition(new THREE.Vector3());
+  const mod = getModule(cab.moduleId);
+  resize.drag = {
+    cabId: cab.id, face, dir, origin,
+    axisWorld: localAxisWorld(group, face.axis),
+    t0: closestTOnLine(e.clientX, e.clientY, origin, dir),
+    before: job.snapshot(),
+    params0: cab.params,
+    pose0: { ...cab.pose },
+    env0: mod.envelope(cab.params),
+    errors0: blockingErrors(job.resultFor(cab.id)?.validation?.errors).length,
+    overlaps0: new Set(overlaps(cab, cab.pose)),
+    lastGood: { params: cab.params, pose: { ...cab.pose } },
+    stopped: null,
+  };
+  canvas.setPointerCapture(e.pointerId);
+  canvas.style.cursor = "grabbing";
+  log("resize.drag", { id: cab.id, face: { ...face, label: resizeFaceLabel(face) }, envelope: resize.drag.env0 });
+  setEnvelopeDrag(cab.id);
+  emitMode();
+}
+
+function resizeDragMove(e) {
+  const d = resize.drag;
+  const cab = job.getJob().cabinets.find((c) => c.id === d.cabId);
+  if (!cab) return;
+  const mod = getModule(cab.moduleId);
+  const dim = DIM_OF_AXIS[d.face.axis];
+  const L0 = d.env0[dim];
+  const min = mod.minSize[dim];
+  const pulled = job.snap(closestTOnLine(e.clientX, e.clientY, d.origin, d.dir) - d.t0);
+  const L = Math.max(min, Math.round((L0 + pulled) * 10) / 10);
+  d.stopped = L0 + pulled < min ? `minimum ${min}` : null;
+
+  const apply = (params, pose) => {
+    job.updateCabinet(d.cabId, (c) => { c.pose = pose; });
+    job.setParams(d.cabId, params, { history: false });
+  };
+  const params = mod.resizeFace ? mod.resizeFace(d.params0, d.face, L) : mod.setEnvelope(d.params0, { [dim]: L });
+  if (!params) {
+    d.stopped = "a zone at its minimum";
+  } else {
+    // The far face stays: a pull on a negative-side face moves the origin with it.
+    const shift = d.face.dir < 0 ? L0 - L : 0;
+    const pose = { ...d.pose0, x: d.pose0.x + d.axisWorld.x * shift, y: d.pose0.y + d.axisWorld.y * shift, z: (d.pose0.z || 0) + d.axisWorld.z * shift };
+    const probe = { ...cab, params, pose };
+    const fresh = overlaps(probe, pose).filter((id) => !d.overlaps0.has(id));
+    if (!poseFits(probe, pose)) d.stopped = "the space boundary";
+    else if (fresh.length) d.stopped = fresh[0];
+    else {
+      apply(params, pose);
+      const errs = blockingErrors(job.resultFor(d.cabId)?.validation?.errors);
+      if (errs.length > d.errors0) {
+        d.stopped = errs[0];
+        apply(d.lastGood.params, d.lastGood.pose);
+      } else {
+        d.lastGood = { params, pose };
+      }
+    }
+  }
+  const now = job.getJob().cabinets.find((c) => c.id === d.cabId);
+  const env = mod.envelope(now.params);
+  showTip(e.clientX, e.clientY, [`${dim} ${Math.round(env[dim])}  (${env[dim] - L0 >= 0 ? "+" : ""}${Math.round(env[dim] - L0)})`, d.stopped ? `Stopped: ${d.stopped}` : null], d.stopped ? "warn" : "");
+}
+
+/** The documented V1 half-slot conflict still builds the cabinet, so a resize keeps that size. */
+function blockingErrors(errs) {
+  return (errs || []).filter((e) => !/half-slot conflict/.test(e));
+}
+
+function zonesSummary(params) {
+  if (Array.isArray(params.columns)) return params.columns.map((c) => ({ width: c.width, heights: (c.zones || []).map((z) => z.height) }));
+  if (Array.isArray(params.zones)) return params.zones.map((z) => z.width ?? z.height ?? z.type);
+  return undefined;
+}
+
+function endResizeDrag(e) {
+  if (!resize || !resize.drag) return;
+  const d = resize.drag;
+  resize.drag = null;
+  setEnvelopeDrag(null);
+  try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
+  const changed = job.commitSnapshot(d.before);
+  const cab = job.getJob().cabinets.find((c) => c.id === d.cabId);
+  const mod = cab && getModule(cab.moduleId);
+  log("resize.end", {
+    id: d.cabId, moduleId: cab ? cab.moduleId : null, face: { ...d.face, label: resizeFaceLabel(d.face) }, changed,
+    from: { envelope: d.env0, pose: d.pose0, zones: zonesSummary(d.params0) },
+    to: cab ? { envelope: mod.envelope(cab.params), pose: cab.pose, zones: zonesSummary(cab.params) } : null,
+    stopped: d.stopped || undefined,
+  });
+  hideTip();
+  canvas.style.cursor = "grab";
+  emitMode();
+}
+
 // --- re-type the last created box ---------------------------------------------------
 
 function beginRetype() {
@@ -2983,6 +3587,8 @@ canvas.addEventListener("pointerdown", (e) => {
   if (e.button !== 0) return;
   if (retype) endRetype(true);
 
+  if (resize) { resizeClick(e); return; }
+
   if (orient) { orientClick(e); return; }
 
   if (cplane) {
@@ -3020,12 +3626,14 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
+  if (lshape && lshape.step !== "box") { loungeLClick(e); return; }
+
   if (placing) {
     if (!rb) {
       const p = cursorPoint(e.clientX, e.clientY);
       if (!p) return;
       if (p.none) { log("place.blocked", { moduleId: placing, reason: "not on a ceiling edge" }); return; }
-      if (e.shiftKey && repeatLastSize(p)) return;
+      if (e.shiftKey && !lshape && repeatLastSize(p)) return;
       beginFace(p);
     } else if (rb.step === "face") {
       if (!faceDrawn()) return; // a second click on the anchor is a no-op
@@ -3065,6 +3673,7 @@ canvas.addEventListener("pointerdown", (e) => {
     // OrbitControls ignores the left button, so the middle button still orbits mid-drag.
     canvas.setPointerCapture(e.pointerId);
     log("handle.start", { id: cabId, handle: handle.type, index: handle.index, key: handle.key || undefined, envelope: getModule(cab.moduleId).envelope(cab.params) });
+    setEnvelopeDrag(cabId);
     emitMode();
     return;
   }
@@ -3094,12 +3703,14 @@ function hoverArmed(e, prefix) {
   showSnapMarker(p.x, p.y, p.z, { feature: p.feature });
   if (p.face) showFaceHint(p.face); else hideFaceHint();
   const lines = [...(prefix ? [prefix] : []), ...p.tip];
-  if (placing && lastSize && lastSize.moduleId === placing) lines.push(`Shift+click: repeat ${lastSize.W}×${lastSize.D}×${lastSize.H}`);
+  if (placing && !lshape && lastSize && lastSize.moduleId === placing) lines.push(`Shift+click: repeat ${lastSize.W}×${lastSize.D}×${lastSize.H}`);
   showTip(e.clientX, e.clientY, lines);
 }
 
 canvas.addEventListener("pointermove", (e) => {
   if (drag) return handleDragMove(e);
+
+  if (resize) return resize.drag ? resizeDragMove(e) : resizeHover(e);
 
   if (orient) return orientHover(e);
   if (cplane) return cplane.step === "pick" ? planeHoverPick(e) : updatePlane(e);
@@ -3128,8 +3739,10 @@ canvas.addEventListener("pointermove", (e) => {
     return;
   }
 
+  if (lshape && lshape.step !== "box") return updateLoungeL(e);
+
   if (placing) {
-    if (!rb) return hoverArmed(e, null);
+    if (!rb) return hoverArmed(e, lshape ? "Lounge L · main box first" : null);
     if (rb.step === "face") {
       chooseFace(e);
       const p = resolveCursor(e, rb.ctx);
@@ -3214,6 +3827,7 @@ function endDrag(e) {
   if (!drag) return;
   const d = drag;
   drag = null;
+  setEnvelopeDrag(null);
   try { canvas.releasePointerCapture(e.pointerId); } catch (_) { /* already released */ }
   const changed = job.commitSnapshot(d.before);
   const cab = job.getJob().cabinets.find((c) => c.id === d.cabId);
@@ -3229,13 +3843,13 @@ function endDrag(e) {
   hideTip();
   emitMode();
 }
-canvas.addEventListener("pointerup", (e) => { endDrag(e); endMoveDrag(e); });
-canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); });
+canvas.addEventListener("pointerup", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); });
+canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); });
 
 canvas.addEventListener("pointerleave", () => {
   if (placing && !rb) { hideSnapMarker(); hideFaceHint(); hideTip(); }
   if (orient) { const pend = pendingFace(); if (pend) showFaceHint(pend, { tone: "pending" }); else hideFaceHint(); hideTip(); }
-  if (nose || bed || cplane || lounge) hideTip();
+  if (nose || bed || cplane || lounge || (lshape && lshape.step !== "box")) hideTip();
 });
 
 function cursorFor(handle) {
@@ -3251,6 +3865,7 @@ function cursorFor(handle) {
   else if (nose && nose.step === "drag") positionDimInputs(noseBox());
   else if (bed) drawBedBox(null);
   else if (lounge) { const b = loungeDimBox(); if (b) positionDimInputs(b); }
+  else if (lshape && lshape.step === "pull") positionDimInputs(loungeWingDimBox());
   else if (cplane && cplane.step === "offset") positionDimInputs(planeBox());
   else if (retype) updateRetype();
   else if (move) layoutMoveTriad();
@@ -3278,6 +3893,7 @@ function typableDims() {
     if (lounge.step === "height") return ["H"];
     return [];
   }
+  if (lshape && lshape.step !== "box") return lshape.step === "pull" || lshape.step === "wide" ? ["D"] : [];
   if (rb && rb.step === "face") return DIM_ORDER.filter((k) => AXIS_OF[k] !== rb.plane.axis);
   return DIM_ORDER;
 }
@@ -3308,6 +3924,8 @@ export function evalDim(text, current, max) {
 }
 
 function currentDim(k) {
+  if (lshape && lshape.step === "wide") return k === "D" ? lshape.wide : 0;
+  if (lshape && lshape.step === "pull") return k === "D" ? lshape.len : 0;
   if (rb) return placementBox()[k];
   if (cplane) return k === "W" ? cplane.offset : 0;
   if (nose) return k === "D" ? nose.D : 0;
@@ -3327,6 +3945,11 @@ function currentDim(k) {
   return 0;
 }
 function maxDim(k) {
+  if (lshape && lshape.step === "pull") {
+    if (k !== "D") return null;
+    const room = roomFrom(loungeEdgeBase(lshape.frame, lshape.end))[lshape.frame.n];
+    return lshape.front.dir > 0 ? room.pos : room.neg;
+  }
   if (rb) return placementBox().max[k];
   if (cplane) return cplane.face ? extrudeRoom(cplane.face) : null;
   if (nose) return k === "D" ? noseLength() : null;
@@ -3378,6 +4001,11 @@ function setTyped(k, v) {
     nose.locked = v != null && v >= getModule(nose.moduleId).minSize.D ? v : null;
     log("nose.typein", { value: dimInputs.D.value, locked: nose.locked });
     if (nose.step === "drag") updateNose(null);
+  } else if (lshape && (lshape.step === "pull" || lshape.step === "wide")) {
+    if (k !== "D") return;
+    lshape.locked = v != null && v >= LOUNGE_MIN ? v : null;
+    log("lounge.typein", { style: "L", step: "pull", dim: "L", value: dimInputs.D.value, locked: lshape.locked });
+    updateLoungeL(null);
   } else if (rb) {
     const min = minSizes(getModule(placing))[k];
     rb.locked[k] = v != null && v >= min ? v : null;
@@ -3421,6 +4049,8 @@ for (const k of DIM_ORDER) {
       else if (cplane) { if (cplane.step === "offset") finishPlane("enter"); }
       else if (bed) finishBedBox("enter");
       else if (lounge) loungeConfirm("enter");
+      else if (lshape && lshape.step === "pull") finishLoungeL("enter");
+      else if (lshape && lshape.step === "wide") loungeLClick(null);
       else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else if (retype) endRetype(true);
@@ -3430,6 +4060,7 @@ for (const k of DIM_ORDER) {
       else if (cplane) cancelPlane();
       else if (bed) cancelBedBox();
       else if (lounge) loungeBack();
+      else if (lshape && lshape.step !== "box") loungeLBack();
       else if (rb) cancelPlacement();
       else if (move) cancelMove();
       else if (retype) endRetype(false);
@@ -3442,6 +4073,10 @@ for (const k of DIM_ORDER) {
 
 window.addEventListener("keydown", (e) => {
   if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (resize) {
+    if (e.key === "Escape" || e.key === "Enter") { e.preventDefault(); if (!resize.drag) endResize(e.key === "Enter" ? "enter" : "esc"); return; }
+    if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) { endResize("key"); return; }
+  }
   if (orient) {
     if (e.key === "Enter") { e.preventDefault(); finishOrient("enter"); }
     else if (e.key === "Escape") cancelOrient();
@@ -3469,7 +4104,8 @@ window.addEventListener("keydown", (e) => {
   }
   if (align && e.key === "Escape") { cancelAlign(); return; }
   if (pointAlign && e.key === "Escape") { cancelPointAlign(); return; }
-  const typing = rb || retype || nose || bed || lounge || (cplane && cplane.step === "offset");
+  const lWing = lshape && lshape.step !== "box";
+  const typing = rb || retype || nose || bed || lounge || lWing || (cplane && cplane.step === "offset");
 
   if (typing) {
     if (e.key === "Tab") {
@@ -3485,6 +4121,7 @@ window.addEventListener("keydown", (e) => {
       else if (cplane) finishPlane("enter");
       else if (bed) finishBedBox("enter");
       else if (lounge) loungeConfirm("enter");
+      else if (lWing) { if (lshape.step === "pull") finishLoungeL("enter"); else loungeLClick(null); }
       else if (rb) finishPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else endRetype(true);
@@ -3495,6 +4132,7 @@ window.addEventListener("keydown", (e) => {
       else if (cplane) cancelPlane();
       else if (bed) cancelBedBox();
       else if (lounge) loungeBack();
+      else if (lWing) loungeLBack();
       else if (rb) cancelPlacement();
       else if (move) cancelMove();
       else endRetype(false);
@@ -3533,6 +4171,7 @@ window.addEventListener("keydown", (e) => {
   }
 
   if ((e.key === "p" || e.key === "P") && !e.ctrlKey) { startPlane(); return; }
+  if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) { startResize(); return; }
 
   const pl = job.getSelectedPlane();
   if (pl && (e.key === "Delete" || e.key === "Backspace")) {
@@ -3565,6 +4204,11 @@ window.addEventListener("keydown", (e) => {
     return;
   }
   if (!sel || move) return;
+  if ((e.key === "v" || e.key === "V") && !e.ctrlKey && !e.metaKey && !e.altKey) {
+    const boardId = job.getSubSelection()?.boardId;
+    job.toggleBoardsVisible(sel.id, boardId ? [boardId] : null);
+    return;
+  }
   if (e.key === "m" || e.key === "M") {
     startMove(sel.id);
   } else if (e.key === "Delete" || e.key === "Backspace") {

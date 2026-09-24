@@ -24,6 +24,7 @@ import {
   normalizeStock,
   validateMaterials,
 } from "./materials.js";
+import { swatchChipStyle } from "./doorSwatches.js";
 import { log } from "./log.js";
 
 const overlay = document.getElementById("spaceDialog");
@@ -375,8 +376,17 @@ function doorColorSelect(series, value, onChange) {
     for (const name of spec.colors) sel.append(el("option", { value: name, text: name }));
   }
   sel.value = coerceDoorName(series, value);
-  sel.addEventListener("change", () => onChange(sel.value));
-  return sel;
+  const chip = el("span", { class: "swatch" });
+  const paintChip = () => {
+    const s = swatchChipStyle(sel.value);
+    chip.style.backgroundColor = s ? s.background : "transparent";
+    chip.classList.toggle("metallic", !!s && s.finish === "metallic");
+    chip.classList.toggle("none", !s);
+    chip.title = s ? s.title : "No swatch yet";
+  };
+  paintChip();
+  sel.addEventListener("change", () => { paintChip(); onChange(sel.value); });
+  return el("span", { class: "swatch-select" }, [chip, sel]);
 }
 
 function renderMaterials() {

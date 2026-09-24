@@ -14,12 +14,14 @@ export function buildLoungeFaces(fb: {
   hinges?: LoungeHinge[];
   locks?: LoungeLock[];
   grooves?: LoungeGroove[];
+  doorColour: string;
 }): Joint[] {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
     if (b.boardType === "front" || b.category === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
     if (b.boardType === "top_panel") {

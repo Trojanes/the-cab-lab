@@ -5,6 +5,7 @@
  */
 import { beginProvenance, dim, endProvenance, param, ref, same } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
+import { doorColourOf } from "../_lib/finish.ts";
 import { recordBoardBox } from "../_lib/recordBox.ts";
 import { buildTallFaces } from "./faces.ts";
 import type {
@@ -329,13 +330,13 @@ function v12Profile(s: S, slots: { z0: number; z1: number }[], yOrigin: number):
  * V3/V4 轮廓，直接写成柜体 Y（后立梃贴墙：局部 0 = 柜体 yOff = midDepth−150）。
  * 路径与 spec §8.3 一致：底边 → 后缘上到顶 L 缺口 → 沿前缘下行插入 Zi 槽。
  */
-function v34Profile(s: S, slots: { z0: number; z1: number }[], warnings: string[], yOff: number): P2[] {
+function v34Profile(s: S, slots: { z0: number; z1: number }[], warnings: string[], yOff: number, rear = R.V34_Y_REAR.value): P2[] {
   const CH = s.CH;
-  const tRear = R.V34_Y_REAR.value;
+  const tRear = rear;
   const slotY = R.V34_ZI_SLOT_INNER.value;
   const nh = R.V34_NOTCH_HEIGHT.value;
-  const nf = R.V34_TOP_NOTCH_FRONT_Y.value;
-  const ni = R.V34_TOP_NOTCH_INNER_Y.value;
+  const ni = Math.max(0, tRear - (R.V34_Y_REAR.value - R.V34_TOP_NOTCH_INNER_Y.value));
+  const nf = Math.max(0, Math.min(ni, tRear - (R.V34_Y_REAR.value - R.V34_TOP_NOTCH_FRONT_Y.value)));
   const nt = R.V34_END_NOTCH_THICKNESS.value;
   const Y = (y: number) => r2(y + yOff);
   const kept: { z0: number; z1: number }[] = [];
@@ -484,12 +485,16 @@ export function generateGeneralTall(input: GTParams): GTResult {
     "YZ", "X", vRightX0, vRightX1, v12Y0, v12Y1, 0, CH, v12Profile(s, v12Slots, v12Y0)));
 
   /* ---- V3/V4 后立梃：同样朝前一个门厚。后缘贴侧板后缘 midDepth。 ---- */
-  const v34Y0 = r2(stileY0 + Math.max(0, md - R.V34_Y_REAR.value));
   const v34Y1 = r2(stileY0 + md);
+  // Front stile occupies y up to v12Y1 (150). A shallow cabinet would put the rear stile through it.
+  let v34Y0 = r2(stileY0 + Math.max(0, md - R.V34_Y_REAR.value));
+  if (v34Y0 < v12Y1) v34Y0 = v12Y1;
+  const v34Depth = r2(Math.max(0, v34Y1 - v34Y0));
+  const v34Rear = Math.min(R.V34_Y_REAR.value, v34Depth);
   boards.push(mkBoard("V3", "Rear Stile Left", "vertical_structure", "V3", CPT, "carcass",
-    "YZ", "X", vLeftX0, vLeftX1, v34Y0, v34Y1, 0, CH, v34Profile(s, v34Slots, warnings, v34Y0)));
+    "YZ", "X", vLeftX0, vLeftX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)));
   boards.push(mkBoard("V4", "Rear Stile Right", "vertical_structure", "V4", CPT, "carcass",
-    "YZ", "X", vRightX0, vRightX1, v34Y0, v34Y1, 0, CH, v34Profile(s, v34Slots, warnings, v34Y0)));
+    "YZ", "X", vRightX0, vRightX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)));
 
   if (fridgeZoneItem) {
     const v5OnLeft = s.exteriorSide !== "left";
@@ -546,7 +551,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
     if (s.topSys.style === "style_1") {
       const topBand0 = r2(CH - s.topSys.railH);
       const topRail0 = r2(CH - s.topSys.frontRail);
-      boards.push(mkBoard("T1", "Top Front Rail", "top_system", "T1", t1H, "carcass",
+      boards.push(mkBoard("T1", "Top Front Rail", "top_system", "T1", t1H, "door",
         "XZ", "Y", dx, r2(dx + mw), railY0, t1Rear, topRail0, CH, undefined));
       boards.push(mkBoard("T2", "Top Second Rail", "top_system", "T2", t2H, "carcass",
         "XZ", "Y", dx, r2(dx + mw), t1Rear, railRear, topRail0, CH, undefined));
@@ -569,7 +574,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
     if (s.botSys.style === "style_1") {
       const botRail1 = r2(s.botSys.frontRail);
       const botBand1 = r2(s.botSys.railH);
-      boards.push(mkBoard("B1", "Bottom Front Rail", "bottom_system", "B1", t1H, "carcass",
+      boards.push(mkBoard("B1", "Bottom Front Rail", "bottom_system", "B1", t1H, "door",
         "XZ", "Y", dx, r2(dx + mw), railY0, t1Rear, 0, botRail1, undefined));
       boards.push(mkBoard("B2", "Bottom Second Rail", "bottom_system", "B2", t2H, "carcass",
         "XZ", "Y", dx, r2(dx + mw), t1Rear, railRear, 0, botRail1, undefined));
@@ -708,8 +713,15 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same(`${h.name}.y0`, "tall.hY0");
       same(`${h.name}.y1`, "tall.hY1");
     } else {
+      let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
+      let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
+      const v5 = boards.find((board) => board.id === "V5");
+      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+        if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
+        else x1 = r2(Math.min(x1, v5.x0));
+      }
       boards.push(mkBoard(h.name, "H Bridge Rear", "h_support", h.name, s.hT, "carcass",
-        "XZ", "Y", r2(dx + R.H_SUPPORT_THICKNESS.value), r2(dx + mw - R.H_SUPPORT_THICKNESS.value),
+        "XZ", "Y", x0, x1,
         r2(md - R.H34_DEPTH.value), md, h.z0, h.z1, undefined));
     }
     if (hBottomZ0 != null && h.name.endsWith("_bottom")) {
@@ -740,8 +752,15 @@ export function generateGeneralTall(input: GTParams): GTResult {
         same(`${h.name}.y0`, "tall.hY0");
         same(`${h.name}.y1`, "tall.hY1");
       } else {
+        let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
+        let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
+        const v5 = boards.find((board) => board.id === "V5");
+        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+          if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
+          else x1 = r2(Math.min(x1, v5.x0));
+        }
         boards.push(mkBoard(h.name, "H34 fridge", "h_support", "H34_fridge", s.hT, "carcass",
-          "XZ", "Y", r2(dx + R.H_SUPPORT_THICKNESS.value), r2(dx + mw - R.H_SUPPORT_THICKNESS.value),
+          "XZ", "Y", x0, x1,
           r2(md - R.H34_DEPTH.value), md, h.z0, h.z1, undefined));
       }
     }
@@ -999,7 +1018,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
 
   /* ---- 组装 ---- */
   attachFaces(boards);
-  const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks });
+  const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
 
   const result: GTResult = {
     params: {

@@ -1,11 +1,11 @@
 /**
- * Overhead cabinet ù?face layer (docs/model-spec.md).
+ * Overhead cabinet ??face layer (docs/model-spec.md).
  *
  * Takes the boards in their final pose plus the geometry's feature records and
  * hangs every one of them on the face it is machined into:
  *
  *   BP.A        divider grooves (BG_D<i>), rangehood cutout (through)
- *   D<i>.E*     tongue (into BP), T3 notch, T4 notch ù?tags on the outline edges
+ *   D<i>.E*     tongue (into BP), T3 notch, T4 notch ??tags on the outline edges
  *   D<i>.A/B    rangehood side grooves
  *   T2/T3/T4.A  divider screw pilot holes (through)
  *   T3.A        LED T-groove (main + two branches)
@@ -22,6 +22,7 @@ import {
   annotate,
   bigFaceToward,
   boundaryEdgeFaces,
+  edgeFaces,
   edgeFacesIn,
   faceOf,
   faceRef,
@@ -29,9 +30,11 @@ import {
   localRect,
   planeAxes,
   tagEdges,
+  type AxisDir,
   type Board,
   type Joint,
 } from "../_lib/model.ts";
+import { setEdgeBand } from "../_lib/edgeBand.ts";
 import { RULES as R, type OverheadCabinetInputs, type OverheadLegacyGeometry } from "./geometry.ts";
 import type { RelationshipDeclaration } from "./relationshipDeclarations.ts";
 
@@ -47,6 +50,7 @@ interface FaceBuildInputs {
   rangehoodFeatures: Rec[];
   declarations: RelationshipDeclaration[];
   carcassColorName: string;
+  doorColour: string;
 }
 
 const EPS = 0.01;
@@ -76,8 +80,10 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       annotate(b, "A", { finish: { colour: fb.carcassColorName } });
       annotate(b, "B", { finish: { colour: fb.carcassColorName } });
     }
-    if (b.category === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+    if (isFront) {
+      // Flap fronts and the T1 front rail: door stock, room face B (-Y).
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }
@@ -102,6 +108,26 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     annotate(t3, "A", { semantic: "top" });
     annotate(t3, "B", { semantic: "bottom" });
   }
+
+  // Visible outer edges only. Notches, tongues and strip ends stay bare.
+  // Door leaves take the door colour. Carcass edges that bound the visible
+  // interior take the carcass colour. T1, T2 and the rangehood front and
+  // back boards have no free edge.
+  const tape = R.EDGE_BAND_THICKNESS_MM.value;
+  const band = (b: Board | undefined, normal: AxisDir, colour: string) => {
+    if (!b) return;
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
+  };
+  for (const b of boards) {
+    if (b.category !== "front_panel") continue;
+    for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
+  }
+  band(bp, "-Y", fb.carcassColorName);
+  for (const d of dividers) band(d, "-Y", fb.carcassColorName);
+  band(t3, "-Y", fb.carcassColorName);
+  band(t3, "+Y", fb.carcassColorName);
+  band(B.get("T4"), "-Z", fb.carcassColorName);
+  band(B.get("RGHD_TOP"), "-Y", fb.carcassColorName);
 
   // --- BP: divider grooves -------------------------------------------------------
   if (bp) {

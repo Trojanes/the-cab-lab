@@ -6,6 +6,7 @@
 // stored. Selecting a board or a face narrows the 3D highlight. Move uses that
 // choice: a cabinet row moves the module, a board row moves that board.
 import * as job from "./job.js";
+import { showContextMenu } from "./benchMenu.js";
 import { getModule } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
 import { bigFaces, edgeFaces, faceLabel, featureSummary, boardDims } from "./boardModel.js";
@@ -17,7 +18,12 @@ const browser = document.getElementById("browser");
 const open = new Set();
 
 // The browser floats over the canvas: its own wheel / pointer events must not reach the 3D view.
-for (const type of ["pointerdown", "pointerup", "wheel", "contextmenu", "dblclick"]) browser.addEventListener(type, (e) => e.stopPropagation());
+for (const type of ["pointerdown", "pointerup", "wheel", "contextmenu", "dblclick"]) {
+  browser.addEventListener(type, (e) => {
+    e.stopPropagation();
+    if (type === "contextmenu") e.preventDefault();
+  });
+}
 browser.querySelector("[data-browser-toggle]").addEventListener("click", (e) => {
   const collapsed = browser.classList.toggle("collapsed");
   e.currentTarget.classList.toggle("open", !collapsed);
@@ -48,7 +54,37 @@ function el(tag, attrs = {}, children = []) {
  * One row. `depth` indents; `path` (when the row can expand) drives the caret;
  * `selected` marks it; `onpick` runs on a click anywhere but the caret.
  */
-function row({ depth, path, hasChildren, label, sub, selected, kind, onpick, title }) {
+function eyeIcon() {
+  const ns = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(ns, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("aria-hidden", "true");
+  const outline = document.createElementNS(ns, "path");
+  outline.setAttribute("d", "M1.5 8S4 3.5 8 3.5 14.5 8 14.5 8 12 12.5 8 12.5 1.5 8 1.5 8Z");
+  outline.setAttribute("class", "eye-outline");
+  const pupil = document.createElementNS(ns, "circle");
+  pupil.setAttribute("cx", "8");
+  pupil.setAttribute("cy", "8");
+  pupil.setAttribute("r", "2");
+  pupil.setAttribute("class", "eye-pupil");
+  const slash = document.createElementNS(ns, "path");
+  slash.setAttribute("d", "M3 13L13 3");
+  slash.setAttribute("class", "eye-slash");
+  svg.append(outline, pupil, slash);
+  return svg;
+}
+
+/** Lit = the board is drawn; dark = hidden. The click does not change the selection. */
+function eyeButton(shown, onToggle) {
+  const b = el("button", {
+    class: `tree-eye${shown ? " on" : ""}`,
+    title: shown ? "Hide" : "Show",
+    onclick: (e) => { e.stopPropagation(); onToggle(); },
+  }, [eyeIcon()]);
+  return b;
+}
+
+function row({ depth, path, hasChildren, label, sub, selected, kind, onpick, title, eye, hidden, oncontextmenu }) {
   const caret = hasChildren
     ? el("button", { class: `tree-caret${open.has(path) ? " open" : ""}`, title: open.has(path) ? "Collapse" : "Expand", onclick: (e) => {
         e.stopPropagation();
@@ -56,11 +92,16 @@ function row({ depth, path, hasChildren, label, sub, selected, kind, onpick, tit
         render();
       } })
     : el("span", { class: "tree-caret none" });
-  const r = el("div", { class: `tree-row k-${kind}${selected ? " sel" : ""}`, style: `padding-left:${6 + depth * 12}px`, title, onclick: onpick }, [
+  const r = el("div", {
+    class: `tree-row k-${kind}${selected ? " sel" : ""}${hidden ? " is-hidden" : ""}`,
+    style: `padding-left:${6 + depth * 12}px`, title, onclick: onpick,
+  }, [
     caret,
+    eye || null,
     el("span", { class: "tree-label", text: label }),
     sub ? el("span", { class: "tree-sub", text: sub }) : null,
   ]);
+  if (oncontextmenu) r.addEventListener("contextmenu", oncontextmenu);
   if (hasChildren) r.addEventListener("dblclick", () => { if (open.has(path)) open.delete(path); else open.add(path); render(); });
   r.dataset.path = path || "";
   return r;
@@ -108,24 +149,38 @@ function cabinetRows(cab, selectedId, sub) {
   const errors = result?.validation?.errors?.length || 0;
   const path = cab.id;
   const isSel = selectedId === cab.id;
+  const hiddenIds = new Set(job.hiddenBoardIds(cab));
   const out = [row({
     depth: 1, path, hasChildren: boards.length > 0, kind: "cabinet",
     label: mod.label,
     sub: errors ? `${cab.id} · ${errors} error${errors > 1 ? "s" : ""}` : boards.length ? `${cab.id} · ${boards.length} boards` : `${cab.id} · envelope`,
     selected: isSel && !sub,
     onpick: () => job.select(cab.id),
+    oncontextmenu: (e) => {
+      e.preventDefault();
+      const allHidden = boards.length > 0 && boards.every((b) => hiddenIds.has(b.id));
+      const allShown = boards.every((b) => !hiddenIds.has(b.id));
+      showContextMenu(e.clientX, e.clientY, [
+        { title: mod.label },
+        { label: "Show all boards", disabled: !boards.length || allShown, run: () => job.setBoardsVisible(cab.id, true) },
+        { label: "Hide all boards", disabled: !boards.length || allHidden, run: () => job.setBoardsVisible(cab.id, false) },
+      ]);
+    },
   })];
   if (!open.has(path)) return out;
   for (const b of boards) {
     const bpath = `${cab.id}/${b.id}`;
     const d = boardDims(b);
     const faces = b.faces || [];
+    const shown = !hiddenIds.has(b.id);
     out.push(row({
       depth: 2, path: bpath, hasChildren: faces.length > 0, kind: "board",
       label: b.name || b.id,
       sub: `${b.id} · ${Math.round(d.L)} × ${Math.round(d.W)} × ${d.T}`,
       selected: isSel && sub && sub.boardId === b.id && !sub.faceId,
+      hidden: !shown,
       title: `${b.category} · ${b.boardType} · ${b.stock?.kind || "carcass"} stock`,
+      eye: eyeButton(shown, () => job.toggleBoardsVisible(cab.id, [b.id])),
       onpick: () => job.select(cab.id, { boardId: b.id }),
     }));
     if (open.has(bpath)) out.push(...faceRows(cab, b, isSel ? sub : null, 3));

@@ -217,6 +217,13 @@ function faceRef(board, faces) {
   return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/finish.ts
+var DEFAULT_DOOR_COLOUR = "Gloss White";
+function doorColourOf(params) {
+  const raw = params ? params.doorColorName || params.doorColor : "";
+  return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+
 // generators/_lib/recordBox.ts
 function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
   return {
@@ -335,7 +342,8 @@ function buildLoungeFaces(fb) {
   for (const b of fb.boards) {
     b.role = b.category;
     if (b.boardType === "front" || b.category === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
     if (b.boardType === "top_panel") {
@@ -720,7 +728,7 @@ var PV = {
   front: "#9ec5d8",
   frontLine: "#3f5a6a",
   boundary: "#e0a34f",
-  select: "#4f86e0",
+  select: "#0e3f8f",
   text: "#d8dde4",
   text2: "#9aa2ad",
   text3: "#6b737e",
@@ -1445,7 +1453,7 @@ function generateLounge(raw) {
     }
   }
   attachFaces(boards);
-  const joints = buildLoungeFaces({ boards, openings, lids, hinges, locks, grooves });
+  const joints = buildLoungeFaces({ boards, openings, lids, hinges, locks, grooves, doorColour: doorColourOf(raw) });
   return {
     params: { style, height: H, partitionPanelThickness: ppt, panelHeight: Hprime },
     boards,

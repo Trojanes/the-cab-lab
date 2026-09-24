@@ -45,7 +45,11 @@ function migrate(obj) {
   // Module-level params repair (e.g. tall zones re-fitted to cabinetHeight).
   obj.cabinets = (Array.isArray(obj.cabinets) ? obj.cabinets : []).map((cab) => {
     const normalize = getModule(cab.moduleId)?.normalizeParams;
-    return normalize ? { ...cab, params: normalize(cab.params || {}) } : cab;
+    const next = normalize ? { ...cab, params: normalize(cab.params || {}) } : { ...cab };
+    const hidden = normalizeHidden(next.hidden);
+    if (hidden) next.hidden = hidden;
+    else delete next.hidden;
+    return next;
   });
   return obj;
 }
@@ -451,6 +455,70 @@ export function setParams(id, params, { history = true } = {}) {
       if (next !== twin.params) updateCabinet(twin.id, (c) => { c.params = next; });
     }
   }
+}
+
+/** Board role ids the user has hidden in the 3D view. Unknown ids (a board that no longer exists) are dropped. */
+function normalizeHidden(list) {
+  if (!Array.isArray(list)) return null;
+  const ids = [];
+  for (const id of list) {
+    if (typeof id === "string" && id && !ids.includes(id)) ids.push(id);
+  }
+  return ids.length ? ids : null;
+}
+
+/** Role ids of this cabinet's boards that are hidden. Ids the generator no longer emits are ignored. */
+export function hiddenBoardIds(cab) {
+  if (!cab) return [];
+  const live = new Set((resultFor(cab.id)?.boards || []).map((b) => b.id));
+  return (cab.hidden || []).filter((id) => live.has(id));
+}
+
+export function isBoardHidden(cab, boardId) {
+  return hiddenBoardIds(cab).includes(boardId);
+}
+
+/**
+ * Show or hide boards of one cabinet. `boardIds` omitted = every board the generator currently emits.
+ * Stored on `cabinet.hidden` (role ids) and saved with the job. The boards still exist; only the 3D view skips them.
+ * Returns false when nothing changed.
+ */
+export function setBoardsVisible(id, visible, boardIds) {
+  const cab = job.cabinets.find((c) => c.id === id);
+  if (!cab) return false;
+  const all = (resultFor(id)?.boards || []).map((b) => b.id);
+  const live = new Set(all);
+  const targets = (boardIds ? boardIds.filter((b) => live.has(b)) : all);
+  if (!targets.length) return false;
+  const hidden = new Set((cab.hidden || []).filter((b) => live.has(b)));
+  let changed = false;
+  for (const b of targets) {
+    if (visible && hidden.delete(b)) changed = true;
+    else if (!visible && !hidden.has(b)) { hidden.add(b); changed = true; }
+  }
+  if (!changed) return false;
+  pushHistory();
+  if (hidden.size) cab.hidden = [...hidden];
+  else delete cab.hidden;
+  log("board.visibility", { id, boards: targets, visible, hidden: cab.hidden || [] });
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+/**
+ * V, or the browser eye. One board, or every board when `boardIds` is omitted.
+ * A mixed module hides: every targeted board that is still showing goes dark; when they are all hidden, they all come back.
+ */
+export function toggleBoardsVisible(id, boardIds) {
+  const cab = job.cabinets.find((c) => c.id === id);
+  if (!cab) return false;
+  const all = (resultFor(id)?.boards || []).map((b) => b.id);
+  const live = new Set(all);
+  const targets = boardIds ? boardIds.filter((b) => live.has(b)) : all;
+  if (!targets.length) return false;
+  const hidden = new Set(cab.hidden || []);
+  return setBoardsVisible(id, targets.every((b) => hidden.has(b)), targets);
 }
 
 export function setPose(id, pose, { history = true } = {}) {

@@ -13,9 +13,9 @@ import { statusOf } from "./walls3d.js";
 import { openFloorPlan } from "./floorplan.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "./boardModel.js";
 import { log } from "./log.js";
+import { swatchChipStyle } from "./doorSwatches.js";
 
 const panel = document.getElementById("rightpanel");
-const app = document.getElementById("app");
 const drawerChecks = document.querySelector('[data-dpane="checks"]');
 const drawerBoards = document.querySelector('[data-dpane="boards"]');
 
@@ -31,6 +31,18 @@ function el(tag, attrs = {}, children = []) {
   }
   for (const c of children) if (c) e.append(c);
   return e;
+}
+
+/** "Door" row with a swatch chip in front of the colour name. */
+function doorLine(p, fpt) {
+  const name = p.doorColorName || p.doorColor || "—";
+  const s = swatchChipStyle(name);
+  const chip = el("span", {
+    class: `swatch${!s ? " none" : s.finish === "metallic" ? " metallic" : ""}`,
+    title: s ? s.title : "No swatch yet",
+    style: s ? `background-color: ${s.background}` : "",
+  });
+  return el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", {}, [chip, fpt == null ? name : `${name} · ${fpt} mm`])]);
 }
 
 function numField(label, value, onCommit, opts = {}) {
@@ -72,6 +84,25 @@ function dragField(label, value, onCommit, cabId, type, title) {
 
 function section(title, children) {
   return el("div", { class: "panel-section" }, [el("div", { class: "sec-title", text: title }), ...children]);
+}
+
+/** One choice for every front elevation: clearance between faces, or centre line to centre line. */
+let gapMode = "clear";
+function gapSelect() {
+  return el("select", {
+    class: "gap-mode",
+    title: "Distance shown between boards",
+    onchange: (e) => { gapMode = e.target.value; renderPanel(); },
+  }, [
+    el("option", { value: "clear", text: "Clearance", selected: gapMode === "clear" }),
+    el("option", { value: "center", text: "Centre to centre", selected: gapMode === "center" }),
+  ]);
+}
+function frontSection(title, children) {
+  return el("div", { class: "panel-section" }, [
+    el("div", { class: "sec-head" }, [el("div", { class: "sec-title", text: title }), gapSelect()]),
+    ...children,
+  ]);
 }
 const kv = (label, value) => el("div", { class: "kv" }, [el("span", { text: label }), el("b", { text: value })]);
 
@@ -333,7 +364,7 @@ function renderOverhead(cab, mod, result, shared) {
   if (ohcDrag && ohcDrag.cabId === cab.id && panel.querySelector(".zs-strip")) {
     ohcDrag.refresh();
     const view = panel.querySelector(".ohc-front");
-    if (view) view.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1 }) || "";
+    if (view) view.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1, gaps: gapMode }) || "";
     return;
   }
 
@@ -364,7 +395,7 @@ function renderOverhead(cab, mod, result, shared) {
   } });
 
   const front = el("div", { class: "ohc-front" });
-  front.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1 }) || "";
+  front.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1, gaps: gapMode }) || "";
   if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
 
   // Selected zone card.
@@ -419,7 +450,7 @@ function renderOverhead(cab, mod, result, shared) {
     ]),
     section("Material (job stock)", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || "White Stipple"} · ${cpt} mm` })]),
-      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: `${p.doorColorName || p.doorColor || "—"} · ${fpt} mm` })]),
+      doorLine(p, fpt),
       el("div", { class: "empty small", text: "Every board except the doors is carcass stock; the doors are door stock. Thicknesses come from the space's catalogue." }),
     ]),
   ]);
@@ -437,7 +468,7 @@ function renderOverhead(cab, mod, result, shared) {
       cumRow,
     ]),
     zoneCard,
-    section("Front view", [front]),
+    frontSection("Front view", [front]),
     fold,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),
@@ -484,7 +515,7 @@ function renderTall(cab, mod, result, shared) {
 
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
-    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: tallSelected(cab.id) }) || "";
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: tallSelected(cab.id), gaps: gapMode }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
   };
   drawFront();
@@ -687,7 +718,7 @@ function renderTall(cab, mod, result, shared) {
     ]),
     section("Material (job stock)", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
-      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: `${p.doorColorName || p.doorColor || "—"} · ${fpt} mm` })]),
+      doorLine(p, fpt),
     ]),
   ]);
 
@@ -697,7 +728,7 @@ function renderTall(cab, mod, result, shared) {
       el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
     ]),
     shared.board,
-    section(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [
+    frontSection(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [
       el("div", { class: "zs-tools" }, [addZone, removeZone]),
       front,
       el("div", { class: "zs-hint", text: "Click a zone to select it · drag an orange line (height) or the dashed one (divider) · Shift = 1 mm" }),
@@ -753,7 +784,7 @@ function renderKitchen(cab, mod, result, shared) {
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
     const cur = kitchenSelected(cab.id);
-    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: cur.zoneId, selectedCol: cur.col }) || "";
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: cur.zoneId, selectedCol: cur.col, gaps: gapMode }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
   };
   drawFront();
@@ -960,7 +991,7 @@ function renderKitchen(cab, mod, result, shared) {
     ]),
     section("Material (job stock)", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
-      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: `${p.doorColorName || p.doorColor || "—"} · ${fpt} mm` })]),
+      doorLine(p, fpt),
     ]),
   ]);
 
@@ -970,7 +1001,7 @@ function renderKitchen(cab, mod, result, shared) {
       el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${columns.length} columns · kick ${Math.round(bch)} · ${result?.boards?.length || 0} boards` }),
     ]),
     shared.board,
-    section(`Front view · from the room · ${columns.length} column${columns.length === 1 ? "" : "s"}`, [
+    frontSection(`Front view · from the room · ${columns.length} column${columns.length === 1 ? "" : "s"}`, [
       el("div", { class: "zs-tools" }, [addColumn, addZone, removeZone, removeColumn]),
       front,
       el("div", { class: "zs-hint", text: "Click a cell to select it · drag an orange line (column width / zone height) · Shift = 1 mm" }),
@@ -1216,7 +1247,7 @@ function renderBedroom(cab, mod, result, shared) {
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
     const res = job.resultFor(cab.id);
-    front.innerHTML = mod.frontView(res, { selectedRegion: job.getSelectedRegion() }) || "";
+    front.innerHTML = mod.frontView(res, { selectedRegion: job.getSelectedRegion(), gaps: gapMode }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
   };
   drawFront();
@@ -1389,7 +1420,7 @@ function renderBedroom(cab, mod, result, shared) {
       el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · boot ${Math.round(p.bootHeight)} · wardrobes ${Math.round(p.wardrobeWidth)} · overhead from ${Math.round(p.ohcBottom)} · ${nBoards} boards` }),
     ]),
     shared.board,
-    section("Front view · from the room", [
+    frontSection("Front view · from the room", [
       front,
       el("div", { class: "zs-hint", text: "Click a region to select it · drag an orange boundary · Shift = 1 mm" }),
     ]),
@@ -1569,7 +1600,7 @@ function renderCabinet(cab) {
     ]),
     section("Material", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: p.carcassColorName || p.carcassColor || "White Stipple" })]),
-      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: p.doorColorName || p.doorColor || "—" })]),
+      doorLine(p),
       numField("Carcass thickness", cpt, setParam("panelThickness", 1), { step: 0.5 }),
       numField("Front thickness", p.frontPanelThickness ?? thickness(job.getStock(), "door"), setParam("frontPanelThickness", 1), { step: 0.5 }),
       numField("Front clearance", p.frontClearance ?? 2.5, setParam("frontClearance", 0), { step: 0.5 }),
@@ -1847,12 +1878,26 @@ function renderWall(w) {
   drawerBoards.replaceChildren(el("div", { class: "empty", text: "Partition walls are not cut into boards yet (v1)." }));
 }
 
-export function renderPanel() {
+/** Which page the panel is showing. A board / face pick stays on the same page, so it does not slide. */
+function panelPage() {
+  const sel = job.getSelected();
+  if (sel) return `cab:${sel.id}`;
+  const pl = job.getSelectedPlane();
+  if (pl) return `plane:${pl.id}`;
+  const wall = job.getSelectedWall();
+  if (wall) return `wall:${wall.id}`;
+  return "space";
+}
+
+let shownPage = null;
+let panelToken = 0;
+let panelLeaving = false;
+
+function paintPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
   const wide = !!sel && ["ohc", "bedroom", "bedSide", "tall", "kitchen", "lounge"].includes(getModule(sel.moduleId).panel);
   panel.classList.toggle("wide", wide);
-  app.classList.toggle("wide-right", wide);
   if (sel) renderCabinet(sel);
   else {
     const pl = job.getSelectedPlane();
@@ -1861,4 +1906,44 @@ export function renderPanel() {
     else if (wall) renderWall(wall);
     else renderSpace();
   }
+}
+
+function slideIn() {
+  panel.classList.remove("panel-in");
+  void panel.offsetWidth;
+  panel.classList.add("panel-in");
+}
+
+/**
+ * A different page slides out to the right, then the next one slides in.
+ * Rewriting the same page (a parameter edit) does not animate.
+ */
+export function renderPanel() {
+  const key = panelPage();
+  const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  // A job edit while the page is leaving waits: the arrival paints whatever is selected then.
+  if (panelLeaving) return;
+  if (key === shownPage || shownPage === null || reduce) {
+    shownPage = key;
+    paintPanel();
+    return;
+  }
+  const token = ++panelToken;
+  panelLeaving = true;
+  panel.classList.remove("panel-in");
+  panel.classList.add("panel-out");
+  let arrived = false;
+  const arrive = () => {
+    if (arrived || token !== panelToken) return;
+    arrived = true;
+    panelLeaving = false;
+    panel.removeEventListener("animationend", onEnd);
+    shownPage = panelPage();
+    panel.classList.remove("panel-out");
+    paintPanel();
+    slideIn();
+  };
+  const onEnd = (e) => { if (e.target === panel && e.animationName === "panel-out") arrive(); };
+  panel.addEventListener("animationend", onEnd);
+  setTimeout(arrive, 400);
 }

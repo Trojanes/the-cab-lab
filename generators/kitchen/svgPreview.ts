@@ -18,7 +18,7 @@
  * Display only: nothing here decides geometry.
  */
 import type { KitchenResult, KitchenZoneType } from "./types.ts";
-import { PV, dimText, fitCanvas, fmt, frontRect, grip, label, px, spacedLabels, svgRoot } from "../_lib/preview.ts";
+import { PV, boardGaps, dimText, fitCanvas, fmt, frontRect, gapMarks, grip, label, px, selectRect, spacedLabels, svgRoot, zoneColor } from "../_lib/preview.ts";
 
 export interface KitchenSvgPreviewOptions {
   width?: number;
@@ -28,6 +28,8 @@ export interface KitchenSvgPreviewOptions {
   /** … and its column index (zone ids may repeat across columns). */
   selectedCol?: number;
   showDimensions?: boolean;
+  /** Board-to-board distance: clearance between faces, or centre to centre. */
+  gaps?: "clear" | "center";
 }
 
 interface PreviewColumn {
@@ -49,15 +51,6 @@ export const KITCHEN_ZONE_LABELS: Record<string, string> = {
   unassigned: "Unassigned",
 };
 
-function zoneTint(type: KitchenZoneType): string {
-  if (type === "drawer") return "rgba(224,163,79,0.10)";
-  if (type === "open") return "rgba(255,255,255,0.03)";
-  if (type === "down_flap") return "rgba(180,140,230,0.10)";
-  if (type === "stove") return "rgba(229,72,77,0.10)";
-  if (type === "custom") return "rgba(160,200,150,0.08)";
-  if (type === "unassigned") return "rgba(229,72,77,0.16)";
-  return "rgba(79,134,224,0.07)";
-}
 
 export function generateKitchenSvgPreview(result: KitchenResult, options: KitchenSvgPreviewOptions = {}): string | null {
   if (!result || !result.boards.length) return null;
@@ -85,7 +78,7 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
   parts.push(`<rect ${rect(0, W, 0, BCH)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
   columns.forEach((col, ci) => {
     for (const z of col.zones) {
-      parts.push(`<rect class="region" data-zone="${z.id}" data-col="${ci}" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneTint(z.zoneType)}" stroke="none" />`);
+      parts.push(`<rect class="region" data-zone="${z.id}" data-col="${ci}" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" stroke="none" />`);
     }
   });
 
@@ -109,6 +102,13 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     if ((av.x1 - av.x0) * scale > 34) parts.push(label(toX((av.x0 + av.x1) / 2), toY(av.height) + 9, `wheel ${fmt(av.height)}`, { size: 9, fill: "#f08a8d" }));
   }
 
+  // Type colour over the boards. Clicks still hit the region underneath.
+  columns.forEach((col) => {
+    for (const z of col.zones) {
+      parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" fill-opacity="0.9" stroke="none" />`);
+    }
+  });
+
   // Hinge cups and lock mortises (absolute cabinet x / z).
   for (const h of result.hinges) {
     parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max((h.diameter / 2) * scale, 1.5))}" fill="none" stroke="${PV.hinge}" stroke-width="1" pointer-events="none" />`);
@@ -118,6 +118,11 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     const h = Math.max(l.height * scale, 2.5);
     parts.push(`<rect x="${px(toX(l.centerX) - w / 2)}" y="${px(toY(l.centerZ) - h / 2)}" width="${px(w)}" height="${px(h)}" rx="${px(h / 2)}" fill="${PV.lock}" fill-opacity="0.55" stroke="none" pointer-events="none" />`);
   }
+
+  columns.forEach((col, ci) => {
+    const z = col.zones.find((zz) => isSel(ci, zz.id));
+    if (z) parts.push(selectRect(rect(col.x0, col.x1, z.z0, z.z1)));
+  });
 
   // Cell names (type + height), haloed.
   for (const col of columns) {
@@ -138,12 +143,6 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     }
   }
   if ((BCH * scale) >= 11) parts.push(label(toX(0) + 6, toY(BCH / 2), `kick ${fmt(BCH)}`, { size: 9, fill: PV.text2, anchor: "start" }));
-
-  // Selected cell: an outline over the boards.
-  columns.forEach((col, ci) => {
-    const z = col.zones.find((zz) => isSel(ci, zz.id));
-    if (z) parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
-  });
 
   // Outer envelope.
   parts.push(`<rect ${rect(0, W, 0, H)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
@@ -177,6 +176,7 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     });
     parts.push(dimText(toX(W / 2), yb + 15, `W ${fmt(W)} · H ${fmt(H)} · ${columns.length} column${columns.length === 1 ? "" : "s"}`, "middle", PV.text3));
   }
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
 
   return svgRoot(width, height, { scale, ox, oy, w: W, h: H }, "Kitchen base front elevation", parts.join(""));
 }

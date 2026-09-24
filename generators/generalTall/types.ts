@@ -58,6 +58,9 @@ export interface GTParams {
   cabinetDepth: number;
   panelThickness?: number;
   frontPanelThickness?: number;
+  /** Door colour name on the fronts' and T1 / B1 room face. Default Gloss White. */
+  doorColor?: string;
+  doorColorName?: string;
   frontFaceAllowance?: number;
   doorPanelThickness?: number;
   ziThickness?: number;

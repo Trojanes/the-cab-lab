@@ -21,7 +21,7 @@ export function generateBedSideSvg(result: BedSideResult, options: { width?: num
     const zone = id === "FRONT_LO" ? p.zones[0] : p.zones[1];
     if (!b || !zone) continue;
     parts.push(
-      `<rect class="region" x="${toX(b.x0).toFixed(1)}" y="${toY(b.z1).toFixed(1)}" width="${((b.x1 - b.x0) * scale).toFixed(1)}" height="${((b.z1 - b.z0) * scale).toFixed(1)}" fill="${zone.type === "drawer" ? "#e8dcc6" : "#d5e4f2"}" stroke="#8a8378" pointer-events="none" />`,
+      `<rect class="region" x="${toX(b.x0).toFixed(1)}" y="${toY(b.z1).toFixed(1)}" width="${((b.x1 - b.x0) * scale).toFixed(1)}" height="${((b.z1 - b.z0) * scale).toFixed(1)}" fill="${zone.type === "drawer" ? "#f0c27a" : "#8ec5ef"}" stroke="#5c6b78" pointer-events="none" />`,
       `<text x="${toX((b.x0 + b.x1) / 2).toFixed(1)}" y="${toY((b.z0 + b.z1) / 2).toFixed(1)}" text-anchor="middle" dominant-baseline="middle" font-size="12" fill="#3b352d" pointer-events="none">${labelOf(zone.type)}</text>`,
     );
   }

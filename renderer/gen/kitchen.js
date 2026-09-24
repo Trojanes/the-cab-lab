@@ -217,6 +217,13 @@ function faceRef(board, faces) {
   return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/finish.ts
+var DEFAULT_DOOR_COLOUR = "Gloss White";
+function doorColourOf(params) {
+  const raw = params ? params.doorColorName || params.doorColor : "";
+  return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+
 // generators/_lib/recordBox.ts
 function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
   return {
@@ -231,6 +238,29 @@ function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
 function refreshBoardBox(b) {
   Object.assign(b, recordBoardBox(b.id, b.x0, b.x1, b.y0, b.y1, b.z0, b.z1));
   return b;
+}
+
+// generators/_lib/edgeBand.ts
+function outlineOf(b) {
+  return localOutline(b) ?? rectOutline(b);
+}
+function setEdgeBand(b, i, band) {
+  if (!Number.isInteger(i) || i < 0) throw new Error(`${b.id}: edge ${i} is not an outline index`);
+  const n = outlineOf(b).length;
+  if (i >= n) throw new Error(`${b.id}: edge ${i} is past the outline (${n} edges)`);
+  const face = faceOf(b, `E${i}`);
+  if (!band) {
+    if (!face.finish?.edgeBand) return;
+    delete face.finish.edgeBand;
+    if (face.finish.colour == null) delete face.finish;
+    return;
+  }
+  if (!Number.isFinite(band.thickness) || band.thickness <= 0) {
+    throw new Error(`${b.id}.E${i}: edge band thickness must be millimetres above 0`);
+  }
+  const stored = { thickness: band.thickness };
+  if (band.colour) stored.colour = band.colour;
+  face.finish = { ...face.finish, edgeBand: stored };
 }
 
 // generators/_lib/resolveJoints.ts
@@ -332,14 +362,67 @@ function relationshipDeclarationsForBoards(boardIds) {
   return [...STATIC, ...extra].filter((d) => present(d, boardIds));
 }
 
+// generators/kitchen/rules.json
+var rules_default = {
+  NOTCH_ALLOWANCE_EXTRA: { value: 1, doc: "\u8BA9\u4F4D\u7F3A\u53E3/\u69FD\u5BBD\u4F59\u91CF\uFF1Bna = \u677F\u539A + 1\u3002" },
+  STYLE1_TOE_KICK_Y: { value: 70, doc: "style_1 \u8DBE\u8E22\uFF1AV \u677F\u5E95\u6BB5\u524D\u7F18 Y\uFF1BB1 \u524D\u8138 = 70 \u2212 CPT \u2212 FPT\u3002" },
+  BOTTOM_SLOT_REAR_Y: { value: 80, doc: "V \u677F B3 \u53F0\u9636\u524D\u7F18 Y\uFF08z\u2208[BCH, BCH+na] \u6BB5\uFF09\u3002" },
+  RECEIVER_NOTCH_DEPTH: { value: 85, doc: "r\uFF1AV \u677F\u9876\u524D T1 \u8BA9\u4F4D\u6DF1\uFF08Y \u5411\uFF09\uFF1B\u4EA6\u4E3A T3/B4 \u540E\u63A5\u6536\u7F3A\u53E3\u9AD8\uFF08Z \u5411\uFF09\u3002" },
+  SUPPORT_STRIP_WIDTH: { value: 100, doc: "B3 \u6DF1\u5EA6\uFF1BT1/T2 \u6761\u5BBD\uFF1BT3/B4 \u6761\u9AD8\uFF1B\u52A0\u5F3A\u6761\u6DF1\u5EA6\u3002" },
+  B3_DEPTH: { value: 150, doc: "\u62BD\u5C49\u5206\u9694\u677F\u6DF1\uFF08drawer_divider y \u8303\u56F4\uFF09\u3002" },
+  SUPPORT_STRIP_NOTCH_DEPTH: { value: 20, doc: "T \u7CFB/B4 \u6761\u8BA9 V \u677F\u7684\u7F3A\u53E3\u6DF1\u3002" },
+  MIN_STRIP_SEGMENT_LENGTH: { value: 30, doc: "\u6761\u5207\u5206\u540E\u6700\u5C0F\u6BB5\u957F\uFF0C\u5C0F\u4E8E\u5373\u4E22\u5F03\u3002" },
+  DRAWER_SLOT_Y0: { value: 45, doc: "\u62BD\u5C49\u69FD Y \u4E0B\u754C\uFF08drawerSlotLength 110\uFF1Ay\u2208[45,155]\uFF09\u3002" },
+  DRAWER_SLOT_Y1: { value: 155, doc: "\u62BD\u5C49\u69FD Y \u4E0A\u754C\u3002" },
+  DRAWER_TONGUE_Y0: { value: 50, doc: "\u62BD\u5C49\u820C Y \u4E0B\u754C\uFF08[50, B3_DEPTH]\uFF09\u3002" },
+  DRAWER_SLOT_CLEARANCE: { value: 5, doc: "\u62BD\u5C49\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\u3002" },
+  SHELF_SLOT_CLEARANCE: { value: 6, doc: "\u529F\u80FD\u677F\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\uFF08\u820C \xB16\uFF09\u3002" },
+  HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
+  HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
+  HINGE_CUP_FROM_EDGE: { value: 22.5, doc: "\u676F\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
+  HINGE_SD_MIN: { value: 75, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0B\u9650\u3002" },
+  HINGE_SD_MAX: { value: 100, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0A\u9650\u3002" },
+  HINGE_SD_SPAN: { value: 300, doc: "\u4FA7\u8DDD\u516C\u5F0F\u53C2\u8003\u957F\uFF1Asd = clamp[75,100](75 + (\u957F\u8FB9\u2212300)\xB725/300)\u3002" },
+  SD_GAIN_NUM: { value: 25, doc: "\u4FA7\u8DDD\u516C\u5F0F\u589E\u76CA\u5206\u5B50\u3002" },
+  SD_GAIN_DEN: { value: 300, doc: "\u4FA7\u8DDD\u516C\u5F0F\u589E\u76CA\u5206\u6BCD\u3002" },
+  FRONT_CLEARANCE: { value: 2.5, doc: "\u95E8\u7F1D fc\uFF08\u9690\u85CF\u53C2\u6570\u9ED8\u8BA4\uFF09\u3002" },
+  LOCK_WIDTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u5BBD\u3002" },
+  LOCK_HEIGHT: { value: 15.5, doc: "\u9501\u69FD\u9AD8\uFF08r = \u9AD8/2\uFF09\u3002" },
+  LOCK_SIDE_OFFSET: { value: 80, doc: "\u9501\u5FC3\u8DDD\u4FA7\u6CBF\uFF08lockSideCenterOffset \u9ED8\u8BA4\uFF09\u3002" },
+  LOCK_DROP: { value: 30.5, doc: "\u9501\u5FC3\u4F4E\u4E8E\u4E0A\u5206\u9694\u5FC3\uFF1A\u4E0A\u5206\u9694\u5FC3 \u2212 CPT/2 \u2212 30.5\u3002" },
+  DOOR_SHELF_MIN_ZONE_HEIGHT: { value: 350, doc: "\u533A\u9AD8\u4F4E\u4E8E\u6B64\u4E0D\u751F\u6210\u95E8\u5C42\u677F\u3002" },
+  STRENGTHENING_STRIP_NOTCH_Y: { value: 85, doc: "\u5C42\u677F\u524D\u7F18\u8BA9\u52A0\u5F3A\u6761\u7684\u7F3A\u53E3\u6DF1\uFF08y\u2208[0,85]\uFF09\u3002" },
+  STRENGTHENING_GROOVE_Y0: { value: 80, doc: "\u52A0\u5F3A\u6761\u81EA\u8EAB\u69FD y \u4E0B\u754C\u3002" },
+  STRENGTHENING_GROOVE_CLEARANCE: { value: 0.5, doc: "\u52A0\u5F3A\u6761\u69FD z \u76F8\u5BF9\u5C42\u677F\u7684\u4F59\u91CF\u3002" },
+  RAISED_B4_HEIGHT: { value: 100, doc: "\u8F6E\u62F1 raised B4 \u9AD8\u5EA6/\u907F\u8BA9\u7F29\u77ED\u5E26\uFF08100 mm\uFF09\u3002" },
+  STOVE_CUT_FRONT_EXTRA: { value: 100, doc: "\u7076\u53F0\u5207\u5272\u533A y \u2208 [0, FPT+100]\u3002" },
+  SLOT_Z_CLEARANCE: { value: 0.5, doc: "\u69FD z = \u677F z \xB1 0.5\u3002" },
+  TONGUE_FALLBACK_SLACK: { value: 0.5, doc: "\u69FD\u4FE1\u606F\u7F3A\u5931\u65F6\u820C\u957F = CPT/2 \u2212 0.5\u3002" },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges." }
+};
+
+// generators/kitchen/rules.ts
+var RULES = defineRules("kitchen", rules_default);
+
 // generators/kitchen/faces.ts
+var CARCASS_COLOUR = "White Stipple";
+function frontWorldY(b) {
+  const edges = boundaryEdgeFaces(b, "-Y");
+  const edge = edges[0]?.edge;
+  if (!edge) return null;
+  const [U, V] = planeAxes(b.profilePlane);
+  const c = U === "y" ? 0 : V === "y" ? 1 : -1;
+  if (c < 0) return null;
+  return b.y0 + (edge.from[c] + edge.to[c]) / 2;
+}
 function buildKitchenFaces(fb) {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
     const isFront = b.category === "front_panel" || b.boardType === "front_panel" || b.id === "B1";
     if (isFront) {
-      annotate(b, "B", { semantic: "front", visible: true });
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }
@@ -405,49 +488,35 @@ function buildKitchenFaces(fb) {
     const r = localRect(p, { x: [n.x0, n.x1], y: [n.y0, n.y1] });
     addFeature(p, "A", { id: n.id, kind: "notch", ...r, for: "strip", source: "kitchen" });
   }
+  const tape = RULES.EDGE_BAND_THICKNESS_MM.value;
+  const carcass = CARCASS_COLOUR;
+  const band = (b, normal, colour) => {
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
+  };
+  for (const b of fb.boards) {
+    if (b.boardType === "front_panel") {
+      for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
+      continue;
+    }
+    if (b.boardType === "vertical_panel") {
+      const y = frontWorldY(b);
+      band(b, "-Y", y != null && y < -0.5 ? fb.doorColour : carcass);
+      continue;
+    }
+    if (b.boardType === "bottom_deck" || b.boardType === "top_front_rail" || b.boardType === "drawer_divider") {
+      band(b, "-Y", carcass);
+      band(b, "+Y", carcass);
+      continue;
+    }
+    if (b.boardType === "top_rear_rail" || b.boardType === "full_depth_shelf" || b.boardType === "door_shelf" || b.boardType === "strengthening_strip") {
+      band(b, "-Y", carcass);
+      continue;
+    }
+    if (b.boardType === "top_rear_vertical") band(b, "-Z", carcass);
+    else if (b.boardType === "bottom_rear_vertical") band(b, "+Z", carcass);
+  }
   return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
 }
-
-// generators/kitchen/rules.json
-var rules_default = {
-  NOTCH_ALLOWANCE_EXTRA: { value: 1, doc: "\u8BA9\u4F4D\u7F3A\u53E3/\u69FD\u5BBD\u4F59\u91CF\uFF1Bna = \u677F\u539A + 1\u3002" },
-  STYLE1_TOE_KICK_Y: { value: 70, doc: "style_1 \u8DBE\u8E22\uFF1AV \u677F\u5E95\u6BB5\u524D\u7F18 Y\uFF1BB1 \u524D\u8138 = 70 \u2212 CPT \u2212 FPT\u3002" },
-  BOTTOM_SLOT_REAR_Y: { value: 80, doc: "V \u677F B3 \u53F0\u9636\u524D\u7F18 Y\uFF08z\u2208[BCH, BCH+na] \u6BB5\uFF09\u3002" },
-  RECEIVER_NOTCH_DEPTH: { value: 85, doc: "r\uFF1AV \u677F\u9876\u524D T1 \u8BA9\u4F4D\u6DF1\uFF08Y \u5411\uFF09\uFF1B\u4EA6\u4E3A T3/B4 \u540E\u63A5\u6536\u7F3A\u53E3\u9AD8\uFF08Z \u5411\uFF09\u3002" },
-  SUPPORT_STRIP_WIDTH: { value: 100, doc: "B3 \u6DF1\u5EA6\uFF1BT1/T2 \u6761\u5BBD\uFF1BT3/B4 \u6761\u9AD8\uFF1B\u52A0\u5F3A\u6761\u6DF1\u5EA6\u3002" },
-  B3_DEPTH: { value: 150, doc: "\u62BD\u5C49\u5206\u9694\u677F\u6DF1\uFF08drawer_divider y \u8303\u56F4\uFF09\u3002" },
-  SUPPORT_STRIP_NOTCH_DEPTH: { value: 20, doc: "T \u7CFB/B4 \u6761\u8BA9 V \u677F\u7684\u7F3A\u53E3\u6DF1\u3002" },
-  MIN_STRIP_SEGMENT_LENGTH: { value: 30, doc: "\u6761\u5207\u5206\u540E\u6700\u5C0F\u6BB5\u957F\uFF0C\u5C0F\u4E8E\u5373\u4E22\u5F03\u3002" },
-  DRAWER_SLOT_Y0: { value: 45, doc: "\u62BD\u5C49\u69FD Y \u4E0B\u754C\uFF08drawerSlotLength 110\uFF1Ay\u2208[45,155]\uFF09\u3002" },
-  DRAWER_SLOT_Y1: { value: 155, doc: "\u62BD\u5C49\u69FD Y \u4E0A\u754C\u3002" },
-  DRAWER_TONGUE_Y0: { value: 50, doc: "\u62BD\u5C49\u820C Y \u4E0B\u754C\uFF08[50, B3_DEPTH]\uFF09\u3002" },
-  DRAWER_SLOT_CLEARANCE: { value: 5, doc: "\u62BD\u5C49\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\u3002" },
-  SHELF_SLOT_CLEARANCE: { value: 6, doc: "\u529F\u80FD\u677F\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\uFF08\u820C \xB16\uFF09\u3002" },
-  HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
-  HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
-  HINGE_CUP_FROM_EDGE: { value: 22.5, doc: "\u676F\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
-  HINGE_SD_MIN: { value: 75, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0B\u9650\u3002" },
-  HINGE_SD_MAX: { value: 100, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0A\u9650\u3002" },
-  HINGE_SD_SPAN: { value: 300, doc: "\u4FA7\u8DDD\u516C\u5F0F\u53C2\u8003\u957F\uFF1Asd = clamp[75,100](75 + (\u957F\u8FB9\u2212300)\xB725/300)\u3002" },
-  SD_GAIN_NUM: { value: 25, doc: "\u4FA7\u8DDD\u516C\u5F0F\u589E\u76CA\u5206\u5B50\u3002" },
-  SD_GAIN_DEN: { value: 300, doc: "\u4FA7\u8DDD\u516C\u5F0F\u589E\u76CA\u5206\u6BCD\u3002" },
-  FRONT_CLEARANCE: { value: 2.5, doc: "\u95E8\u7F1D fc\uFF08\u9690\u85CF\u53C2\u6570\u9ED8\u8BA4\uFF09\u3002" },
-  LOCK_WIDTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u5BBD\u3002" },
-  LOCK_HEIGHT: { value: 15.5, doc: "\u9501\u69FD\u9AD8\uFF08r = \u9AD8/2\uFF09\u3002" },
-  LOCK_SIDE_OFFSET: { value: 80, doc: "\u9501\u5FC3\u8DDD\u4FA7\u6CBF\uFF08lockSideCenterOffset \u9ED8\u8BA4\uFF09\u3002" },
-  LOCK_DROP: { value: 30.5, doc: "\u9501\u5FC3\u4F4E\u4E8E\u4E0A\u5206\u9694\u5FC3\uFF1A\u4E0A\u5206\u9694\u5FC3 \u2212 CPT/2 \u2212 30.5\u3002" },
-  DOOR_SHELF_MIN_ZONE_HEIGHT: { value: 350, doc: "\u533A\u9AD8\u4F4E\u4E8E\u6B64\u4E0D\u751F\u6210\u95E8\u5C42\u677F\u3002" },
-  STRENGTHENING_STRIP_NOTCH_Y: { value: 85, doc: "\u5C42\u677F\u524D\u7F18\u8BA9\u52A0\u5F3A\u6761\u7684\u7F3A\u53E3\u6DF1\uFF08y\u2208[0,85]\uFF09\u3002" },
-  STRENGTHENING_GROOVE_Y0: { value: 80, doc: "\u52A0\u5F3A\u6761\u81EA\u8EAB\u69FD y \u4E0B\u754C\u3002" },
-  STRENGTHENING_GROOVE_CLEARANCE: { value: 0.5, doc: "\u52A0\u5F3A\u6761\u69FD z \u76F8\u5BF9\u5C42\u677F\u7684\u4F59\u91CF\u3002" },
-  RAISED_B4_HEIGHT: { value: 100, doc: "\u8F6E\u62F1 raised B4 \u9AD8\u5EA6/\u907F\u8BA9\u7F29\u77ED\u5E26\uFF08100 mm\uFF09\u3002" },
-  STOVE_CUT_FRONT_EXTRA: { value: 100, doc: "\u7076\u53F0\u5207\u5272\u533A y \u2208 [0, FPT+100]\u3002" },
-  SLOT_Z_CLEARANCE: { value: 0.5, doc: "\u69FD z = \u677F z \xB1 0.5\u3002" },
-  TONGUE_FALLBACK_SLACK: { value: 0.5, doc: "\u69FD\u4FE1\u606F\u7F3A\u5931\u65F6\u820C\u957F = CPT/2 \u2212 0.5\u3002" }
-};
-
-// generators/kitchen/rules.ts
-var RULES = defineRules("kitchen", rules_default);
 
 // generators/_lib/preview.ts
 var PV = {
@@ -457,7 +526,7 @@ var PV = {
   front: "#9ec5d8",
   frontLine: "#3f5a6a",
   boundary: "#e0a34f",
-  select: "#4f86e0",
+  select: "#0e3f8f",
   text: "#d8dde4",
   text2: "#9aa2ad",
   text3: "#6b737e",
@@ -467,6 +536,35 @@ var PV = {
   warn: "#e5484d",
   font: "'Segoe UI', system-ui, sans-serif"
 };
+var ZONE_COLOR = {
+  left_door: "#8ec5ef",
+  right_door: "#8ec5ef",
+  double_door: "#8ec5ef",
+  side_door: "#8ec5ef",
+  left_side_door: "#8ec5ef",
+  right_side_door: "#8ec5ef",
+  up_flap: "#b7e3a1",
+  down_flap: "#b7e3a1",
+  top_flap: "#b7e3a1",
+  bottom_flap: "#b7e3a1",
+  rangehood_flap: "#d7b8f2",
+  drawer: "#f0c27a",
+  open: "#f3e39a",
+  open_space: "#f3e39a",
+  custom: "#e4d0b0",
+  stove: "#f0a3a3",
+  open_appliance: "#f0a3a3",
+  fridge: "#8ed4d0",
+  fixed_panel: "#d5dcc4",
+  blank_panel: "#d5dcc4",
+  unassigned: "#f0a3a3"
+};
+function zoneColor(type) {
+  return type && ZONE_COLOR[type] || "#8ec5ef";
+}
+function selectRect(attrs) {
+  return `<rect pointer-events="none" ${attrs} fill="${PV.select}" fill-opacity="0.62" stroke="#d7e6ff" stroke-width="3" />`;
+}
 function esc(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -519,6 +617,55 @@ function fitCanvas(W, H, width, maxHeight, pad) {
   const height = Math.round(H * scale + pad.t + pad.b);
   return { scale, ox, oy, height };
 }
+function boardGaps(boards) {
+  const out = [];
+  const structural = boards.filter((b) => b.category !== "front_panel" && b.stock?.kind !== "door");
+  for (const axis of ["x", "z"]) {
+    const thick = axis === "x" ? "X" : "Z";
+    const list = structural.filter((b) => b.thicknessAxis === thick);
+    const lo = (b) => axis === "x" ? b.x0 : b.z0;
+    const hi = (b) => axis === "x" ? b.x1 : b.z1;
+    const c0 = (b) => axis === "x" ? b.z0 : b.x0;
+    const c1 = (b) => axis === "x" ? b.z1 : b.x1;
+    const mid = (b) => (lo(b) + hi(b)) / 2;
+    const sorted = [...list].sort((a, b) => mid(a) - mid(b));
+    for (let i = 0; i < sorted.length; i += 1) {
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const a = sorted[i];
+        const b = sorted[j];
+        const crossLo = Math.max(c0(a), c0(b));
+        const crossHi = Math.min(c1(a), c1(b));
+        if (crossHi - crossLo < 30) continue;
+        const clear = lo(b) - hi(a);
+        if (clear < 8) continue;
+        const blocked = sorted.some((m, k) => {
+          if (k === i || k === j) return false;
+          if (mid(m) <= mid(a) || mid(m) >= mid(b)) return false;
+          const share = Math.min(c1(m), crossHi) - Math.max(c0(m), crossLo);
+          return share > 20 && lo(m) >= hi(a) - 1 && hi(m) <= lo(b) + 1;
+        });
+        if (blocked) continue;
+        out.push({
+          axis,
+          clear: Math.round(clear * 10) / 10,
+          center: Math.round((mid(b) - mid(a)) * 10) / 10,
+          at: (hi(a) + lo(b)) / 2,
+          cross: (crossLo + crossHi) / 2
+        });
+      }
+    }
+  }
+  return out;
+}
+function gapMarks(gaps, toX, toY, scale, mode = "clear") {
+  const center = mode === "center";
+  return gaps.map((g) => {
+    if (g.clear * scale < 16) return "";
+    const x = g.axis === "x" ? toX(g.at) : toX(g.cross);
+    const y = g.axis === "z" ? toY(g.at) : toY(g.cross);
+    return label(x, y, fmt(center ? g.center : g.clear), { size: 9, fill: center ? "#e0a34f" : "#8ec5ef" });
+  }).join("");
+}
 function svgRoot(width, height, data, aria, body) {
   const d = Object.entries(data).map(([k, v]) => `data-${k}="${v}"`).join(" ");
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(aria)}" ${d} font-family="${PV.font}"><rect x="0" y="0" width="${width}" height="${height}" fill="${PV.bg}" />` + body + `</svg>`;
@@ -536,15 +683,6 @@ var KITCHEN_ZONE_LABELS = {
   custom: "Custom",
   unassigned: "Unassigned"
 };
-function zoneTint(type) {
-  if (type === "drawer") return "rgba(224,163,79,0.10)";
-  if (type === "open") return "rgba(255,255,255,0.03)";
-  if (type === "down_flap") return "rgba(180,140,230,0.10)";
-  if (type === "stove") return "rgba(229,72,77,0.10)";
-  if (type === "custom") return "rgba(160,200,150,0.08)";
-  if (type === "unassigned") return "rgba(229,72,77,0.16)";
-  return "rgba(79,134,224,0.07)";
-}
 function generateKitchenSvgPreview(result, options = {}) {
   if (!result || !result.boards.length) return null;
   const W = result.params.length;
@@ -567,7 +705,7 @@ function generateKitchenSvgPreview(result, options = {}) {
   parts.push(`<rect ${rect(0, W, 0, BCH)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
   columns.forEach((col, ci) => {
     for (const z of col.zones) {
-      parts.push(`<rect class="region" data-zone="${z.id}" data-col="${ci}" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneTint(z.zoneType)}" stroke="none" />`);
+      parts.push(`<rect class="region" data-zone="${z.id}" data-col="${ci}" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" stroke="none" />`);
     }
   });
   const boards = [...result.boards].sort((a, b) => b.y0 - a.y0);
@@ -585,6 +723,11 @@ function generateKitchenSvgPreview(result, options = {}) {
     parts.push(`<rect ${rect(av.x0, av.x1, 0, av.height)} fill="${PV.warn}" fill-opacity="0.10" stroke="${PV.warn}" stroke-dasharray="4 3" pointer-events="none" />`);
     if ((av.x1 - av.x0) * scale > 34) parts.push(label(toX((av.x0 + av.x1) / 2), toY(av.height) + 9, `wheel ${fmt(av.height)}`, { size: 9, fill: "#f08a8d" }));
   }
+  columns.forEach((col) => {
+    for (const z of col.zones) {
+      parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" fill-opacity="0.9" stroke="none" />`);
+    }
+  });
   for (const h of result.hinges) {
     parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max(h.diameter / 2 * scale, 1.5))}" fill="none" stroke="${PV.hinge}" stroke-width="1" pointer-events="none" />`);
   }
@@ -593,6 +736,10 @@ function generateKitchenSvgPreview(result, options = {}) {
     const h = Math.max(l.height * scale, 2.5);
     parts.push(`<rect x="${px(toX(l.centerX) - w / 2)}" y="${px(toY(l.centerZ) - h / 2)}" width="${px(w)}" height="${px(h)}" rx="${px(h / 2)}" fill="${PV.lock}" fill-opacity="0.55" stroke="none" pointer-events="none" />`);
   }
+  columns.forEach((col, ci) => {
+    const z = col.zones.find((zz) => isSel(ci, zz.id));
+    if (z) parts.push(selectRect(rect(col.x0, col.x1, z.z0, z.z1)));
+  });
   for (const col of columns) {
     const w = (col.x1 - col.x0) * scale;
     for (const z of col.zones) {
@@ -611,10 +758,6 @@ function generateKitchenSvgPreview(result, options = {}) {
     }
   }
   if (BCH * scale >= 11) parts.push(label(toX(0) + 6, toY(BCH / 2), `kick ${fmt(BCH)}`, { size: 9, fill: PV.text2, anchor: "start" }));
-  columns.forEach((col, ci) => {
-    const z = col.zones.find((zz) => isSel(ci, zz.id));
-    if (z) parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
-  });
   parts.push(`<rect ${rect(0, W, 0, H)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
   for (let i = 0; i < columns.length - 1; i += 1) {
     const x = toX(columns[i].x1);
@@ -642,6 +785,7 @@ function generateKitchenSvgPreview(result, options = {}) {
     });
     parts.push(dimText(toX(W / 2), yb + 15, `W ${fmt(W)} \xB7 H ${fmt(H)} \xB7 ${columns.length} column${columns.length === 1 ? "" : "s"}`, "middle", PV.text3));
   }
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
   return svgRoot(width, height, { scale, ox, oy, w: W, h: H }, "Kitchen base front elevation", parts.join(""));
 }
 
@@ -1211,7 +1355,8 @@ function generateKitchenCabinet(input) {
   const addFuncBoard = (id, name, boardType, ci, z0, z1, isDrawer) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
-    const depth = isDrawer ? RULES.B3_DEPTH.value : cd;
+    const intoRear = !isDrawer && (z0 < stripW || z1 > r2(H - stripW));
+    const depth = isDrawer ? RULES.B3_DEPTH.value : intoRear ? r2(cd - CPT) : cd;
     const ty0 = isDrawer ? RULES.DRAWER_TONGUE_Y0.value : r2(cd / 3);
     const ty1 = isDrawer ? RULES.B3_DEPTH.value : r2(2 * cd / 3);
     const board = mkBoard(
@@ -1422,8 +1567,9 @@ function generateKitchenCabinet(input) {
     });
   }
   {
-    const y0 = r2(cd - stripW);
-    const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, cd));
+    const y1 = r2(cd - CPT);
+    const y0 = r2(y1 - stripW);
+    const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, y1));
     segs.forEach(([a, b], i) => {
       const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean);
       boards.push(mkBoard(
@@ -1438,7 +1584,7 @@ function generateKitchenCabinet(input) {
         a,
         b,
         y0,
-        cd,
+        y1,
         zTop0,
         H,
         xyNotch(a, b, y0, stripW, ns, notchD, "near")
@@ -1727,7 +1873,7 @@ function generateKitchenCabinet(input) {
   });
   for (const b of boards) refreshBoardBox(b);
   attachFaces(boards);
-  const joints = buildKitchenFaces({ boards, slots, hinges, locks, notches });
+  const joints = buildKitchenFaces({ boards, slots, hinges, locks, notches, doorColour: doorColourOf(input) });
   const result = {
     params: {
       length: s.W,

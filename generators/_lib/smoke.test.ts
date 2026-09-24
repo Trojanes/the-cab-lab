@@ -195,6 +195,15 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
     assert.equal(errs.length, 0, `${id} defaults: ${errs.join("; ")}`);
     const env = m.envelope(params);
     assert.ok(env.W > 0 && env.D > 0 && env.H > 0, `${id} envelope`);
+    // Colour faces: every visible door-stock face carries the cabinet's door colour name.
+    if (params.doorColorName) {
+      for (const b of result.boards ?? []) {
+        if (b.stock?.kind !== "door") continue;
+        const shown = (b.faces ?? []).filter((f) => (f.id === "A" || f.id === "B") && f.visible === true);
+        assert.ok(shown.length > 0, `${id} ${b.id}: door stock without a visible face`);
+        for (const f of shown) assert.equal(f.finish?.colour, params.doorColorName, `${id} ${b.id}.${f.id} colour`);
+      }
+    }
     if (typeof m.footprintBoxes === "function") {
       const boxes = m.footprintBoxes(params, result);
       assert.ok(boxes.length >= 2, `${id} multi-rect footprint`);

@@ -6,6 +6,9 @@ import * as THREE from "three";
 import { scene, camera, controls, canvas, renderer, setView, frame, rayFromClient } from "../space.js";
 import { MODULES, moduleIdForGenerator } from "../modules.js";
 import { boardMesh } from "../boardGeom.js";
+import { colourFaces, doorBodyMaterial } from "../doorFinish.js";
+import { STIPPLE_WHITE, carcassMat } from "../carcassFinish.js";
+import { doorSwatch } from "../doorSwatches.js";
 import { showTip, hideTip } from "../hud.js";
 import { log } from "../log.js";
 import { collectPins, pinsForBoard, mergePins, checkPins, countPins } from "../gen/pins.js";
@@ -445,7 +448,6 @@ $("#ruleDialog [data-ok]").addEventListener("click", async () => {
 const cabRoot = new THREE.Group();
 cabRoot.name = "bench-cabinet";
 scene.add(cabRoot);
-const carcassMat = new THREE.MeshStandardMaterial({ color: 0xc9b799, roughness: 0.8 });
 const frontMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6 });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a4034 });
 const pointMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0 });
@@ -509,11 +511,14 @@ function build3D(keepCamera) {
   const pr = Math.max(3, span / 260);
 
   for (const b of boards) {
-    const mat = (b.category === "front_panel" ? frontMat : carcassMat).clone();
+    const coatsOn = colourFaces(b);
+    const bodyHex = coatsOn.length ? (doorSwatch(coatsOn[0].finish.colour)?.hex ?? STIPPLE_WHITE) : null;
+    const mat = (bodyHex != null ? doorBodyMaterial(coatsOn[0].finish.colour) : b.category === "front_panel" ? frontMat : carcassMat).clone();
     const { mesh, edges } = boardMesh(b, mat, edgeMat);
     mesh.userData = { kind: "board", boardId: b.id };
     const group = new THREE.Group();
     group.add(mesh, edges);
+    const coats = [];
     const bc = new THREE.Vector3((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
     if (t.showPoints) {
       for (const p of pointsOf(b, c.prov, c.result.features || [])) {
@@ -526,7 +531,7 @@ function build3D(keepCamera) {
       }
     }
     cabRoot.add(group);
-    boardGroups.set(b.id, { group, mesh, edges, mat, center: bc, board: b });
+    boardGroups.set(b.id, { group, mesh, edges, mat, coats, bodyHex, center: bc, board: b });
   }
   buildTrails();
   buildLabels();
@@ -662,6 +667,12 @@ function applyOpacity() {
     g.mat.opacity = o;
     g.mat.depthWrite = o >= 1;
     g.mat.needsUpdate = true;
+    for (const m of g.coats) {
+      m.transparent = o < 1;
+      m.opacity = o;
+      m.depthWrite = o >= 1;
+      m.needsUpdate = true;
+    }
     g.edges.material = isWaiting(id) ? edgeMatGhost : edgeMat;
   }
 }
@@ -818,7 +829,10 @@ function applyCut() {
   if (t.cut.y < 1) { clipPlanes[1].constant = min.y + (max.y - min.y) * t.cut.y; planes.push(clipPlanes[1]); }
   if (t.cut.z < 1) { clipPlanes[2].constant = min.z + (max.z - min.z) * t.cut.z; planes.push(clipPlanes[2]); }
   const list = planes.length ? planes : null;
-  for (const g of boardGroups.values()) g.mat.clippingPlanes = list;
+  for (const g of boardGroups.values()) {
+    g.mat.clippingPlanes = list;
+    for (const m of g.coats) m.clippingPlanes = list;
+  }
   for (const m of sharedClipped) m.clippingPlanes = list;
 }
 
@@ -853,7 +867,8 @@ function paintSelection() {
     const l3 = t.l3 === id;
     g.mat.emissive.setHex(on || joint || l3 ? HL : 0x000000);
     g.mat.emissiveIntensity = on || l3 ? 1.2 : joint ? 0.8 : 0;
-    g.mat.color.setHex(on || l3 ? 0xffe08a : joint ? 0xe8d7b0 : g.board.category === "front_panel" ? 0x9ec5d8 : 0xc9b799);
+    const rest = g.bodyHex != null ? g.bodyHex : g.board.category === "front_panel" ? 0x9ec5d8 : STIPPLE_WHITE;
+    g.mat.color.setHex(on || l3 ? 0xffe08a : joint ? 0xe8d7b0 : rest);
   }
   renderExplodeOrder();
   for (const m of pointMeshes) {
@@ -1050,7 +1065,8 @@ function highlightKeys(keys, label, ruleName = null) {
     const on = highlight.boards.has(id);
     g.mat.emissive.setHex(on ? 0x3a2a00 : 0x000000);
     g.mat.emissiveIntensity = on ? 1 : 0;
-    g.mat.color.setHex(on ? 0xffe08a : g.board.category === "front_panel" ? 0x9ec5d8 : 0xc9b799);
+    const rest = g.bodyHex != null ? g.bodyHex : g.board.category === "front_panel" ? 0x9ec5d8 : STIPPLE_WHITE;
+    g.mat.color.setHex(on ? 0xffe08a : rest);
   }
   for (const m of pointMeshes) {
     const on = m.userData.point.keys.some((k) => highlight.keys.has(k));

@@ -220,6 +220,13 @@ function faceRef(board, faces) {
   return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/finish.ts
+var DEFAULT_DOOR_COLOUR = "Gloss White";
+function doorColourOf(params) {
+  const raw = params ? params.doorColorName || params.doorColor : "";
+  return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+
 // generators/_lib/recordBox.ts
 function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
   return {
@@ -349,8 +356,10 @@ function buildTallFaces(fb) {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
-    if (b.category === "front_panel" || b.boardType === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+    const doorLeaf = b.category === "front_panel" || b.boardType === "front_panel" || b.boardType === "style2_fixed_front_panel" || b.id === "T1" || b.id === "B1";
+    if (doorLeaf) {
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }
@@ -511,7 +520,7 @@ var PV = {
   front: "#9ec5d8",
   frontLine: "#3f5a6a",
   boundary: "#e0a34f",
-  select: "#4f86e0",
+  select: "#0e3f8f",
   text: "#d8dde4",
   text2: "#9aa2ad",
   text3: "#6b737e",
@@ -521,6 +530,35 @@ var PV = {
   warn: "#e5484d",
   font: "'Segoe UI', system-ui, sans-serif"
 };
+var ZONE_COLOR = {
+  left_door: "#8ec5ef",
+  right_door: "#8ec5ef",
+  double_door: "#8ec5ef",
+  side_door: "#8ec5ef",
+  left_side_door: "#8ec5ef",
+  right_side_door: "#8ec5ef",
+  up_flap: "#b7e3a1",
+  down_flap: "#b7e3a1",
+  top_flap: "#b7e3a1",
+  bottom_flap: "#b7e3a1",
+  rangehood_flap: "#d7b8f2",
+  drawer: "#f0c27a",
+  open: "#f3e39a",
+  open_space: "#f3e39a",
+  custom: "#e4d0b0",
+  stove: "#f0a3a3",
+  open_appliance: "#f0a3a3",
+  fridge: "#8ed4d0",
+  fixed_panel: "#d5dcc4",
+  blank_panel: "#d5dcc4",
+  unassigned: "#f0a3a3"
+};
+function zoneColor(type) {
+  return type && ZONE_COLOR[type] || "#8ec5ef";
+}
+function selectRect(attrs) {
+  return `<rect pointer-events="none" ${attrs} fill="${PV.select}" fill-opacity="0.62" stroke="#d7e6ff" stroke-width="3" />`;
+}
 function esc(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
@@ -573,6 +611,55 @@ function fitCanvas(W, H, width, maxHeight, pad) {
   const height = Math.round(H * scale + pad.t + pad.b);
   return { scale, ox, oy, height };
 }
+function boardGaps(boards) {
+  const out = [];
+  const structural = boards.filter((b) => b.category !== "front_panel" && b.stock?.kind !== "door");
+  for (const axis of ["x", "z"]) {
+    const thick = axis === "x" ? "X" : "Z";
+    const list = structural.filter((b) => b.thicknessAxis === thick);
+    const lo = (b) => axis === "x" ? b.x0 : b.z0;
+    const hi = (b) => axis === "x" ? b.x1 : b.z1;
+    const c0 = (b) => axis === "x" ? b.z0 : b.x0;
+    const c1 = (b) => axis === "x" ? b.z1 : b.x1;
+    const mid = (b) => (lo(b) + hi(b)) / 2;
+    const sorted = [...list].sort((a, b) => mid(a) - mid(b));
+    for (let i = 0; i < sorted.length; i += 1) {
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const a = sorted[i];
+        const b = sorted[j];
+        const crossLo = Math.max(c0(a), c0(b));
+        const crossHi = Math.min(c1(a), c1(b));
+        if (crossHi - crossLo < 30) continue;
+        const clear = lo(b) - hi(a);
+        if (clear < 8) continue;
+        const blocked = sorted.some((m, k) => {
+          if (k === i || k === j) return false;
+          if (mid(m) <= mid(a) || mid(m) >= mid(b)) return false;
+          const share = Math.min(c1(m), crossHi) - Math.max(c0(m), crossLo);
+          return share > 20 && lo(m) >= hi(a) - 1 && hi(m) <= lo(b) + 1;
+        });
+        if (blocked) continue;
+        out.push({
+          axis,
+          clear: Math.round(clear * 10) / 10,
+          center: Math.round((mid(b) - mid(a)) * 10) / 10,
+          at: (hi(a) + lo(b)) / 2,
+          cross: (crossLo + crossHi) / 2
+        });
+      }
+    }
+  }
+  return out;
+}
+function gapMarks(gaps, toX, toY, scale, mode = "clear") {
+  const center = mode === "center";
+  return gaps.map((g) => {
+    if (g.clear * scale < 16) return "";
+    const x = g.axis === "x" ? toX(g.at) : toX(g.cross);
+    const y = g.axis === "z" ? toY(g.at) : toY(g.cross);
+    return label(x, y, fmt(center ? g.center : g.clear), { size: 9, fill: center ? "#e0a34f" : "#8ec5ef" });
+  }).join("");
+}
 function svgRoot(width, height, data, aria, body) {
   const d = Object.entries(data).map(([k, v]) => `data-${k}="${v}"`).join(" ");
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(aria)}" ${d} font-family="${PV.font}"><rect x="0" y="0" width="${width}" height="${height}" fill="${PV.bg}" />` + body + `</svg>`;
@@ -592,14 +679,6 @@ var GT_ZONE_LABELS = {
   bottom_flap: "Bottom flap",
   blank_panel: "Blank panel"
 };
-function zoneTint(type) {
-  if (type === "drawer") return "rgba(224,163,79,0.10)";
-  if (type === "open_space" || type === "open_appliance") return "rgba(255,255,255,0.03)";
-  if (type === "fridge") return "rgba(110,200,200,0.10)";
-  if (type === "top_flap" || type === "bottom_flap") return "rgba(180,140,230,0.10)";
-  if (type === "blank_panel") return "rgba(160,200,150,0.08)";
-  return "rgba(79,134,224,0.07)";
-}
 var OWNED_HEIGHT = /* @__PURE__ */ new Set(["fridge"]);
 function generateGTSvgPreview(result, options = {}) {
   if (!result || result.validation.errors.length || !result.boards.length || !result.stack?.length) return null;
@@ -619,7 +698,7 @@ function generateGTSvgPreview(result, options = {}) {
   const parts = [];
   for (const it of rows) {
     if (it.kind === "functional_zone") {
-      parts.push(`<rect class="region" data-zone="${zid(it)}" ${rect(0, CW, it.z0, it.z1)} fill="${zoneTint(it.zoneType)}" stroke="none" />`);
+      parts.push(`<rect class="region" data-zone="${zid(it)}" ${rect(0, CW, it.z0, it.z1)} fill="${zoneColor(it.zoneType)}" stroke="none" />`);
     } else if (it.kind !== "boundary_panel") {
       parts.push(`<rect ${rect(0, CW, it.z0, it.z1)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
     }
@@ -634,6 +713,11 @@ function generateGTSvgPreview(result, options = {}) {
       `<rect data-board="${b.id}" pointer-events="none" ${rect(r.x0, r.x1, r.z0, r.z1)} fill="${door ? PV.front : PV.carcass}" fill-opacity="${isFront ? 0.55 : 0.92}" stroke="${door ? PV.frontLine : PV.carcassLine}" stroke-width="0.75" />`
     );
   }
+  for (const it of zones) {
+    parts.push(`<rect pointer-events="none" ${rect(0, CW, it.z0, it.z1)} fill="${zoneColor(it.zoneType)}" fill-opacity="0.9" stroke="none" />`);
+  }
+  const sel = zones.find((it) => zid(it) === selected);
+  if (sel) parts.push(selectRect(rect(0, CW, sel.z0, sel.z1)));
   for (const h of result.hinges) {
     parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max(h.diameter / 2 * scale, 1.5))}" fill="none" stroke="${PV.hinge}" stroke-width="1" pointer-events="none" />`);
   }
@@ -656,8 +740,6 @@ function generateGTSvgPreview(result, options = {}) {
       parts.push(label(cx, cy, `${name} \xB7 ${fmt(it.height)}`, { size: 10 }));
     }
   }
-  const sel = zones.find((it) => zid(it) === selected);
-  if (sel) parts.push(`<rect pointer-events="none" ${rect(0, CW, sel.z0, sel.z1)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
   parts.push(`<rect ${rect(0, CW, 0, CH)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
   const draggable = /* @__PURE__ */ new Set();
   for (let i = 0; i < zones.length - 1; i += 1) {
@@ -693,6 +775,7 @@ function generateGTSvgPreview(result, options = {}) {
     }
     parts.push(dimText(toX(CW / 2), toY(0) + 15, `W ${fmt(CW)} \xB7 H ${fmt(CH)}`, "middle", PV.text3));
   }
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
   return svgRoot(width, height, { scale, ox, oy, w: CW, h: CH }, "Tall cabinet front elevation", parts.join(""));
 }
 
@@ -965,13 +1048,13 @@ function v12Profile(s, slots, yOrigin) {
   }
   return yz(pts.map(([y, z]) => [y + yOrigin, z]));
 }
-function v34Profile(s, slots, warnings, yOff) {
+function v34Profile(s, slots, warnings, yOff, rear = RULES.V34_Y_REAR.value) {
   const CH = s.CH;
-  const tRear = RULES.V34_Y_REAR.value;
+  const tRear = rear;
   const slotY = RULES.V34_ZI_SLOT_INNER.value;
   const nh = RULES.V34_NOTCH_HEIGHT.value;
-  const nf = RULES.V34_TOP_NOTCH_FRONT_Y.value;
-  const ni = RULES.V34_TOP_NOTCH_INNER_Y.value;
+  const ni = Math.max(0, tRear - (RULES.V34_Y_REAR.value - RULES.V34_TOP_NOTCH_INNER_Y.value));
+  const nf = Math.max(0, Math.min(ni, tRear - (RULES.V34_Y_REAR.value - RULES.V34_TOP_NOTCH_FRONT_Y.value)));
   const nt = RULES.V34_END_NOTCH_THICKNESS.value;
   const Y = (y) => r2(y + yOff);
   const kept = [];
@@ -1154,8 +1237,11 @@ function generateGeneralTall(input) {
     CH,
     v12Profile(s, v12Slots, v12Y0)
   ));
-  const v34Y0 = r2(stileY0 + Math.max(0, md - RULES.V34_Y_REAR.value));
   const v34Y1 = r2(stileY0 + md);
+  let v34Y0 = r2(stileY0 + Math.max(0, md - RULES.V34_Y_REAR.value));
+  if (v34Y0 < v12Y1) v34Y0 = v12Y1;
+  const v34Depth = r2(Math.max(0, v34Y1 - v34Y0));
+  const v34Rear = Math.min(RULES.V34_Y_REAR.value, v34Depth);
   boards.push(mkBoard(
     "V3",
     "Rear Stile Left",
@@ -1168,10 +1254,10 @@ function generateGeneralTall(input) {
     vLeftX0,
     vLeftX1,
     v34Y0,
-    v34Y1,
+    r2(v34Y0 + v34Rear),
     0,
     CH,
-    v34Profile(s, v34Slots, warnings, v34Y0)
+    v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)
   ));
   boards.push(mkBoard(
     "V4",
@@ -1185,10 +1271,10 @@ function generateGeneralTall(input) {
     vRightX0,
     vRightX1,
     v34Y0,
-    v34Y1,
+    r2(v34Y0 + v34Rear),
     0,
     CH,
-    v34Profile(s, v34Slots, warnings, v34Y0)
+    v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)
   ));
   if (fridgeZoneItem) {
     const v5OnLeft = s.exteriorSide !== "left";
@@ -1278,7 +1364,7 @@ function generateGeneralTall(input) {
         "top_system",
         "T1",
         t1H,
-        "carcass",
+        "door",
         "XZ",
         "Y",
         dx,
@@ -1376,7 +1462,7 @@ function generateGeneralTall(input) {
         "bottom_system",
         "B1",
         t1H,
-        "carcass",
+        "door",
         "XZ",
         "Y",
         dx,
@@ -1655,6 +1741,13 @@ function generateGeneralTall(input) {
       same(`${h.name}.y0`, "tall.hY0");
       same(`${h.name}.y1`, "tall.hY1");
     } else {
+      let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
+      let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
+      const v5 = boards.find((board) => board.id === "V5");
+      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+        if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
+        else x1 = r2(Math.min(x1, v5.x0));
+      }
       boards.push(mkBoard(
         h.name,
         "H Bridge Rear",
@@ -1664,8 +1757,8 @@ function generateGeneralTall(input) {
         "carcass",
         "XZ",
         "Y",
-        r2(dx + RULES.H_SUPPORT_THICKNESS.value),
-        r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value),
+        x0,
+        x1,
         r2(md - RULES.H34_DEPTH.value),
         md,
         h.z0,
@@ -1729,6 +1822,13 @@ function generateGeneralTall(input) {
         same(`${h.name}.y0`, "tall.hY0");
         same(`${h.name}.y1`, "tall.hY1");
       } else {
+        let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
+        let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
+        const v5 = boards.find((board) => board.id === "V5");
+        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+          if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
+          else x1 = r2(Math.min(x1, v5.x0));
+        }
         boards.push(mkBoard(
           h.name,
           "H34 fridge",
@@ -1738,8 +1838,8 @@ function generateGeneralTall(input) {
           "carcass",
           "XZ",
           "Y",
-          r2(dx + RULES.H_SUPPORT_THICKNESS.value),
-          r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value),
+          x0,
+          x1,
           r2(md - RULES.H34_DEPTH.value),
           md,
           h.z0,
@@ -2135,7 +2235,7 @@ function generateGeneralTall(input) {
     ));
   }
   attachFaces(boards);
-  const joints = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks });
+  const joints = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
   const result = {
     params: {
       cabinetHeight: CH,

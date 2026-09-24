@@ -18,12 +18,14 @@
  */
 
 import type { Board, BedroomResult, BedroomZoneId } from "./types.ts";
+import { boardGaps, gapMarks } from "../_lib/preview.ts";
 
 export interface BedroomSvgPreviewOptions {
   width?: number;
   height?: number;
   selectedRegion?: BedroomZoneId | null;
   showDimensions?: boolean;
+  gaps?: "clear" | "center";
 }
 
 function esc(value: unknown): string {
@@ -174,6 +176,8 @@ export function generateBedroomSvgPreview(result: BedroomResult, options: Bedroo
   if (selZone) {
     parts.push(`<rect class="region-outline" pointer-events="none" ${rectAttrs(selZone.x0, selZone.x1, selZone.z0, selZone.z1)} fill="${C.select}" fill-opacity="0.12" stroke="${C.select}" stroke-width="2" />`);
   }
+
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
 
   // Outer envelope.
   parts.push(`<rect ${rectAttrs(0, W, 0, H)} fill="none" stroke="${C.envelope}" stroke-width="1.25" pointer-events="none" />`);

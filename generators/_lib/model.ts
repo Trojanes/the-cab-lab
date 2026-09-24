@@ -64,6 +64,17 @@ export interface FaceFeature {
   source?: string;
 }
 
+/**
+ * Tape on one outline edge. Absent on a face means that edge is not banded.
+ * `setEdgeBand` / `edgeBandPart` in `edgeBand.ts` are the only writers and the export shape.
+ */
+export interface EdgeBand {
+  /** Tape thickness, millimetres. */
+  thickness: number;
+  /** Catalogue colour name. Omitted when the edge takes the board face colour. */
+  colour?: string;
+}
+
 export interface Face {
   id: FaceId;
   /** `${boardId}.${faceId}` */
@@ -79,7 +90,7 @@ export interface Face {
   semantic?: string;
   /** Exposed after assembly, when the module knows. */
   visible?: boolean;
-  finish?: { colour?: string; edgeBand?: { thickness: number; colour?: string } };
+  finish?: { colour?: string; edgeBand?: EdgeBand };
   features: FaceFeature[];
 }
 

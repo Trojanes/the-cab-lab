@@ -353,6 +353,27 @@ function testFaceLayer() {
   assert.deepEqual(j.get("oh_t1_t2_top_rail_stack")!.a, { board: "T1", faces: ["A"] });
   assert.deepEqual(j.get("oh_t1_t2_top_rail_stack")!.b, { board: "T2", faces: ["B"] });
 
+  // Edge tape sits on the visible outer edges. Door colour on fronts, carcass colour inside.
+  const door = "Gloss White";
+  const carcass = "White Stipple";
+  const banded = (board: { faces?: Array<{ id: string; normal: unknown; finish?: { edgeBand?: { thickness: number; colour?: string } } }> }) =>
+    (board.faces ?? []).filter((f) => f.id.startsWith("E") && f.finish?.edgeBand);
+  const fpBands = banded(fp0);
+  assert.equal(fpBands.length, 4, "door: four edges");
+  assert.ok(fpBands.every((f) => f.finish!.edgeBand!.colour === door && f.finish!.edgeBand!.thickness === 1));
+  assert.equal(banded(byId.get("T1")!).length, 0, "T1 bare");
+  assert.equal(banded(byId.get("T2")!).length, 0, "T2 bare");
+  for (const id of ["BP", "D0", "D1"] as const) {
+    const bands = banded(byId.get(id)!);
+    assert.ok(bands.length >= 1, `${id} front edge`);
+    assert.ok(bands.every((f) => f.normal === "-Y" && f.finish!.edgeBand!.colour === carcass), id);
+  }
+  const t3Bands = banded(t3);
+  assert.ok(t3Bands.some((f) => f.normal === "-Y") && t3Bands.some((f) => f.normal === "+Y"), "T3 front and back");
+  assert.ok(t3Bands.every((f) => (f.normal === "-Y" || f.normal === "+Y") && f.finish!.edgeBand!.colour === carcass));
+  const t4Bands = banded(byId.get("T4")!);
+  assert.ok(t4Bands.length >= 1 && t4Bands.every((f) => f.normal === "-Z" && f.finish!.edgeBand!.colour === carcass), "T4 bottom");
+
   // Pins cover the face features too.
   assert.ok(Object.keys(preset.pins.faceFeatures ?? {}).length > 0, "golden preset pins face features — run scripts/pin-presets.ts --write");
   assert.ok(preset.pins.faceFeatures!["BP.A.BG_D1"], "BP.A.BG_D1 pinned");
@@ -378,6 +399,14 @@ function testFaceLayerRangehood() {
   const g = d1.faces!.find((f) => f.id === "B")!.features[0]!;
   // z 90..106 cabinet → local v = z - z0 (D1.z0 = 15).
   assert.deepEqual([g.v0, g.v1], [75, 91]);
+  const topBands = (byId.get("RGHD_TOP")!.faces ?? []).filter((f) => f.finish?.edgeBand);
+  assert.ok(topBands.length >= 1 && topBands.every((f) => f.normal === "-Y" && f.finish!.edgeBand!.colour === "White Stipple"), "rangehood top front");
+  assert.equal((byId.get("RGHD_FRONT")!.faces ?? []).some((f) => f.finish?.edgeBand), false, "rangehood front bare");
+  assert.equal((byId.get("RGHD_BACK")!.faces ?? []).some((f) => f.finish?.edgeBand), false, "rangehood back bare");
+  const flap = [...byId.values()].find((b) => b.category === "front_panel")!;
+  const flapBands = (flap.faces ?? []).filter((f) => f.finish?.edgeBand);
+  assert.equal(flapBands.length, 4);
+  assert.ok(flapBands.every((f) => f.finish!.edgeBand!.colour === "Gloss White"));
 }
 
 function testDividerBoardThicknessUsesCptNotGrooveSlot() {

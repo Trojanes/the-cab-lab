@@ -174,7 +174,8 @@ var rules_default = {
   RANGEHOOD_CUTOUT_WIDTH_MM: { value: 555, doc: "NCE rangehood: BP cutout width." },
   RANGEHOOD_CUTOUT_DEPTH_MM: { value: 285, doc: "NCE rangehood: BP cutout depth." },
   RANGEHOOD_MIN_EDGE_MM: { value: 40, doc: "NCE rangehood: minimum material left around the cutout." },
-  RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM: { value: 75, doc: "NCE rangehood: clear height from BP top to the insert top when the params give none." }
+  RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM: { value: 75, doc: "NCE rangehood: clear height from BP top to the insert top when the params give none." },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges." }
 };
 
 // generators/overheadCabinet/rules.ts
@@ -722,16 +723,18 @@ function fmt(value) {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(2)));
 }
 function panelFill(type) {
-  if (type === "rangehood_flap") return "#f3e8ff";
-  if (type === "fixed_panel") return "#eef8ea";
-  if (type === "open") return "#fff7dc";
-  return "#e5f2ff";
+  if (type === "rangehood_flap") return "#d7b8f2";
+  if (type === "fixed_panel") return "#d5dcc4";
+  if (type === "open") return "#f3e39a";
+  if (type === "up_flap") return "#b7e3a1";
+  return "#8ec5ef";
 }
 function generateOHCSvgPreview(geometry, options = {}) {
   const width = options.width ?? 760;
   const height = options.height ?? 390;
   const showDimensions = options.showDimensions ?? true;
   const selectedZoneIndex = options.selectedZoneIndex ?? -1;
+  const centerGaps = options.gaps === "center";
   const cw = geometry.cabinet.Cw;
   const ch = geometry.cabinet.Ch ?? geometry.manufacturing.TCH;
   const fg = geometry.manufacturing.FGw;
@@ -775,12 +778,27 @@ function generateOHCSvgPreview(geometry, options = {}) {
         <text x="${fmt(r.x + r.w / 2)}" y="${fmt(labelY - 4)}" text-anchor="middle" fill="#6e5a42" font-size="10">D${index} ${fmt(fg)} mm</text>` : ""}
     `;
   }).join("");
+  const dividers = [...geometry.divider_features].sort((a, b) => a.XDi - b.XDi);
+  const bayGaps = dividers.slice(0, -1).map((a, i) => {
+    const b = dividers[i + 1];
+    const clear = Math.round((b.XDi - fg / 2 - (a.XDi + fg / 2)) * 10) / 10;
+    const center = Math.round((b.XDi - a.XDi) * 10) / 10;
+    if (clear < 8 || clear * scale < 16) return "";
+    const x = toX((a.XDi + b.XDi) / 2);
+    const y = toY(fzh / 2);
+    const n = centerGaps ? center : clear;
+    return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="middle" fill="${centerGaps ? "#9a6b12" : "#2a6f97"}" font-size="10">${fmt(n)}</text>`;
+  }).join("");
+  const topClear = Math.round((ch - tch - fg) * 10) / 10;
+  const topCenter = Math.round((ch - tch / 2 - fg / 2) * 10) / 10;
+  const heightGap = topClear >= 8 && topClear * scale >= 16 ? `<text x="${fmt(toX(cw / 2))}" y="${fmt(toY((fg + ch - tch) / 2))}" text-anchor="middle" fill="${centerGaps ? "#9a6b12" : "#2a6f97"}" font-size="10">${fmt(centerGaps ? topCenter : topClear)}</text>` : "";
   const openingRects = geometry.front_panels.map((panel) => {
     const opening = rectFromXZ(panel.opening.x[0], 0, panel.opening.x[1], fzh);
     const selected = panel.zoneIndex === selectedZoneIndex;
     const dimensionY = oy + bodyH + 20 + panel.zoneIndex % 2 * 15;
     return `
-      <rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="${panelFill(panel.type)}" stroke="${selected ? "#0f6bff" : "#9db6d5"}" stroke-width="${selected ? 2 : 1}"></rect>
+      <rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="${panelFill(panel.type)}" stroke="#6a7d90" stroke-width="1"></rect>
+      ${selected ? `<rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="#0e3f8f" fill-opacity="0.62" stroke="#d7e6ff" stroke-width="3"></rect>` : ""}
       ${showDimensions ? `
         <line x1="${fmt(opening.x)}" y1="${fmt(dimensionY)}" x2="${fmt(opening.x + opening.w)}" y2="${fmt(dimensionY)}" stroke="#0f6bff"></line>
         <line x1="${fmt(opening.x)}" y1="${fmt(dimensionY - 4)}" x2="${fmt(opening.x)}" y2="${fmt(dimensionY + 4)}" stroke="#0f6bff"></line>
@@ -818,6 +836,8 @@ function generateOHCSvgPreview(geometry, options = {}) {
       <rect x="${fmt(topArea.x)}" y="${fmt(topArea.y)}" width="${fmt(topArea.w)}" height="${fmt(topArea.h)}" fill="rgba(15,107,255,0.06)" stroke="#85b5ff" stroke-dasharray="5 3"></rect>
       <text x="${fmt(topArea.x + topArea.w - 6)}" y="${fmt(topArea.y + 14)}" text-anchor="end" fill="#0b57d0" font-size="10">T1/T2 / TCH ${fmt(tch)}</text>
       ${openingRects}
+      ${bayGaps}
+      ${heightGap}
       ${frontPanelRects}
       <rect x="${fmt(bp.x)}" y="${fmt(bp.y)}" width="${fmt(bp.w)}" height="${fmt(bp.h)}" fill="#c7b9a2" stroke="#6e5a42"></rect>
       <text x="${fmt(bp.x + 6)}" y="${fmt(bp.y - 4)}" fill="#6e5a42" font-size="10">BP ${fmt(fg)} mm</text>
@@ -1038,6 +1058,36 @@ function faceRef(board, faces) {
   return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/finish.ts
+var DEFAULT_DOOR_COLOUR = "Gloss White";
+function doorColourOf(params) {
+  const raw = params ? params.doorColorName || params.doorColor : "";
+  return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+
+// generators/_lib/edgeBand.ts
+function outlineOf(b) {
+  return localOutline(b) ?? rectOutline(b);
+}
+function setEdgeBand(b, i, band) {
+  if (!Number.isInteger(i) || i < 0) throw new Error(`${b.id}: edge ${i} is not an outline index`);
+  const n = outlineOf(b).length;
+  if (i >= n) throw new Error(`${b.id}: edge ${i} is past the outline (${n} edges)`);
+  const face = faceOf(b, `E${i}`);
+  if (!band) {
+    if (!face.finish?.edgeBand) return;
+    delete face.finish.edgeBand;
+    if (face.finish.colour == null) delete face.finish;
+    return;
+  }
+  if (!Number.isFinite(band.thickness) || band.thickness <= 0) {
+    throw new Error(`${b.id}.E${i}: edge band thickness must be millimetres above 0`);
+  }
+  const stored = { thickness: band.thickness };
+  if (band.colour) stored.colour = band.colour;
+  face.finish = { ...face.finish, edgeBand: stored };
+}
+
 // generators/overheadCabinet/faces.ts
 var EPS = 0.01;
 function byId(boards) {
@@ -1060,8 +1110,9 @@ function buildOverheadFaces(fb) {
       annotate(b, "A", { finish: { colour: fb.carcassColorName } });
       annotate(b, "B", { finish: { colour: fb.carcassColorName } });
     }
-    if (b.category === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+    if (isFront) {
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }
@@ -1086,6 +1137,21 @@ function buildOverheadFaces(fb) {
     annotate(t3, "A", { semantic: "top" });
     annotate(t3, "B", { semantic: "bottom" });
   }
+  const tape = RULES.EDGE_BAND_THICKNESS_MM.value;
+  const band = (b, normal, colour) => {
+    if (!b) return;
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
+  };
+  for (const b of boards) {
+    if (b.category !== "front_panel") continue;
+    for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
+  }
+  band(bp, "-Y", fb.carcassColorName);
+  for (const d of dividers) band(d, "-Y", fb.carcassColorName);
+  band(t3, "-Y", fb.carcassColorName);
+  band(t3, "+Y", fb.carcassColorName);
+  band(B.get("T4"), "-Z", fb.carcassColorName);
+  band(B.get("RGHD_TOP"), "-Y", fb.carcassColorName);
   if (bp) {
     geometry.divider_features.forEach((df, index) => {
       if (fb.suppressedGrooves.includes(index) || !df.bp_groove) return;
@@ -1951,7 +2017,8 @@ function generateOverheadCabinetInner(rawParams) {
     ledFeatures,
     rangehoodFeatures,
     declarations: relationshipDeclarations,
-    carcassColorName: carcassColor.carcassColorName
+    carcassColorName: carcassColor.carcassColorName,
+    doorColour: doorColourOf(rawParams)
   });
   return {
     params: resolvedParams(),

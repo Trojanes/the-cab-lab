@@ -33,8 +33,11 @@ Decisions taken 2026‑09‑20:
 
 Answers: what is this, how big, where, how is it divided.
 
-- `job.cabinets[i] = { id, moduleId, params, pose }`. Params **are** the
+- `job.cabinets[i] = { id, moduleId, params, pose, hidden? }`. Params **are** the
   envelope (`renderer/modules.js` maps W/D/H and divider handles onto them).
+  `hidden` is the role ids the user has turned off in the 3D view. It is saved
+  with the job; the boards are still generated and still count for fit and
+  overlap. Omit the field when every board is shown.
 - Decides which boards exist and their **role ids** (`BP`, `T1`, `D0`, `FP0`,
   `SIDE_L`, `MID_1`). Role ids are stable across parameter changes; pins,
   labels and future user overrides anchor on them.
@@ -96,7 +99,7 @@ interface Face {
   edge?: { from: [u, v]; to: [u, v] };
   semantic?: string;      // module annotation: front back top bottom inside outside
   visible?: boolean;      // when the module knows (fronts: B visible, A hidden)
-  finish?: { colour?: string; edgeBand?: { thickness; colour? } };
+  finish?: { colour?: string; edgeBand?: EdgeBand };  // EdgeBand on E<i> only; absent = not banded
   features: FaceFeature[];
 }
 
@@ -120,6 +123,29 @@ interface FaceFeature {
 - Edge normals are outward normals of the outline; `boundaryEdgeFaces(b, "-Y")`
   returns the edges on the outline's front boundary (not a tongue side or a
   step that happens to face the same way).
+
+### Edge banding
+
+Stored on the edge face, not in a second coordinate system. `E<i>.finish.edgeBand`
+is `{ thickness, colour? }` (millimetres, catalogue colour name). No `edgeBand`
+on that face means the edge is not banded. A and B never carry one. Which
+edges get a band is decided later; `setEdgeBand(board, i, band | null)` only writes.
+
+Export is `edgeBandPart(board)` (`generators/_lib/edgeBand.ts`). Web, mobile
+and the app read this record and nothing else:
+
+```ts
+interface EdgeBandPart {
+  id: string;
+  axes: { u: "X" | "Y" | "Z"; v: "X" | "Y" | "Z" };  // XY → u=X v=Y; XZ → u=X v=Z; YZ → u=Y v=Z
+  outline: [u, v][];   // board-local mm from (u0, v0); same order as localOutline / the SVG path
+  edgeBand: { i: number; t: number; colour?: string }[];  // sparse; edge i is outline[i] → outline[(i+1) % n]
+}
+```
+
+The outline is the whole cut, tongues and notches included. A segment that is
+not in `edgeBand` is cut and not banded. Screen Y-down is applied when drawing,
+not stored. Pose is not in the record.
 
 ### Where each overhead feature lives
 
@@ -166,12 +192,12 @@ small‑cabinet joints are one per tongue (`SIDE_L.A ↔ MID_1 left‑tongue edg
 
 | Consumer | Reads |
 |---|---|
-| main window (`cabinets3d.js`) | boards → boxes / extruded outlines. Still colours by `category`; per‑face colour is the next step |
+| main window (`cabinets3d.js`) | boards → boxes / extruded outlines. A board with a colour face is painted all over with that swatch (`doorFinish.js`, flat, no environment reflection) so the face and the edge match; other boards by `category`. Carcass is White Stipple |
 | bench L2 | boards, `faces` (Faces section), joints |
 | bench L3 (`board2d.js`) | `faces` A / B features as rectangles and hole points; falls back to the flat `features` list when a result has no faces |
 | nesting | boards: `stock`, `localOutline`, grain |
 | CNC | faces: A / B features, face‑local |
-| edge‑banding | E faces with `finish.edgeBand` |
+| edge‑banding | `edgeBandPart(board)`: outline + sparse `edgeBand[]`, stored on `E<i>.finish.edgeBand` |
 | labels | module → board path |
 
 ## Rules for changes

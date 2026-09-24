@@ -11,6 +11,9 @@ export interface OverheadCabinetParams {
   /** Carcass / structural board colour. Default White Stipple (double-sided). */
   carcassColor?: string;
   carcassColorName?: string;
+  /** Door colour name on the flap fronts' room face. Default Gloss White. */
+  doorColor?: string;
+  doorColorName?: string;
   /** T3 top-face LED T-groove (opens upward). Default on when omitted. */
   ledGroove?: boolean;
   topClearanceHeight?: number;

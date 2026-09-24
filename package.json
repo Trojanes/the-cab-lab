@@ -8,9 +8,11 @@
   "scripts": {
     "start": "node ensure-electron.js && node build-generators.js && electron .",
     "build:generators": "node build-generators.js",
-    "test:generators": "node --experimental-strip-types generators/smallCabinet/generator.test.ts && node --experimental-strip-types generators/overheadCabinet/generator.test.ts && node --experimental-strip-types generators/bedroom/generator.test.ts && node --experimental-strip-types generators/bedBox/generator.test.ts && node --experimental-strip-types generators/bedSideTable/generator.test.ts && node --experimental-strip-types generators/kitchen/generator.test.ts && node --experimental-strip-types generators/generalTall/generator.test.ts && node --experimental-strip-types generators/lounge/generator.test.ts && node --experimental-strip-types generators/_lib/benchContract.test.ts && node --experimental-strip-types generators/_lib/smoke.test.ts",
+    "test:generators": "node --experimental-strip-types generators/smallCabinet/generator.test.ts && node --experimental-strip-types generators/overheadCabinet/generator.test.ts && node --experimental-strip-types generators/bedroom/generator.test.ts && node --experimental-strip-types generators/bedBox/generator.test.ts && node --experimental-strip-types generators/bedSideTable/generator.test.ts && node --experimental-strip-types generators/kitchen/generator.test.ts && node --experimental-strip-types generators/generalTall/generator.test.ts && node --experimental-strip-types generators/lounge/generator.test.ts && node --experimental-strip-types generators/_lib/benchContract.test.ts && node --experimental-strip-types generators/_lib/edgeBand.test.ts && node --experimental-strip-types generators/_lib/smoke.test.ts",
     "test:pose": "node renderer/pose.test.js",
     "test:grab": "node renderer/grab.test.js",
+    "test:resize": "node renderer/resize.test.js",
+    "test:swatches": "node renderer/doorSwatches.test.js",
     "pins:check": "node --experimental-strip-types scripts/pin-presets.ts overheadCabinet",
     "bench": "node ensure-electron.js && node build-generators.js && node scripts/run-bench.js",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File create-desktop-shortcut.ps1"

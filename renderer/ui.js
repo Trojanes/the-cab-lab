@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes } from "./cabinets3d.js";
 import { syncWalls } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -140,6 +140,9 @@ function refreshRail() {
     side: "the lit end gets the side cabinet · click it · Esc steps back",
     width: "pull the side cabinet's width · type W · click or Enter · Esc steps back",
     height: "pull the height · type H · click or Enter creates · Esc steps back",
+    edge: "move to the left or the right — that vertical edge turns orange · click it · Esc redraws the main box",
+    wide: "drag the side line to set the wing width · it snaps near the main depth, drag past for another width · Tab types L · click or Enter · Esc back to the edge",
+    pull: "pull the wing out into the room · near the main depth it snaps · Tab types L · click or Enter creates · Esc back to the width",
   };
   const HINTS = {
     armed: placing
@@ -160,12 +163,18 @@ function refreshRail() {
     "nose.drag": "Drag the room-side face along the van · snaps to roof breaks, the seam and cabinet faces · type “From front” · click or Enter to create · Esc cancels",
     "bedbox.width": "Bed Box — width: move sideways, the line grows symmetrically from the centre line · type W · click or Enter to lock · Esc cancels",
     "bedbox.depth": "Bed Box — length: pull into the room from the body face · snaps to cabinet faces · type D · click or Enter to create · Esc cancels",
+    "resize.pick": "Resize — click a face of any module · Esc ends",
+    "resize.face": "Resize — drag the arrow; the opposite face stays · click another face · Esc ends",
+    "resize.drag": "Resize — release to keep this size (one undo step)",
     "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
   };
+  const lBox = getLoungeStyle() === "L" && ["armed", "face", "extrude"].includes(mode);
   $("#modeHint").textContent = loungeStep
     ? `Lounge ${getLoungeStyle()} — ${LOUNGE_HINT[loungeStep] || ""}`
-    : (HINTS[mode] || "");
+    : lBox
+      ? `Lounge L · main box — ${mode === "armed" ? "click a corner to start · Esc to stop" : HINTS[mode]}`
+      : (HINTS[mode] || "");
 }
 
 // --- view buttons ---------------------------------------------------------------
@@ -246,6 +255,8 @@ function refreshStatus() {
     ? `Face — ${MODULES[sel.moduleId].label} has one door side (toward the room)`
     : "Face (O) — click a side; doors face that way · Enter confirms · Esc restores";
   $('[data-action="orient"]').classList.toggle("active", getMode().startsWith("orient"));
+  $('[data-action="resize"]').disabled = !job.getJob().cabinets.length;
+  $('[data-action="resize"]').classList.toggle("active", getMode().startsWith("resize"));
   $('[data-action="plane"]').disabled = !job.hasSpace();
   $('[data-action="plane"]').classList.toggle("active", getMode().startsWith("plane"));
   const pl = job.getSelectedPlane();
@@ -290,6 +301,7 @@ const ACTIONS = {
   move: () => startMove(),
   orient: () => startOrient(),
   plane: () => startPlane(),
+  resize: () => startResize(),
 };
 $$("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());
@@ -310,8 +322,13 @@ window.addEventListener("keydown", (e) => {
 // --- sync --------------------------------------------------------------------------
 let panelPending = false;
 const rightpanel = $("#rightpanel");
+/** A number / text field keeps its focus across a job edit. A button does not: Add / Remove must redraw at once. */
+function panelFieldFocused() {
+  const el = document.activeElement;
+  return !!el && rightpanel.contains(el) && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+}
 function maybeRenderPanel() {
-  if (rightpanel.contains(document.activeElement)) {
+  if (panelFieldFocused()) {
     panelPending = true;
     return;
   }
@@ -320,7 +337,7 @@ function maybeRenderPanel() {
 }
 rightpanel.addEventListener("focusout", () => {
   // Wait for focus to settle, then re-render if a job change was skipped.
-  setTimeout(() => { if (panelPending && !rightpanel.contains(document.activeElement)) maybeRenderPanel(); }, 0);
+  setTimeout(() => { if (panelPending) maybeRenderPanel(); }, 0);
 });
 
 let lastSpace = undefined;

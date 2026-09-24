@@ -176,7 +176,7 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   restart, outside the repo); new Vehicle spaces start from it. **Reset to built-in** removes it. The **Side** view
   looks across the van so the profile reads as drawn.
 - **Overhead** (OHC, `generators/overheadCabinet/generator.ts`): hangs from the ceiling with its back on a wall. The
-  anchor can only be a feature point on a **ceiling ∩ wall line** (a top corner of the room, an overhead's top-back
+  anchor can only be a feature point where the flat ceiling meets a solid — a space wall, a cabinet's outer box, or a partition extended up to the roof (a top corner of the room, an overhead's top-back
   corner, a plane ∩ ceiling corner); other points are refused with a hint. **W runs along that wall**, the doors face
   the room, the top stays on the ceiling (the box only grows down). Three faces take the 2D rectangle: the ceiling
   (W×D, pull H down), the wall itself (W×H, pull D into the room) or a face perpendicular to the wall — a neighbour's

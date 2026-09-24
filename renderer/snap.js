@@ -1,10 +1,12 @@
-// Feature points for point-to-point placement: the space's corners and the
-// corners of every cabinet envelope (world space, coincident points merged).
+// Feature points for point-to-point placement: the space's corners, every
+// corner of each cabinet's outer box, and partition corners extended to the
+// floor and the roof (world space, coincident points merged).
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
 import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
-import { envelopeFootprint } from "./cabinets3d.js";
+import { cabinetFootprints, envelopeFootprint } from "./cabinets3d.js";
+import { partitionClearance } from "./materials.js";
 import { localAxes } from "./pose.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
 import { wallSolid, wallParts, wallBoxes } from "./walls.js";
@@ -76,11 +78,13 @@ function build() {
     }
   }
 
+  // Every corner of each cabinet's outer box, including the top. The box is not
+  // drawn; the corners are still feature points.
   for (const cab of getJob().cabinets) {
-    const fp = envelopeFootprint(cab, cab.pose);
     const dirs = localAxes(cab.pose);
-    const pts = fp.points || fp.corners.map(([x, y]) => [x, y, fp.z0]);
-    for (const [x, y, z] of pts) add(x, y, z, cab.id, dirs);
+    for (const fp of cabinetFootprints(cab, cab.pose)) {
+      for (const [x, y, z] of fp.points) add(x, y, z, cab.id, dirs);
+    }
   }
   // Construction planes: their outline vertices (plane ∩ walls / roof / floor).
   for (const pl of getPlanes()) {
@@ -94,12 +98,17 @@ function build() {
       add(a.x, a.y, a.z, pl.id, [unit(prev.x - a.x, prev.y - a.y, prev.z - a.z), unit(next.x - a.x, next.y - a.y, next.z - a.z)]);
     }
   }
-  // Partition walls: their bottom and top corners (the top follows the roof), and the corners of every door hole.
+  // Partition corners where the board, extended, meets the floor and the roof.
+  // The board itself stops short (floor / ceiling clearance); those intersections
+  // are still feature points, so a rectangle can start on the floor.
+  const partClear = partitionClearance(getStock());
   for (const w of getWalls()) {
     const s = wallSolid(w, sp, getStock());
     for (const x of [s.x0, s.x1]) for (const y of [s.y0, s.y1]) {
-      add(x, y, s.z0, w.id, AXIS_DIRS);
-      add(x, y, s.topZ(s.along === "x" ? x : y), w.id, AXIS_DIRS);
+      add(x, y, 0, w.id, AXIS_DIRS);
+      const boardTop = s.topZ(s.along === "x" ? x : y);
+      const roofZ = boardTop + partClear.ceiling;
+      if (Number.isFinite(roofZ)) add(x, y, roofZ, w.id, AXIS_DIRS);
     }
     for (const o of s.openings) {
       for (const u of [o.u0, o.u1]) for (const v of (s.along === "x" ? [s.y0, s.y1] : [s.x0, s.x1])) for (const z of [o.zBottom, o.zTop]) {
@@ -171,10 +180,14 @@ function buildPlanes() {
     if (!slice) continue;
     face(pl.axis, pl.value, pl.dir, pl.id, pl.from?.label ? `Offset ${Math.round(pl.offset)} from ${pl.from.label}` : pl.id, slice.ext);
   }
-  // Partition walls: four vertical faces (cabinets snap to them and can be drawn on them); a flat top when the wall runs across the van.
+  // Partition walls: four vertical faces. The board stops short of the floor and
+  // the roof; the pickable face still runs from the floor up to the roof so a
+  // corner on that extension can be drawn on.
+  const partCl = partitionClearance(getStock());
   for (const w of getWalls()) {
     const s = wallSolid(w, sp, getStock());
-    const ext = { x: [s.x0, s.x1], y: [s.y0, s.y1], z: [s.z0, s.zTopMin] };
+    const zTop = Number.isFinite(s.z1) ? s.z1 + partCl.ceiling : s.z1;
+    const ext = { x: [s.x0, s.x1], y: [s.y0, s.y1], z: [0, zTop] };
     face("x", s.x0, -1, w.id, `${w.id} −X face`, ext);
     face("x", s.x1, +1, w.id, `${w.id} +X face`, ext);
     face("y", s.y0, -1, w.id, `${w.id} −Y face`, ext);

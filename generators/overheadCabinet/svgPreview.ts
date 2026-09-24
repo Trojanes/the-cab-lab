@@ -5,6 +5,7 @@ export interface OHCSvgPreviewOptions {
   height?: number;
   selectedZoneIndex?: number;
   showDimensions?: boolean;
+  gaps?: "clear" | "center";
 }
 
 function esc(value: unknown): string {
@@ -20,10 +21,11 @@ function fmt(value: number): string {
 }
 
 function panelFill(type: string): string {
-  if (type === "rangehood_flap") return "#f3e8ff";
-  if (type === "fixed_panel") return "#eef8ea";
-  if (type === "open") return "#fff7dc";
-  return "#e5f2ff";
+  if (type === "rangehood_flap") return "#d7b8f2";
+  if (type === "fixed_panel") return "#d5dcc4";
+  if (type === "open") return "#f3e39a";
+  if (type === "up_flap") return "#b7e3a1";
+  return "#8ec5ef";
 }
 
 export function generateOHCSvgPreview(
@@ -34,6 +36,7 @@ export function generateOHCSvgPreview(
   const height = options.height ?? 390;
   const showDimensions = options.showDimensions ?? true;
   const selectedZoneIndex = options.selectedZoneIndex ?? -1;
+  const centerGaps = options.gaps === "center";
 
   const cw = geometry.cabinet.Cw;
   const ch = geometry.cabinet.Ch ?? geometry.manufacturing.TCH;
@@ -81,12 +84,30 @@ export function generateOHCSvgPreview(
     `;
   }).join("");
 
+  const dividers = [...geometry.divider_features].sort((a, b) => a.XDi - b.XDi);
+  const bayGaps = dividers.slice(0, -1).map((a, i) => {
+    const b = dividers[i + 1];
+    const clear = Math.round((b.XDi - fg / 2 - (a.XDi + fg / 2)) * 10) / 10;
+    const center = Math.round((b.XDi - a.XDi) * 10) / 10;
+    if (clear < 8 || clear * scale < 16) return "";
+    const x = toX((a.XDi + b.XDi) / 2);
+    const y = toY(fzh / 2);
+    const n = centerGaps ? center : clear;
+    return `<text x="${fmt(x)}" y="${fmt(y)}" text-anchor="middle" fill="${centerGaps ? "#9a6b12" : "#2a6f97"}" font-size="10">${fmt(n)}</text>`;
+  }).join("");
+  const topClear = Math.round((ch - tch - fg) * 10) / 10;
+  const topCenter = Math.round(((ch - tch / 2) - fg / 2) * 10) / 10;
+  const heightGap = topClear >= 8 && topClear * scale >= 16
+    ? `<text x="${fmt(toX(cw / 2))}" y="${fmt(toY((fg + ch - tch) / 2))}" text-anchor="middle" fill="${centerGaps ? "#9a6b12" : "#2a6f97"}" font-size="10">${fmt(centerGaps ? topCenter : topClear)}</text>`
+    : "";
+
   const openingRects = geometry.front_panels.map((panel) => {
     const opening = rectFromXZ(panel.opening.x[0], 0, panel.opening.x[1], fzh);
     const selected = panel.zoneIndex === selectedZoneIndex;
     const dimensionY = oy + bodyH + 20 + (panel.zoneIndex % 2) * 15;
     return `
-      <rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="${panelFill(panel.type)}" stroke="${selected ? "#0f6bff" : "#9db6d5"}" stroke-width="${selected ? 2 : 1}"></rect>
+      <rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="${panelFill(panel.type)}" stroke="#6a7d90" stroke-width="1"></rect>
+      ${selected ? `<rect x="${fmt(opening.x)}" y="${fmt(opening.y)}" width="${fmt(opening.w)}" height="${fmt(opening.h)}" fill="#0e3f8f" fill-opacity="0.62" stroke="#d7e6ff" stroke-width="3"></rect>` : ""}
       ${showDimensions ? `
         <line x1="${fmt(opening.x)}" y1="${fmt(dimensionY)}" x2="${fmt(opening.x + opening.w)}" y2="${fmt(dimensionY)}" stroke="#0f6bff"></line>
         <line x1="${fmt(opening.x)}" y1="${fmt(dimensionY - 4)}" x2="${fmt(opening.x)}" y2="${fmt(dimensionY + 4)}" stroke="#0f6bff"></line>
@@ -132,6 +153,8 @@ export function generateOHCSvgPreview(
       <rect x="${fmt(topArea.x)}" y="${fmt(topArea.y)}" width="${fmt(topArea.w)}" height="${fmt(topArea.h)}" fill="rgba(15,107,255,0.06)" stroke="#85b5ff" stroke-dasharray="5 3"></rect>
       <text x="${fmt(topArea.x + topArea.w - 6)}" y="${fmt(topArea.y + 14)}" text-anchor="end" fill="#0b57d0" font-size="10">T1/T2 / TCH ${fmt(tch)}</text>
       ${openingRects}
+      ${bayGaps}
+      ${heightGap}
       ${frontPanelRects}
       <rect x="${fmt(bp.x)}" y="${fmt(bp.y)}" width="${fmt(bp.w)}" height="${fmt(bp.h)}" fill="#c7b9a2" stroke="#6e5a42"></rect>
       <text x="${fmt(bp.x + 6)}" y="${fmt(bp.y - 4)}" fill="#6e5a42" font-size="10">BP ${fmt(fg)} mm</text>

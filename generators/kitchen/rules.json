@@ -32,5 +32,6 @@
   "RAISED_B4_HEIGHT": { "value": 100, "doc": "轮拱 raised B4 高度/避让缩短带（100 mm）。" },
   "STOVE_CUT_FRONT_EXTRA": { "value": 100, "doc": "灶台切割区 y ∈ [0, FPT+100]。" },
   "SLOT_Z_CLEARANCE": { "value": 0.5, "doc": "槽 z = 板 z ± 0.5。" },
-  "TONGUE_FALLBACK_SLACK": { "value": 0.5, "doc": "槽信息缺失时舌长 = CPT/2 − 0.5。" }
+  "TONGUE_FALLBACK_SLACK": { "value": 0.5, "doc": "槽信息缺失时舌长 = CPT/2 − 0.5。" },
+  "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges." }
 }

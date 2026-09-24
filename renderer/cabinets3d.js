@@ -3,30 +3,28 @@
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
 import { scene, camera, canvas } from "./space.js";
-import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor } from "./job.js";
+import { colourFaces, doorBodyMaterial } from "./doorFinish.js";
+import { carcassDimMat, carcassMat } from "./carcassFinish.js";
+import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
-import { prismYZ, boardGeometry, boxMesh, boxEdges, faceSheetGeometry } from "./boardGeom.js";
+import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry } from "./boardGeom.js";
 import { faceAtHit } from "./boardModel.js";
 import { worldOf, boardOverride, nominalBoardPoint } from "./pose.js";
 
 export const HANDLE_SIZE = 44;
 
-const carcassMat = new THREE.MeshStandardMaterial({ color: 0xc9b799, roughness: 0.8 });
-// Fronts read clearly against the carcass so the door side is visible at a glance (see the Face command).
 const frontMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6 });
 const errorMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.8, transparent: true, opacity: 0.35 });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a4034 });
 // A board is selected in the tree / by a second click: it lights up, the rest of its cabinet fades.
 const boardSelMat = new THREE.MeshStandardMaterial({ color: 0x6fa0f0, emissive: 0x1e3a6e, roughness: 0.5 });
-const carcassDimMat = new THREE.MeshStandardMaterial({ color: 0xc9b799, roughness: 0.8, transparent: true, opacity: 0.22, depthWrite: false });
 const frontDimMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6, transparent: true, opacity: 0.22, depthWrite: false });
 const edgeDimMat = new THREE.LineBasicMaterial({ color: 0x4a4034, transparent: true, opacity: 0.3 });
 // A face is selected: a translucent sheet just proud of that face (faceSheetGeometry offsets it;
 // no polygonOffset — with the scene's depth range that pulled the sheet through the board).
 const faceSelMat = new THREE.MeshBasicMaterial({ color: 0xffd166, transparent: true, opacity: 0.55, side: THREE.DoubleSide, depthWrite: false });
 const envMat = new THREE.LineBasicMaterial({ color: 0x4f86e0 });
-const envMatIdle = new THREE.LineBasicMaterial({ color: 0x6b7784, transparent: true, opacity: 0.35 });
 const envMatBad = new THREE.LineBasicMaterial({ color: 0xd94b4b });
 const handleMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0 });
 const handleHoverMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
@@ -150,6 +148,8 @@ function buildGroup(cab) {
   group.userData = { cabId: cab.id };
 
   const hasBoards = result && result.boards && result.boards.length > 0;
+  const hiddenCount = hasBoards ? result.boards.filter((b) => isBoardHidden(cab, b.id)).length : 0;
+  const allBoardsHidden = hasBoards && hiddenCount === result.boards.length;
   const modOf = getModule(cab.moduleId);
   const valid = result && result.validation && result.validation.errors.length === 0;
 
@@ -199,10 +199,15 @@ function buildGroup(cab) {
     // A region selected in a mixed module (bedroom body): its boards light up, the rest fades.
     const selRegion = selected && allRegions.length ? getSelectedRegion() : null;
     for (const b of result.boards) {
+      if (isBoardHidden(cab, b.id)) continue;
       const front = b.category === "front_panel";
+      const coats = colourFaces(b);
       const isSel = (sub && sub.boardId === b.id) || (!sub && selRegion && b.zoneId === selRegion);
       const dim = (sub && !isSel) || (selRegion && !isSel);
-      const mat = isSel && !sub && selRegion ? carcassMat : isSel ? boardSelMat : dim ? (front ? frontDimMat : carcassDimMat) : front ? frontMat : carcassMat;
+      // A colour face used to sit on the blue front material, which washed the colour out.
+      const plain = coats.length ? doorBodyMaterial(coats[0].finish.colour) : front ? frontMat : carcassMat;
+      const faded = coats.length ? doorBodyMaterial(coats[0].finish.colour, { dim: true }) : front ? frontDimMat : carcassDimMat;
+      const mat = isSel && !sub && selRegion ? plain : isSel ? boardSelMat : dim ? faded : plain;
       // A board with an outline (robe side cut to the roof, an OHC divider / T3 / T4 with its notches) is drawn
       // from that outline, not its bounding box.
       const { geo, cut } = boardGeometry(b);
@@ -211,9 +216,10 @@ function buildGroup(cab) {
       mesh.userData = { kind: "board", cabId: cab.id, boardId: b.id };
       holder.add(mesh);
       const lineMat = dim ? edgeDimMat : edgeMat;
-      holder.add(cut ? new THREE.LineSegments(new THREE.EdgesGeometry(mesh.geometry), lineMat) : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, lineMat));
+      holder.add(boardEdges(b, lineMat));
       addHingeMarks(holder, b);
       addGrooveMarks(holder, b);
+      addEdgeBandMarks(holder, b, dim);
       if (isSel && sub && sub.face) {
         const sheetGeo = faceSheetGeometry(b, sub.face);
         if (sheetGeo) {
@@ -233,17 +239,28 @@ function buildGroup(cab) {
 
   const fits = poseFits(cab, cab.pose);
   const mod = getModule(cab.moduleId);
-  const envMatNow = !fits ? envMatBad : selected ? envMat : envMatIdle;
-  // Envelope: a box, or the slab prism when the module follows the roof.
-  const envLines = mod.envelopeProfile
-    ? new THREE.LineSegments(new THREE.EdgesGeometry(prismYZ(slabOutline(mod.envelopeProfile(cab.params), env.D), env.x0, env.x1)), envMatNow)
-    : boxEdges(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, envMatNow);
-  envLines.renderOrder = 5;
-  group.add(envLines);
+  // The blue envelope is only there while this box is being dragged. A box that
+  // does not fit keeps its red frame so the error stays visible.
+  if ((!fits || envelopeDragId === cab.id) && !(allBoardsHidden && !selected)) {
+    const envMatNow = !fits ? envMatBad : envMat;
+    const envLines = mod.envelopeProfile
+      ? new THREE.LineSegments(new THREE.EdgesGeometry(prismYZ(slabOutline(mod.envelopeProfile(cab.params), env.D), env.x0, env.x1)), envMatNow)
+      : boxEdges(env.x0, env.x1, env.y0, env.y1, env.z0, env.z1, envMatNow);
+    envLines.renderOrder = 5;
+    group.add(envLines);
+  }
+
+  // Resize command: one double arrow on the chosen envelope face, pointing out of it.
+  if (resizeFace && resizeFace.cabId === cab.id) {
+    const c = { x: (env.x0 + env.x1) / 2, y: (env.y0 + env.y1) / 2, z: (env.z0 + env.z1) / 2 };
+    c[resizeFace.axis] = env[`${resizeFace.axis}${resizeFace.dir > 0 ? 1 : 0}`];
+    const type = { x: "W", y: "D", z: "H" }[resizeFace.axis];
+    group.add(arrowHandle([c.x, c.y, c.z], type, resizeFace.dir, { kind: "handle", cabId: cab.id, handle: { type: "resize", axis: resizeFace.axis, dir: resizeFace.dir } }));
+  }
 
   // Handles only while the cabinet itself is selected: reading a board / face hides them.
-  // Move draws its own triad and hides these so the two don't fight for the click.
-  if (selected && !getSubSelection() && !moveOpen) {
+  // Move draws its own triad and hides these so the two don't fight for the click; so does Resize.
+  if (selected && !getSubSelection() && !moveOpen && !resizeOpen) {
     const handles = new THREE.Group();
     handles.name = "handles";
     const s = HANDLE_SIZE;
@@ -321,6 +338,87 @@ export function setMoveOpen(on) {
   if (moveOpen === on) return;
   moveOpen = on;
   syncCabinets();
+}
+
+/** Resize command: open (hides the cubes) and the face carrying the arrow, `{ cabId, axis, dir }` in cabinet-local axes. */
+let resizeOpen = false;
+let resizeFace = null;
+/** The cabinet whose envelope is being dragged (handle or Resize). The blue box shows only then. */
+let envelopeDragId = null;
+export function setEnvelopeDrag(cabId) {
+  const next = cabId || null;
+  if (envelopeDragId === next) return;
+  envelopeDragId = next;
+  syncCabinets();
+}
+export function setResizeState(open, face = null) {
+  resizeOpen = open;
+  resizeFace = open ? face : null;
+  syncCabinets();
+}
+
+/** Nearest cabinet envelope face under the ray, seen from outside: `{ cabId, axis, dir, t }` in cabinet-local axes, or null. */
+export function pickEnvelopeFace(ray) {
+  let best = null;
+  const inv = new THREE.Matrix4();
+  for (const cab of getJob().cabinets) {
+    const g = groups.get(cab.id);
+    if (!g) continue;
+    inv.copy(g.matrixWorld).invert();
+    const o = new THREE.Vector3(ray.origin.x, ray.origin.y, ray.origin.z).applyMatrix4(inv);
+    const d = new THREE.Vector3(ray.direction.x, ray.direction.y, ray.direction.z).transformDirection(inv);
+    const hit = rayBoxEntry(o, d, envelopeBox(cab, resultFor(cab.id)));
+    if (hit && (!best || hit.t < best.t)) best = { cabId: cab.id, ...hit };
+  }
+  return best;
+}
+
+function rayBoxEntry(o, d, b) {
+  let tmin = -Infinity;
+  let tmax = Infinity;
+  let face = null;
+  for (const a of ["x", "y", "z"]) {
+    const lo = b[`${a}0`];
+    const hi = b[`${a}1`];
+    if (Math.abs(d[a]) < 1e-12) {
+      if (o[a] < lo || o[a] > hi) return null;
+      continue;
+    }
+    let t1 = (lo - o[a]) / d[a];
+    let t2 = (hi - o[a]) / d[a];
+    let f1 = { axis: a, dir: -1 };
+    if (t1 > t2) { [t1, t2] = [t2, t1]; f1 = { axis: a, dir: 1 }; }
+    if (t1 > tmin) { tmin = t1; face = f1; }
+    if (t2 < tmax) tmax = t2;
+  }
+  if (!face || tmin <= 0 || tmax < tmin) return null;
+  return { t: tmin, ...face };
+}
+
+/** A cabinet-local envelope face as a world face (`{ axis, dir, value, ext }`) for showFaceHint. */
+export function envelopeFaceWorld(cab, axis, dir) {
+  const b = envelopeBox(cab, resultFor(cab.id));
+  const at = b[`${axis}${dir > 0 ? 1 : 0}`];
+  const [u, v] = ["x", "y", "z"].filter((a) => a !== axis);
+  const pts = [];
+  for (const pu of [b[`${u}0`], b[`${u}1`]]) {
+    for (const pv of [b[`${v}0`], b[`${v}1`]]) {
+      const p = { [axis]: at, [u]: pu, [v]: pv };
+      pts.push(worldOf(cab.pose, [p.x, p.y, p.z]));
+    }
+  }
+  const ext = {};
+  ["x", "y", "z"].forEach((a, i) => { ext[a] = [Math.min(...pts.map((p) => p[i])), Math.max(...pts.map((p) => p[i]))]; });
+  const flat = ["x", "y", "z"].reduce((m, a) => (ext[a][1] - ext[a][0] < ext[m][1] - ext[m][0] ? a : m), "x");
+  const n = localAxisDir(cab.pose, axis);
+  return { axis: flat, dir: Math.sign(n[flat] * dir) || 1, value: ext[flat][0], ext };
+}
+
+/** World direction of a cabinet-local axis. */
+export function localAxisDir(pose, axis) {
+  const o = worldOf(pose, [0, 0, 0]);
+  const p = worldOf(pose, [axis === "x" ? 1 : 0, axis === "y" ? 1 : 0, axis === "z" ? 1 : 0]);
+  return { x: p[0] - o[0], y: p[1] - o[1], z: p[2] - o[2] };
 }
 export function armHandle(cabId, type) {
   armedHandle = armedHandle && armedHandle.cabId === cabId && armedHandle.type === type ? null : { cabId, type };
@@ -583,6 +681,58 @@ function addGrooveMarks(group, b) {
   }
 }
 
+/**
+ * Edge tape on a banded outline edge. Pre-mill means the tape does not add to
+ * the outline: the strip only recolours the narrow face (the board thickness).
+ * Colour is the stored name — door swatch, or White Stipple for carcass.
+ */
+function addEdgeBandMarks(group, b, dim) {
+  const axes = PLANE_AXES[b.profilePlane];
+  if (!axes || !b.faces) return;
+  const [U, V, T] = axes;
+  const t0 = b[`${T}0`];
+  const t1 = b[`${T}1`];
+  const thick = Math.abs(t1 - t0);
+  const tMid = (t0 + t1) / 2;
+  const thickAxis = new THREE.Vector3();
+  thickAxis[T] = 1;
+  for (const face of b.faces) {
+    const band = face.finish && face.finish.edgeBand;
+    if (!band || !face.edge) continue;
+    const p0 = { x: 0, y: 0, z: 0 };
+    const p1 = { x: 0, y: 0, z: 0 };
+    p0[U] = b[`${U}0`] + face.edge.from[0];
+    p0[V] = b[`${V}0`] + face.edge.from[1];
+    p1[U] = b[`${U}0`] + face.edge.to[0];
+    p1[V] = b[`${V}0`] + face.edge.to[1];
+    p0[T] = tMid;
+    p1[T] = tMid;
+    const along = new THREE.Vector3(p1.x - p0.x, p1.y - p0.y, p1.z - p0.z);
+    const len = along.length();
+    if (len < 1) continue;
+    along.multiplyScalar(1 / len);
+    const normal = new THREE.Vector3();
+    if (typeof face.normal === "string") {
+      normal[face.normal[1].toLowerCase()] = face.normal[0] === "+" ? 1 : -1;
+    } else if (Array.isArray(face.normal)) {
+      normal.set(face.normal[0], face.normal[1], face.normal[2]);
+    }
+    if (normal.lengthSq() < 1e-8) continue;
+    normal.normalize();
+    const mat = band.colour === "White Stipple" ? (dim ? carcassDimMat : carcassMat) : doorBodyMaterial(band.colour, { dim: !!dim });
+    const bar = new THREE.Mesh(new THREE.BoxGeometry(len, thick, 0.2), mat);
+    bar.position.set(
+      (p0.x + p1.x) / 2 + normal.x * 0.15,
+      (p0.y + p1.y) / 2 + normal.y * 0.15,
+      (p0.z + p1.z) / 2 + normal.z * 0.15,
+    );
+    bar.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, thickAxis, normal));
+    bar.renderOrder = 6;
+    bar.userData = { kind: "edgeBand" };
+    group.add(bar);
+  }
+}
+
 function addHingeMarks(group, b) {
   if (b.profilePlane !== "XZ" || b.thicknessAxis !== "Y" || !b.faces) return;
   const face = b.faces.find((f) => f.id === "A");
@@ -633,7 +783,7 @@ scene.add(faceHint);
  * `face` = { axis, value, ext:{x,y,z} } from snap.js.
  * `tone`: "" blue working face · "pending" orange (Face command's chosen side) · "done" green flash on confirm.
  */
-const HINT_TONES = { "": 0x4f86e0, pending: 0xf0a050, done: 0x7cf09c };
+const HINT_TONES = { "": 0x4f86e0, pending: 0xf0a050, done: 0x7cf09c, warn: 0xd94b4b };
 let hintTimer = null;
 export function showFaceHint(face, { tone = "" } = {}) {
   const e = face.ext;
@@ -752,14 +902,17 @@ const loungeSlots = [0x4f86e0, 0xf0c070, 0x9ec5d8].map((hex) => {
   scene.add(mesh, edges);
   return { mesh, edges };
 });
-const loungeLineGeo = new THREE.BufferGeometry();
-loungeLineGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
-const loungeLine = new THREE.Line(loungeLineGeo, new THREE.LineBasicMaterial({ color: 0xffffff }));
-loungeLine.visible = false;
-loungeLine.renderOrder = 27;
-scene.add(loungeLine);
-/** `boxes` are world AABBs {x0,y0,x1,y1,z0,z1}. `segment` is two floor points. */
-export function showLoungeGhost(boxes, segment = null) {
+const loungeLines = [0x4f86e0, 0xf0a050].map((hex) => {
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(6), 3));
+  const line = new THREE.Line(geo, new THREE.LineBasicMaterial({ color: hex, depthTest: false }));
+  line.visible = false;
+  line.renderOrder = 27;
+  scene.add(line);
+  return line;
+});
+/** `boxes` are world AABBs {x0,y0,x1,y1,z0,z1}. `segments` is up to two edges [{a,b}]. */
+export function showLoungeGhost(boxes, segments = null) {
   hideLoungeGhost();
   (boxes || []).slice(0, loungeSlots.length).forEach((b, i) => {
     const slot = loungeSlots[i];
@@ -772,21 +925,22 @@ export function showLoungeGhost(boxes, segment = null) {
       m.position.set(b.x0 + W / 2, b.y0 + D / 2, (b.z0 ?? 0) + H / 2);
     }
   });
-  if (segment && segment.length === 2) {
-    const pos = loungeLineGeo.attributes.position;
-    pos.setXYZ(0, segment[0].x, segment[0].y, segment[0].z || 2);
-    pos.setXYZ(1, segment[1].x, segment[1].y, segment[1].z || 2);
+  (segments || []).slice(0, loungeLines.length).forEach((seg, i) => {
+    const line = loungeLines[i];
+    const pos = line.geometry.attributes.position;
+    pos.setXYZ(0, seg.a.x, seg.a.y, seg.a.z || 0);
+    pos.setXYZ(1, seg.b.x, seg.b.y, seg.b.z || 0);
     pos.needsUpdate = true;
-    loungeLineGeo.computeBoundingSphere();
-    loungeLine.visible = true;
-  }
+    line.geometry.computeBoundingSphere();
+    line.visible = true;
+  });
 }
 export function hideLoungeGhost() {
   for (const slot of loungeSlots) {
     slot.mesh.visible = false;
     slot.edges.visible = false;
   }
-  loungeLine.visible = false;
+  for (const line of loungeLines) line.visible = false;
 }
 
 /** Nose-slab preview (Bedroom placement): the space's nose from Y = 0 to `depth`, full width, under the roof. */

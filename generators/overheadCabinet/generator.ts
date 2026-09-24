@@ -15,6 +15,7 @@ import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { attachFaces } from "../_lib/model.ts";
+import { doorColourOf } from "../_lib/finish.ts";
 import { buildOverheadFaces } from "./faces.ts";
 
 export * from "./geometry.ts";
@@ -848,6 +849,7 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
     rangehoodFeatures,
     declarations: relationshipDeclarations,
     carcassColorName: carcassColor.carcassColorName,
+    doorColour: doorColourOf(rawParams),
   });
 
   return {

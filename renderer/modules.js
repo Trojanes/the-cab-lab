@@ -23,6 +23,53 @@ function materialsOf(materials) {
 export const MIN_ZONE_HEIGHT = 60;
 const round1 = (v) => Math.round(v * 10) / 10;
 
+/** Envelope dimension along a local axis. */
+export const DIM_OF_AXIS = { x: "W", y: "D", z: "H" };
+
+/**
+ * Resize command on a row of zones. `items` are ordered from the moved face
+ * inward; `delta` is how far the face moved outward (negative = pushed in).
+ * Growth: `make(delta)` becomes a new zone at the face once delta reaches
+ * `min`; without `make`, or below `min`, the face zone takes it. Shrink: the
+ * face zone gives; a zone that would drop under `min` merges into its
+ * neighbour, which keeps giving. Returns the list in the same order, or null
+ * when the last zone would drop under `min`.
+ */
+export function resizeStack(items, delta, { key, min, make = null }) {
+  const out = items.map((it) => ({ ...it }));
+  if (!out.length) return null;
+  if (delta >= 0) {
+    if (make && delta >= min) out.unshift(make(round1(delta)));
+    else out[0][key] = round1(out[0][key] + delta);
+    return out;
+  }
+  const give = -delta;
+  while (out.length > 1 && out[0][key] - give < min) {
+    const gone = out.shift();
+    out[0] = { ...out[0], [key]: round1(out[0][key] + gone[key]) };
+  }
+  if (out[0][key] - give < min) return null;
+  out[0][key] = round1(out[0][key] - give);
+  return out;
+}
+
+/** First `${prefix}${n}` not already taken. */
+function freshId(prefix, taken) {
+  const used = new Set(taken);
+  let n = 1;
+  while (used.has(`${prefix}${n}`)) n += 1;
+  return `${prefix}${n}`;
+}
+
+/** Zones along W (left → right) resized from the left (x−) or right (x+) face. */
+function resizeRow(zones, side, delta, opts) {
+  const fromLeft = side.dir < 0;
+  const ordered = fromLeft ? zones : zones.slice().reverse();
+  const next = resizeStack(ordered, delta, opts);
+  if (!next) return null;
+  return fromLeft ? next : next.reverse();
+}
+
 /** Scale zone heights so they sum to `interior`, absorbing rounding in the last zone. */
 export function fitZones(zones, interior) {
   if (!zones.length) return [];
@@ -87,6 +134,15 @@ const smallCabinet = {
       next.zones = fitZones(params.zones || [], round1(next.cabinetHeight - 2 * cpt));
     }
     return next;
+  },
+
+  /** Resize command: the faces it offers (`x-` left … `z+` top; the floor side never moves). */
+  resizeFaces: ["x-", "x+", "y-", "y+", "z+"],
+  /** Top face: only the top zone (zones[0]) grows or shrinks; one too small merges into the zone below. */
+  resizeFace(params, side, size) {
+    if (side.axis !== "z") return this.setEnvelope(params, { [DIM_OF_AXIS[side.axis]]: size });
+    const zones = resizeStack(params.zones || [], size - params.cabinetHeight, { key: "height", min: MIN_ZONE_HEIGHT });
+    return zones ? { ...params, cabinetHeight: round1(size), zones } : null;
   },
 
   /**
@@ -202,8 +258,8 @@ const bedroom = {
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedRegion` is outlined. */
-  frontView(result, { selectedRegion = null } = {}) {
-    return generateBedroomSvgPreview(result, { selectedRegion, showDimensions: true });
+  frontView(result, { selectedRegion = null, gaps = "clear" } = {}) {
+    return generateBedroomSvgPreview(result, { selectedRegion, showDimensions: true, gaps });
   },
 
   envelope(params) {
@@ -217,6 +273,8 @@ const bedroom = {
     if (H != null) next.height = round1(H);
     return next;
   },
+  /** Width is the van, height the roof, the nose side the nose: only the room face moves. */
+  resizeFaces: ["y-"],
 
   /** Layout: the numbers the regions (and Style 1 split) are built from. Clamped by the generator's limits. */
   layoutKeys: BEDROOM_LAYOUT_KEYS,
@@ -360,6 +418,7 @@ const bedBox = {
   attachesTo: "bedroom", // the body's depth drag ignores it
   handles: [], // no permanent cubes: W and H come from the body
   handlesOnDemand: ["D"], // the panel's "drag in 3D" button shows an arrow for the length
+  resizeFaces: ["y-"], // the room end; the body end stays on the body
   defaultSize: { W: BEDROOM_RULES.BED_FRAME_QUEEN_WIDTH_MM.value, D: BED_BOX_RULES.LENGTH_DEFAULT_MM.value, H: BED_BOX_DEFAULT_HEIGHT },
   minSize: { W: BED_BOX_MIN.width, D: BED_BOX_MIN.depth, H: BED_BOX_MIN.height },
 
@@ -434,6 +493,9 @@ const bedSideTable = {
   attachesTo: "bedroom",
   handles: [],
   handlesOnDemand: ["D"],
+  // Room face (depth) and top (height). The shelf stays where it is, so a height change goes to the
+  // upper zone; `attach` pushes the shelf down once the upper zone reaches its minimum.
+  resizeFaces: ["y-", "z+"],
   panel: "bedSide",
   defaultSize: { W: 330, D: BED_SIDE_RULES.DEPTH_DEFAULT_MM.value, H: BEDROOM_RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value },
   minSize: { W: 80, D: 40, H: 200 },
@@ -595,10 +657,10 @@ const overheadCabinet = {
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneIndex` is outlined. */
-  frontView(result, { selectedZoneIndex = -1 } = {}) {
+  frontView(result, { selectedZoneIndex = -1, gaps = "clear" } = {}) {
     const geo = result?.debug?.legacyGeometry;
     if (!geo) return null;
-    return generateOHCSvgPreview(geo, { selectedZoneIndex, showDimensions: true });
+    return generateOHCSvgPreview(geo, { selectedZoneIndex, showDimensions: true, gaps });
   },
 
   envelope(params) {
@@ -614,6 +676,20 @@ const overheadCabinet = {
     if (D != null) next.cabinetDepth = round1(D);
     if (H != null) next.cabinetHeight = round1(H);
     return next;
+  },
+
+  /** Hung on the ceiling against a wall: the top and the back stay. */
+  resizeFaces: ["x-", "x+", "y-", "z-"],
+  /** Side faces: a pull adds an up-flap bay (once it is MIN_ZONE_WIDTH), a push trims the end bay and merges one too narrow. */
+  resizeFace(params, side, size) {
+    if (side.axis !== "x") return this.setEnvelope(params, { [DIM_OF_AXIS[side.axis]]: size });
+    const zones = params.zones || [];
+    const next = resizeRow(zones, side, size - params.cabinetWidth, {
+      key: "width",
+      min: MIN_ZONE_WIDTH,
+      make: (width) => ({ id: freshId("zone-", zones.map((z) => z.id)), type: "up_flap", width }),
+    });
+    return next ? { ...params, cabinetWidth: round1(size), zones: next } : null;
   },
 
   /** Zone boundaries: vertical lines on the front face at local x (left → right). */
@@ -663,12 +739,17 @@ const kitchenCabinet = {
   minSize: { W: 300, D: 250, H: 400 },
 
   defaults(W, D, H, materials) {
-    const { stock } = materialsOf(materials);
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
     const bch = 70;
     return {
       globalSettings: { length: round1(W), depth: round1(D), height: round1(H) },
       materialThickness: thickness(stock, "carcass"),
       frontThickness: thickness(stock, "door"),
+      doorSeries: color.doorSeries,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
       bottomClearanceHeight: bch,
       bottomClearanceStyle: "style_1",
       frontClearance: 2.5,
@@ -690,8 +771,8 @@ const kitchenCabinet = {
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
-  frontView(result, { selectedZoneId = null, selectedCol = -1 } = {}) {
-    return generateKitchenSvgPreview(result, { selectedZoneId, selectedCol, showDimensions: true });
+  frontView(result, { selectedZoneId = null, selectedCol = -1, gaps = "clear" } = {}) {
+    return generateKitchenSvgPreview(result, { selectedZoneId, selectedCol, showDimensions: true, gaps });
   },
 
   envelope(params) {
@@ -735,6 +816,40 @@ const kitchenCabinet = {
 
   dividers() {
     return [];
+  },
+
+  resizeFaces: ["x-", "x+", "y-", "y+", "z+"],
+  /**
+   * Side faces: a pull adds a door column (left_door on the left face, right_door on the right, once it is
+   * MIN_ZONE_WIDTH), a push trims the end column and merges one too narrow into its neighbour.
+   * Top face: the same on every column's top zone (a left_door, MIN_ZONE_HEIGHT).
+   */
+  resizeFace(params, side, size) {
+    const gs = params.globalSettings || {};
+    if (side.axis === "y") return this.setEnvelope(params, { D: size });
+    const columns = params.columns || [];
+    if (side.axis === "x") {
+      const zoneH = round1((gs.height ?? 0) - (params.bottomClearanceHeight ?? 70));
+      const next = resizeRow(columns, side, size - gs.length, {
+        key: "width",
+        min: MIN_ZONE_WIDTH,
+        make: (width) => ({ id: freshId("c", columns.map((c) => c.id)), width, zones: [{ id: "z1", height: zoneH, zoneType: side.dir < 0 ? "left_door" : "right_door" }] }),
+      });
+      return next ? { ...params, globalSettings: { ...gs, length: round1(size) }, columns: next } : null;
+    }
+    const delta = size - gs.height;
+    const next = [];
+    for (const col of columns) {
+      const zones = col.zones || [];
+      const z = resizeStack(zones, delta, {
+        key: "height",
+        min: MIN_ZONE_HEIGHT,
+        make: (height) => ({ id: freshId("z", zones.map((zn) => zn.id)), height, zoneType: "left_door" }),
+      });
+      if (!z) return null;
+      next.push({ ...col, zones: z });
+    }
+    return { ...params, globalSettings: { ...gs, height: round1(size) }, columns: next };
   },
 
   /** Column boundary `index` (between columns index / index+1) moves to local x = pos; the two columns trade width. */
@@ -795,13 +910,18 @@ const generalTallCabinet = {
   defaultSize: { W: 600, D: 584, H: 2000 },
   minSize: { W: 400, D: 350, H: 800 },
   defaults(W, D, H, materials) {
-    const { stock } = materialsOf(materials);
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
     const base = {
       cabinetWidth: W,
       cabinetDepth: D,
       cabinetHeight: H,
       panelThickness: thickness(stock, "carcass"),
       frontPanelThickness: thickness(stock, "door"),
+      doorSeries: color.doorSeries,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
       topSystem: { style: "style_1", frontRailHeight: 40 },
       bottomSystem: { style: "style_1", frontRailHeight: 53 },
     };
@@ -832,8 +952,8 @@ const generalTallCabinet = {
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
-  frontView(result, { selectedZoneId = null } = {}) {
-    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true });
+  frontView(result, { selectedZoneId = null, gaps = "clear" } = {}) {
+    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true, gaps });
   },
 
   envelope(params) {
@@ -853,6 +973,24 @@ const generalTallCabinet = {
     if (D != null) next.cabinetDepth = round1(D);
     if (H != null) return fitTallCabinetHeight(next, round1(H));
     return next;
+  },
+
+  resizeFaces: ["x-", "x+", "y-", "y+", "z+"],
+  /** Top face: every zone keeps its share of the stack. Null when a zone would fall under its minimum. */
+  resizeFace(params, side, size) {
+    if (side.axis !== "z") return this.setEnvelope(params, { [DIM_OF_AXIS[side.axis]]: size });
+    const zones = params.zones || [];
+    const sum = zones.reduce((s, z) => s + (z.height || 0), 0);
+    const target = round1(sum + size - params.cabinetHeight);
+    if (!zones.length || sum <= 0 || target <= 0) return null;
+    let acc = 0;
+    const scaled = zones.map((z, i) => {
+      const h = i === zones.length - 1 ? round1(target - acc) : round1((z.height * target) / sum);
+      acc = round1(acc + h);
+      return { ...z, height: h };
+    });
+    const fitted = fitTallCabinetHeight({ ...params, zones: scaled }, round1(size));
+    return Math.abs(fitted.cabinetHeight - size) > 0.05 ? null : fitted;
   },
 
   /**
@@ -910,10 +1048,15 @@ const loungeGenerator = {
   panel: "lounge", // wide right-hand editor: plan view + run card
   defaultSize: { W: 2000, D: 800, H: 420 },
   minSize: { W: 800, D: 400, H: 300 },
-  defaults(W, D, H) {
+  defaults(W, D, H, materials) {
+    const color = cabinetColor(materialsOf(materials).finish);
     return {
       style: "L_SHAPE",
       height: H,
+      doorSeries: color.doorSeries,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
       partitionPanelThickness: 18,
       mainWidth: W,
       mainDepth: Math.min(D, 600),
@@ -1080,7 +1223,7 @@ export const MODULE_GROUPS = [
     sub: "I / L",
     items: [
       { moduleId: "loungeGenerator", lounge: "I", label: "I", sub: "one run" },
-      { moduleId: "loungeGenerator", lounge: "L", label: "L", sub: "middle run, then one wing" },
+      { moduleId: "loungeGenerator", lounge: "L", label: "L", sub: "main box, then the wing" },
     ],
   },
 ];

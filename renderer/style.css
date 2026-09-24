@@ -49,16 +49,13 @@ button:disabled { cursor: default; opacity: 0.45; }
   display: grid;
   height: 100vh;
   grid-template-rows: var(--topbar-h) var(--cmdbar-h) 1fr var(--status-h);
-  grid-template-columns: var(--left-w) 1fr var(--right-w);
+  grid-template-columns: var(--left-w) 1fr 0;
   grid-template-areas:
     "top top top"
     "cmd cmd cmd"
     "left center right"
     "status status status";
 }
-/* An overhead cabinet is selected: the right panel becomes its editor page. */
-#app.wide-right { grid-template-columns: var(--left-w) 1fr var(--right-w-wide); }
-
 /* ---------- top bar ---------- */
 
 #topbar {
@@ -264,6 +261,23 @@ button:disabled { cursor: default; opacity: 0.45; }
 .tree-caret.open::before { transform: rotate(90deg) translate(1px, 1px); }
 .tree-caret:hover { color: var(--text); }
 .tree-caret.none::before { display: none; }
+.tree-eye {
+  flex: 0 0 14px;
+  width: 14px;
+  height: 14px;
+  align-self: center;
+  padding: 0;
+  color: var(--text-3);
+}
+.tree-eye svg { display: block; width: 14px; height: 14px; }
+.tree-eye .eye-outline { fill: none; stroke: currentColor; stroke-width: 1.4; }
+.tree-eye .eye-pupil { fill: currentColor; }
+.tree-eye .eye-slash { fill: none; stroke: currentColor; stroke-width: 1.4; stroke-linecap: round; }
+.tree-eye.on { color: var(--text); }
+.tree-eye.on .eye-slash { display: none; }
+.tree-eye:not(.on) .eye-pupil { display: none; }
+.tree-eye:hover { color: var(--text); }
+.tree-row.is-hidden .tree-label { color: var(--text-3); }
 .tree-label { flex: 0 0 auto; color: var(--text); }
 .k-space .tree-label { font-weight: 600; }
 .k-cabinet .tree-label { font-weight: 500; }
@@ -510,12 +524,37 @@ button:disabled { cursor: default; opacity: 0.45; }
 /* ---------- right panel ---------- */
 
 #rightpanel {
-  grid-area: right;
+  position: fixed;
+  z-index: 6;
+  top: calc(var(--topbar-h) + var(--cmdbar-h));
+  right: 0;
+  bottom: var(--status-h);
+  width: var(--right-w);
   display: flex;
   flex-direction: column;
   background: var(--bg-panel);
   border-left: 1px solid var(--line);
+  box-shadow: -8px 0 24px rgba(0, 0, 0, 0.28);
   overflow-y: auto;
+}
+#rightpanel.wide { width: var(--right-w-wide); }
+#rightpanel.panel-out {
+  animation: panel-out 0.32s ease-in forwards;
+  pointer-events: none;
+}
+#rightpanel.panel-in {
+  animation: panel-in 0.42s cubic-bezier(0.16, 0.84, 0.32, 1) both;
+}
+@keyframes panel-out {
+  from { transform: translateX(0); }
+  to { transform: translateX(100%); }
+}
+@keyframes panel-in {
+  from { transform: translateX(100%); }
+  to { transform: translateX(0); }
+}
+@media (prefers-reduced-motion: reduce) {
+  #rightpanel.panel-out, #rightpanel.panel-in { animation: none; }
 }
 .panel-head {
   padding: 12px 14px 10px;
@@ -753,6 +792,23 @@ button:disabled { cursor: default; opacity: 0.45; }
 .stock-field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 .materials-hint { font-size: 11px; color: var(--text-3); margin: 2px 0 6px; }
 
+/* door colour chip (doorSwatches.js); metallic gets a faint sheen, no swatch a dashed box */
+.swatch-select { display: flex; align-items: center; gap: 6px; }
+.swatch-select select { flex: 1; min-width: 0; }
+.swatch {
+  display: inline-block;
+  flex: none;
+  width: 14px;
+  height: 14px;
+  margin-right: 6px;
+  vertical-align: -2px;
+  border: 1px solid var(--line-strong);
+  border-radius: 3px;
+}
+.swatch-select .swatch { margin-right: 0; }
+.swatch.metallic { background-image: linear-gradient(135deg, rgba(255, 255, 255, 0.45), rgba(255, 255, 255, 0) 55%); }
+.swatch.none { border-style: dashed; }
+
 /* vehicle nose: segmented choice, side-view preview, point table, DXF import */
 .kind-fields .field:has(.seg-group) { grid-template-columns: 1fr auto; }
 .seg-group { display: inline-flex; gap: 2px; padding: 2px; border: 1px solid var(--line-strong); border-radius: var(--radius); background: var(--bg); }
@@ -951,7 +1007,9 @@ table.grid.pick td:last-child { text-align: left; color: var(--text-3); }
 
 /* Board / face read-out (right panel) for the selection inside a cabinet. */
 .panel-section.sub-sel { background: var(--bg-panel-2); }
-.sec-head { display: flex; align-items: center; justify-content: space-between; margin-bottom: 4px; }
+.sec-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 4px; }
+.sec-head .sec-title { margin-bottom: 0; }
+.gap-mode { height: 22px; max-width: 148px; padding: 0 4px; background: var(--bg); color: var(--text); border: 1px solid var(--line-strong); border-radius: var(--radius); font: inherit; }
 .sec-head .tb { height: 22px; padding: 0 8px; font-size: 11px; color: var(--text-2); }
 .kv.link { cursor: default; }
 .kv.link:hover span { color: var(--text); text-decoration: underline; }

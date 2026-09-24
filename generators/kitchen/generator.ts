@@ -7,6 +7,7 @@
  */
 import { beginProvenance, dim, endProvenance, param } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
+import { doorColourOf } from "../_lib/finish.ts";
 import { recordBoardBox, refreshBoardBox } from "../_lib/recordBox.ts";
 import { buildKitchenFaces } from "./faces.ts";
 import type {
@@ -588,7 +589,9 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   ) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
-    const depth = isDrawer ? R.B3_DEPTH.value : cd;
+    // A full-depth shelf stops on T3 / B4's front face when it shares their height.
+    const intoRear = !isDrawer && (z0 < stripW || z1 > r2(H - stripW));
+    const depth = isDrawer ? R.B3_DEPTH.value : (intoRear ? r2(cd - CPT) : cd);
     const ty0 = isDrawer ? R.DRAWER_TONGUE_Y0.value : r2(cd / 3);
     const ty1 = isDrawer ? R.B3_DEPTH.value : r2((2 * cd) / 3);
     const board = mkBoard(id, name, "functional", boardType, CPT, "carcass",
@@ -740,14 +743,15 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
         xyNotch(a, b, 0, stripW, ns, notchD, "far")));
     });
   }
-  // T2 顶后条：y∈[cd−100, cd]；灶台 y 带不相交时保持整段
+  // T2 顶后条：深 100，后边贴在 T3 前脸（cd−CPT），不伸进 T3。
   {
-    const y0 = r2(cd - stripW);
-    const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, cd));
+    const y1 = r2(cd - CPT);
+    const y0 = r2(y1 - stripW);
+    const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, y1));
     segs.forEach(([a, b], i) => {
       const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean) as [number, number][];
       boards.push(mkBoard(`T2-${i + 1}`, "Top Rear Rail", "top", "top_rear_rail", CPT, "carcass",
-        "XY", "Z", a, b, y0, cd, zTop0, H,
+        "XY", "Z", a, b, y0, y1, zTop0, H,
         xyNotch(a, b, y0, stripW, ns, notchD, "near")));
     });
   }
@@ -946,7 +950,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   /* ---- 组装结果 ---- */
   for (const b of boards) refreshBoardBox(b);
   attachFaces(boards);
-  const joints: Joint[] = buildKitchenFaces({ boards, slots, hinges, locks, notches });
+  const joints: Joint[] = buildKitchenFaces({ boards, slots, hinges, locks, notches, doorColour: doorColourOf(input) });
 
   const result: KitchenResult = {
     params: {

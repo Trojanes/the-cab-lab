@@ -12,7 +12,8 @@ if (!gotSingleInstanceLock) {
 
 function focusExistingWindows() {
   const windows = BrowserWindow.getAllWindows().filter((win) => !win.isDestroyed());
-  const main = windows.find((win) => win.getTitle() === "The Cab Lab") || windows[0];
+  // The document title is "Untitled — The Cab Lab", not the BrowserWindow option.
+  const main = windows.find((win) => /The Cab Lab/.test(win.getTitle()) && !/bench/i.test(win.getTitle())) || windows[0];
   if (!main) return;
   if (main.isMinimized()) main.restore();
   main.show();

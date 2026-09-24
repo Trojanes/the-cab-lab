@@ -29,5 +29,6 @@
   "RANGEHOOD_CUTOUT_WIDTH_MM": { "value": 555, "doc": "NCE rangehood: BP cutout width." },
   "RANGEHOOD_CUTOUT_DEPTH_MM": { "value": 285, "doc": "NCE rangehood: BP cutout depth." },
   "RANGEHOOD_MIN_EDGE_MM": { "value": 40, "doc": "NCE rangehood: minimum material left around the cutout." },
-  "RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM": { "value": 75, "doc": "NCE rangehood: clear height from BP top to the insert top when the params give none." }
+  "RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM": { "value": 75, "doc": "NCE rangehood: clear height from BP top to the insert top when the params give none." },
+  "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges." }
 }

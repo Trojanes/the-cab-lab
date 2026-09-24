@@ -108,14 +108,14 @@ assert.deepEqual(place("B3"), { x0: 16, x1: 887, y0: 0, y1: 100, z0: 55, z1: 70 
 
 /* ---------- T 系统 + B4 ---------- */
 assert.deepEqual(place("T1-1"), { x0: 16, x1: 887, y0: 0, y1: 100, z0: 865, z1: 880 });
-assert.deepEqual(place("T2-1"), { x0: 0, x1: 887, y0: 154, y1: 254, z0: 865, z1: 880 });
+assert.deepEqual(place("T2-1"), { x0: 0, x1: 887, y0: 139, y1: 239, z0: 865, z1: 880 });
 assert.deepEqual(place("T3-1"), { x0: 0, x1: 887, y0: 239, y1: 254, z0: 780, z1: 880 });
 assert.deepEqual(place("B4-1"), { x0: 0, x1: 887, y0: 239, y1: 254, z0: 0, z1: 100 });
-// T2 前缘 V 缺口 y∈[154,174]
+// T2 前缘 V 缺口 y∈[139,159]（后边贴在 T3 的 y=239）
 {
   const p = b("T2-1").profileVector as { x: number; y: number }[];
-  assert.ok(p.some((q) => q.x === 16 && q.y === 174), "T2 V0 notch");
-  assert.ok(p.some((q) => q.x === 452 && q.y === 174), "T2 V1 notch");
+  assert.ok(p.some((q) => q.x === 16 && q.y === 159), "T2 V0 notch");
+  assert.ok(p.some((q) => q.x === 452 && q.y === 159), "T2 V1 notch");
 }
 // B4 顶缘 V 缺口 z∈[80,100]
 {
@@ -286,6 +286,34 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.ok(stove.boards.some((x) => x.id === "T3-1" && x.x0 === 0 && x.x1 === 900), "T3 kept full (y does not meet stove cut)");
   const v0p = stove.boards.find((x) => x.id === "V0")!.profileVector as { y: number; z: number }[];
   assert.ok(v0p.some((q) => q.y === 0 && q.z === 880), "edge stove V0 drops T1 front receiver");
+}
+
+/* ---------- 封边：门板颜色 / 柜体颜色，缺口和短边不封 ---------- */
+{
+  const colours = (id: string) => (b(id).faces ?? [])
+    .filter((f) => f.id.startsWith("E") && f.finish?.edgeBand)
+    .map((f) => ({ n: f.normal, c: f.finish!.edgeBand!.colour }));
+  const only = (id: string, normals: string[], colour: string) => {
+    const bands = colours(id);
+    assert.ok(bands.length >= 1, `${id} banded`);
+    assert.ok(bands.every((x) => normals.includes(String(x.n)) && x.c === colour), `${id} ${JSON.stringify(bands)}`);
+  };
+  const fp = colours("c1-door-front-panel");
+  assert.equal(fp.length, 4, "door four edges");
+  assert.ok(fp.every((x) => x.c === "Gloss White"));
+  assert.equal(colours("c2-drawer-front-panel").length, 4);
+  only("V0", ["-Y"], "Gloss White");
+  only("V2", ["-Y"], "White Stipple");
+  assert.equal(colours("B1").length, 0, "B1 bare");
+  assert.equal(colours("B2").length, 0, "B2 bare");
+  only("B3", ["-Y", "+Y"], "White Stipple");
+  only("T1-1", ["-Y", "+Y"], "White Stipple");
+  only("T2-1", ["-Y"], "White Stipple");
+  only("T3-1", ["-Z"], "White Stipple");
+  only("B4-1", ["+Z"], "White Stipple");
+  only("k-col-2-c2-drawer-bottom", ["-Y", "+Y"], "White Stipple");
+  only("c1-door-door-shelf", ["-Y"], "White Stipple");
+  only("left-side-strengthening-strip-c1-door", ["-Y"], "White Stipple");
 }
 
 console.log("kitchen: all golden tests passed");

@@ -17,6 +17,8 @@ menu.className = "ctx hidden";
 document.body.append(menu);
 
 function hide() { menu.classList.add("hidden"); }
+/** Shared right-click menu (rail, a placed cabinet, the browser). */
+export function showContextMenu(x, y, items) { show(x, y, items); }
 function show(x, y, items) {
   menu.replaceChildren(...items.map((it) => {
     if (it.title) {
@@ -52,7 +54,7 @@ export function railContext(button, moduleId) {
   button.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     const mod = MODULES[moduleId];
-    show(e.clientX, e.clientY, [
+    showContextMenu(e.clientX, e.clientY, [
       { title: mod ? mod.label : moduleId },
       { label: "Generator rules…", run: () => openBench(moduleId, { from: "rail" }) },
     ]);
@@ -75,7 +77,7 @@ canvas.addEventListener("contextmenu", (e) => {
   const cab = job.getJob().cabinets.find((c) => c.id === hit.object.userData.cabId);
   if (!cab) return;
   const mod = MODULES[cab.moduleId];
-  show(e.clientX, e.clientY, [
+  showContextMenu(e.clientX, e.clientY, [
     { title: `${cab.id} · ${mod ? mod.label : cab.moduleId}` },
     { label: "Open in bench with these params", run: () => openBench(cab.moduleId, { params: cab.params, cabinetId: cab.id, from: "cabinet" }) },
     { label: "Generator rules…", run: () => openBench(cab.moduleId, { from: "cabinet" }) },

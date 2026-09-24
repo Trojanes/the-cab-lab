@@ -12,6 +12,9 @@ export type LPosition = "LEFT" | "RIGHT";
 
 export interface LoungeParams {
   style?: LoungeStyle;
+  /** Door colour name on the fronts' room face. Default Gloss White. */
+  doorColor?: string;
+  doorColorName?: string;
   height?: number;
   partitionPanelThickness?: number;
   wheelAvoidanceEnabled?: boolean;

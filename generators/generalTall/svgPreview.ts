@@ -14,13 +14,14 @@
  * Display only: nothing here decides geometry.
  */
 import type { GTResult, GTZone, GTZoneType, StackItem } from "./types.ts";
-import { PV, dimText, fitCanvas, fmt, frontRect, grip, label, px, spacedLabels, svgRoot } from "../_lib/preview.ts";
+import { PV, boardGaps, dimText, fitCanvas, fmt, frontRect, gapMarks, grip, label, px, selectRect, spacedLabels, svgRoot, zoneColor } from "../_lib/preview.ts";
 
 export interface GTSvgPreviewOptions {
   width?: number;
   maxHeight?: number;
   selectedZoneId?: string | null;
   showDimensions?: boolean;
+  gaps?: "clear" | "center";
 }
 
 export const GT_ZONE_LABELS: Record<string, string> = {
@@ -37,14 +38,6 @@ export const GT_ZONE_LABELS: Record<string, string> = {
   blank_panel: "Blank panel",
 };
 
-function zoneTint(type: GTZoneType | undefined): string {
-  if (type === "drawer") return "rgba(224,163,79,0.10)";
-  if (type === "open_space" || type === "open_appliance") return "rgba(255,255,255,0.03)";
-  if (type === "fridge") return "rgba(110,200,200,0.10)";
-  if (type === "top_flap" || type === "bottom_flap") return "rgba(180,140,230,0.10)";
-  if (type === "blank_panel") return "rgba(160,200,150,0.08)";
-  return "rgba(79,134,224,0.07)";
-}
 
 /** Zones whose height is owned by the appliance: their edges do not drag. */
 const OWNED_HEIGHT = new Set<GTZoneType>(["fridge"]);
@@ -74,7 +67,7 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
   // Stack rows: zones are the pick areas; the end systems are faint bands.
   for (const it of rows) {
     if (it.kind === "functional_zone") {
-      parts.push(`<rect class="region" data-zone="${zid(it)}" ${rect(0, CW, it.z0, it.z1)} fill="${zoneTint(it.zoneType)}" stroke="none" />`);
+      parts.push(`<rect class="region" data-zone="${zid(it)}" ${rect(0, CW, it.z0, it.z1)} fill="${zoneColor(it.zoneType)}" stroke="none" />`);
     } else if (it.kind !== "boundary_panel") {
       parts.push(`<rect ${rect(0, CW, it.z0, it.z1)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
     }
@@ -92,6 +85,12 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
       `fill-opacity="${isFront ? 0.55 : 0.92}" stroke="${door ? PV.frontLine : PV.carcassLine}" stroke-width="0.75" />`,
     );
   }
+
+  for (const it of zones) {
+    parts.push(`<rect pointer-events="none" ${rect(0, CW, it.z0, it.z1)} fill="${zoneColor(it.zoneType)}" fill-opacity="0.9" stroke="none" />`);
+  }
+  const sel = zones.find((it) => zid(it) === selected);
+  if (sel) parts.push(selectRect(rect(0, CW, sel.z0, sel.z1)));
 
   // Hinge cups and lock mortises (absolute cabinet x / z).
   for (const h of result.hinges) {
@@ -121,9 +120,6 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
   }
 
   // Selected zone: an outline over the boards.
-  const sel = zones.find((it) => zid(it) === selected);
-  if (sel) parts.push(`<rect pointer-events="none" ${rect(0, CW, sel.z0, sel.z1)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
-
   // Outer envelope.
   parts.push(`<rect ${rect(0, CW, 0, CH)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
 
@@ -166,6 +162,7 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
     }
     parts.push(dimText(toX(CW / 2), toY(0) + 15, `W ${fmt(CW)} · H ${fmt(CH)}`, "middle", PV.text3));
   }
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
 
   return svgRoot(width, height, { scale, ox, oy, w: CW, h: CH }, "Tall cabinet front elevation", parts.join(""));
 }

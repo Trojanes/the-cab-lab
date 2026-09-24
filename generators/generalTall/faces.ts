@@ -13,12 +13,16 @@ export function buildTallFaces(fb: {
   ziGrooves: ZiGrooveRecord[];
   hinges: HingeRecord[];
   locks: LockRecord[];
+  doorColour: string;
 }): Joint[] {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
-    if (b.category === "front_panel" || b.boardType === "front_panel") {
-      annotate(b, "B", { semantic: "front", visible: true });
+    const doorLeaf = b.category === "front_panel" || b.boardType === "front_panel" || b.boardType === "style2_fixed_front_panel" || b.id === "T1" || b.id === "B1";
+    if (doorLeaf) {
+      // Room face is B (−Y): door leaves, Style 2 fixed fronts, and the style-1 front rails T1 / B1.
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }

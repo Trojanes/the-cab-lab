@@ -780,11 +780,90 @@ function board(id, name, category, profilePlane, thicknessAxis, materialThicknes
   };
 }
 
-// generators/bedroom/svgPreview.ts
+// generators/_lib/preview.ts
+var PV = {
+  bg: "#1d2025",
+  carcass: "#c9b799",
+  carcassLine: "#4a4034",
+  front: "#9ec5d8",
+  frontLine: "#3f5a6a",
+  boundary: "#e0a34f",
+  select: "#0e3f8f",
+  text: "#d8dde4",
+  text2: "#9aa2ad",
+  text3: "#6b737e",
+  envelope: "#6b737e",
+  hinge: "#243044",
+  lock: "#5a3d22",
+  warn: "#e5484d",
+  font: "'Segoe UI', system-ui, sans-serif"
+};
 function esc(value) {
   return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 function fmt(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
+}
+var px = (v) => v.toFixed(2);
+function label(x, y, text, opts = {}) {
+  const { size = 11, fill = PV.text, anchor = "middle", weight } = opts;
+  return `<text x="${px(x)}" y="${px(y)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="${size}"${weight ? ` font-weight="${weight}"` : ""} fill="${fill}" stroke="${PV.bg}" stroke-opacity="0.85" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round" pointer-events="none">${esc(text)}</text>`;
+}
+function boardGaps(boards) {
+  const out = [];
+  const structural = boards.filter((b) => b.category !== "front_panel" && b.stock?.kind !== "door");
+  for (const axis of ["x", "z"]) {
+    const thick = axis === "x" ? "X" : "Z";
+    const list = structural.filter((b) => b.thicknessAxis === thick);
+    const lo = (b) => axis === "x" ? b.x0 : b.z0;
+    const hi = (b) => axis === "x" ? b.x1 : b.z1;
+    const c0 = (b) => axis === "x" ? b.z0 : b.x0;
+    const c1 = (b) => axis === "x" ? b.z1 : b.x1;
+    const mid = (b) => (lo(b) + hi(b)) / 2;
+    const sorted = [...list].sort((a, b) => mid(a) - mid(b));
+    for (let i = 0; i < sorted.length; i += 1) {
+      for (let j = i + 1; j < sorted.length; j += 1) {
+        const a = sorted[i];
+        const b = sorted[j];
+        const crossLo = Math.max(c0(a), c0(b));
+        const crossHi = Math.min(c1(a), c1(b));
+        if (crossHi - crossLo < 30) continue;
+        const clear = lo(b) - hi(a);
+        if (clear < 8) continue;
+        const blocked = sorted.some((m, k) => {
+          if (k === i || k === j) return false;
+          if (mid(m) <= mid(a) || mid(m) >= mid(b)) return false;
+          const share = Math.min(c1(m), crossHi) - Math.max(c0(m), crossLo);
+          return share > 20 && lo(m) >= hi(a) - 1 && hi(m) <= lo(b) + 1;
+        });
+        if (blocked) continue;
+        out.push({
+          axis,
+          clear: Math.round(clear * 10) / 10,
+          center: Math.round((mid(b) - mid(a)) * 10) / 10,
+          at: (hi(a) + lo(b)) / 2,
+          cross: (crossLo + crossHi) / 2
+        });
+      }
+    }
+  }
+  return out;
+}
+function gapMarks(gaps, toX, toY, scale, mode = "clear") {
+  const center = mode === "center";
+  return gaps.map((g) => {
+    if (g.clear * scale < 16) return "";
+    const x = g.axis === "x" ? toX(g.at) : toX(g.cross);
+    const y = g.axis === "z" ? toY(g.at) : toY(g.cross);
+    return label(x, y, fmt(center ? g.center : g.clear), { size: 9, fill: center ? "#e0a34f" : "#8ec5ef" });
+  }).join("");
+}
+
+// generators/bedroom/svgPreview.ts
+function esc2(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function fmt2(value) {
   return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
 }
 var C = {
@@ -860,7 +939,7 @@ function generateBedroomSvgPreview(result, options = {}) {
     const line = doorStock ? C.frontLine : C.carcassLine;
     const opacity = isFront ? 0.55 : 0.92;
     parts.push(
-      `<rect class="${kind}" data-board="${esc(b.id)}" pointer-events="none" ${rectAttrs(r.x0, r.x1, r.z0, r.z1)} fill="${fill}" fill-opacity="${opacity}" stroke="${line}" stroke-width="0.75" />`
+      `<rect class="${kind}" data-board="${esc2(b.id)}" pointer-events="none" ${rectAttrs(r.x0, r.x1, r.z0, r.z1)} fill="${fill}" fill-opacity="${opacity}" stroke="${line}" stroke-width="0.75" />`
     );
   }
   for (const b of result.boards) {
@@ -882,9 +961,9 @@ function generateBedroomSvgPreview(result, options = {}) {
     const cx = toX((z.x0 + z.x1) / 2);
     const cy = toY((z.z0 + z.z1) / 2);
     const halo = `stroke="${C.bg}" stroke-opacity="0.85" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round"`;
-    parts.push(`<text class="label" x="${cx.toFixed(2)}" y="${(cy - 5).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="${C.text}" ${halo} pointer-events="none">${esc(z.label)}</text>`);
+    parts.push(`<text class="label" x="${cx.toFixed(2)}" y="${(cy - 5).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-size="11" fill="${C.text}" ${halo} pointer-events="none">${esc2(z.label)}</text>`);
     if (w >= 70 && h >= 34) {
-      parts.push(`<text class="label size" x="${cx.toFixed(2)}" y="${(cy + 9).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="${C.text2}" ${halo} pointer-events="none">${esc(`${fmt(z.x1 - z.x0)} \xD7 ${fmt(z.z1 - z.z0)}`)}</text>`);
+      parts.push(`<text class="label size" x="${cx.toFixed(2)}" y="${(cy + 9).toFixed(2)}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="${C.text2}" ${halo} pointer-events="none">${esc2(`${fmt2(z.x1 - z.x0)} \xD7 ${fmt2(z.z1 - z.z0)}`)}</text>`);
     }
   }
   const bedW = result.layout.bedFrameWidth;
@@ -892,12 +971,13 @@ function generateBedroomSvgPreview(result, options = {}) {
   const bx1 = bx0 + bedW;
   const by = toY(p.bootHeight) - 14;
   parts.push(
-    `<g class="bed" pointer-events="none" stroke="${C.text2}" stroke-width="1"><line x1="${toX(bx0).toFixed(2)}" y1="${by.toFixed(2)}" x2="${toX(bx1).toFixed(2)}" y2="${by.toFixed(2)}" /><line x1="${toX(bx0).toFixed(2)}" y1="${(by - 5).toFixed(2)}" x2="${toX(bx0).toFixed(2)}" y2="${(by + 5).toFixed(2)}" /><line x1="${toX(bx1).toFixed(2)}" y1="${(by - 5).toFixed(2)}" x2="${toX(bx1).toFixed(2)}" y2="${(by + 5).toFixed(2)}" /><text x="${toX(W / 2).toFixed(2)}" y="${(by - 7).toFixed(2)}" text-anchor="middle" dominant-baseline="auto" font-size="10" fill="${C.text2}" stroke="none">bed ${fmt(bedW)} \xB7 ${fmt(result.layout.bedMargin)} each side</text></g>`
+    `<g class="bed" pointer-events="none" stroke="${C.text2}" stroke-width="1"><line x1="${toX(bx0).toFixed(2)}" y1="${by.toFixed(2)}" x2="${toX(bx1).toFixed(2)}" y2="${by.toFixed(2)}" /><line x1="${toX(bx0).toFixed(2)}" y1="${(by - 5).toFixed(2)}" x2="${toX(bx0).toFixed(2)}" y2="${(by + 5).toFixed(2)}" /><line x1="${toX(bx1).toFixed(2)}" y1="${(by - 5).toFixed(2)}" x2="${toX(bx1).toFixed(2)}" y2="${(by + 5).toFixed(2)}" /><text x="${toX(W / 2).toFixed(2)}" y="${(by - 7).toFixed(2)}" text-anchor="middle" dominant-baseline="auto" font-size="10" fill="${C.text2}" stroke="none">bed ${fmt2(bedW)} \xB7 ${fmt2(result.layout.bedMargin)} each side</text></g>`
   );
   const selZone = result.zones.find((z) => z.id === selected);
   if (selZone) {
     parts.push(`<rect class="region-outline" pointer-events="none" ${rectAttrs(selZone.x0, selZone.x1, selZone.z0, selZone.z1)} fill="${C.select}" fill-opacity="0.12" stroke="${C.select}" stroke-width="2" />`);
   }
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
   parts.push(`<rect ${rectAttrs(0, W, 0, H)} fill="none" stroke="${C.envelope}" stroke-width="1.25" pointer-events="none" />`);
   const front = result.layout.front;
   const boundary = (key, axis, side, x1, y1, x2, y2, index) => {
@@ -920,16 +1000,16 @@ function generateBedroomSvgPreview(result, options = {}) {
     });
   }
   if (showDimensions) {
-    const dimText = (x, y, text, anchor = "middle", fill = C.text2) => parts.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="10" fill="${fill}" pointer-events="none">${esc(text)}</text>`);
+    const dimText = (x, y, text, anchor = "middle", fill = C.text2) => parts.push(`<text x="${x.toFixed(2)}" y="${y.toFixed(2)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="10" fill="${fill}" pointer-events="none">${esc2(text)}</text>`);
     const heights = [[0, false], [p.bootHeight, true], [p.ohcBottom, true], [H, false]];
     if (front && front.style === "style1" && front.fixedPanelTop != null) heights.push([front.fixedPanelTop, true]);
     if (front && front.style === "nook" && front.nookShelfBottom != null) heights.push([front.nookShelfBottom, false]);
-    for (const [z, drag] of heights) dimText(ox - 6, toY(z), fmt(z), "end", drag ? C.boundary : C.text3);
+    for (const [z, drag] of heights) dimText(ox - 6, toY(z), fmt2(z), "end", drag ? C.boundary : C.text3);
     const yb = toY(0) + 14;
-    dimText(toX(p.wardrobeWidth / 2), yb, fmt(p.wardrobeWidth), "middle", C.boundary);
-    dimText(toX(W / 2), yb, `${fmt(result.layout.openingWidth)} opening`);
-    dimText(toX(W - p.wardrobeWidth / 2), yb, fmt(p.wardrobeWidth), "middle", C.boundary);
-    dimText(toX(W), toY(H) - 11, `W ${fmt(W)} \xB7 roof ${fmt(H)} at the room face`, "end", C.text3);
+    dimText(toX(p.wardrobeWidth / 2), yb, fmt2(p.wardrobeWidth), "middle", C.boundary);
+    dimText(toX(W / 2), yb, `${fmt2(result.layout.openingWidth)} opening`);
+    dimText(toX(W - p.wardrobeWidth / 2), yb, fmt2(p.wardrobeWidth), "middle", C.boundary);
+    dimText(toX(W), toY(H) - 11, `W ${fmt2(W)} \xB7 roof ${fmt2(H)} at the room face`, "end", C.text3);
   }
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="Bedroom body front elevation" data-scale="${scale}" data-ox="${ox}" data-oy="${oy}" data-w="${W}" data-h="${H}" font-family="'Segoe UI', system-ui, sans-serif"><rect x="0" y="0" width="${width}" height="${height}" fill="${C.bg}" />` + parts.join("") + `</svg>`;
 }
@@ -1471,7 +1551,7 @@ function generateBedroom(raw) {
             o.add(inset(), lit(0)).add(inset(), ySet()).add(wall(), ySet()).add(wall(), yD()).add(face(), yD());
             o.add(face(), y1t()).add(tip(), y1t()).add(tip(), y0t()).add(face(), y0t()).add(face(), lit(0));
           }
-          return o.points.map(([px, py]) => ({ x: round13(px), y: round13(py) }));
+          return o.points.map(([px2, py]) => ({ x: round13(px2), y: round13(py) }));
         };
         const shelfBox = (id, side) => {
           const outline = shelfOutline(id, side);
@@ -1508,7 +1588,7 @@ function generateBedroom(raw) {
         const Y1 = ex({ y: ref("top.T3.y1") }, (t) => t.y);
         if (side === "L") o.add(X0, Y0).add(X1, Y0).add(X1, YT).add(XN, YT).add(XN, Y1).add(X0, Y1);
         else o.add(X0, Y0).add(X1, Y0).add(X1, Y1).add(XN, Y1).add(XN, YT).add(X0, YT);
-        b.profileVector = o.points.map(([px, py]) => ({ x: round13(px), y: round13(py) }));
+        b.profileVector = o.points.map(([px2, py]) => ({ x: round13(px2), y: round13(py) }));
         return b;
       };
       const t3L = t3Box("WARD_L_T3", "L");
