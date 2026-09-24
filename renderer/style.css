@@ -554,6 +554,19 @@ button:disabled { cursor: default; opacity: 0.45; }
   text-align: right;
 }
 .field input[type="text"] { text-align: left; }
+.field select {
+  height: 24px;
+  min-width: 0;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font: inherit;
+}
+.field select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
+/* A wider value column for a type list (zone / run cards). */
+.field.wide-value { grid-template-columns: 1fr 150px; }
 .field input:disabled { color: var(--text-2); }
 .field.readonly input { color: var(--text-2); border-style: dashed; cursor: default; }
 .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
@@ -860,6 +873,9 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 
 .zs-tools { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
 .zs-tools .tb { height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); }
+.zs-tools .tb:disabled { opacity: 0.45; cursor: default; }
+.zs-tools + .bedroom-front { margin-top: 2px; }
+.bedroom-front + .zs-hint { margin-top: 6px; }
 .zs-hint { flex-basis: 100%; font-size: 11px; color: var(--text-3); }
 .zs-strip {
   display: flex;
@@ -916,6 +932,7 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .bedroom-front .region:hover { fill: rgba(79, 134, 224, 0.16); }
 .bedroom-front .boundary[data-axis="x"] { cursor: ew-resize; }
 .bedroom-front .boundary[data-axis="z"] { cursor: ns-resize; }
+.bedroom-front .boundary[data-axis="y"] { cursor: ns-resize; }
 .bedroom-front .boundary:hover line:first-child, .bedroom-front .boundary.active line:first-child { stroke: #fff; stroke-width: 3; }
 .bedroom-front.dragging { cursor: grabbing; }
 

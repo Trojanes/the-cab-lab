@@ -13,6 +13,8 @@ import type {
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 
+export { generateGTSvgPreview } from "./svgPreview.ts";
+
 const asNum = (v: unknown, fb: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;

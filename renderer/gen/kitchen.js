@@ -449,6 +449,202 @@ var rules_default = {
 // generators/kitchen/rules.ts
 var RULES = defineRules("kitchen", rules_default);
 
+// generators/_lib/preview.ts
+var PV = {
+  bg: "#1d2025",
+  carcass: "#c9b799",
+  carcassLine: "#4a4034",
+  front: "#9ec5d8",
+  frontLine: "#3f5a6a",
+  boundary: "#e0a34f",
+  select: "#4f86e0",
+  text: "#d8dde4",
+  text2: "#9aa2ad",
+  text3: "#6b737e",
+  envelope: "#6b737e",
+  hinge: "#243044",
+  lock: "#5a3d22",
+  warn: "#e5484d",
+  font: "'Segoe UI', system-ui, sans-serif"
+};
+function esc(value) {
+  return String(value ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+function fmt(value) {
+  return Number.isInteger(value) ? String(value) : String(Number(value.toFixed(1)));
+}
+var px = (v) => v.toFixed(2);
+function frontRect(b) {
+  const pv = b.profileVector ?? [];
+  if (b.profilePlane === "XZ" || pv.length < 3) return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 };
+  const ys = pv.map((q) => q.y).filter((v) => Number.isFinite(v));
+  if (!ys.length) return { x0: b.x0, x1: b.x1, z0: b.z0, z1: b.z1 };
+  const yMin = Math.min(...ys);
+  const atFront = pv.filter((q) => Math.abs(q.y - yMin) < 0.6);
+  if (b.profilePlane === "YZ") {
+    const zs = atFront.map((q) => q.z);
+    return zs.length >= 2 ? { x0: b.x0, x1: b.x1, z0: Math.min(...zs), z1: Math.max(...zs) } : null;
+  }
+  const xs = atFront.map((q) => q.x);
+  return xs.length >= 2 ? { x0: Math.min(...xs), x1: Math.max(...xs), z0: b.z0, z1: b.z1 } : null;
+}
+function label(x, y, text, opts = {}) {
+  const { size = 11, fill = PV.text, anchor = "middle", weight } = opts;
+  return `<text x="${px(x)}" y="${px(y)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="${size}"${weight ? ` font-weight="${weight}"` : ""} fill="${fill}" stroke="${PV.bg}" stroke-opacity="0.85" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round" pointer-events="none">${esc(text)}</text>`;
+}
+function dimText(x, y, text, anchor = "middle", fill = PV.text2, size = 10) {
+  return `<text x="${px(x)}" y="${px(y)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="${size}" fill="${fill}" pointer-events="none">${esc(text)}</text>`;
+}
+function grip(attrs, x1, y1, x2, y2, dashed = false) {
+  const c = `x1="${px(x1)}" y1="${px(y1)}" x2="${px(x2)}" y2="${px(y2)}"`;
+  return `<g class="boundary" ${attrs}><line ${c} stroke="${PV.boundary}" stroke-width="2"${dashed ? ` stroke-dasharray="6 4"` : ""} /><line class="hit" ${c} stroke="transparent" stroke-width="12" pointer-events="stroke" /></g>`;
+}
+function spacedLabels(items, x, anchor, gap = 11) {
+  const sorted = [...items].sort((a, b) => a.y - b.y || Number(!!b.strong) - Number(!!a.strong));
+  const out = [];
+  let last = -Infinity;
+  for (const it of sorted) {
+    if (it.y - last < gap) continue;
+    out.push(dimText(x, it.y, it.text, anchor, it.fill));
+    last = it.y;
+  }
+  return out.join("");
+}
+function fitCanvas(W, H, width, maxHeight, pad) {
+  const availW = width - pad.l - pad.r;
+  const availH = maxHeight - pad.t - pad.b;
+  const scale = Math.min(availW / Math.max(W, 1), availH / Math.max(H, 1));
+  const ox = pad.l + (availW - W * scale) / 2;
+  const oy = pad.t;
+  const height = Math.round(H * scale + pad.t + pad.b);
+  return { scale, ox, oy, height };
+}
+function svgRoot(width, height, data, aria, body) {
+  const d = Object.entries(data).map(([k, v]) => `data-${k}="${v}"`).join(" ");
+  return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(aria)}" ${d} font-family="${PV.font}"><rect x="0" y="0" width="${width}" height="${height}" fill="${PV.bg}" />` + body + `</svg>`;
+}
+
+// generators/kitchen/svgPreview.ts
+var KITCHEN_ZONE_LABELS = {
+  left_door: "Door \xB7 hinge left",
+  right_door: "Door \xB7 hinge right",
+  double_door: "Double door",
+  drawer: "Drawer",
+  open: "Open",
+  down_flap: "Down flap",
+  stove: "Stove",
+  custom: "Custom",
+  unassigned: "Unassigned"
+};
+function zoneTint(type) {
+  if (type === "drawer") return "rgba(224,163,79,0.10)";
+  if (type === "open") return "rgba(255,255,255,0.03)";
+  if (type === "down_flap") return "rgba(180,140,230,0.10)";
+  if (type === "stove") return "rgba(229,72,77,0.10)";
+  if (type === "custom") return "rgba(160,200,150,0.08)";
+  if (type === "unassigned") return "rgba(229,72,77,0.16)";
+  return "rgba(79,134,224,0.07)";
+}
+function generateKitchenSvgPreview(result, options = {}) {
+  if (!result || !result.boards.length) return null;
+  const W = result.params.length;
+  const H = result.params.height;
+  const BCH = result.params.bottomClearanceHeight;
+  if (!(W > 0) || !(H > 0)) return null;
+  const columns = result.debug?.columns ?? [];
+  if (!columns.length) return null;
+  const avoidances = result.debug?.avoidances ?? [];
+  const width = options.width ?? 520;
+  const showDimensions = options.showDimensions ?? true;
+  const selZone = options.selectedZoneId ?? null;
+  const selCol = options.selectedCol ?? -1;
+  const { scale, ox, oy, height } = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  const toX = (x) => ox + x * scale;
+  const toY = (z) => oy + (H - z) * scale;
+  const rect = (x0, x1, z0, z1) => `x="${px(toX(x0))}" y="${px(toY(z1))}" width="${px(Math.max((x1 - x0) * scale, 0.8))}" height="${px(Math.max((z1 - z0) * scale, 0.8))}"`;
+  const isSel = (ci, id) => id === selZone && (selCol < 0 || selCol === ci);
+  const parts = [];
+  parts.push(`<rect ${rect(0, W, 0, BCH)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
+  columns.forEach((col, ci) => {
+    for (const z of col.zones) {
+      parts.push(`<rect class="region" data-zone="${z.id}" data-col="${ci}" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneTint(z.zoneType)}" stroke="none" />`);
+    }
+  });
+  const boards = [...result.boards].sort((a, b) => b.y0 - a.y0);
+  for (const b of boards) {
+    const r = frontRect(b);
+    if (!r || r.x1 - r.x0 < 0.1 || r.z1 - r.z0 < 0.1) continue;
+    const door = b.stock?.kind === "door";
+    const isFront = b.y0 < -0.01;
+    parts.push(
+      `<rect data-board="${b.id}" pointer-events="none" ${rect(r.x0, r.x1, r.z0, r.z1)} fill="${door ? PV.front : PV.carcass}" fill-opacity="${isFront ? 0.55 : 0.92}" stroke="${door ? PV.frontLine : PV.carcassLine}" stroke-width="0.75" />`
+    );
+  }
+  for (const av of avoidances) {
+    if (!(av.x1 > av.x0) || !(av.height > 0)) continue;
+    parts.push(`<rect ${rect(av.x0, av.x1, 0, av.height)} fill="${PV.warn}" fill-opacity="0.10" stroke="${PV.warn}" stroke-dasharray="4 3" pointer-events="none" />`);
+    if ((av.x1 - av.x0) * scale > 34) parts.push(label(toX((av.x0 + av.x1) / 2), toY(av.height) + 9, `wheel ${fmt(av.height)}`, { size: 9, fill: "#f08a8d" }));
+  }
+  for (const h of result.hinges) {
+    parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max(h.diameter / 2 * scale, 1.5))}" fill="none" stroke="${PV.hinge}" stroke-width="1" pointer-events="none" />`);
+  }
+  for (const l of result.locks) {
+    const w = Math.max(l.width * scale, 4);
+    const h = Math.max(l.height * scale, 2.5);
+    parts.push(`<rect x="${px(toX(l.centerX) - w / 2)}" y="${px(toY(l.centerZ) - h / 2)}" width="${px(w)}" height="${px(h)}" rx="${px(h / 2)}" fill="${PV.lock}" fill-opacity="0.55" stroke="none" pointer-events="none" />`);
+  }
+  for (const col of columns) {
+    const w = (col.x1 - col.x0) * scale;
+    for (const z of col.zones) {
+      const h = (z.z1 - z.z0) * scale;
+      if (h < 14 || w < 36) continue;
+      const cx = toX((col.x0 + col.x1) / 2);
+      const cy = toY((z.z0 + z.z1) / 2);
+      const name = KITCHEN_ZONE_LABELS[z.zoneType] ?? z.zoneType;
+      const short = w < 90 ? name.replace("Door \xB7 hinge ", "Door ").replace("Double door", "Double") : name;
+      if (h >= 32) {
+        parts.push(label(cx, cy - 6, short, { size: 11, fill: z.zoneType === "unassigned" ? "#f08a8d" : PV.text }));
+        parts.push(label(cx, cy + 8, fmt(z.z1 - z.z0), { size: 10, fill: PV.text2 }));
+      } else {
+        parts.push(label(cx, cy, `${short} \xB7 ${fmt(z.z1 - z.z0)}`, { size: 10 }));
+      }
+    }
+  }
+  if (BCH * scale >= 11) parts.push(label(toX(0) + 6, toY(BCH / 2), `kick ${fmt(BCH)}`, { size: 9, fill: PV.text2, anchor: "start" }));
+  columns.forEach((col, ci) => {
+    const z = col.zones.find((zz) => isSel(ci, zz.id));
+    if (z) parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
+  });
+  parts.push(`<rect ${rect(0, W, 0, H)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
+  for (let i = 0; i < columns.length - 1; i += 1) {
+    const x = toX(columns[i].x1);
+    parts.push(grip(`data-boundary="column" data-axis="x" data-index="${i}"`, x, toY(H), x, toY(BCH)));
+  }
+  columns.forEach((col, ci) => {
+    for (let zi = 0; zi < col.zones.length - 1; zi += 1) {
+      const y = toY(col.zones[zi].z0);
+      parts.push(grip(`data-boundary="zone" data-axis="z" data-col="${ci}" data-index="${zi}"`, toX(col.x0) + 3, y, toX(col.x1) - 3, y));
+    }
+  });
+  if (showDimensions) {
+    parts.push(spacedLabels([
+      { y: toY(0), text: "0", fill: PV.text3 },
+      { y: toY(BCH), text: fmt(BCH), fill: PV.text3 },
+      { y: toY(H), text: fmt(H), fill: PV.text3 }
+    ], ox - 6, "end"));
+    const yb = toY(0) + 12;
+    columns.forEach((col) => {
+      const x0 = toX(col.x0);
+      const x1 = toX(col.x1);
+      parts.push(`<line x1="${px(x0)}" y1="${px(yb - 4)}" x2="${px(x0)}" y2="${px(yb + 4)}" stroke="${PV.text3}" pointer-events="none" />`);
+      parts.push(`<line x1="${px(x1)}" y1="${px(yb - 4)}" x2="${px(x1)}" y2="${px(yb + 4)}" stroke="${PV.text3}" pointer-events="none" />`);
+      if (x1 - x0 >= 24) parts.push(dimText((x0 + x1) / 2, yb, fmt(col.x1 - col.x0), "middle", columns.length > 1 ? PV.boundary : PV.text2));
+    });
+    parts.push(dimText(toX(W / 2), yb + 15, `W ${fmt(W)} \xB7 H ${fmt(H)} \xB7 ${columns.length} column${columns.length === 1 ? "" : "s"}`, "middle", PV.text3));
+  }
+  return svgRoot(width, height, { scale, ox, oy, w: W, h: H }, "Kitchen base front elevation", parts.join(""));
+}
+
 // generators/kitchen/generator.ts
 var asNum = (v, fb) => {
   const n = Number(v);
@@ -888,10 +1084,10 @@ function generateKitchenCabinet(input) {
     const av = avoidanceForV(s, v);
     const omitT1 = v.index === 0 && stoveAtLeftEdge || v.index === vPanels.length - 1 && stoveAtRightEdge;
     const outline = vPanelOutline(s, v, av, omitT1 && !v.frontVisible);
-    const label = v.index === 0 ? "Left End Panel" : v.index === vPanels.length - 1 ? "Right End Panel" : `Vertical Panel ${v.index}`;
+    const label2 = v.index === 0 ? "Left End Panel" : v.index === vPanels.length - 1 ? "Right End Panel" : `Vertical Panel ${v.index}`;
     boards.push(mkBoard(
       v.id,
-      label,
+      label2,
       "vertical",
       "vertical_panel",
       v.thickness,
@@ -1554,9 +1750,21 @@ function generateKitchenCabinet(input) {
     xBoundaries: s.xBoundaries,
     validation: { errors, warnings }
   };
-  result.debug = { provenance: endProvenance(), boardFrame: "final" };
+  result.debug = {
+    provenance: endProvenance(),
+    boardFrame: "final",
+    // Resolved layout for the front-view preview (same numbers the boards were built from).
+    columns: s.columns.map((c) => ({
+      id: c.id,
+      x0: c.x0,
+      x1: c.x1,
+      zones: c.zones.map((z) => ({ id: z.id, zoneType: z.zoneType, z0: z.z0, z1: z.z1 }))
+    })),
+    avoidances: s.avoidances
+  };
   return result;
 }
 export {
-  generateKitchenCabinet
+  generateKitchenCabinet,
+  generateKitchenSvgPreview
 };

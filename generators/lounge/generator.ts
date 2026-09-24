@@ -20,6 +20,7 @@ export {
   loungePolyline,
   pointInFootprintBoxes,
 } from "./place.ts";
+export { generateLoungeSvgPreview } from "./svgPreview.ts";
 
 const asNum = (v: unknown, fb: number) => {
   const n = Number(v);

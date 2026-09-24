@@ -444,6 +444,739 @@ function renderOverhead(cab, mod, result, shared) {
   ].filter(Boolean));
 }
 
+// --- tall cabinet editor --------------------------------------------------------------
+//
+// Wide page while a general tall cabinet is selected: the generator's 2D front
+// elevation (zones stack bottom → top between the bottom and top systems; click
+// a zone to select it, drag an orange boundary to trade height with the zone
+// above — 10 mm steps, Shift = 1 mm), a card for the selected zone, and the
+// cabinet-level fields folded below. A double_door zone's vertical divider is
+// an x-axis drag on the same view. Every edit is one undo step; a boundary drag
+// commits once on release.
+
+const tallSel = { cabId: null, zoneId: null }; // zone selection, kept across re-renders
+let tallDrag = null; // { cabId, refresh } while a front-view boundary is dragged
+
+function tallSelected(cabId) {
+  if (tallSel.cabId !== cabId) { tallSel.cabId = cabId; tallSel.zoneId = null; }
+  return tallSel.zoneId;
+}
+
+function renderTall(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const zones = p.zones || [];
+  const cpt = p.panelThickness ?? thickness(job.getStock(), "carcass");
+  const fpt = p.frontPanelThickness ?? thickness(job.getStock(), "door");
+  const selectedZoneId = tallSelected(cab.id);
+  const zoneItems = (result?.stack || []).filter((it) => it.kind === "functional_zone");
+
+  const setZones = (next, kind, extra = {}) => {
+    job.setParams(cab.id, { ...p, zones: next });
+    log(`tall.zone.${kind}`, { id: cab.id, heights: next.map((z) => z.height), types: next.map((z) => z.type), ...extra });
+  };
+
+  // A drag in progress: redraw the SVG in place and keep the container (and its pointer capture) alive.
+  if (tallDrag && tallDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    tallDrag.refresh();
+    return;
+  }
+
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => {
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: tallSelected(cab.id) }) || "";
+    if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+  };
+  drawFront();
+
+  // Zone selection: one click on a zone row. Boundary drag: pointer down on a boundary group.
+  front.addEventListener("click", (e) => {
+    if (tallDrag) return;
+    const zoneEl = e.target.closest?.("[data-zone]");
+    if (!zoneEl) return;
+    const id = zoneEl.getAttribute("data-zone");
+    tallSel.cabId = cab.id;
+    tallSel.zoneId = tallSel.zoneId === id ? null : id;
+    log("tall.zone.select", { id: cab.id, zone: tallSel.zoneId });
+    renderPanel();
+  });
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    const svg = front.querySelector("svg");
+    if (!g || !svg || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const kind = g.getAttribute("data-boundary"); // "zone" | "divider"
+    const axis = g.getAttribute("data-axis");
+    const index = Number(g.getAttribute("data-index") || 0);
+    const dragZoneId = g.getAttribute("data-zone");
+    const params0 = cab.params;
+    const result0 = job.resultFor(cab.id);
+    const from = kind === "divider"
+      ? (params0.zones || []).find((z) => z.id === dragZoneId)?.dividerCenterX
+      : (result0?.stack || []).filter((it) => it.kind === "functional_zone")[index]?.z1;
+    const before = job.snapshot();
+    // mm ↔ px: the SVG carries its own mapping; the container may be scaled to the panel width.
+    const toMm = (clientX, clientY) => {
+      const s = front.querySelector("svg");
+      const rect = s.getBoundingClientRect();
+      const k = Number(s.getAttribute("width")) / rect.width;
+      const scale = Number(s.dataset.scale);
+      const ox = Number(s.dataset.ox);
+      const oy = Number(s.dataset.oy);
+      const H = Number(s.dataset.h);
+      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : H - ((clientY - rect.top) * k - oy) / scale;
+    };
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    front.classList.add("dragging");
+    g.classList.add("active");
+    tallDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const step = ev.shiftKey ? 1 : 10;
+      const v = Math.round(toMm(ev.clientX, ev.clientY) / step) * step;
+      // The divider centre is stored from the left side panel's inner face; the view is in cabinet x.
+      const next = kind === "divider"
+        ? mod.setDividerCenter(params0, dragZoneId, v - (params0.leftSidePanelThickness ?? 0))
+        : mod.setDivider(params0, result0, index, v);
+      job.setParams(cab.id, next, { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      front.classList.remove("dragging");
+      tallDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("tall.zone.drag", {
+        id: cab.id, boundary: kind, index: kind === "zone" ? index : undefined, zone: kind === "divider" ? dragZoneId : undefined,
+        from, to: now ? (kind === "divider" ? now.params.zones?.find((z) => z.id === dragZoneId)?.dividerCenterX : now.params.zones?.map((z) => z.height)) : null,
+        changed, where: "front view",
+      });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+
+  // Zone toolbar: add / remove keep the stack's total (a neighbour gives or takes the room).
+  const zi = zones.findIndex((z) => z.id === selectedZoneId);
+  const addZone = el("button", { class: "tb", text: "+ Add zone", title: "A new open zone on top, taken from the tallest zone", onclick: () => {
+    const next = zones.map((z) => ({ ...z }));
+    const tallest = next.reduce((a, b) => (b.height > a.height ? b : a), next[0]);
+    const take = Math.min(300, (tallest?.height ?? 0) - MIN_ZONE_HEIGHT);
+    if (take < MIN_ZONE_HEIGHT) { log("tall.zone.blocked", { id: cab.id, reason: `no zone can give ${MIN_ZONE_HEIGHT} mm` }); return; }
+    tallest.height = Math.round((tallest.height - take) * 10) / 10;
+    const zone = { id: `zone-${Date.now().toString(36)}`, type: "open_space", height: take };
+    next.push(zone);
+    tallSel.zoneId = zone.id;
+    setZones(next, "add", { zone: zone.id, from: tallest.id });
+  } });
+  const removeZone = el("button", { class: "tb danger", text: "Remove", disabled: zi < 0 || zones.length <= 1, title: "The zone below (or above) takes its height", onclick: () => {
+    const z = zones[zi];
+    const next = zones.filter((_, k) => k !== zi).map((zz) => ({ ...zz }));
+    const heir = next[Math.max(0, zi - 1)];
+    if (heir) heir.height = Math.round((heir.height + z.height) * 10) / 10;
+    tallSel.zoneId = null;
+    setZones(next, "remove", { removed: z.id, heir: heir?.id });
+  } });
+
+  // Selected zone card.
+  let zoneCard = null;
+  if (zi >= 0) {
+    const z = zones[zi];
+    const row = zoneItems.find((it) => it.zoneId === z.id);
+    const neighbour = zi < zones.length - 1 ? zi + 1 : zi - 1;
+    const type = el("select", {
+      onchange: (e) => {
+        const next = zones.map((zz) => ({ ...zz }));
+        next[zi].type = e.target.value;
+        e.target.blur();
+        setZones(next, "type", { zone: z.id, type: e.target.value });
+      },
+    }, mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
+    const check = (text, on, onChange, title) => el("label", { class: "field check", title }, [
+      el("span", { text }),
+      el("input", { type: "checkbox", checked: on, onchange: (e) => onChange(e.target.checked) }),
+    ]);
+
+    const fields = [
+      el("label", { class: "field wide-value" }, [el("span", { text: "Type" }), type]),
+      row ? kv("From floor", `${Math.round(row.z0)} – ${Math.round(row.z1)} mm`) : null,
+      z.type === "fridge"
+        ? numField("Appliance height (mm)", z.applianceHeightMm ?? z.height, (v) => {
+            const next = zones.map((zz) => ({ ...zz }));
+            next[zi].applianceHeightMm = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
+            setZones(next, "height", { zone: z.id, appliance: true });
+          }, { step: 10, min: MIN_ZONE_HEIGHT })
+        : numField("Height (mm)", z.height, (v) => {
+            // The neighbour above (or below for the last zone) absorbs the difference.
+            const val = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
+            if (neighbour < 0) return;
+            const next = zones.map((zz) => ({ ...zz }));
+            const delta = val - next[zi].height;
+            if (next[neighbour].height - delta >= MIN_ZONE_HEIGHT) {
+              next[zi].height = val;
+              next[neighbour].height = Math.round((next[neighbour].height - delta) * 10) / 10;
+              setZones(next, "height", { zone: z.id, height: val });
+            }
+          }, { step: 10, min: MIN_ZONE_HEIGHT }),
+    ];
+    if (z.type === "fridge") {
+      fields.push(numField("Appliance width (mm)", z.applianceWidthMm ?? 0, (v) => {
+        const next = zones.map((zz) => ({ ...zz }));
+        next[zi].applianceWidthMm = Math.max(0, Math.round(v));
+        setZones(next, "appliance", { zone: z.id });
+      }, { step: 10, min: 0 }));
+    }
+    if (z.type === "double_door") {
+      fields.push(check("Vertical divider", z.verticalDivider === true, (on) => {
+        const next = zones.map((zz) => ({ ...zz }));
+        next[zi].verticalDivider = on;
+        setZones(next, "divider", { zone: z.id, on });
+      }, "A standing board between the two leaves; shelves split left / right"));
+      if (z.verticalDivider === true) {
+        const mw = (result?.params?.midWidth ?? env.W) || env.W;
+        const field = numField("Divider centre (mm)", z.dividerCenterX ?? Math.round(mw / 2), (v) => {
+          job.setParams(cab.id, mod.setDividerCenter(p, z.id, Math.round(v)));
+          log("tall.zone.divider", { id: cab.id, zone: z.id, to: v });
+        }, { step: 10, min: 0 });
+        field.title = `From the left side panel's inner face · interior ${Math.round(mw)} wide · or drag the dashed line`;
+        fields.push(field);
+      }
+    }
+    if (z.type !== "drawer" && z.type !== "fridge" && z.type !== "blank_panel") {
+      fields.push(check("Shelf", z.shelfEnabled === true, (on) => {
+        const next = zones.map((zz) => ({ ...zz }));
+        next[zi].shelfEnabled = on;
+        setZones(next, "shelf", { zone: z.id, on });
+      }));
+      if (z.shelfEnabled === true) {
+        fields.push(numField("Shelf top above zone (mm)", z.shelfHeight ?? Math.round(z.height / 2), (v) => {
+          const next = zones.map((zz) => ({ ...zz }));
+          next[zi].shelfHeight = Math.max(0, Math.min(z.height, Math.round(v)));
+          setZones(next, "shelfHeight", { zone: z.id });
+        }, { step: 10, min: 0 }));
+      }
+    }
+    zoneCard = section(`Zone ${zi + 1} of ${zones.length} · from the floor · ${mod.zoneTypes.find((t) => t.id === z.type)?.label ?? z.type}`, fields.filter(Boolean));
+  }
+
+  // Cabinet-level fields, folded.
+  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
+  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const setNested = (group, key) => (v) => job.setParams(cab.id, { ...p, [group]: { ...(p[group] || {}), [key]: v } });
+  const fold = el("details", { class: "panel-fold" }, [
+    el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
+    section("Outer size (= box)", [
+      numField("Width (mm)", env.W, setEnv("W")),
+      numField("Depth (mm)", env.D, setEnv("D")),
+      numField("Height (mm)", env.H, setEnv("H")),
+    ]),
+    section("Systems", [
+      numField("Top rail (mm)", p.topSystem?.frontRailHeight ?? 40, setNested("topSystem", "frontRailHeight"), { step: 5, min: 0 }),
+      numField("Bottom rail (mm)", p.bottomSystem?.frontRailHeight ?? 53, setNested("bottomSystem", "frontRailHeight"), { step: 5, min: 0 }),
+      numField("Front clearance (mm)", p.frontHardware?.frontClearance ?? 2.5, setNested("frontHardware", "frontClearance"), { step: 0.5, min: 0 }),
+    ]),
+    section("Position", [
+      numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
+      numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+    ]),
+    section("Material (job stock)", [
+      el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
+      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: `${p.doorColorName || p.doorColor || "—"} · ${fpt} mm` })]),
+    ]),
+  ]);
+
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
+    ]),
+    shared.board,
+    section(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [
+      el("div", { class: "zs-tools" }, [addZone, removeZone]),
+      front,
+      el("div", { class: "zs-hint", text: "Click a zone to select it · drag an orange line (height) or the dashed one (divider) · Shift = 1 mm" }),
+    ]),
+    zoneCard,
+    fold,
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
+// --- kitchen base cabinet editor -------------------------------------------------------
+//
+// Wide page while a kitchen base run is selected: the generator's 2D front
+// elevation (columns left → right, zones inside a column top → bottom, over the
+// kick). Click a cell to select its zone; drag an orange column boundary to
+// trade width with the next column, or an orange zone boundary to trade height
+// with the zone below (10 mm steps, Shift = 1 mm). A card edits the selected
+// zone and its column. Every edit is one undo step; a drag commits on release.
+
+const kitchenSel = { cabId: null, col: -1, zoneId: null }; // cell selection, kept across re-renders
+let kitchenDrag = null; // { cabId, refresh } while a front-view boundary is dragged
+
+function kitchenSelected(cabId) {
+  if (kitchenSel.cabId !== cabId) { kitchenSel.cabId = cabId; kitchenSel.col = -1; kitchenSel.zoneId = null; }
+  return kitchenSel;
+}
+
+function renderKitchen(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const columns = p.columns || [];
+  const cpt = p.materialThickness ?? thickness(job.getStock(), "carcass");
+  const fpt = p.frontThickness ?? thickness(job.getStock(), "door");
+  const bch = p.bottomClearanceHeight ?? 70;
+  const sel = kitchenSelected(cab.id);
+  const selCol = columns[sel.col];
+  const selZone = selCol?.zones?.find((z) => z.id === sel.zoneId) ?? null;
+  const selZoneIndex = selZone ? selCol.zones.indexOf(selZone) : -1;
+  const resCols = result?.debug?.columns || [];
+
+  const setParams = (next, kind, extra = {}) => {
+    job.setParams(cab.id, next);
+    log(`kitchen.cell.${kind}`, { id: cab.id, ...extra });
+  };
+
+  // A drag in progress: redraw the SVG in place and keep the container (and its pointer capture) alive.
+  if (kitchenDrag && kitchenDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    kitchenDrag.refresh();
+    return;
+  }
+
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => {
+    const cur = kitchenSelected(cab.id);
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: cur.zoneId, selectedCol: cur.col }) || "";
+    if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+  };
+  drawFront();
+
+  // Cell selection: one click on a zone cell.
+  front.addEventListener("click", (e) => {
+    if (kitchenDrag) return;
+    const cellEl = e.target.closest?.("[data-zone]");
+    if (!cellEl) return;
+    const zid = cellEl.getAttribute("data-zone");
+    const ci = Number(cellEl.getAttribute("data-col") || 0);
+    const cur = kitchenSelected(cab.id);
+    const same = cur.zoneId === zid && cur.col === ci;
+    cur.col = same ? -1 : ci;
+    cur.zoneId = same ? null : zid;
+    log("kitchen.cell.select", { id: cab.id, column: cur.col, zone: cur.zoneId });
+    renderPanel();
+  });
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    const svg = front.querySelector("svg");
+    if (!g || !svg || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const kind = g.getAttribute("data-boundary"); // "column" | "zone"
+    const axis = g.getAttribute("data-axis");
+    const index = Number(g.getAttribute("data-index") || 0);
+    const ci = Number(g.getAttribute("data-col") || 0);
+    const params0 = cab.params;
+    const result0 = job.resultFor(cab.id);
+    const before = job.snapshot();
+    // mm ↔ px: the SVG carries its own mapping; the container may be scaled to the panel width.
+    const toMm = (clientX, clientY) => {
+      const s = front.querySelector("svg");
+      const rect = s.getBoundingClientRect();
+      const k = Number(s.getAttribute("width")) / rect.width;
+      const scale = Number(s.dataset.scale);
+      const ox = Number(s.dataset.ox);
+      const oy = Number(s.dataset.oy);
+      const H = Number(s.dataset.h);
+      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : H - ((clientY - rect.top) * k - oy) / scale;
+    };
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    front.classList.add("dragging");
+    g.classList.add("active");
+    kitchenDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const step = ev.shiftKey ? 1 : 10;
+      const v = Math.round(toMm(ev.clientX, ev.clientY) / step) * step;
+      const next = kind === "column"
+        ? mod.setDivider(params0, result0, index, v)
+        : mod.setZoneDivider(params0, result0, ci, index, v);
+      job.setParams(cab.id, next, { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      front.classList.remove("dragging");
+      kitchenDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("kitchen.cell.drag", {
+        id: cab.id, boundary: kind, index, column: kind === "zone" ? ci : undefined,
+        to: now ? (kind === "column" ? now.params.columns?.map((c) => c.width) : now.params.columns?.[ci]?.zones?.map((z) => z.height)) : null,
+        changed, where: "front view",
+      });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+
+  // Column / zone toolbar. Columns keep the run's length; zones keep the column's height.
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const zoneAllowsShelf = (t) => ["left_door", "right_door", "double_door", "open", "custom"].includes(t);
+  const zoneAllowsLock = (t) => ["left_door", "right_door", "double_door", "drawer", "down_flap"].includes(t);
+  const cloneCols = () => columns.map((c) => ({ ...c, zones: c.zones.map((z) => ({ ...z })) }));
+  const addColumn = el("button", { class: "tb", text: "+ Column", title: "A new column on the right, taken from the widest column", onclick: () => {
+    const next = cloneCols();
+    const widest = next.reduce((a, b) => ((b.width || 0) > (a.width || 0) ? b : a), next[0]);
+    const take = Math.min(400, r1((widest?.width || 0) / 2));
+    if (take < MIN_ZONE_WIDTH || (widest.width || 0) - take < MIN_ZONE_WIDTH) { log("kitchen.cell.blocked", { id: cab.id, reason: `no column can give ${MIN_ZONE_WIDTH} mm` }); return; }
+    widest.width = r1(widest.width - take);
+    const stamp = Date.now().toString(36);
+    const col = { id: `c${stamp}`, width: take, zones: [{ id: `z${stamp}`, height: r1(env.H - bch), zoneType: "left_door" }] };
+    next.push(col);
+    kitchenSel.col = next.length - 1;
+    kitchenSel.zoneId = col.zones[0].id;
+    setParams({ ...p, columns: next }, "add", { column: col.id, from: widest.id, widths: next.map((c) => c.width) });
+  } });
+  const addZone = el("button", { class: "tb", text: "+ Zone", disabled: !selZone, title: "Split the selected zone: a new drawer above it takes part of its height", onclick: () => {
+    const next = cloneCols();
+    const zs = next[sel.col].zones;
+    const host = zs[selZoneIndex];
+    const take = Math.min(200, r1(host.height / 2));
+    if (take < MIN_ZONE_HEIGHT || host.height - take < MIN_ZONE_HEIGHT) { log("kitchen.cell.blocked", { id: cab.id, reason: `zone ${host.id} cannot give ${MIN_ZONE_HEIGHT} mm` }); return; }
+    host.height = r1(host.height - take);
+    const zone = { id: `z${Date.now().toString(36)}`, height: take, zoneType: "drawer" };
+    zs.splice(selZoneIndex, 0, zone); // top → bottom: inserting before the host puts it above
+    kitchenSel.zoneId = zone.id;
+    setParams({ ...p, columns: next }, "zoneAdd", { column: selCol.id, zone: zone.id, from: host.id });
+  } });
+  const removeZone = el("button", { class: "tb danger", text: "Remove zone", disabled: !selZone || selCol.zones.length <= 1, title: "The zone below (or above) takes its height", onclick: () => {
+    const next = cloneCols();
+    const zs = next[sel.col].zones;
+    const heir = zs[selZoneIndex + 1] ?? zs[selZoneIndex - 1];
+    heir.height = r1(heir.height + zs[selZoneIndex].height);
+    zs.splice(selZoneIndex, 1);
+    kitchenSel.zoneId = heir.id;
+    setParams({ ...p, columns: next }, "zoneRemove", { column: selCol.id, removed: selZone.id, heir: heir.id });
+  } });
+  const removeColumn = el("button", { class: "tb danger", text: "Remove column", disabled: !selCol || columns.length <= 1, title: "The neighbouring column takes its width", onclick: () => {
+    const next = cloneCols();
+    const ci = sel.col;
+    const heir = next[ci + 1] ?? next[ci - 1];
+    heir.width = r1((heir.width || 0) + (next[ci].width || 0));
+    next.splice(ci, 1);
+    kitchenSel.col = -1;
+    kitchenSel.zoneId = null;
+    setParams({ ...p, columns: next }, "columnRemove", { removed: selCol.id, heir: heir.id });
+  } });
+
+  // Selected cell card: the zone's fields, then its column.
+  let cellCard = null;
+  if (selZone && selZoneIndex >= 0) {
+    const ci = sel.col;
+    const zi = selZoneIndex;
+    const z = selZone;
+    const col = selCol;
+    const res = resCols[ci]?.zones?.find((rz) => rz.id === z.id);
+    const setZone = (patch, kind, extra = {}) => {
+      const next = cloneCols();
+      Object.assign(next[ci].zones[zi], patch);
+      setParams({ ...p, columns: next }, kind, { column: col.id, zone: z.id, ...extra });
+    };
+    const check = (text, on, onChange, title) => el("label", { class: "field check", title }, [
+      el("span", { text }),
+      el("input", { type: "checkbox", checked: on, onchange: (e) => onChange(e.target.checked) }),
+    ]);
+    const type = el("select", { onchange: (e) => { e.target.blur(); setZone({ zoneType: e.target.value }, "type", { type: e.target.value }); } },
+      mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.zoneType })));
+
+    const neighbour = zi < col.zones.length - 1 ? zi + 1 : zi - 1;
+    const colNeighbour = ci < columns.length - 1 ? ci + 1 : ci - 1;
+    const fields = [
+      el("label", { class: "field wide-value" }, [el("span", { text: "Type" }), type]),
+      res ? kv("From floor", `${Math.round(res.z0)} – ${Math.round(res.z1)} mm`) : null,
+      numField("Height (mm)", z.height, (v) => {
+        if (neighbour < 0) return;
+        const next = cloneCols();
+        const zs = next[ci].zones;
+        const val = Math.max(MIN_ZONE_HEIGHT, Math.min(r1(zs[zi].height + zs[neighbour].height - MIN_ZONE_HEIGHT), Math.round(v)));
+        zs[neighbour].height = r1(zs[neighbour].height - (val - zs[zi].height));
+        zs[zi].height = val;
+        setParams({ ...p, columns: next }, "height", { column: col.id, zone: z.id, height: val });
+      }, { step: 10, min: MIN_ZONE_HEIGHT, readOnly: col.zones.length <= 1 ? "The only zone fills the column (height − kick)" : null }),
+      zoneAllowsShelf(z.zoneType) ? check("Shelf", z.shelfEnabled !== false, (on) => setZone({ shelfEnabled: on }, "shelf", { on })) : null,
+      zoneAllowsLock(z.zoneType) ? check("Lock", z.lockEnabled !== false, (on) => setZone({ lockEnabled: on }, "lock", { on }), p.lockEnabled === false ? "Locks are off for the whole cabinet" : undefined) : null,
+    ];
+    const colFields = [
+      numField("Width (mm)", col.width, (v) => {
+        if (colNeighbour < 0) return;
+        const next = cloneCols();
+        const val = Math.max(MIN_ZONE_WIDTH, Math.min(r1(next[ci].width + next[colNeighbour].width - MIN_ZONE_WIDTH), Math.round(v)));
+        next[colNeighbour].width = r1(next[colNeighbour].width - (val - next[ci].width));
+        next[ci].width = val;
+        setParams({ ...p, columns: next }, "width", { column: col.id, width: val });
+      }, { step: 10, min: MIN_ZONE_WIDTH, readOnly: columns.length <= 1 ? "The only column fills the run" : null }),
+      resCols[ci] ? kv("From left", `${Math.round(resCols[ci].x0)} – ${Math.round(resCols[ci].x1)} mm`) : null,
+      kv("Zones", `${col.zones.length} · top → bottom`),
+    ];
+    cellCard = [
+      section(`Zone ${zi + 1} of ${col.zones.length} · from the top`, fields.filter(Boolean)),
+      section(`Column ${ci + 1} of ${columns.length}`, colFields.filter(Boolean)),
+    ];
+  }
+
+  // Cabinet-level fields, folded.
+  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
+  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const fold = el("details", { class: "panel-fold" }, [
+    el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${columns.length} columns · ${result?.boards?.length || 0} boards` }),
+    section("Outer size (= box)", [
+      numField("Width (mm)", env.W, setEnv("W")),
+      numField("Depth (mm)", env.D, setEnv("D")),
+      numField("Height (mm)", env.H, setEnv("H")),
+    ]),
+    section("Kick & fronts", [
+      // A new kick re-fits every column's zones to height − kick (same rule as a height change).
+      numField("Kick height (mm)", bch, (v) => job.setParams(cab.id, mod.setEnvelope({ ...p, bottomClearanceHeight: Math.max(0, Math.round(v)) }, { H: env.H })), { step: 5, min: 0 }),
+      numField("Front clearance (mm)", p.frontClearance ?? 2.5, (v) => job.setParams(cab.id, { ...p, frontClearance: Math.max(0, v) }), { step: 0.5, min: 0 }),
+      el("label", { class: "field check" }, [
+        el("span", { text: "Locks" }),
+        el("input", { type: "checkbox", checked: p.lockEnabled !== false, onchange: (e) => job.setParams(cab.id, { ...p, lockEnabled: e.target.checked }) }),
+      ]),
+    ]),
+    section("Position", [
+      numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
+      numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+    ]),
+    section("Material (job stock)", [
+      el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
+      el("div", { class: "kv" }, [el("span", { text: "Door" }), el("b", { text: `${p.doorColorName || p.doorColor || "—"} · ${fpt} mm` })]),
+    ]),
+  ]);
+
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${columns.length} columns · kick ${Math.round(bch)} · ${result?.boards?.length || 0} boards` }),
+    ]),
+    shared.board,
+    section(`Front view · from the room · ${columns.length} column${columns.length === 1 ? "" : "s"}`, [
+      el("div", { class: "zs-tools" }, [addColumn, addZone, removeZone, removeColumn]),
+      front,
+      el("div", { class: "zs-hint", text: "Click a cell to select it · drag an orange line (column width / zone height) · Shift = 1 mm" }),
+    ]),
+    ...(cellCard || []),
+    fold,
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
+// --- lounge editor ---------------------------------------------------------------------
+//
+// Wide page while a lounge group is selected: a top-down plan view (the
+// elevation of a 420 mm seat is a flat strip — the shape lives in XY). Click a
+// run to select it; drag an orange edge to move it — the edge drives its
+// matching size param (mainWidth / lWidth / lDepth / …, 10 mm steps,
+// Shift = 1 mm). A card edits the selected run's fields. Every edit is one undo
+// step; a drag commits once on release.
+
+const loungeSel = { cabId: null, run: null }; // run selection, kept across re-renders
+let loungeDrag = null; // { cabId, refresh } while a plan edge is dragged
+
+function loungeSelected(cabId) {
+  if (loungeSel.cabId !== cabId) { loungeSel.cabId = cabId; loungeSel.run = null; }
+  return loungeSel.run;
+}
+
+const LOUNGE_RUN_LABEL = { i: "Run", main: "Main run", l: "L wing", left: "Left leg", right: "Right leg" };
+const LOUNGE_STYLE_LABEL = { I_SHAPE: "I · straight", L_SHAPE: "L · corner", U_SHAPE: "U · three sides", PARALLEL: "Parallel · face to face" };
+
+function renderLounge(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const style = p.style || "L_SHAPE";
+  const selectedRun = loungeSelected(cab.id);
+  const runs = Object.keys(result?.footprint || {});
+
+  const setP = (key, value, kind = "set") => {
+    job.setParams(cab.id, { ...p, [key]: value });
+    log(`lounge.run.${kind}`, { id: cab.id, key, to: value });
+  };
+
+  // A drag in progress: redraw the SVG in place and keep the container (and its pointer capture) alive.
+  if (loungeDrag && loungeDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    loungeDrag.refresh();
+    return;
+  }
+
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => {
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedRun: loungeSelected(cab.id) }) || "";
+    if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No plan view — fix the checks first." }));
+  };
+  drawFront();
+
+  front.addEventListener("click", (e) => {
+    if (loungeDrag) return;
+    const runEl = e.target.closest?.("[data-run]");
+    if (!runEl) return;
+    const id = runEl.getAttribute("data-run");
+    loungeSel.cabId = cab.id;
+    loungeSel.run = loungeSel.run === id ? null : id;
+    log("lounge.run.select", { id: cab.id, run: loungeSel.run });
+    renderPanel();
+  });
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    const svg = front.querySelector("svg");
+    if (!g || !svg || e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const param = g.getAttribute("data-param");
+    const axis = g.getAttribute("data-axis"); // "x" | "y"
+    const params0 = cab.params;
+    const from = params0[param];
+    const before = job.snapshot();
+    // mm ↔ px: the SVG carries its own mapping; plan view maps the vertical axis to Y (depth), not Z.
+    const toMm = (clientX, clientY) => {
+      const s = front.querySelector("svg");
+      const rect = s.getBoundingClientRect();
+      const k = Number(s.getAttribute("width")) / rect.width;
+      const scale = Number(s.dataset.scale);
+      const ox = Number(s.dataset.ox);
+      const oy = Number(s.dataset.oy);
+      const planH = Number(s.dataset.h);
+      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : planH - ((clientY - rect.top) * k - oy) / scale;
+    };
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    front.classList.add("dragging");
+    g.classList.add("active");
+    loungeDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const step = ev.shiftKey ? 1 : 10;
+      const v = Math.round(toMm(ev.clientX, ev.clientY) / step) * step;
+      job.setParams(cab.id, mod.setRunEdge(params0, param, v), { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      front.classList.remove("dragging");
+      loungeDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("lounge.run.drag", { id: cab.id, param, from, to: now ? now.params[param] : null, changed, where: "plan view" });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+
+  // Selected run card: its rectangle, then only the sizes that run owns.
+  const check = (text, on, onChange, title) => el("label", { class: "field check", title }, [
+    el("span", { text }),
+    el("input", { type: "checkbox", checked: on, onchange: (e) => onChange(e.target.checked) }),
+  ]);
+  const num = (label, key, min, title) => {
+    const field = numField(label, p[key] ?? 0, (v) => setP(key, Math.max(min, Math.round(v)), "size"), { step: 10, min });
+    if (title) field.title = title;
+    return field;
+  };
+  let runCard = null;
+  const fpRun = selectedRun ? result?.footprint?.[selectedRun] : null;
+  if (fpRun) {
+    const f = [
+      kv("Across (X)", `${Math.round(fpRun.x0)} – ${Math.round(fpRun.x1)} · ${Math.round(fpRun.x1 - fpRun.x0)} long`),
+      kv("From the room (Y)", `${Math.round(fpRun.y0)} – ${Math.round(fpRun.y1)} · ${Math.round(fpRun.y1 - fpRun.y0)} deep`),
+    ];
+    if (style === "I_SHAPE") {
+      f.push(num("Length (mm)", "mainWidth", mod.minSize.W), num("Seat depth (mm)", "mainDepth", 300));
+    } else if (style === "L_SHAPE") {
+      if (selectedRun === "main") f.push(num("Overall width (mm)", "mainWidth", mod.minSize.W, "Main run + wing, along the wall"), num("Seat depth (mm)", "mainDepth", 300));
+      if (selectedRun === "l") f.push(num("Wing length (mm)", "lWidth", 400, "Wall to the room end of the wing — the overall depth"), num("Wing seat depth (mm)", "lDepth", 200));
+    } else if (style === "U_SHAPE") {
+      if (selectedRun === "main") f.push(num("Overall width (mm)", "mainWidth", mod.minSize.W), num("Overall depth (mm)", "mainDepth", 600));
+      else f.push(num("Leg seat depth (mm)", "lDepth", 200, "Both legs and the back run share it"), num("Overall depth (mm)", "mainDepth", 600));
+    } else if (style === "PARALLEL") {
+      f.push(num("Run width (mm)", "singleLoungeWidth", 400, "Both runs share it"), num("Run length (mm)", "depth", 400), num("Total width (mm)", "totalWidth", 1600, "Outer face to outer face"));
+    }
+    runCard = section(`${LOUNGE_RUN_LABEL[selectedRun] ?? selectedRun}`, f);
+  }
+
+  // Shape: the lounge's own layout, always open (like the bedroom's Layout section).
+  const shape = section(`Shape · ${style.replace("_", " ")}`, [
+    el("label", { class: "field wide-value" }, [
+      el("span", { text: "Style" }),
+      el("select", { onchange: (e) => {
+        e.target.blur();
+        const to = e.target.value;
+        loungeSel.run = null;
+        job.setParams(cab.id, mod.setStyle(p, to));
+        log("lounge.run.style", { id: cab.id, key: "style", from: style, to });
+      } }, Object.entries(LOUNGE_STYLE_LABEL).map(([s, text]) => el("option", { value: s, text, selected: s === style }))),
+    ]),
+    style === "L_SHAPE" ? el("label", { class: "field wide-value" }, [
+      el("span", { text: "Wing side" }),
+      el("select", { onchange: (e) => { e.target.blur(); setP("lPosition", e.target.value, "side"); } },
+        ["RIGHT", "LEFT"].map((s) => el("option", { value: s, text: s === "RIGHT" ? "Right" : "Left", selected: s === (p.lPosition ?? "RIGHT") }))),
+    ]) : null,
+    numField("Seat height (mm)", p.height ?? env.H, (v) => setP("height", Math.max(mod.minSize.H, Math.round(v)), "size"), { step: 10, min: mod.minSize.H }),
+    check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
+    style === "PARALLEL" ? check("Middle cabinet", p.hasMiddleCabinet === true, (on) => setP("hasMiddleCabinet", on, "midCab"), "A low cabinet between the two runs, against the wall") : null,
+    style !== "U_SHAPE" ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
+  ].filter(Boolean));
+
+  // Cabinet-level fields, folded.
+  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
+  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const fold = el("details", { class: "panel-fold" }, [
+    el("summary", { text: `Lounge · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${result?.boards?.length || 0} boards` }),
+    section("Outer size (= box)", [
+      numField("Width (mm)", env.W, setEnv("W")),
+      numField("Depth (mm)", env.D, setEnv("D")),
+      numField("Height (mm)", env.H, setEnv("H")),
+    ]),
+    section("Position", [
+      numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
+      numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+    ]),
+    section("Material", [
+      numField("Panel thickness (mm)", p.partitionPanelThickness ?? 18, (v) => setP("partitionPanelThickness", Math.max(1, v), "size"), { step: 0.5, min: 1 }),
+    ]),
+  ]);
+
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: `${mod.label} · ${LOUNGE_STYLE_LABEL[style] ?? style}` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${runs.length} run${runs.length === 1 ? "" : "s"} · ${result?.boards?.length || 0} boards` }),
+    ]),
+    shared.board,
+    section("Plan view · from above · wall at the top", [
+      front,
+      el("div", { class: "zs-hint", text: "Click a run to select it · drag an orange edge · Shift = 1 mm" }),
+    ]),
+    runCard,
+    shape,
+    fold,
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
 // --- bedroom body editor ------------------------------------------------------------
 //
 // Wide page while the Bedroom body is selected: the generator's 2D front
@@ -798,6 +1531,21 @@ function renderCabinet(cab) {
     fillDrawer(result, errors, warnings);
     return;
   }
+  if (mod.panel === "tall") {
+    renderTall(cab, mod, result, { checks, remove, board });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
+  if (mod.panel === "kitchen") {
+    renderKitchen(cab, mod, result, { checks, remove, board });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
+  if (mod.panel === "lounge") {
+    renderLounge(cab, mod, result, { checks, remove, board });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
 
   const boxChildren = [
     el("div", { class: "panel-head" }, [
@@ -1102,7 +1850,7 @@ function renderWall(w) {
 export function renderPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
-  const wide = !!sel && ["ohc", "bedroom", "bedSide"].includes(getModule(sel.moduleId).panel);
+  const wide = !!sel && ["ohc", "bedroom", "bedSide", "tall", "kitchen", "lounge"].includes(getModule(sel.moduleId).panel);
   panel.classList.toggle("wide", wide);
   app.classList.toggle("wide-right", wide);
   if (sel) renderCabinet(sel);

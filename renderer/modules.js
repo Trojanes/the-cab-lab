@@ -7,9 +7,9 @@ import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayo
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
-import { generateKitchenCabinet } from "./gen/kitchen.js";
-import { fitTallCabinetHeight, generateGeneralTall } from "./gen/generalTall.js";
-import { generateLounge, loungeFootprintBoxes } from "./gen/lounge.js";
+import { generateKitchenCabinet, generateKitchenSvgPreview } from "./gen/kitchen.js";
+import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview } from "./gen/generalTall.js";
+import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
 
@@ -658,6 +658,7 @@ const kitchenCabinet = {
   id: "kitchenCabinet",
   label: "Base",
   sub: "kitchen run",
+  panel: "kitchen", // wide right-hand editor: front elevation (columns × zones)
   defaultSize: { W: 887, D: 270, H: 880 },
   minSize: { W: 300, D: 250, H: 400 },
 
@@ -688,6 +689,11 @@ const kitchenCabinet = {
     return generateKitchenCabinet(params);
   },
 
+  /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
+  frontView(result, { selectedZoneId = null, selectedCol = -1 } = {}) {
+    return generateKitchenSvgPreview(result, { selectedZoneId, selectedCol, showDimensions: true });
+  },
+
   envelope(params) {
     const gs = params.globalSettings || {};
     return { W: gs.length, D: gs.depth, H: gs.height };
@@ -701,10 +707,8 @@ const kitchenCabinet = {
       if (next.columns?.length === 1) {
         next.columns[0].width = round1(W);
       } else if (next.columns?.length) {
-        // 多列：按比例缩放列宽，保持列数
-        const oldW = gs.length ?? W;
-        const k = oldW > 0 ? W / oldW : 1;
-        for (const col of next.columns) col.width = round1((col.width || 0) * k);
+        // 多列：按比例缩放列宽，保持列数（末列吸收取整余量）
+        next.columns = fitZoneWidths(next.columns, round1(W));
       }
     }
     if (D != null) gs.depth = round1(D);
@@ -732,16 +736,62 @@ const kitchenCabinet = {
   dividers() {
     return [];
   },
-  setDivider(params) {
-    return params;
+
+  /** Column boundary `index` (between columns index / index+1) moves to local x = pos; the two columns trade width. */
+  setDivider(params, result, index, pos) {
+    const columns = (params.columns || []).map((c) => ({ ...c }));
+    const left = columns[index];
+    const right = columns[index + 1];
+    if (!left || !right) return params;
+    const x0 = columns.slice(0, index).reduce((s, c) => s + (c.width || 0), 0);
+    const total = round1((left.width || 0) + (right.width || 0));
+    const x = Math.max(x0 + MIN_ZONE_WIDTH, Math.min(x0 + total - MIN_ZONE_WIDTH, Math.round(pos)));
+    left.width = round1(x - x0);
+    right.width = round1(total - left.width);
+    return { ...params, columns };
   },
-  zoneTypes: [],
+
+  /**
+   * Zone boundary inside a column: `zoneIndex` is the upper zone (zones are
+   * declared top → bottom); pos is the boundary's new absolute z. The upper
+   * zone gives or takes the difference from the zone below.
+   */
+  setZoneDivider(params, result, colIndex, zoneIndex, pos) {
+    const col = (params.columns || [])[colIndex];
+    if (!col) return params;
+    const resCol = result?.debug?.columns?.[colIndex];
+    const upper = col.zones?.[zoneIndex];
+    const lower = col.zones?.[zoneIndex + 1];
+    const resUpper = resCol?.zones?.[zoneIndex];
+    const resLower = resCol?.zones?.[zoneIndex + 1];
+    if (!upper || !lower || !resUpper || !resLower) return params;
+    const z = Math.max(resLower.z0 + MIN_ZONE_HEIGHT, Math.min(resUpper.z1 - MIN_ZONE_HEIGHT, Math.round(pos)));
+    const columns = params.columns.map((c, i) => (i === colIndex ? { ...c, zones: c.zones.map((zn) => ({ ...zn })) } : c));
+    const u = columns[colIndex].zones[zoneIndex];
+    const l = columns[colIndex].zones[zoneIndex + 1];
+    u.height = round1(resUpper.z1 - z);
+    l.height = round1(z - resLower.z0);
+    return { ...params, columns };
+  },
+
+  zoneTypes: [
+    { id: "left_door", label: "Door · hinge left" },
+    { id: "right_door", label: "Door · hinge right" },
+    { id: "double_door", label: "Double door" },
+    { id: "drawer", label: "Drawer" },
+    { id: "open", label: "Open" },
+    { id: "down_flap", label: "Down flap" },
+    { id: "stove", label: "Stove" },
+    { id: "custom", label: "Custom" },
+    { id: "unassigned", label: "Unassigned" },
+  ],
 };
 
 const generalTallCabinet = {
   id: "generalTallCabinet",
   label: "Tall",
   sub: "general tall",
+  panel: "tall", // wide right-hand editor: front elevation + zone card
   defaultSize: { W: 600, D: 584, H: 2000 },
   minSize: { W: 400, D: 350, H: 800 },
   defaults(W, D, H, materials) {
@@ -764,6 +814,12 @@ const generalTallCabinet = {
   generate(params) {
     return generateGeneralTall(params);
   },
+
+  /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
+  frontView(result, { selectedZoneId = null } = {}) {
+    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true });
+  },
+
   envelope(params) {
     return { W: params.cabinetWidth, D: params.cabinetDepth, H: params.cabinetHeight };
   },
@@ -774,15 +830,60 @@ const generalTallCabinet = {
     if (H != null) return fitTallCabinetHeight(next, round1(H));
     return next;
   },
+
+  /**
+   * Zone boundaries on the front view: the centre line of the boundary panel
+   * between functional zones `index` (below) and `index + 1` (absolute z from
+   * result.stack). Moving it trades height between the two zones.
+   */
+  setDivider(params, result, index, pos) {
+    const items = (result?.stack || []).filter((it) => it.kind === "functional_zone");
+    const below = items[index];
+    const above = items[index + 1];
+    if (!below || !above) return params;
+    const zones = (params.zones || []).map((z) => ({ ...z }));
+    const pBelow = zones.find((z) => z.id === below.zoneId);
+    const pAbove = zones.find((z) => z.id === above.zoneId);
+    if (!pBelow || !pAbove) return params;
+    const gap = Math.max(0, above.z0 - below.z1); // the boundary panel
+    const top = Math.max(below.z0 + MIN_ZONE_HEIGHT, Math.min(above.z1 - gap - MIN_ZONE_HEIGHT, round1(pos - gap / 2)));
+    const total = round1(pBelow.height + pAbove.height);
+    pBelow.height = round1(top - below.z0);
+    pAbove.height = round1(total - pBelow.height);
+    return { ...params, zones };
+  },
+
+  /** Move a double_door zone's vertical divider centre to interior x (from the left side panel's inner face). */
+  setDividerCenter(params, zoneId, x) {
+    const zones = (params.zones || []).map((z) => ({ ...z }));
+    const zone = zones.find((z) => z.id === zoneId);
+    if (!zone || zone.verticalDivider !== true) return params;
+    const mw = round1((params.cabinetWidth ?? 0) - (params.leftSidePanelThickness ?? 0) - (params.rightSidePanelThickness ?? 0));
+    zone.dividerCenterX = round1(Math.max(MIN_ZONE_WIDTH, Math.min(mw - MIN_ZONE_WIDTH, x)));
+    return { ...params, zones };
+  },
+
   dividers() { return []; },
-  setDivider(params) { return params; },
-  zoneTypes: [],
+  zoneTypes: [
+    { id: "side_door", label: "Door (hinge side)" },
+    { id: "left_side_door", label: "Door · hinge left" },
+    { id: "right_side_door", label: "Door · hinge right" },
+    { id: "double_door", label: "Double door" },
+    { id: "drawer", label: "Drawer" },
+    { id: "open_space", label: "Open" },
+    { id: "open_appliance", label: "Open · appliance" },
+    { id: "fridge", label: "Fridge" },
+    { id: "top_flap", label: "Top flap" },
+    { id: "bottom_flap", label: "Bottom flap" },
+    { id: "blank_panel", label: "Blank panel" },
+  ],
 };
 
 const loungeGenerator = {
   id: "loungeGenerator",
   label: "Lounge",
   sub: "I / L",
+  panel: "lounge", // wide right-hand editor: plan view + run card
   defaultSize: { W: 2000, D: 800, H: 420 },
   minSize: { W: 800, D: 400, H: 300 },
   defaults(W, D, H) {
@@ -808,24 +909,93 @@ const loungeGenerator = {
     if (params.style === "L_SHAPE") {
       return { W: params.mainWidth ?? 2000, D: params.lWidth ?? 1600, H: params.height ?? 420 };
     }
-    const lD = params.lDepth ?? 800;
-    const mD = params.mainDepth ?? 600;
-    return { W: params.mainWidth ?? 2000, D: Math.max(lD, mD), H: params.height ?? 420 };
+    // I: the run's depth; U: the overall depth (the legs run from the room to the wall).
+    return { W: params.mainWidth ?? 2000, D: params.mainDepth ?? (params.style === "U_SHAPE" ? 1600 : 600), H: params.height ?? 420 };
   },
   footprintBoxes(params, result) {
     return loungeFootprintBoxes(params, result);
   },
+
+  /** Plan (top-down) view — a front elevation of a lounge is a flat strip; the layout lives in XY. */
+  frontView(result, { selectedRun = null } = {}) {
+    return generateLoungeSvgPreview(result, { selectedRun, showDimensions: true });
+  },
+
   setEnvelope(params, { W, D, H }) {
     const next = { ...params };
-    if (W != null) next.mainWidth = round1(W);
+    const parallel = params.style === "PARALLEL";
+    if (W != null) next[parallel ? "totalWidth" : "mainWidth"] = round1(W);
     if (D != null) {
       if (params.style === "L_SHAPE") next.lWidth = round1(D);
-      else if (params.style === "U_SHAPE") next.mainDepth = round1(D);
-      else next.lDepth = round1(D);
+      else if (parallel) next.depth = round1(D);
+      else next.mainDepth = round1(D);
     }
     if (H != null) next.height = round1(H);
     return next;
   },
+
+  /**
+   * Switch the shape, keeping the footprint's outer size where it means the
+   * same thing and a sensible seat depth everywhere else.
+   */
+  setStyle(params, style) {
+    if (style === params.style) return params;
+    const env = this.envelope(params);
+    const seat = Math.max(300, Math.min(params.mainDepth ?? params.singleLoungeWidth ?? 600, 800));
+    const next = { ...params, style };
+    if (style === "I_SHAPE") {
+      next.mainWidth = round1(env.W);
+      next.mainDepth = seat;
+    } else if (style === "L_SHAPE") {
+      next.mainWidth = round1(env.W);
+      next.mainDepth = seat;
+      next.lWidth = round1(Math.max(env.D, seat + 400));
+      next.lDepth = round1(Math.min(params.lDepth ?? seat, env.W - 400));
+      next.lPosition = params.lPosition ?? "RIGHT";
+    } else if (style === "U_SHAPE") {
+      next.mainWidth = round1(env.W);
+      next.mainDepth = round1(Math.max(env.D, seat + 400));
+      next.lDepth = round1(Math.min(seat, env.W / 2 - 200, next.mainDepth - 200));
+    } else if (style === "PARALLEL") {
+      next.totalWidth = round1(Math.max(env.W, 2 * seat + 400));
+      next.singleLoungeWidth = seat;
+      next.depth = round1(Math.max(env.D, 400));
+    }
+    return next;
+  },
+
+  /**
+   * Plan-view edge drag. `key` is the plan edge's semantic (emitted as
+   * data-param by the preview); pos is the pointer's mm on that axis.
+   * Edges that are measured from a fixed outer edge convert internally.
+   */
+  setRunEdge(params, key, pos) {
+    const next = { ...params };
+    const v = round1(pos);
+    const minRun = 200;
+    switch (key) {
+      case "mainWidth": next.mainWidth = Math.max(800, v); break;
+      case "mainDepth":
+        // I/U: the back edge sits at y = mainDepth. L: main's front edge sits at
+        // y = lWidth - mainDepth (main hugs the wall), so convert.
+        next.mainDepth = Math.max(300, round1(params.style === "L_SHAPE" ? (params.lWidth ?? 1600) - v : v));
+        break;
+      case "lWidth": next.lWidth = Math.max(400, v); break;
+      case "lDepth": {
+        // L: the inner edge — LEFT wing measures from x=0, RIGHT from mainWidth. U: right leg's inner edge, from mainWidth.
+        const mw = params.mainWidth ?? 2000;
+        const raw = params.style === "L_SHAPE" && params.lPosition === "LEFT" ? v : mw - v;
+        next.lDepth = Math.max(minRun, round1(raw));
+        break;
+      }
+      case "totalWidth": next.totalWidth = Math.max(1600, v); break;
+      case "singleLoungeWidth": next.singleLoungeWidth = Math.max(400, round1((params.totalWidth ?? 4000) - v)); break;
+      case "depth": next.depth = Math.max(400, v); break;
+      default: return params;
+    }
+    return next;
+  },
+
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],

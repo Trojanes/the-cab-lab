@@ -15,6 +15,8 @@ import type {
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 
+export { generateKitchenSvgPreview } from "./svgPreview.ts";
+
 const asNum = (v: unknown, fb: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
@@ -958,6 +960,14 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     xBoundaries: s.xBoundaries,
     validation: { errors, warnings },
   };
-  result.debug = { provenance: endProvenance(), boardFrame: "final" };
+  result.debug = {
+    provenance: endProvenance(), boardFrame: "final",
+    // Resolved layout for the front-view preview (same numbers the boards were built from).
+    columns: s.columns.map((c) => ({
+      id: c.id, x0: c.x0, x1: c.x1,
+      zones: c.zones.map((z) => ({ id: z.id, zoneType: z.zoneType, z0: z.z0, z1: z.z1 })),
+    })),
+    avoidances: s.avoidances,
+  };
   return result;
 }
