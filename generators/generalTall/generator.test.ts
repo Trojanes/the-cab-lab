@@ -3,7 +3,7 @@
  * 坐标：柜体最终位置。立梃前端 y=FPT，后缘可探出侧板；门左右让 fc。
  */
 import assert from "node:assert/strict";
-import { generateGeneralTall } from "./generator.ts";
+import { fitTallCabinetHeight, generateGeneralTall } from "./generator.ts";
 import type { GTParams } from "./types.ts";
 
 function b(r: ReturnType<typeof generateGeneralTall>, id: string) {
@@ -35,12 +35,7 @@ const UI: GTParams = {
 {
   const r = generateGeneralTall(UI);
   assert.deepEqual(r.validation.errors, []);
-  // H mid [950,1050] 与 full_zi[984,999] 冲突 → 3 条移动评估 warning（§8.8）
-  assert.deepEqual(r.validation.warnings, [
-    "H H13_mid overlaps full_zi boundary-zone-3; Stage 2 movement evaluated.",
-    "H H24_mid overlaps full_zi boundary-zone-3; Stage 2 movement evaluated.",
-    "H H34_mid overlaps full_zi boundary-zone-3; Stage 2 movement evaluated.",
-  ]);
+  assert.deepEqual(r.validation.warnings, []);
 
   // 堆叠链（§8.2）
   const zOf = r.stack.map((i) => `${i.id}:${i.z0}-${i.z1}`);
@@ -102,7 +97,7 @@ const UI: GTParams = {
     assert.ok(prof.some((p) => p.y === 189.333 && p.z === 999), "tongue y0 corner");
     assert.ok(prof.some((p) => p.y === 378.667 && p.z === 999), "tongue y1 corner");
     assert.ok(prof.some((p) => p.y === 552), "h34 overlap retreats to midDepth-16");
-    assert.ok(prof.some((p) => p.y === 568), "rear elsewhere stays at midDepth");
+    assert.ok(prof.some((p) => p.y === 552 && p.z === 1944), "rear top stops on T5's front face");
   }
 
   // zi_groove：仅贴 VD 的功能区边界（zone-3 上方是顶系统 → 无上边界）
@@ -449,6 +444,38 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   const v1m = b(mixedBot, "V1").profileVector as { y: number; z: number }[];
   assert.ok(hasPoint(v1m, 0, 1944), "mixed keeps style_1 top insert");
   assert.ok(hasPoint(v1m, 105, 0), "mixed style_2 bottom notch");
+}
+
+/* ================= 柜高差额进 zone-3，H 撑按新柜高重算 ================= */
+{
+  const tall = fitTallCabinetHeight(UI, 2200);
+  assert.equal(tall.cabinetHeight, 2200);
+  assert.equal(tall.zones?.find((z) => z.id === "zone-1")?.height, 600);
+  assert.equal(tall.zones?.find((z) => z.id === "zone-2")?.height, 300);
+  assert.equal(tall.zones?.find((z) => z.id === "zone-3")?.height, 1145);
+  const r = generateGeneralTall(tall);
+  assert.deepEqual(r.validation.errors, []);
+  assert.deepEqual(r.validation.warnings, []);
+  assert.deepEqual(place(r, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 2144 });
+  assert.deepEqual(place(r, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 2100, z1: 2200 });
+  assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 2100, z1: 2200 });
+  assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
+  assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 883, z1: 983 });
+  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 883, z1: 983 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
+
+  const shorter = fitTallCabinetHeight(UI, 1800);
+  assert.equal(shorter.zones?.find((z) => z.id === "zone-3")?.height, 745);
+  const rs = generateGeneralTall(shorter);
+  assert.deepEqual(place(rs, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1744 });
+  assert.deepEqual(place(rs, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1700, z1: 1800 });
+  assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 883, z1: 983 });
+  assert.deepEqual(place(rs, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
+
+  const crushed = fitTallCabinetHeight(UI, 1000);
+  assert.equal(crushed.zones?.find((z) => z.id === "zone-3")?.height, 300);
+  assert.equal(crushed.cabinetHeight, 1355);
 }
 
 console.log("generalTall: all golden tests passed");

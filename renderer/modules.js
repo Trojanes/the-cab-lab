@@ -8,7 +8,7 @@ import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_R
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { generateKitchenCabinet } from "./gen/kitchen.js";
-import { generateGeneralTall } from "./gen/generalTall.js";
+import { fitTallCabinetHeight, generateGeneralTall } from "./gen/generalTall.js";
 import { generateLounge, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
@@ -771,7 +771,7 @@ const generalTallCabinet = {
     const next = { ...params };
     if (W != null) next.cabinetWidth = round1(W);
     if (D != null) next.cabinetDepth = round1(D);
-    if (H != null) next.cabinetHeight = round1(H);
+    if (H != null) return fitTallCabinetHeight(next, round1(H));
     return next;
   },
   dividers() { return []; },

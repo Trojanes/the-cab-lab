@@ -22,7 +22,7 @@
 import * as job from "./job.js";
 import { snap } from "./job.js";
 import { cabinetFootprints } from "./cabinets3d.js";
-import { loungeFromPolyline } from "./gen/lounge.js";
+import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { thickness } from "./materials.js";
 import { wallSolid, wallStatus, wallBoxes, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
 import { solidBoxes } from "./walls3d.js";
@@ -121,6 +121,9 @@ wallBtn.addEventListener("click", () => setTool(tool && tool.kind === "wall" ? n
 doorBtn.addEventListener("click", () => setTool(isDoor("showerDoor") ? null : "door"));
 slideBtn.addEventListener("click", () => setTool(isDoor("slidingDoor") ? null : "slide"));
 if (loungeBtn) loungeBtn.addEventListener("click", () => setTool(tool && tool.kind === "lounge" ? null : "lounge"));
+for (const b of overlay.querySelectorAll("[data-fp-lounge]")) {
+  b.addEventListener("click", () => setLoungeStyle(b.dataset.fpLounge));
+}
 
 // --- view -----------------------------------------------------------------------------
 
@@ -269,12 +272,10 @@ const HINTS = {
   "slidingDoor.width": "Sliding door — pull to the other side of the opening · Tab / digits type W · click or Enter · right-click restarts",
   "slidingDoor.side": "Sliding door — move to the side of the wall the door hangs on: the leaf and the pelmet follow · click or Enter · right-click restarts",
   "slidingDoor.clear": "Sliding door — top clearance (= pelmet height), leaf overlap and leaf height (mm) · Enter creates · Esc / right-click cancels",
-  "lounge.p1": "Lounge — click the first point of the back edge (the wall the seat sits against) · 2 pts = I · 3 orthogonal = L · 3 colinear = Parallel · right-click leaves",
-  "lounge.p2": "Lounge — click the next back-edge point (axis-aligned from the last) · Enter finishes an I-run · right-click restarts",
-  "lounge.p3": "Lounge — click a third point (orthogonal = L, colinear = Parallel) or Enter to finish I · right-click restarts",
-  "lounge.p4": "Lounge — Enter drops the run · right-click restarts",
 };
-const FIRST = { wall: "pt1", door: "end", lounge: "p1" };
+const FIRST = { wall: "pt1", door: "end", lounge: "corner" };
+const LOUNGE_MIN = 50;
+let loungeStyle = "I";
 const DRAW_LOG = { wall: "wall.draw", door: "opening.draw", lounge: "lounge.place" };
 /** Tool button → door type (the two door buttons drive one tool kind, "door"). */
 const DOOR_TYPE = { door: "showerDoor", slide: "slidingDoor" };
@@ -282,9 +283,16 @@ const DOOR_TYPE = { door: "showerDoor", slide: "slidingDoor" };
 function isDoor(type = null) {
   return !!tool && tool.kind === "door" && (type == null || tool.type === type);
 }
+function freshLoungeTool() {
+  return {
+    kind: "lounge", style: loungeStyle, step: "corner",
+    a: null, b: null, depth: null, roomSign: 1, side: null, wing: null,
+    height: 420, locks: { W: null, D: null, H: null }, dimKey: null,
+  };
+}
 function newTool(kind, type = null) {
   if (kind === "door") return { kind, type, step: "end", locked: null };
-  if (kind === "lounge") return { kind, step: "p1", pts: [], locked: null };
+  if (kind === "lounge") return freshLoungeTool();
   return { kind, step: FIRST[kind], locked: null };
 }
 function syncToolButtons() {
@@ -292,6 +300,21 @@ function syncToolButtons() {
   doorBtn.classList.toggle("active", isDoor("showerDoor"));
   slideBtn.classList.toggle("active", isDoor("slidingDoor"));
   if (loungeBtn) loungeBtn.classList.toggle("active", !!tool && tool.kind === "lounge");
+  for (const b of overlay.querySelectorAll("[data-fp-lounge]")) {
+    b.classList.toggle("active", !!tool && tool.kind === "lounge" && tool.style === b.dataset.fpLounge);
+  }
+}
+function setLoungeStyle(style) {
+  loungeStyle = style === "L" ? "L" : "I";
+  if (!tool || tool.kind !== "lounge") { setTool("lounge"); return; }
+  if (tool.style === loungeStyle) { syncToolButtons(); return; }
+  log("lounge.place.style", { style: loungeStyle, from: tool.step });
+  tool = freshLoungeTool();
+  hideDim();
+  cur = mouse ? resolve(mouse) : null;
+  syncToolButtons();
+  updateHint();
+  render();
 }
 
 function setTool(kind, { silent = false } = {}) {
@@ -332,11 +355,24 @@ function cancelTool(reason) {
 /** Right-click / Esc: back one level — restart the tool, or leave it when nothing is in progress. */
 function cancelStep(reason) {
   if (!tool) return false;
+  if (tool.kind === "lounge") return loungeBack(reason);
   if (tool.step === FIRST[tool.kind]) cancelTool(reason); else restartTool(reason);
   return true;
 }
 
 function updateHint() {
+  if (tool && tool.kind === "lounge") {
+    const style = tool.style;
+    const map = {
+      corner: `Lounge ${style} — click one corner of the plan · I or L switches · Esc leaves`,
+      face: `Lounge ${style} — click the opposite corner (length and depth together) · Tab / digits type W then D · Esc steps back`,
+      side: `Lounge ${style} — move to an end; the lit end gets the side cabinet · click it · Esc steps back`,
+      width: `Lounge ${style} — pull the side cabinet wider than the middle depth · type W · click or Enter · Esc steps back`,
+      height: `Lounge ${style} — type H · click or Enter creates · Esc steps back`,
+    };
+    hintEl.textContent = map[tool.step] || "";
+    return;
+  }
   hintEl.textContent = HINTS[tool ? `${tool.kind === "door" ? tool.type : tool.kind}.${tool.step}` : "idle"] || "";
 }
 const END_NAME = { x: ["left", "right"], y: ["front", "back"] };
@@ -761,7 +797,26 @@ function resolve(p) {
   }
   if (tool.kind === "door") return resolveDoor(p);
   if (tool.kind === "lounge") {
-    out.pt = { x: snap(p.x), y: snap(p.y) };
+    const pt = { x: snap(p.x), y: snap(p.y) };
+    out.pt = pt;
+    if (tool.step === "corner") out.tip.push(`${tool.style} · click one corner`);
+    else if (tool.step === "face") {
+      const m = faceMeasures(pt);
+      if (!m) out.tip.push(`Plan face · both edges at least ${LOUNGE_MIN} mm`);
+      else out.tip.push(`Plan face · W ${Math.round(m.len)} · D ${Math.round(m.depth)}`);
+    } else if (tool.step === "side") {
+      const preview = loungePreview(pt);
+      const lit = preview && loungeSideAt(pt, preview.basis);
+      out.tip.push(lit === "LEFT" ? "Left end — click to turn the side cabinet here" : lit === "RIGHT" ? "Right end — click to turn the side cabinet here" : "Move to an end");
+    } else if (tool.step === "width") {
+      const preview = loungePreview(pt);
+      const width = (tool.depth || 0) + (preview ? preview.extra : 0);
+      out.tip.push(`Side cabinet ${Math.round(width)}`);
+      if (!(preview && preview.extra >= LOUNGE_MIN)) { out.tip.push(`wider than the middle depth (${Math.round(tool.depth || 0)})`); out.tone = "warn"; }
+    } else if (tool.step === "height") {
+      const h = tool.locks.H != null ? tool.locks.H : tool.height;
+      out.tip.push(`H ${Math.round(h)} · click or Enter creates`);
+    }
     return out;
   }
   if (tool.step === "pt1") {
@@ -837,52 +892,275 @@ function openingAt(s, p) {
 
 // --- clicks / commits ----------------------------------------------------------------------
 
-function axisAlign(from, to) {
-  const adx = Math.abs(to.x - from.x);
-  const ady = Math.abs(to.y - from.y);
-  return adx >= ady ? { x: to.x, y: from.y } : { x: from.x, y: to.y };
+function loungeOpposite(pt) {
+  if (!tool.a || !pt) return null;
+  const rawX = pt.x - tool.a.x;
+  const rawY = pt.y - tool.a.y;
+  const alongX = Math.abs(rawX) >= Math.abs(rawY);
+  let len = alongX ? Math.abs(rawX) : Math.abs(rawY);
+  let depth = alongX ? Math.abs(rawY) : Math.abs(rawX);
+  if (tool.step === "face" && tool.locks.W != null) len = tool.locks.W;
+  if (tool.step === "face" && tool.locks.D != null) depth = tool.locks.D;
+  if (len < LOUNGE_MIN || depth < LOUNGE_MIN) return null;
+  const sx = rawX >= 0 ? 1 : -1;
+  const sy = rawY >= 0 ? 1 : -1;
+  return alongX
+    ? { x: snap(tool.a.x + sx * len), y: snap(tool.a.y + sy * depth) }
+    : { x: snap(tool.a.x + sx * depth), y: snap(tool.a.y + sy * len) };
 }
 
-function clickLounge(p) {
+function loungeRun(a, opposite) {
+  const dx = opposite.x - a.x;
+  const dy = opposite.y - a.y;
+  const adx = Math.abs(dx);
+  const ady = Math.abs(dy);
+  if (adx < LOUNGE_MIN || ady < LOUNGE_MIN) return null;
+  if (adx >= ady) {
+    const walkPos = dx >= 0;
+    const roomPos = dy > 0;
+    return { a, b: { x: opposite.x, y: a.y }, depth: ady, roomSign: walkPos === roomPos ? -1 : 1 };
+  }
+  const walkPos = dy >= 0;
+  const roomPos = dx > 0;
+  return { a, b: { x: a.x, y: opposite.y }, depth: adx, roomSign: walkPos === roomPos ? 1 : -1 };
+}
+
+function faceMeasures(pt) {
+  const opposite = loungeOpposite(pt);
+  const run = opposite && loungeRun(tool.a, opposite);
+  if (!run) return null;
+  return { opposite, run, len: Math.hypot(run.b.x - run.a.x, run.b.y - run.a.y), depth: run.depth };
+}
+
+function loungeBasis(a, b, sign) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const len = Math.hypot(dx, dy);
+  if (len < 1) return null;
+  let ux = dx / len;
+  let uy = dy / len;
+  let rx = uy;
+  let ry = -ux;
+  let left = a;
+  let right = b;
+  if (sign < 0) {
+    ux = -ux; uy = -uy; rx = -rx; ry = -ry;
+    left = b; right = a;
+  }
+  return { len, ux, uy, rx, ry, left, right, sign };
+}
+
+function loungeSideAt(pt, basis) {
+  if (!pt || !basis) return null;
+  const dl = Math.hypot(pt.x - basis.left.x, pt.y - basis.left.y);
+  const dr = Math.hypot(pt.x - basis.right.x, pt.y - basis.right.y);
+  return dl <= dr ? "LEFT" : "RIGHT";
+}
+
+function loungeExtra(pt, basis, depth) {
+  if (!basis || !(depth > 0)) return 0;
+  if (tool.style === "L" && !tool.side) return 0;
+  if (tool.step === "height" && tool.wing != null) return Math.max(0, tool.wing - depth);
+  if (tool.step === "width" && tool.locks.W != null) return Math.max(0, tool.locks.W - depth);
+  if (!pt) return 0;
+  const along = (pt.x - basis.left.x) * basis.rx + (pt.y - basis.left.y) * basis.ry;
+  return Math.max(0, along - depth);
+}
+
+function loungePreview(pt) {
+  if (!tool.a || !tool.b || !(tool.depth >= 1)) return null;
+  const basis = loungeBasis(tool.a, tool.b, tool.roomSign || 1);
+  if (!basis) return null;
+  const extra = tool.style === "I" ? 0 : loungeExtra(pt, basis, tool.depth);
+  const height = tool.locks.H != null ? tool.locks.H : tool.height;
+  const wing = tool.depth + extra;
+  const placed = tool.style === "L" && tool.side && extra >= LOUNGE_MIN
+    ? loungeFromDrawnRun({
+      a: tool.a, b: tool.b, depth: tool.depth, roomSign: tool.roomSign,
+      style: "L", side: tool.side, wing, height,
+    })
+    : loungeFromDrawnRun({
+      a: tool.a, b: tool.b, depth: tool.depth, roomSign: tool.roomSign, style: "I", height,
+    });
+  return { placed, basis, extra, wing, depth: tool.depth };
+}
+
+function loungeWorldPolys(placed) {
+  const rad = ((placed.pose.rotZ || 0) * Math.PI) / 180;
+  const c = Math.cos(rad);
+  const s = Math.sin(rad);
+  return loungeFootprintBoxes(placed.params).map((b) => [
+    [b.x0, b.y0], [b.x1, b.y0], [b.x1, b.y1], [b.x0, b.y1],
+  ].map(([x, y]) => ({
+    x: placed.pose.x + x * c - y * s,
+    y: placed.pose.y + x * s + y * c,
+  })));
+}
+
+function clickLounge(p, how = "click") {
   cur = resolve(p);
-  const raw = cur.pt || p;
-  if (!tool.pts) tool.pts = [];
-  const pt = tool.pts.length ? axisAlign(tool.pts[tool.pts.length - 1], raw) : { x: raw.x, y: raw.y };
-  const last = tool.pts[tool.pts.length - 1];
-  if (last && Math.hypot(pt.x - last.x, pt.y - last.y) < 10) { flashTip(); return; }
-  if ((tool.pts || []).length >= 3) { flashTip(); return; }
-  tool.pts.push(pt);
-  log("lounge.place.point", { n: tool.pts.length, x: pt.x, y: pt.y, snap: cur.snap ? cur.snap.kind : null });
-  tool.step = `p${tool.pts.length + 1}`;
+  const pt = cur.pt;
+  if (!pt) return;
+  if (tool.step === "corner") {
+    tool.a = pt;
+    tool.locks = { W: null, D: null, H: null };
+    tool.step = "face";
+    tool.dimKey = "W";
+    showDim("W", pt);
+    log("lounge.place.point", { style: tool.style, n: 1, x: pt.x, y: pt.y });
+    return;
+  }
+  if (tool.step === "face") {
+    const m = faceMeasures(pt);
+    if (!m) { flashTip(); return; }
+    tool.b = m.run.b;
+    tool.depth = m.run.depth;
+    tool.roomSign = m.run.roomSign;
+    tool.locks.W = null;
+    tool.locks.D = null;
+    log("lounge.place.face", { style: tool.style, x: m.run.b.x, y: m.run.b.y, depth: m.run.depth, roomSign: m.run.roomSign });
+    tool.step = tool.style === "I" ? "height" : "side";
+    if (tool.step === "height") { tool.dimKey = "H"; showDim("H", pt); }
+    else { tool.dimKey = null; hideDim(); }
+    return;
+  }
+  if (tool.step === "side") {
+    const preview = loungePreview(pt);
+    const side = preview && loungeSideAt(pt, preview.basis);
+    if (!side) { flashTip(); return; }
+    tool.side = side;
+    tool.locks.W = null;
+    tool.step = "width";
+    tool.dimKey = "W";
+    showDim("W", pt);
+    log("lounge.place.side", { side });
+    return;
+  }
+  if (tool.step === "width") {
+    const preview = loungePreview(pt);
+    if (!preview || !(preview.extra >= LOUNGE_MIN)) { flashTip(); return; }
+    tool.wing = preview.wing;
+    tool.locks.W = null;
+    tool.step = "height";
+    tool.dimKey = "H";
+    showDim("H", pt);
+    log("lounge.place.width", { extra: preview.extra, wing: tool.wing, side: tool.side });
+    return;
+  }
+  if (tool.step === "height") commitLounge(how);
 }
 
 function commitLounge(how) {
-  const pts = tool.pts || [];
-  if (pts.length < 2) { log("lounge.place.blocked", { how, reason: "need 2 points" }); flashTip(); return; }
+  if (tool.step !== "height" || !tool.a || !tool.b || !(tool.depth >= LOUNGE_MIN)) { flashTip(); return; }
+  if (tool.style === "L" && (!(tool.wing > tool.depth) || !tool.side)) { flashTip(); return; }
+  const height = tool.locks.H != null ? tool.locks.H : tool.height;
+  if (!(height >= LOUNGE_MIN)) { flashTip(); return; }
   let placed;
-  try { placed = loungeFromPolyline(pts); }
-  catch (err) { log("lounge.place.blocked", { how, reason: String(err.message || err) }); flashTip(); return; }
+  try {
+    placed = tool.style === "L"
+      ? loungeFromDrawnRun({
+        a: tool.a, b: tool.b, depth: tool.depth, roomSign: tool.roomSign || 1,
+        style: "L", side: tool.side, wing: tool.wing, height,
+      })
+      : loungeFromDrawnRun({
+        a: tool.a, b: tool.b, depth: tool.depth, roomSign: tool.roomSign || 1, style: "I", height,
+      });
+  } catch (err) {
+    log("lounge.place.blocked", { how, reason: String(err.message || err) });
+    flashTip();
+    return;
+  }
   const env = {
-    W: placed.params.mainWidth || placed.params.totalWidth || 2000,
-    D: placed.params.lDepth || placed.params.mainDepth || placed.params.depth || 800,
-    H: placed.params.height || 420,
+    W: placed.params.mainWidth,
+    D: placed.params.style === "L_SHAPE" ? placed.params.lWidth : placed.params.mainDepth,
+    H: height,
   };
   const cab = job.addCabinet("loungeGenerator", placed.pose, env, placed.params);
-  log("lounge.place.commit", { how, id: cab.id, style: placed.params.style, pts, pose: placed.pose });
-  tool = newTool("lounge");
+  log("lounge.place.commit", { how, id: cab.id, style: placed.params.style, pose: placed.pose });
+  tool = freshLoungeTool();
   hideDim();
+  syncToolButtons();
   updateHint();
   render();
 }
 
-function drawLoungeTool() {
-  const pts = (tool.pts || []).slice();
-  if (cur && cur.pt) {
-    const next = pts.length ? axisAlign(pts[pts.length - 1], cur.pt) : cur.pt;
-    pts.push(next);
+function loungeBack(reason) {
+  tool.locks = { W: null, D: null, H: null };
+  if (tool.step === "corner") { cancelTool(reason); return true; }
+  if (tool.step === "face") {
+    tool.a = null;
+    tool.step = "corner";
+    tool.dimKey = null;
+    hideDim();
+  } else if (tool.step === "side" || (tool.step === "height" && tool.style === "I")) {
+    tool.b = null;
+    tool.depth = null;
+    tool.step = "face";
+    tool.dimKey = "W";
+    showDim("W", tool.a);
+  } else if (tool.step === "width") {
+    tool.wing = null;
+    tool.side = null;
+    tool.step = "side";
+    tool.dimKey = null;
+    hideDim();
+  } else if (tool.step === "height") {
+    tool.step = "width";
+    tool.dimKey = "W";
+    showDim("W", tool.a);
   }
-  for (let i = 1; i < pts.length; i += 1) line(pts[i - 1].x, pts[i - 1].y, pts[i].x, pts[i].y, C.accent, 2);
-  for (const q of pts) dot(q.x, q.y, 5, C.point);
+  log("lounge.place.back", { style: tool.style, step: tool.step, reason });
+  cur = mouse ? resolve(mouse) : null;
+  updateHint();
+  render();
+  return true;
+}
+
+function drawLoungeTool() {
+  const pt = cur && cur.pt;
+  if (tool.step === "corner") {
+    if (pt) dot(pt.x, pt.y, 5, C.point);
+    return;
+  }
+  if (tool.a) dot(tool.a.x, tool.a.y, 5, C.point);
+  if (tool.step === "face") {
+    const m = pt && faceMeasures(pt);
+    if (m) {
+      rect(tool.a.x, tool.a.y, m.opposite.x, m.opposite.y, C.preview, C.previewLine, 1.5);
+      dot(m.opposite.x, m.opposite.y, 5, C.point);
+    }
+    syncLoungeDim();
+    return;
+  }
+  const preview = loungePreview(pt);
+  if (preview) {
+    for (const ring of loungeWorldPolys(preview.placed)) poly(ring, C.preview, C.previewLine, 1.5);
+  }
+  if (tool.step === "side" && preview) {
+    const lit = loungeSideAt(pt, preview.basis);
+    if (lit) poly(loungeEndPts(preview.basis, lit, preview.depth), "rgba(240,160,80,0.55)", C.warn, 1.5);
+  }
+  syncLoungeDim();
+}
+
+function loungeEndPts(basis, side, depth) {
+  const end = side === "RIGHT" ? basis.right : basis.left;
+  const inward = side === "RIGHT" ? -1 : 1;
+  const mark = 120;
+  return [
+    { inn: 0, room: 0 }, { inn: 1, room: 0 }, { inn: 1, room: 1 }, { inn: 0, room: 1 },
+  ].map(({ inn, room }) => ({
+    x: end.x + basis.ux * inward * mark * inn + basis.rx * depth * room,
+    y: end.y + basis.uy * inward * mark * inn + basis.ry * depth * room,
+  }));
+}
+
+function syncLoungeDim() {
+  if (!dimOpen() || document.activeElement === dimInput || !tool.dimKey) return;
+  dimName.textContent = tool.dimKey;
+  dimInput.value = String(Math.round(currentDimValue()));
+  dimEl.classList.toggle("locked", tool.locks[tool.dimKey] != null);
+  if (cur && cur.pt) placeDim(cur.pt);
 }
 
 
@@ -959,7 +1237,13 @@ function enter() {
     else if (tool.step === "clear") { readCard(); commitDoor("enter"); }
     return;
   }
-  if (tool.kind === "lounge") { commitLounge("enter"); return; }
+  if (tool.kind === "lounge") {
+    if (mouse && tool.step !== "corner") clickLounge(mouse, "enter");
+    if (mouse) cur = resolve(mouse);
+    updateHint();
+    render();
+    return;
+  }
   if (tool.step === "pt2") {
     if (mouse) cur = resolve(mouse); // lets the cursor pick the edge at a corner
     const e = tool.edge;
@@ -1047,6 +1331,20 @@ function focusDim() {
 }
 function currentDimValue() {
   if (!tool || !cur) return 0;
+  if (tool.kind === "lounge") {
+    const pt = cur.pt;
+    if (tool.dimKey === "H") return tool.locks.H != null ? tool.locks.H : tool.height;
+    if (tool.step === "width") {
+      const preview = loungePreview(pt);
+      return (tool.depth || 0) + (preview ? preview.extra : 0);
+    }
+    if (tool.step === "face" && pt) {
+      const m = faceMeasures(pt);
+      if (!m) return 0;
+      return tool.dimKey === "D" ? m.depth : m.len;
+    }
+    return 0;
+  }
   if (tool.kind === "door") {
     if (tool.step === "start") return cur.dist || 0;
     if (tool.step === "width") return cur.width || 0;
@@ -1071,6 +1369,17 @@ function maxDimValue() {
 }
 function setLocked(v) {
   if (!tool) return;
+  if (tool.kind === "lounge") {
+    const k = tool.dimKey;
+    if (!k) return;
+    tool.locks[k] = v != null && v >= 0 ? v : null;
+    if (k === "H" && tool.locks.H != null) tool.height = tool.locks.H;
+    dimEl.classList.toggle("locked", tool.locks[k] != null);
+    log(`${DRAW_LOG[tool.kind]}.typein`, { step: tool.step, key: k, value: dimInput.value, locked: tool.locks[k] });
+    if (mouse) cur = resolve(mouse);
+    render();
+    return;
+  }
   tool.locked = v != null && v >= 0 ? v : null;
   dimEl.classList.toggle("locked", tool.locked != null);
   log(`${DRAW_LOG[tool.kind]}.typein`, { step: tool.step, value: dimInput.value, locked: tool.locked });
@@ -1084,6 +1393,15 @@ dimInput.addEventListener("input", () => {
 });
 dimInput.addEventListener("keydown", (e) => {
   e.stopPropagation();
+  if (e.key === "Tab" && tool && tool.kind === "lounge" && tool.step === "face") {
+    e.preventDefault();
+    tool.dimKey = tool.dimKey === "W" ? "D" : "W";
+    dimName.textContent = tool.dimKey;
+    dimInput.value = String(Math.round(currentDimValue()));
+    dimEl.classList.toggle("locked", tool.locks[tool.dimKey] != null);
+    dimInput.select();
+    return;
+  }
   if (e.key === "Enter" || e.key === "Tab") {
     e.preventDefault();
     const v = evalDim(dimInput.value, currentDimValue(), maxDimValue());
@@ -1195,6 +1513,8 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "d" || e.key === "D") { setTool(isDoor("showerDoor") ? null : "door"); return; }
   if (e.key === "s" || e.key === "S") { setTool(isDoor("slidingDoor") ? null : "slide"); return; }
   if (e.key === "g" || e.key === "G") { setTool(tool && tool.kind === "lounge" ? null : "lounge"); return; }
+  if (tool && tool.kind === "lounge" && (e.key === "i" || e.key === "I")) { setLoungeStyle("I"); return; }
+  if (tool && tool.kind === "lounge" && (e.key === "l" || e.key === "L")) { setLoungeStyle("L"); return; }
   if (tool && dimOpen() && /^[0-9.+\-*/]$/.test(e.key)) {
     dimInput.value = "";
     dimEl.classList.add("focused");
@@ -1219,6 +1539,19 @@ function rect(x0, y0, x1, y1, fill, stroke, lw = 1) {
   const b = S(Math.max(x0, x1), Math.min(y0, y1));
   if (fill) { ctx.fillStyle = fill; ctx.fillRect(a.sx, a.sy, b.sx - a.sx, b.sy - a.sy); }
   if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.strokeRect(a.sx, a.sy, b.sx - a.sx, b.sy - a.sy); }
+}
+function poly(pts, fill, stroke, lw = 1) {
+  if (!pts.length) return;
+  ctx.beginPath();
+  const p0 = S(pts[0].x, pts[0].y);
+  ctx.moveTo(p0.sx, p0.sy);
+  for (let i = 1; i < pts.length; i += 1) {
+    const p = S(pts[i].x, pts[i].y);
+    ctx.lineTo(p.sx, p.sy);
+  }
+  ctx.closePath();
+  if (fill) { ctx.fillStyle = fill; ctx.fill(); }
+  if (stroke) { ctx.strokeStyle = stroke; ctx.lineWidth = lw; ctx.stroke(); }
 }
 function line(x0, y0, x1, y1, stroke, lw = 1, dash = null) {
   const a = S(x0, y0);

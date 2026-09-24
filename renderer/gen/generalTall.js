@@ -688,6 +688,29 @@ function computeStack(s, errors, warnings) {
   }
   return { zones: zoneItems, boundaries, topSys, botSys, calculatedHeight: r2(z + s.topSys.railH) };
 }
+var SLACK_ZONE_MIN = 300;
+function fitTallCabinetHeight(input, cabinetHeight) {
+  const zones = (input.zones ?? []).map((zone) => ({ ...zone }));
+  const H = r2(cabinetHeight);
+  if (!zones.length) return { ...input, cabinetHeight: H };
+  const named = zones.findIndex((zone) => zone.id === "zone-3" && zone.type !== "fridge");
+  let fallback = -1;
+  for (let i = zones.length - 1; i >= 0; i -= 1) {
+    if (zones[i].type !== "fridge") {
+      fallback = i;
+      break;
+    }
+  }
+  const index = named >= 0 ? named : fallback >= 0 ? fallback : zones.length - 1;
+  const trial = zones.map((zone, i) => i === index ? { ...zone, height: 0 } : zone);
+  const scratch = [];
+  const stacked = computeStack(normalize({ ...input, cabinetHeight: H, zones: trial }, scratch), scratch, scratch);
+  const room = r2(H - stacked.calculatedHeight);
+  const height = Math.max(SLACK_ZONE_MIN, room);
+  const nextZones = zones.map((zone, i) => i === index ? { ...zone, height } : zone);
+  const fitted = height === room ? H : r2(stacked.calculatedHeight + height);
+  return { ...input, cabinetHeight: fitted, zones: nextZones };
+}
 function yz(pts) {
   return pts.map(([y, z]) => ({ y: r2(y), z: r2(z) }));
 }
@@ -1340,11 +1363,27 @@ function generateGeneralTall(input) {
     { name: "H24_bottom", z0: 0, z1: RULES.H_SUPPORT_HEIGHT.value },
     { name: "H34_bottom", z0: 0, z1: RULES.H_SUPPORT_HEIGHT.value }
   ];
+  const Hspan = RULES.H_SUPPORT_HEIGHT.value;
   let hMid = [
-    { name: "H13_mid", z0: r2(CH / 2 - RULES.H_SUPPORT_HEIGHT.value / 2), z1: r2(CH / 2 + RULES.H_SUPPORT_HEIGHT.value / 2) },
-    { name: "H24_mid", z0: r2(CH / 2 - RULES.H_SUPPORT_HEIGHT.value / 2), z1: r2(CH / 2 + RULES.H_SUPPORT_HEIGHT.value / 2) },
-    { name: "H34_mid", z0: r2(CH / 2 - RULES.H_SUPPORT_HEIGHT.value / 2), z1: r2(CH / 2 + RULES.H_SUPPORT_HEIGHT.value / 2) }
+    { name: "H13_mid", z0: r2(CH / 2 - Hspan / 2), z1: r2(CH / 2 + Hspan / 2) },
+    { name: "H24_mid", z0: r2(CH / 2 - Hspan / 2), z1: r2(CH / 2 + Hspan / 2) },
+    { name: "H34_mid", z0: r2(CH / 2 - Hspan / 2), z1: r2(CH / 2 + Hspan / 2) }
   ];
+  const vdZone = [...zoneItems].reverse().find((zi) => zi.zone.type === "double_door" && zi.zone.verticalDivider === true);
+  const vdShelf = vdZone ? boundaries.find((b) => b.id === `boundary-${vdZone.zone.id}` && (b.boundaryType === "full_zi" || b.boundaryType === "shortened_zi")) : void 0;
+  if (vdShelf) {
+    const below1 = r2(vdShelf.z0 - 1);
+    const above0 = r2(vdShelf.z1 - 1);
+    for (const h of hMid) {
+      if (h.name === "H34_mid") {
+        h.z0 = above0;
+        h.z1 = r2(above0 + Hspan);
+      } else {
+        h.z1 = below1;
+        h.z0 = r2(below1 - Hspan);
+      }
+    }
+  }
   const hZiConflicts = [];
   for (const zi of boundaries) {
     if (zi.boundaryType !== "full_zi" && zi.boundaryType !== "shortened_zi") {
@@ -1353,7 +1392,7 @@ function generateGeneralTall(input) {
       }
       continue;
     }
-    if (!hMid.some((h) => h.z0 < zi.z1 && h.z1 > zi.z0)) continue;
+    if (vdShelf || !hMid.some((h) => h.z0 < zi.z1 && h.z1 > zi.z0)) continue;
     const H = RULES.H_SUPPORT_HEIGHT.value;
     for (const h of hMid) {
       if (!(h.z0 < zi.z1 && h.z1 > zi.z0)) continue;
@@ -1600,7 +1639,11 @@ function generateGeneralTall(input) {
     const h34CutY0 = r2(md - RULES.H34_CLEARANCE_DEPTH.value);
     const rearBottomZ = r2(z0 - tongue);
     const h34Cuts = [];
-    const h34Bands = boards.filter((board) => board.id.startsWith("H34")).map((board) => ({ z0: Math.max(board.z0, z0), z1: Math.min(board.z1, z1) })).filter((band) => band.z1 - band.z0 > EPS2).sort((a, b) => a.z0 - b.z0);
+    const h34Bands = boards.filter((board) => board.id.startsWith("H34")).map((board) => ({ z0: Math.max(board.z0, z0), z1: Math.min(board.z1, z1) })).filter((band) => band.z1 - band.z0 > EPS2);
+    const t5z0 = r2(CH - RULES.T5_REAR_VERTICAL_HEIGHT.value - RULES.H34_Z_BELOW.value);
+    const t5Top = r2(Math.min(z1, CH));
+    if (t5Top > Math.max(z0, t5z0) + EPS2) h34Bands.push({ z0: r2(Math.max(z0, t5z0)), z1: t5Top });
+    h34Bands.sort((a, b) => a.z0 - b.z0);
     for (const band of h34Bands) {
       const prev = h34Cuts[h34Cuts.length - 1];
       if (prev && band.z0 <= prev.z1 + EPS2) prev.z1 = r2(Math.max(prev.z1, band.z1));
@@ -1613,7 +1656,8 @@ function generateGeneralTall(input) {
       const cz1 = r2(cut.z1);
       if (cz1 <= zCursor + EPS2) continue;
       if (cz0 > zCursor + EPS2) rear.push([md, cz0]);
-      rear.push([h34CutY0, cz0], [h34CutY0, cz1], [md, cz1]);
+      rear.push([h34CutY0, cz0], [h34CutY0, cz1]);
+      if (cz1 < z1 - EPS2) rear.push([md, cz1]);
       zCursor = cz1;
     }
     if (z1 > zCursor + EPS2) rear.push([md, z1]);
@@ -1948,5 +1992,6 @@ function generateGeneralTall(input) {
   return result;
 }
 export {
+  fitTallCabinetHeight,
   generateGeneralTall
 };
