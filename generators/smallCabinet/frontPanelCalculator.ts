@@ -66,8 +66,8 @@ export function computeFrontPanelBounds(input: FrontPanelClearanceInput): FrontP
     z0Source = "mid_center_plus_half_fc";
   } else {
     // Sit above bottom board top face (or mid top when neighbor has no front).
-    z0 = round1(zone.clearZ0 + FC);
-    z0Source = below ? "clear_plus_fc_open_neighbor" : "bottom_face_plus_fc";
+    z0 = round1(FC);
+    z0Source = "cabinet_bottom_plus_fc";
   }
 
   let z1: number;
@@ -76,8 +76,8 @@ export function computeFrontPanelBounds(input: FrontPanelClearanceInput): FrontP
     z1 = round1(zone.zTop - FC / 2);
     z1Source = "mid_center_minus_half_fc";
   } else {
-    z1 = round1(zone.clearZ1 - FC);
-    z1Source = above ? "clear_minus_fc_open_neighbor" : "top_face_minus_fc";
+    z1 = round1(H - FC);
+    z1Source = "cabinet_top_minus_fc";
   }
 
   // Doors intentionally overlap middle-board thickness when neighbors are fronts

@@ -1,6 +1,6 @@
 {
   "NOTCH_ALLOWANCE_EXTRA": { "value": 1, "doc": "让位缺口/槽宽余量；na = 板厚 + 1。" },
-  "STYLE1_TOE_KICK_Y": { "value": 70, "doc": "style_1 趾踢：V 板底段前缘 Y；B1 前脸 = 70 − CPT − FPT。" },
+  "STYLE1_TOE_KICK_Y": { "value": 70, "doc": "style_1 toe kick: the side panel's front edge, and B1's front face. B1 and B2 sit behind it." },
   "BOTTOM_SLOT_REAR_Y": { "value": 80, "doc": "V 板 B3 台阶前缘 Y（z∈[BCH, BCH+na] 段）。" },
   "RECEIVER_NOTCH_DEPTH": { "value": 85, "doc": "r：V 板顶前 T1 让位深（Y 向）；亦为 T3/B4 后接收缺口高（Z 向）。" },
   "SUPPORT_STRIP_WIDTH": { "value": 100, "doc": "B3 深度；T1/T2 条宽；T3/B4 条高；加强条深度。" },
@@ -12,6 +12,10 @@
   "DRAWER_TONGUE_Y0": { "value": 50, "doc": "抽屉舌 Y 下界（[50, B3_DEPTH]）。" },
   "DRAWER_SLOT_CLEARANCE": { "value": 5, "doc": "抽屉槽相对舌的 Y 向余量。" },
   "SHELF_SLOT_CLEARANCE": { "value": 6, "doc": "功能板槽相对舌的 Y 向余量（舌 ±6）。" },
+  "SLOT_MIN_GAP": { "value": 20, "doc": "V 板两面的槽（全槽或半槽）z 向至少相隔这么多（槽边到槽边），否则面积小的一侧那块板不开槽、改螺丝。CNC 只从上面切：半槽只能在一面，两槽太近会切到一起。" },
+  "SCREW_END_OFFSET": { "value": 100, "doc": "不开槽的功能板用螺丝从 V 板另一面固定：首尾两孔离板的前后边各这么远。板深不足 2 倍时只在正中打一个。高级设置可调。" },
+  "SCREW_MAX_SPACING": { "value": 150, "doc": "首尾两孔之间按不超过这个间距平分（间隔数 = 中段 ÷ 此值向上取整），以板中心线对称。高级设置可调。" },
+  "SCREW_HOLE_DIAMETER": { "value": 3, "doc": "螺丝孔：通孔，不做沉头；钉头外露，车间贴贴纸。" },
   "HINGE_CUP_DIAMETER": { "value": 35, "doc": "铰链杯直径。" },
   "HINGE_CUP_DEPTH": { "value": 12.5, "doc": "铰链杯深。" },
   "HINGE_CUP_FROM_EDGE": { "value": 22.5, "doc": "杯心距门侧沿。" },

@@ -24,6 +24,8 @@ import type { BedSideParams, BedSideResult, BedSideZone, BedSideZoneType, Board 
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same, type Term } from "../_lib/dim.ts";
 import { addFeature, annotate, attachFaces, faceRef, joint, localRect, tagEdges, type Joint } from "../_lib/model.ts";
+import { applyDoorSides } from "../_lib/finish.ts";
+import { applyMilling } from "../_lib/milling.ts";
 
 export { RULES } from "./rules.ts";
 export { generateBedSideSvg } from "./svgPreview.ts";
@@ -205,6 +207,9 @@ export function generateBedSideTable(raw: BedSideParams): BedSideResult {
       b.stock = { kind: doorish ? "door" : "carcass", thickness: b.materialThickness, colour: doorish ? p.doorColor : p.carcassColor };
     }
     annotate(show, bedAtStart ? "B" : "A", { semantic: "outside", visible: true, finish: { colour: p.doorColor } });
+    // Fronts hang at −Y: B is the room face.
+    for (const b of boards) if (b.category === "front_panel") annotate(b, "B", { semantic: "front", visible: true, finish: { colour: p.doorColor } });
+    applyDoorSides(boards, { doorSides: raw.doorSides, carcassColorName: p.carcassColor });
 
     // Middle slot: a through hole in each side. Top / bottom slots are notches in the outline; tag them.
     const mid = shelves[1]!;
@@ -266,8 +271,10 @@ export function generateBedSideTable(raw: BedSideParams): BedSideResult {
   }
 
   const provenance = endProvenance();
+  const milling = applyMilling(errors.length ? [] : boards);
   return {
     params: p,
+    milling,
     boards: errors.length ? [] : boards,
     joints: errors.length ? [] : joints,
     validation: { errors, warnings },

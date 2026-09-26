@@ -11,9 +11,8 @@
  * column>`; zone grips carry `data-boundary="zone" data-axis="z" data-col
  * data-index=<upper zone>`. The root `<svg>` carries the mm → px mapping.
  *
- * The golden kitchen carries an expected V1 half-slot conflict, so this does
- * not refuse on `validation.errors`: the elevation is still the truthful
- * picture of what was emitted.
+ * This does not refuse on `validation.errors`: the elevation is still the
+ * truthful picture of what was emitted.
  *
  * Display only: nothing here decides geometry.
  */

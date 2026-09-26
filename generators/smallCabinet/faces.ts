@@ -4,7 +4,7 @@
  *   SIDE_L.A / SIDE_R.B   grooves receiving the shelf / back tongues (inside faces)
  *   TOP/BOTTOM/MID.E*     left / right tongue tags on the outline edges
  *   BACK.E*               left / right tongue tags
- *   FP_<i>.B              door lock slot (through, room side)
+ *   FP_<i>.B → A          door lock slot (through; the milling pass lists it on the back A)
  *
  * The outline already carries the tongues (shelfJoinery.ts); this only names
  * the edges and hangs the grooves on the side faces.
@@ -74,11 +74,22 @@ export function buildSmallCabinetFaces(fb: FaceBuildInputs): Joint[] {
   // --- side grooves (from the joinery features) -------------------------------------
   for (const f of fb.features) {
     if (f.type !== "side_groove") continue;
-    const side = B.get(f.targetBoardId);
-    if (!side || f.y0 == null || f.y1 == null || f.z0 == null || f.z1 == null) continue;
-    const faceId: FaceId = side.id === "SIDE_L" ? "A" : "B"; // inside face
-    const r = localRect(side, { y: [f.y0, f.y1], z: [f.z0, f.z1] });
-    addFeature(side, faceId, { id: f.id, kind: "groove", ...r, depth: f.depth, for: f.relatedBoardId, source: f.source });
+    const board = B.get(f.targetBoardId);
+    if (!board) continue;
+    if (board.id === "BACK") {
+      if (f.x0 == null || f.x1 == null || f.z0 == null || f.z1 == null) continue;
+      const r = localRect(board, { x: [f.x0, f.x1], z: [f.z0, f.z1] });
+      addFeature(board, "B", { id: f.id, kind: "groove", ...r, depth: f.depth, for: f.relatedBoardId, source: f.source });
+      continue;
+    }
+    if (f.y0 == null || f.y1 == null || f.z0 == null || f.z1 == null) continue;
+    const opensEdge = f.through && (f.z0 <= 0.05 || f.z1 >= board.z1 - 0.05 || f.y1 >= board.y1 - 0.05);
+    if (opensEdge) continue;
+    const faceId: FaceId = board.id === "SIDE_L" ? "A" : "B";
+    const r = localRect(board, { y: [f.y0, f.y1], z: [f.z0, f.z1] });
+    addFeature(board, faceId, f.through
+      ? { id: f.id, kind: "cutout", ...r, through: true, for: f.relatedBoardId, source: f.source }
+      : { id: f.id, kind: "groove", ...r, depth: f.depth, for: f.relatedBoardId, source: f.source });
   }
 
   // --- tongues: tag the outline edges, then join them to the side grooves ----------------

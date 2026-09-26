@@ -34,6 +34,8 @@ export interface Stock {
   kind: "carcass" | "partition" | "door" | string;
   thickness: number;
   colour?: string;
+  /** Door stock: 1 = colour outside only (back = carcass colour), 2 = colour both faces (_lib/finish.ts). */
+  sides?: 1 | 2;
 }
 
 /**
@@ -90,7 +92,8 @@ export interface Face {
   semantic?: string;
   /** Exposed after assembly, when the module knows. */
   visible?: boolean;
-  finish?: { colour?: string; edgeBand?: EdgeBand };
+  /** `grain`: board-local axis the wood grain runs along on a colour face (generators/_lib/grain.ts). */
+  finish?: { colour?: string; edgeBand?: EdgeBand; grain?: "u" | "v" };
   features: FaceFeature[];
 }
 
@@ -127,6 +130,8 @@ export interface Board {
   role?: string;
   stock?: Stock;
   faces?: Face[];
+  /** The big face up on the CNC: all partial-depth work is on it, through work is listed on it (_lib/milling.ts). */
+  milling?: "A" | "B";
 }
 
 export interface FaceRef {

@@ -1,6 +1,8 @@
 // Board / face / joint records are the shared model (generators/_lib/model.ts, docs/model-spec.md).
 export type { Board, Face, FaceFeature, Joint, ProfilePoint } from "../_lib/model.ts";
 import type { Joint } from "../_lib/model.ts";
+import type { GrainParams, GrainResult } from "../_lib/grain.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 import type { Board } from "../_lib/model.ts";
 
 export interface OverheadCabinetParams {
@@ -14,6 +16,12 @@ export interface OverheadCabinetParams {
   /** Door colour name on the flap fronts' room face. Default Gloss White. */
   doorColor?: string;
   doorColorName?: string;
+  /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
+  doorSeries?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
+  /** Wood grain per group; missing = module default (fronts horizontal). */
+  grain?: GrainParams;
   /** T3 top-face LED T-groove (opens upward). Default on when omitted. */
   ledGroove?: boolean;
   topClearanceHeight?: number;
@@ -91,6 +99,10 @@ export interface OverheadCabinetResult {
   >;
   /** Board layer: each board carries its faces (A / B / E<i>) with the features that belong to them. */
   boards: Board[];
+  /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */
+  grain?: GrainResult;
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   /** Flat legacy view of the same features (grooves, hinge holes, LED, rangehood); kept for existing consumers. */
   features: unknown[];
   /** Face ↔ face joints (the model-layer form of `relationshipDeclarations`). */

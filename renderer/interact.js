@@ -959,9 +959,11 @@ export function startNose(moduleId) {
   if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
   // One per vehicle: picking the module again edits the existing slab's depth.
   const existing = mod.single ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
-  const D = existing
-    ? mod.envelope(existing.params).D
-    : Math.max(mod.minSize.D, Math.min(noseLength(), presetSize(moduleId, "y")));
+  const D = mod.fixedDepth
+    ? mod.fixedDepth
+    : existing
+      ? mod.envelope(existing.params).D
+      : Math.max(mod.minSize.D, Math.min(noseLength(), presetSize(moduleId, "y")));
   nose = { moduleId, step: "ready", editId: existing ? existing.id : null, D, t0: 0, locked: null, snapLabel: null, clamped: null, lastClient: null };
   job.select(existing ? existing.id : null);
   canvas.style.cursor = "crosshair";
@@ -971,6 +973,8 @@ export function startNose(moduleId) {
 }
 
 function noseBegin(e) {
+  const mod = getModule(nose.moduleId);
+  if (mod.fixedDepth) { nose.D = mod.fixedDepth; finishNose("click"); return; }
   nose.step = "drag";
   nose.t0 = e ? noseT(e) - nose.D : 0; // relative: the face starts where it is and follows the cursor
   setDimNames(["W", "From front", "H"]);
@@ -1035,7 +1039,9 @@ function noseHover(e) {
   showTip(e.clientX, e.clientY, [
     nose.editId ? `${nose.editId} · from front ${Math.round(nose.D)}` : `Bedroom · from front ${Math.round(nose.D)} (preset)`,
     `Nose ${Math.round(b.W)} wide · roof ${Math.round(b.H)} at the room face`,
-    `Click to drag the depth · Enter ${nose.editId ? "keeps it" : "creates it"} · Esc cancels`,
+    getModule(nose.moduleId).fixedDepth
+      ? `Mattress depth is fixed at ${Math.round(nose.D)} · click or Enter creates · Esc cancels`
+      : `Click to drag the depth · Enter ${nose.editId ? "keeps it" : "creates it"} · Esc cancels`,
   ]);
 }
 
@@ -3444,7 +3450,7 @@ function beginResizeDrag(e, hit, ud) {
     params0: cab.params,
     pose0: { ...cab.pose },
     env0: mod.envelope(cab.params),
-    errors0: blockingErrors(job.resultFor(cab.id)?.validation?.errors).length,
+    errors0: blockingIssues(job.resultFor(cab.id)).length,
     overlaps0: new Set(overlaps(cab, cab.pose)),
     lastGood: { params: cab.params, pose: { ...cab.pose } },
     stopped: null,
@@ -3485,7 +3491,7 @@ function resizeDragMove(e) {
     else if (fresh.length) d.stopped = fresh[0];
     else {
       apply(params, pose);
-      const errs = blockingErrors(job.resultFor(d.cabId)?.validation?.errors);
+      const errs = blockingIssues(job.resultFor(d.cabId));
       if (errs.length > d.errors0) {
         d.stopped = errs[0];
         apply(d.lastGood.params, d.lastGood.pose);
@@ -3502,6 +3508,11 @@ function resizeDragMove(e) {
 /** The documented V1 half-slot conflict still builds the cabinet, so a resize keeps that size. */
 function blockingErrors(errs) {
   return (errs || []).filter((e) => !/half-slot conflict/.test(e));
+}
+
+/** What stops a drag: blocking generator errors plus HPL boards past the sheet limit for their grain. */
+function blockingIssues(result) {
+  return [...blockingErrors(result?.validation?.errors), ...(result?.grain?.issues || []).map((i) => i.message)];
 }
 
 function zonesSummary(params) {
@@ -3669,6 +3680,7 @@ canvas.addEventListener("pointerdown", (e) => {
       params0: cab.params,
       pose0: { ...cab.pose },
       result0: job.resultFor(cabId),
+      grain0: (job.resultFor(cabId)?.grain?.issues || []).length,
     };
     // OrbitControls ignores the left button, so the middle button still orbits mid-drag.
     canvas.setPointerCapture(e.pointerId);
@@ -3782,12 +3794,23 @@ function handleDragMove(e) {
   // Resize handles stop at the space boundary and at partition walls: only apply a candidate that still fits.
   let stopped = false;
   let stoppedBy = "the space boundary";
+  // HPL: a board may not grow past the sheet for its grain. Keep the last size that did not add an issue.
+  const grainIssues = () => (job.resultFor(drag.cabId)?.grain?.issues || []);
+  const keepGrain = (prev) => {
+    const now = grainIssues();
+    if (now.length <= drag.grain0) return;
+    stopped = true;
+    stoppedBy = now[now.length - 1].message;
+    job.updateCabinet(drag.cabId, (c) => { c.params = prev.params; c.pose = prev.pose; });
+  };
   const applyIfFits = (params, pose) => {
     const probe = { ...cab, params, pose };
     if (!poseFits(probe, pose)) { stopped = true; return; }
     const hits = wallHits(probe, pose);
     if (hits.length) { stopped = true; stoppedBy = hits[0]; return; }
+    const prev = { params: cab.params, pose: { ...cab.pose } };
     job.updateCabinet(drag.cabId, (c) => { c.params = params; c.pose = pose; });
+    keepGrain(prev);
   };
 
   if (h.type === "W") {
@@ -3812,7 +3835,9 @@ function handleDragMove(e) {
       applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
     }
   } else if (h.type === "divider") {
+    const prev = { params: cab.params, pose: { ...cab.pose } };
     job.setParams(drag.cabId, mod.setDivider(drag.params0, drag.result0, h.index, h.pos + delta), { history: false });
+    keepGrain(prev);
   }
   const now = job.getJob().cabinets.find((c) => c.id === drag.cabId).params;
   const env = mod.envelope(now);

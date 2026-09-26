@@ -4,6 +4,7 @@
  * L 是转角。中间段沿柜背，侧段从一端转进房间。U 是两端都转出去。
  */
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 
 export type { Board, Joint } from "../_lib/model.ts";
 
@@ -15,6 +16,8 @@ export interface LoungeParams {
   /** Door colour name on the fronts' room face. Default Gloss White. */
   doorColor?: string;
   doorColorName?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
   height?: number;
   partitionPanelThickness?: number;
   wheelAvoidanceEnabled?: boolean;
@@ -101,6 +104,8 @@ export interface LoungeGroove {
 }
 
 export interface LoungeResult {
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   params: {
     style: LoungeStyle;
     height: number;

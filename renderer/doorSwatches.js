@@ -34,7 +34,37 @@ export const DOOR_SWATCHES = {
   "SuperMatt Sand": { hex: 0xd7c8ba, finish: "matte", source: "Sand colour · matte finish", url: `${EGR}sand-trugloss` },
 };
 
-/** Shown for a door-stock colour face whose name has no swatch (HPL for now). */
+// Textured HPL: one 1 m × 1 m image per decor (renderer/textures/hpl, 2048 px from
+// the 4096 px originals). The wood grain runs along the image's width; Felt
+// Grey is a felt with no direction. `hex` is the image average, for UI chips.
+const HPL_TEXTURE_MM = 1000;
+const hpl = (name, hex, grained = true) => ({
+  hex,
+  finish: "wood",
+  texture: new URL(`./textures/hpl/${name}.jpg`, import.meta.url).href,
+  textureMm: HPL_TEXTURE_MM,
+  grained,
+  source: `Textured HPL ${name}`,
+  url: null,
+});
+Object.assign(DOOR_SWATCHES, {
+  "Pale Driftwood": hpl("Pale Driftwood", 0xc0bfbc),
+  "Natural Beech": hpl("Natural Beech", 0xdab78c),
+  "Smoked Driftwood": hpl("Smoked Driftwood", 0x665f5b),
+  "Felt Grey": hpl("Felt Grey", 0x8b929c, false),
+  "Urban Walnut": hpl("Urban Walnut", 0x89644a),
+  "Washed Elm": hpl("Washed Elm", 0xc1bab0),
+  "Chestnut": hpl("Chestnut", 0xcba370),
+  "Frosted Ash": hpl("Frosted Ash", 0xabafb5),
+  "Taupe Beech": hpl("Taupe Beech", 0xb6a189),
+  "Nordic Grey Oak": hpl("Nordic Grey Oak", 0x6c6b6c),
+  "Grey Elm": hpl("Grey Elm", 0xb5b4b2),
+  "Bleached Oak": hpl("Bleached Oak", 0xd6c6b6),
+  "Natural Pine": hpl("Natural Pine", 0xe1c293),
+  "Weathered Elm": hpl("Weathered Elm", 0x8f8175),
+});
+
+/** Shown for a door-stock colour face whose name has no swatch. */
 export const UNKNOWN_SWATCH = { hex: 0x9a9a9a, finish: "matte", source: "no swatch", url: null };
 
 /**
@@ -63,7 +93,8 @@ export function swatchChipStyle(name) {
   if (!sw) return null;
   return {
     background: `#${sw.hex.toString(16).padStart(6, "0")}`,
+    image: sw.texture || null,
     finish: sw.finish,
-    title: `${sw.source} (${sw.finish}) · screen approximation`,
+    title: sw.texture ? `${sw.source} · 1 m tile` : `${sw.source} (${sw.finish}) · screen approximation`,
   };
 }

@@ -5,7 +5,9 @@
  */
 import { beginProvenance, dim, endProvenance, param, ref, same } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
-import { doorColourOf } from "../_lib/finish.ts";
+import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
+import { applyGrain } from "../_lib/grain.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox } from "../_lib/recordBox.ts";
 import { buildTallFaces } from "./faces.ts";
 import type {
@@ -31,6 +33,7 @@ interface S {
   CH: number; CW: number; CD: number;
   CPT: number; FPT: number; ziT: number; hT: number; dividerT: number;
   leftT: number; rightT: number;
+  leftFinish: "colour" | "carcass"; rightFinish: "colour" | "carcass";
   leftAdapt: boolean; rightAdapt: boolean;
   topSys: { style: string; railH: number; frontRail: number; insert: number };
   botSys: { style: string; railH: number; frontRail: number; insert: number };
@@ -105,8 +108,11 @@ function normalize(input: GTParams, errors: string[]): S {
 
   const leftT = asNum(input.leftSidePanelThickness, 0);
   const rightT = asNum(input.rightSidePanelThickness, 0);
+  // A colour side is door stock (door thickness); a carcass side is carcass stock.
+  const leftFinish: "colour" | "carcass" = input.leftSidePanelFinish === "colour" ? "colour" : "carcass";
+  const rightFinish: "colour" | "carcass" = input.rightSidePanelFinish === "colour" ? "colour" : "carcass";
   for (const [name, t] of [["Left", leftT], ["Right", rightT]] as const) {
-    if (t !== 0 && t !== R.SIDE_PANEL_WHITELIST_15.value && t !== R.SIDE_PANEL_WHITELIST_16.value) {
+    if (t !== 0 && t !== R.SIDE_PANEL_WHITELIST_15.value && t !== R.SIDE_PANEL_WHITELIST_16.value && t !== FPT && t !== CPT) {
       errors.push(`${name} side panel thickness must be one of {0, 15, 16}.`);
     }
   }
@@ -141,7 +147,7 @@ function normalize(input: GTParams, errors: string[]): S {
   if (midWidth <= 0) errors.push("MidWidth must be > 0 after side panel thickness (CabinetWidth too small).");
 
   return {
-    CH, CW, CD, CPT, FPT, ziT, hT, dividerT, leftT, rightT,
+    CH, CW, CD, CPT, FPT, ziT, hT, dividerT, leftT, rightT, leftFinish, rightFinish,
     leftAdapt: input.leftSidePanelAdaptAvoidance ?? true,
     rightAdapt: input.rightSidePanelAdaptAvoidance ?? true,
     topSys: { style: topStyle, railH: topRailH, frontRail: topFront, insert: topInsert },
@@ -989,7 +995,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
   }
 
   /* ---- 侧板：y∈[−FPT, midDepth]；避让缺口用柜体 Y ---- */
-  const mkSidePanel = (side: "L" | "R", t: number, adapt: boolean) => {
+  const mkSidePanel = (side: "L" | "R", t: number, adapt: boolean, finish: "colour" | "carcass") => {
     const x0 = side === "L" ? 0 : r2(s.CW - t);
     let prof: P2[] | undefined;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
@@ -997,10 +1003,10 @@ export function generateGeneralTall(input: GTParams): GTResult {
       prof = yz([[-FPT, 0], [r2(md - ad), 0], [r2(md - ad), ah], [md, ah], [md, CH], [-FPT, CH]]);
     }
     boards.push(mkBoard(`SidePanel_${side}`, `Side Panel ${side === "L" ? "Left" : "Right"}`, "side_panel", "side_panel",
-      t, "carcass", "YZ", "X", x0, r2(x0 + t), -FPT, md, 0, CH, prof));
+      t, finish === "colour" ? "door" : "carcass", "YZ", "X", x0, r2(x0 + t), -FPT, md, 0, CH, prof));
   };
-  if (s.leftT > 0) mkSidePanel("L", s.leftT, s.leftAdapt);
-  if (s.rightT > 0) mkSidePanel("R", s.rightT, s.rightAdapt);
+  if (s.leftT > 0) mkSidePanel("L", s.leftT, s.leftAdapt, s.leftFinish);
+  if (s.rightT > 0) mkSidePanel("R", s.rightT, s.rightAdapt, s.rightFinish);
 
   /* ---- 避让支撑 ---- */
   if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > R.AVOIDANCE_SUPPORT_THICKNESS.value) {
@@ -1019,6 +1025,15 @@ export function generateGeneralTall(input: GTParams): GTResult {
   /* ---- 组装 ---- */
   attachFaces(boards);
   const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
+  // Fronts (doors, fixed fronts, T1 / B1) horizontal; colour side panels vertical.
+  const grain = applyGrain(
+    boards,
+    (b) => (b.id.startsWith("SidePanel_") ? "side" : b.stock?.kind === "door" ? "front" : null),
+    input,
+    { front: "horizontal", side: "vertical" },
+  );
+  applyDoorSides(boards, input);
+  const milling = applyMilling(boards);
 
   const result: GTResult = {
     params: {
@@ -1027,6 +1042,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
       panelThickness: CPT, frontPanelThickness: FPT, ziThickness: s.ziT,
     },
     boards,
+    grain,
+    milling,
     stack: [
       botSys,
       ...(() => {

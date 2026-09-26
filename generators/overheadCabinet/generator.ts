@@ -15,7 +15,9 @@ import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { attachFaces } from "../_lib/model.ts";
-import { doorColourOf } from "../_lib/finish.ts";
+import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
+import { applyGrain } from "../_lib/grain.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { buildOverheadFaces } from "./faces.ts";
 
 export * from "./geometry.ts";
@@ -851,10 +853,16 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
     carcassColorName: carcassColor.carcassColorName,
     doorColour: doorColourOf(rawParams),
   });
+  // Flap fronts and T1: one group, horizontal unless chosen otherwise.
+  const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? "front" : null), rawParams, { front: "horizontal" });
+  applyDoorSides(boards, { ...rawParams, carcassColorName: carcassColor.carcassColorName });
+  const milling = applyMilling(boards);
 
   return {
     params: resolvedParams(),
     boards,
+    grain,
+    milling,
     features: [
       ...dividerFeatures,
       ...geometry.front_panels,

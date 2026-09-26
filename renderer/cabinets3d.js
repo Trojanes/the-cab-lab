@@ -3,7 +3,7 @@
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
 import { scene, camera, canvas } from "./space.js";
-import { colourFaces, doorBodyMaterial } from "./doorFinish.js";
+import { doorBodyMaterial } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
 import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden } from "./job.js";
 import { getModule } from "./modules.js";
@@ -17,9 +17,14 @@ export const HANDLE_SIZE = 44;
 const frontMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6 });
 const errorMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.8, transparent: true, opacity: 0.35 });
 const edgeMat = new THREE.LineBasicMaterial({ color: 0x4a4034 });
+// The board core. Face colour sits only on A and B; an unbanded edge stays this.
+const coreMat = new THREE.MeshStandardMaterial({ color: 0xc4b29a, roughness: 0.86 });
+const coreDimMat = new THREE.MeshStandardMaterial({ color: 0xc4b29a, roughness: 0.86, transparent: true, opacity: 0.22, depthWrite: false });
 // A board is selected in the tree / by a second click: it lights up, the rest of its cabinet fades.
 const boardSelMat = new THREE.MeshStandardMaterial({ color: 0x6fa0f0, emissive: 0x1e3a6e, roughness: 0.5 });
 const frontDimMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6, transparent: true, opacity: 0.22, depthWrite: false });
+// A board past the HPL sheet limit for its grain (result.grain.issues) or with milling issues: red until fixed.
+const grainBadMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.8 });
 const edgeDimMat = new THREE.LineBasicMaterial({ color: 0x4a4034, transparent: true, opacity: 0.3 });
 // A face is selected: a translucent sheet just proud of that face (faceSheetGeometry offsets it;
 // no polygonOffset — with the scene's depth range that pulled the sheet through the board).
@@ -198,15 +203,14 @@ function buildGroup(cab) {
     const sub = selected ? getSubSelection() : null;
     // A region selected in a mixed module (bedroom body): its boards light up, the rest fades.
     const selRegion = selected && allRegions.length ? getSelectedRegion() : null;
+    // Red: past the HPL sheet for its grain, or needing CNC work on both faces.
+    const grainBad = new Set([...(result.grain?.issues || []), ...(result.milling?.issues || [])].map((i) => i.board));
     for (const b of result.boards) {
       if (isBoardHidden(cab, b.id)) continue;
-      const front = b.category === "front_panel";
-      const coats = colourFaces(b);
       const isSel = (sub && sub.boardId === b.id) || (!sub && selRegion && b.zoneId === selRegion);
       const dim = (sub && !isSel) || (selRegion && !isSel);
-      // A colour face used to sit on the blue front material, which washed the colour out.
-      const plain = coats.length ? doorBodyMaterial(coats[0].finish.colour) : front ? frontMat : carcassMat;
-      const faded = coats.length ? doorBodyMaterial(coats[0].finish.colour, { dim: true }) : front ? frontDimMat : carcassDimMat;
+      const plain = grainBad.has(b.id) ? grainBadMat : coreMat;
+      const faded = coreDimMat;
       const mat = isSel && !sub && selRegion ? plain : isSel ? boardSelMat : dim ? faded : plain;
       // A board with an outline (robe side cut to the roof, an OHC divider / T3 / T4 with its notches) is drawn
       // from that outline, not its bounding box.
@@ -215,6 +219,7 @@ function buildGroup(cab) {
       const mesh = cut ? new THREE.Mesh(geo, mat) : boxMesh(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
       mesh.userData = { kind: "board", cabId: cab.id, boardId: b.id };
       holder.add(mesh);
+      if (!grainBad.has(b.id) && !(isSel && !sub)) addBigFaceSheets(holder, b, dim);
       const lineMat = dim ? edgeDimMat : edgeMat;
       holder.add(boardEdges(b, lineMat));
       addHingeMarks(holder, b);
@@ -461,6 +466,41 @@ function arrowHandle(pos, axisType, outward, userData) {
   return g;
 }
 
+// Rebuild only what changed: dragging one cabinet must not rebuild the whole room on every
+// pointer move (a browser on an ordinary machine is the target). A cabinet's key lists
+// everything buildGroup reads; params / results / space are compared by identity (they are
+// replaced, never edited in place), the rest by value.
+const refIds = new WeakMap();
+let nextRefId = 1;
+function refId(o) {
+  if (!o || typeof o !== "object") return String(o);
+  let id = refIds.get(o);
+  if (!id) { id = nextRefId++; refIds.set(o, id); }
+  return id;
+}
+function buildKey(cab) {
+  const selected = cab.id === getSelectedId();
+  const sub = selected ? getSubSelection() : null;
+  return [
+    refId(cab.params),
+    refId(resultFor(cab.id)),
+    refId(getSpace()),
+    JSON.stringify(cab.pose),
+    JSON.stringify(cab.hidden || null),
+    JSON.stringify(cab.overrides || null),
+    selected ? `sel:${sub ? `${sub.boardId}.${sub.face ? sub.face.id : ""}` : ""}:${getSelectedRegion() || ""}:${moveOpen}:${resizeOpen}` : "",
+    resizeFace && resizeFace.cabId === cab.id ? `${resizeFace.axis}${resizeFace.dir}` : "",
+    armedHandle && armedHandle.cabId === cab.id ? armedHandle.type : "",
+    envelopeDragId === cab.id ? "drag" : "",
+  ].join("|");
+}
+const builtKeys = new Map();
+
+/** Frees the geometry of a removed group. Materials are shared module-level objects and stay. */
+function disposeGroup(g) {
+  g.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+}
+
 export function syncCabinets() {
   const job = getJob();
   const seen = new Set();
@@ -468,16 +508,24 @@ export function syncCabinets() {
   if (armedHandle && (armedHandle.cabId !== getSelectedId() || getSubSelection())) armedHandle = null;
   for (const cab of job.cabinets) {
     seen.add(cab.id);
+    const key = buildKey(cab);
     const old = groups.get(cab.id);
-    if (old) root.remove(old);
+    if (old && builtKeys.get(cab.id) === key) continue;
+    if (old) {
+      root.remove(old);
+      disposeGroup(old);
+    }
     const g = buildGroup(cab);
     groups.set(cab.id, g);
+    builtKeys.set(cab.id, key);
     root.add(g);
   }
   for (const [id, g] of groups) {
     if (!seen.has(id)) {
       root.remove(g);
+      disposeGroup(g);
       groups.delete(id);
+      builtKeys.delete(id);
     }
   }
 }
@@ -678,6 +726,27 @@ function addGrooveMarks(group, b) {
       fill.userData = { kind: "groove" };
       group.add(fill);
     }
+  }
+}
+
+/** Colour sheets on A and B only. An edge stays the core unless it carries edge tape. */
+function addBigFaceSheets(group, b, dim) {
+  const carcass = b.stock?.kind !== "door";
+  for (const id of ["A", "B"]) {
+    const face = (b.faces || []).find((f) => f.id === id);
+    if (!face) continue;
+    const name = face.finish && face.finish.colour;
+    const doorName = name && !/stipple/i.test(name) ? name : null;
+    if (!doorName && !carcass && !name) continue;
+    const geo = faceSheetGeometry(b, face, 0.6);
+    if (!geo) continue;
+    const mat = doorName
+      ? doorBodyMaterial(doorName, { dim: !!dim })
+      : (dim ? carcassDimMat : carcassMat);
+    const sheet = new THREE.Mesh(geo, mat);
+    sheet.renderOrder = 2;
+    sheet.userData = { kind: "faceColour" };
+    group.add(sheet);
   }
 }
 

@@ -2,8 +2,8 @@
 // and describes its envelope: which params are the outer W/D/H and which
 // divider handles exist. The renderer only reads this; formulas stay in the
 // generators.
-import { generateSmallCabinet } from "./gen/smallCabinet.js";
-import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, setOhcBoundary as setBedroomOhcBoundary, equalOhcZones as bedroomEqualOhcZones, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES, WARDROBE_STYLES as BEDROOM_WARDROBE_STYLES } from "./gen/bedroom.js";
+import { generateSmallCabinet, generateSmallCabinetSvgPreview } from "./gen/smallCabinet.js";
+import { generateBedroomEast, EAST_MATTRESS_DEPTH_MM, EAST_BODY_DEPTH_MM, EAST_BOOT_HEIGHT_MM, EAST_WARDROBE_DEFAULT_MM, EAST_WARDROBE_MIN_MM, EAST_MATTRESS_MIN_MM, eastWardrobeMax } from "./gen/bedroomEast.js";
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
@@ -91,6 +91,7 @@ const smallCabinet = {
   id: "smallCabinet",
   label: "Small",
   sub: "simple box",
+  panel: "small",
   defaultSize: { W: 600, D: 560, H: 720 },
   minSize: { W: 120, D: 100, H: 120 },
 
@@ -108,6 +109,7 @@ const smallCabinet = {
       carcassColor: color.carcassColor,
       carcassColorName: color.carcassColorName,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       colorSlot: color.colorSlot,
@@ -117,6 +119,10 @@ const smallCabinet = {
 
   generate(params) {
     return generateSmallCabinet(params);
+  },
+
+  frontView(result, { selectedZoneId = null } = {}) {
+    return generateSmallCabinetSvgPreview(result, { selectedZoneId });
   },
 
   envelope(params) {
@@ -248,6 +254,7 @@ const bedroom = {
       frontPanelThickness: 0,
       carcassColor: color.carcassColor,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       colorSlot: color.colorSlot,
     };
@@ -433,6 +440,7 @@ const bedBox = {
       frontPanelThickness: 0,
       carcassColor: color.carcassColor,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       colorSlot: color.colorSlot,
     };
@@ -518,6 +526,7 @@ const bedSideTable = {
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       colorSlot: color.colorSlot,
     };
   },
@@ -645,6 +654,7 @@ const overheadCabinet = {
       carcassColor: color.carcassColor,
       carcassColorName: color.carcassColorName,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       colorSlot: color.colorSlot,
@@ -747,6 +757,7 @@ const kitchenCabinet = {
       materialThickness: thickness(stock, "carcass"),
       frontThickness: thickness(stock, "door"),
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       colorSlot: color.colorSlot,
@@ -919,6 +930,7 @@ const generalTallCabinet = {
       panelThickness: thickness(stock, "carcass"),
       frontPanelThickness: thickness(stock, "door"),
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       colorSlot: color.colorSlot,
@@ -1054,6 +1066,7 @@ const loungeGenerator = {
       style: "L_SHAPE",
       height: H,
       doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
       colorSlot: color.colorSlot,
@@ -1168,10 +1181,59 @@ const loungeGenerator = {
   zoneTypes: [],
 };
 
+const bedroomEast = {
+  id: "bedroomEast",
+  label: "东西向",
+  sub: "wardrobe left · bed on the right",
+  placement: "nose",
+  fixedDepth: EAST_MATTRESS_DEPTH_MM,
+  single: true,
+  roofAware: true,
+  volumeOnly: true,
+  panel: "bedroomEast",
+  defaultSize: { W: 2275, D: EAST_MATTRESS_DEPTH_MM, H: 1797 },
+  minSize: { W: EAST_WARDROBE_MIN_MM + EAST_MATTRESS_MIN_MM, D: EAST_MATTRESS_DEPTH_MM, H: 600 },
+  defaults(W, D, H, materials) {
+    const { stock } = materialsOf(materials);
+    const width = round1(W);
+    return {
+      width,
+      depth: EAST_MATTRESS_DEPTH_MM,
+      height: round1(H),
+      roofProfile: [[0, round1(H)], [EAST_BODY_DEPTH_MM, round1(H)]],
+      wardrobeWidth: Math.min(EAST_WARDROBE_DEFAULT_MM, eastWardrobeMax(width)),
+      bootHeight: EAST_BOOT_HEIGHT_MM,
+      panelThickness: thickness(stock, "carcass"),
+    };
+  },
+  generate(params) { return generateBedroomEast(params); },
+  envelope(params) { return { W: params.width, D: EAST_MATTRESS_DEPTH_MM, H: params.height }; },
+  setEnvelope(params, { W, H }) {
+    const next = { ...params, depth: EAST_MATTRESS_DEPTH_MM };
+    if (W != null) {
+      next.width = round1(W);
+      next.wardrobeWidth = Math.min(next.wardrobeWidth ?? EAST_WARDROBE_DEFAULT_MM, eastWardrobeMax(next.width));
+    }
+    if (H != null) next.height = round1(H);
+    return next;
+  },
+  dividers(params) {
+    const W = params.width;
+    const max = eastWardrobeMax(W);
+    return [{ index: 0, key: "wardrobeWidth", axis: "x", pos: params.wardrobeWidth, min: EAST_WARDROBE_MIN_MM, max, span: [EAST_BOOT_HEIGHT_MM, params.height], front: 20 }];
+  },
+  setDivider(params, _result, _index, pos) {
+    const max = eastWardrobeMax(params.width);
+    const wardrobeWidth = round1(Math.max(EAST_WARDROBE_MIN_MM, Math.min(max, pos)));
+    return { ...params, wardrobeWidth };
+  },
+};
+
 export const MODULES = {
   smallCabinet,
   overheadCabinet,
   bedroom,
+  bedroomEast,
   bedBox,
   kitchenCabinet,
   generalTallCabinet,
@@ -1210,9 +1272,10 @@ export const MODULE_GROUPS = [
   {
     id: "bedroom",
     label: "Bedroom",
-    sub: "3 sub-modules",
+    sub: "南北 / 东西",
     items: [
-      { moduleId: "bedroom", label: "Body", sub: "nose volume" },
+      { moduleId: "bedroom", label: "南北向", sub: "wardrobes both sides" },
+      { moduleId: "bedroomEast", label: "东西向", sub: "wardrobe left · mattress 1570" },
       { moduleId: "bedBox", label: "Bed Box", sub: "bed base · needs the body" },
       { moduleId: "bedSideTable", label: "Bed Side Table", sub: "pair · needs the body" },
     ],

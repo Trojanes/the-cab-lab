@@ -73,8 +73,8 @@ SidePanelOptions 默认：panelType=carcass、frontVisible=false、bchNotchEnabl
 
 | id | 名称 | 料 | 平面/厚轴 | 几何逻辑 |
 |---|---|---|---|---|
-| B1 | 底前板 | FPT | XZ/Y | x∈[frontStopX0, frontStopX1]；z∈[0, BCH]；style_1: y∈[70−CPT−FPT, 70−CPT]（趾踢内缩 39）；style_2: y∈[−FPT, 0]（平前） |
-| B2 | 底柜身板 | CPT | XZ/Y | 紧贴 B1 之后：style_1 y∈[70−CPT, 70]；style_2 y∈[0, CPT] |
+| B1 | 底前板 | FPT | XZ/Y | x∈[frontStopX0, frontStopX1]；z∈[0, BCH]；style_1: y∈[70, 70+FPT]（前脸与侧板趾踢前缘齐）；style_2: y∈[−FPT, 0]（平前） |
+| B2 | 底柜身板 | CPT | XZ/Y | 紧贴 B1 之后：style_1 y∈[70+FPT, 70+FPT+CPT]；style_2 y∈[0, CPT] |
 | B3 | 底板 deck | CPT | XY/Z | y∈[0, 100]；z∈[BCH, BCH+CPT]；对每块 V 板后缘让位缺口（y∈[80,100], x = V 心 ± (CPT/2+0.5)） |
 | T1-n | 顶前条 | CPT | XY/Z | y∈[0, 100]；z∈[H−CPT, H]；V 板缺口 y∈[80,100]（后缘）；灶台列按 x 切分 |
 | T2-n | 顶后条 | CPT | XY/Z | y∈[cd−CPT−100, cd−CPT]（后边贴 T3 前脸）；z∈[H−CPT, H]；V 板缺口 y∈[y0, y0+20]（前缘） |
@@ -120,11 +120,11 @@ frontY = style_2 ? CPT : 70。按 z 分带读：z∈[0,BCH) 前缘 frontY；z∈
 
 ### 4.4 槽请求与解析（slotRequests → resolvedSlots）
 
-- 每块功能板两端各发一条槽请求：左端对 V[列首]（side="right"），右端对 V[列末+1]（side="left"）——side 是 V 板视角。
-- 槽型判定：侧板 grooveVisible=false（外侧不可见）**或**对侧邻区可见（门板/open/custom 区）→ half；否则 through。
+- 每块功能板两端各发一条槽请求：左端对 V[列首]（side="right"），右端对 V[列末+1]（side="left"）——side 是 V 板视角。同一 V 板同一侧可有多块板，**每块板各自解析**（旧实现每侧只留最后一条请求，其余板无槽无舌，已修正）。
+- 槽型判定：侧板 grooveVisible=false（外侧不可见）**或**对侧邻区可见 → half；否则 through。可见区 = 门（left/right/double_door）、down_flap、open、custom；**抽屉区不算可见**（抽屉盒挡在 V 板前，贯通槽藏得住）。
 - 舌长：through → CPT（**与侧板厚无关**，V0 门料 16 厚时舌仍 15）；half → 侧板厚/2；解析为 none → 0（板缩回齐身）。
 - 槽 y 范围：抽屉板 [45, 155]；其他板 [cd/3−6, 2cd/3+6]（= 舌 ±6，上限夹板 y1）。槽 z = 板 z ± na/2。
-- 双侧冲突解析（V 板左右都有 half 时）：无 machiningPreference → **error**；有偏好或仅单侧 → 按模式表解析。11 种模式语义：`left_half_right_none`（左半右无）、`right_half_left_none`（右半左无）、`*_half_*_through`（一侧半一侧贯通）、`left_half`/`right_half`/`left_through`/`right_through`（单侧）、`left/right_face_half_allowed`（对应侧半槽、另一侧贯通）、`through_only`（全贯通）。
+- 双侧冲突解析（V 板左右都有 half 时；CNC 只从上面切，半槽只能在一面）：有 machiningPreference → 按模式表解析；**无偏好 → 自动**：两侧 half 板所在功能区的正面面积（中心距宽 × 区高）各自求和，小的一侧这些板全部 none（不开槽、平接），用螺丝从 V 板另一面固定。随后 V 板两面剩余的槽（全槽或半槽）z 向槽边距 < SLOT_MIN_GAP(20) 的，成对比较功能区面积，小的那块 none。none 的板出螺丝孔（ScrewRecord，3 mm 通孔，无沉头）：板深方向首尾离边 SCREW_END_OFFSET(100)，中段按 ≤ SCREW_MAX_SPACING(150) 平分、以中心对称；板深 < 200 只在正中一个；z = 板厚中心。11 种模式语义：`left_half_right_none`（左半右无）、`right_half_left_none`（右半左无）、`*_half_*_through`（一侧半一侧贯通）、`left_half`/`right_half`/`left_through`/`right_through`（单侧）、`left/right_face_half_allowed`（对应侧半槽、另一侧贯通）、`through_only`（全贯通）。
 - 解析后 through 槽若落在可见面 → warning（"Through slot may appear on visible side"）。
 - 解析结果回写功能板轮廓：x0/x1 与 profileXY 按左/右舌长重算（bodyX 取 clearX，舌向外伸）。
 
@@ -162,7 +162,7 @@ kitchen 生成器无 faces 层，特征以数据结构直接给出（panelDxf + 
 
 ## 7. 校验规则
 
-**errors（阻断）**：length/depth(cd)/height/materialThickness ≤ 0；BCH < 0 或 ≥ H；columns 空或缺失；列含 unassigned 区；列净宽 ≤ 0；**V 板左右同时 half 槽且无 machiningPreference（"Unresolved double-sided half-slot conflict"）**。
+**errors（阻断）**：length/depth(cd)/height/materialThickness ≤ 0；BCH < 0 或 ≥ H；columns 空或缺失；列含 unassigned 区；列净宽 ≤ 0。（原 "Unresolved double-sided half-slot conflict" 已改为自动解析，见 §4.4，不再报错。）
 
 **warnings（不阻断）**：列区和 ≠ H−BCH（0.01 容差）；轮拱高 < BCH（V 板与底部系统冲突）；轮拱支板 bounds 无效跳过；raised B4 超 H 跳过；avoidance-front 高 ≤ CPT 跳过；灶台切空全部顶部条；门层板：区高 <350 / shelfTopZ 越区界；门板叶宽 ≤0 跳过；贯通槽出现在可见面；功能板因轮拱缩后；加强条 Z 区间无效。
 
@@ -170,12 +170,12 @@ kitchen 生成器无 faces 层，特征以数据结构直接给出（panelDxf + 
 
 参数：W 887 × D 270 × H 880，CPT 15 / FPT 16 / fc 2.5 / BCH 55 style_1 / lock on；列1 k-col-1 宽 444（left_door 区 825，左板 door 料·前可见·无趾踢缺口·加强条·shelf 400）；列2 k-col-2 宽 443（drawer 区 300 上 + right_door 区 525 下）。cd = 254。
 
-**errors = ["Unresolved double-sided half-slot conflict on V1."]（黄金集本身含此错误，属预期输出）；warnings = []。**
+**errors = []；warnings = []。**（黄金集原本带 V1 双侧半槽 error；现按 §4.4 自动解析：列 1 门区 825 高面积大，抽屉分隔板在 V1 上不开槽、平接到 V1 右面（x0 451.5），V1 出一个螺丝孔 y 75、z 580。）
 
 - 计数：boards 10 / vPanels 3 / frontPanels 3 / slots 4 / panelDxf 13 / declarations 2。xBoundaries [0, 444, 887]；列1 clear[16, 436.5]、列2 clear[451.5, 872]。
 - V0（door 料 16）：x[0,16]，轮廓 [[−16,0],[−16,880],[152,880],[152,863],[237,863],[237,795],[254,795],[254,85],[237,85],[237,0],[−16,0]]。
 - V1 = V2（mat 15）：V1 x[436.5,451.5]，V2 x[872,887]，轮廓 [[70,0],[70,55],[80,55],[80,71],[0,71],[0,864],[85,864],[85,880],[153,880],[153,864],[238,864],[238,795],[254,795],[254,85],[238,85],[238,0],[70,0]]。
-- 板件 bbox：B1 [16,887, 39,55, 0,55]；B2 [16,887, 55,70, 0,55]；B3 [16,887, 0,100, 55,70]（notch 3 个，含 V0 零宽）；T1-1 [16,887, 0,100, 865,880]（notch 2：V1/V2，V0 心 8 越界被滤）；T2-1 [0,887, 139,239, 865,880]（notch 3）；T3-1 [0,887, 239,254, 780,880]（notch 3）；B4-1 [0,887, 239,254, 0,100]（notch 3）。
+- 板件 bbox：B1 [16,887, 70,86, 0,55]；B2 [16,887, 86,101, 0,55]；B3 [16,887, 0,100, 55,70]（notch 3 个，含 V0 零宽）；T1-1 [16,887, 0,100, 865,880]（notch 2：V1/V2，V0 心 8 越界被滤）；T2-1 [0,887, 139,239, 865,880]（notch 3）；T3-1 [0,887, 239,254, 780,880]（notch 3）；B4-1 [0,887, 239,254, 0,100]（notch 3）。
 - door_shelf：bbox [1,444, 0,254, 440,455]，profileXY [[16,0],[436.5,0],[436.5,84.667],[444,84.667],[444,169.333],[436.5,169.333],[436.5,254],[16,254],[16,169.333],[1,169.333],[1,84.667],[16,84.667],[16,0]]；层板前缘让位缺口 x[16,32] y[0,85]。
 - drawer_divider：bbox [444,887, 0,150, 572.5,587.5]，profileXY [[451.5,0],[872,0],[872,50],[887,50],[887,150],[444,150],[444,50],[451.5,50],[451.5,0]]。
 - 加强条：bbox [16,31, 0,100, 70,865]，轮廓 (y,z) [[0,70],[100,70],[100,439.5],[80,439.5],[80,455.5],[100,455.5],[100,865],[0,865],[0,70]]。
@@ -187,13 +187,13 @@ kitchen 生成器无 faces 层，特征以数据结构直接给出（panelDxf + 
 - 左门 x0 = innerX(16) + fc(2.5) = 18.5 ← 左板 door 料厚 16（frontVisible）；x1 = logicalX1(444) − fc/2(1.25) = 442.75 ← 右邻列含门板区。
 - 锁心 Z = H(880) − CPT/2 − CPT/2 − 30.5 = 834.5（顶区）；右门锁心 Z = zone.z1(580) − 7.5 − 30.5 = 542。
 - 铰链 sd：左门高 822.5 → 75+(822.5−300)·25/300 = 118.5 → 夹取 100；右门高 523.75 → 93.6458（不夹取）。
-- V1 冲突来源：层板右端（对侧 right_door 可见 → half）+ 抽屉板左端（对侧 left_door 可见 → half），V1 双侧 half 且无偏好 → error。
+- V1 冲突来源：层板右端（对侧 right_door 可见 → half）+ 抽屉板左端（对侧 left_door 可见 → half），V1 双侧 half 且无偏好 → 自动解析：抽屉区（443 × 300）面积小，抽屉分隔板改螺丝。
 - 桥接门禁断言（test_generator_declared_relationships / run_declared_generators_offline）：声明数 ≥2 且含 kt_b1_b3_bottom_rail_to_deck；reconcile ok、geometryOkCount ≥2；B1↔B3 关系 validate 通过且 safeForCut（可出螺丝孔预览/切割计划）。
 
 ## 9. 验收流程（与代码来源无关）
 
 1. 按本规格在 Cab Lab 架构下独立实现（`generators/kitchen/` + rules.json + dim() 溯源 + boardFrame final、前脸 −Y）。
 2. 以 §8 参数建黄金 preset；`node --experimental-strip-types scripts/pin-presets.ts kitchen --write` 生成钉值，测试用 checkPins 逐点对比（0.01 mm）。
-3. audit：无未声明重叠；两条 B1/B2↔B3 接缝 touching；§8 的 V1 双侧半槽 error 须按预期复现（或重实现补偏好后显式记录行为差异）。
+3. audit：无未声明重叠；两条 B1/B2↔B3 接缝 touching；§8 的 V1 双侧半槽按 §4.4 自动解析（行为差异已记录：不再报错，抽屉分隔板改螺丝）。
 4. bench 爆炸视图：B 系统 → V 板 → 功能板 → T 系统 → 门板的装配次序与互锁方向合理。
 5. 补齐 §4 已知坑④：V 板互锁、功能板舌槽等接缝声明补全后入库；坑② 的 stove 半成品形态按需求补全（灶台开孔/台面）。

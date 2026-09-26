@@ -380,6 +380,8 @@ function doorColorSelect(series, value, onChange) {
   const paintChip = () => {
     const s = swatchChipStyle(sel.value);
     chip.style.backgroundColor = s ? s.background : "transparent";
+    chip.style.backgroundImage = s && s.image ? `url("${s.image}")` : "";
+    chip.style.backgroundSize = s && s.image ? "400%" : "";
     chip.classList.toggle("metallic", !!s && s.finish === "metallic");
     chip.classList.toggle("none", !s);
     chip.title = s ? s.title : "No swatch yet";
@@ -430,6 +432,24 @@ function renderMaterials() {
     modeSeg.append(b);
   }
 
+  const sidesSeg = el("div", { class: "seg-group" });
+  for (const o of [{ id: "single", label: "Single" }, { id: "double", label: "Double" }]) {
+    const b = el("button", {
+      type: "button",
+      class: "tb seg" + ((door.sides || "single") === o.id ? " active" : ""),
+      text: o.label,
+      title: o.id === "single" ? "Colour outside, carcass colour on the back" : "Colour on both faces",
+    });
+    b.addEventListener("click", () => {
+      if ((door.sides || "single") === o.id) return;
+      door.sides = o.id;
+      log("space.dialog.choice", { spaceKind: currentKind, key: "finish.door.sides", value: o.id });
+      renderMaterials();
+      refresh();
+    });
+    sidesSeg.append(b);
+  }
+
   const colorA = doorColorSelect(door.series, door.colors[0].name, (name) => {
     door.colors[0].name = name;
     door.colors[0].series = door.series;
@@ -441,6 +461,7 @@ function renderMaterials() {
     el("label", { class: "field" }, [el("span", { text: "Carcass / partition" }), el("input", { type: "text", value: CARCASS_COLOR, disabled: true })]),
     el("label", { class: "field" }, [el("span", { text: "Door series" }), seriesSeg]),
     el("label", { class: "field" }, [el("span", { text: "Door colours" }), modeSeg]),
+    el("label", { class: "field" }, [el("span", { text: "Door sides" }), sidesSeg]),
     el("label", { class: "field" }, [el("span", { text: door.mode === "two" ? "Door A" : "Door" }), colorA]),
   ]);
 

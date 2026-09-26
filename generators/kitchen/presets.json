@@ -84,16 +84,16 @@
           "B1": {
             "x0": 16,
             "x1": 887,
-            "y0": 39,
-            "y1": 55,
+            "y0": 70,
+            "y1": 86,
             "z0": 0,
             "z1": 55
           },
           "B2": {
             "x0": 16,
             "x1": 887,
-            "y0": 55,
-            "y1": 70,
+            "y0": 86,
+            "y1": 101,
             "z0": 0,
             "z1": 55
           },
@@ -106,7 +106,7 @@
             "z1": 70
           },
           "k-col-2-c2-drawer-bottom": {
-            "x0": 444,
+            "x0": 451.5,
             "x1": 887,
             "y0": 0,
             "y1": 150,
@@ -485,16 +485,8 @@
               150
             ],
             [
-              444,
-              150
-            ],
-            [
-              444,
-              50
-            ],
-            [
               451.5,
-              50
+              150
             ],
             [
               451.5,
@@ -869,7 +861,85 @@
           ]
         },
         "features": {},
-        "faceFeatures": {}
+        "faceFeatures": {
+          "V0.A.c1-door-door-shelf-V0-right": {
+            "u0": 78.667,
+            "u1": 175.333,
+            "v0": 439.5,
+            "v1": 455.5,
+            "depth": 16
+          },
+          "V1.B.c1-door-door-shelf-V1-left": {
+            "u0": 78.667,
+            "u1": 175.333,
+            "v0": 439.5,
+            "v1": 455.5,
+            "depth": 7.5
+          },
+          "V1.B.k-col-2-c2-drawer-bottom-V1-screw-1": {
+            "diameter": 3,
+            "cx": 75,
+            "cy": 580
+          },
+          "V2.B.k-col-2-c2-drawer-bottom-V2-left": {
+            "u0": 45,
+            "u1": 155,
+            "v0": 572,
+            "v1": 588,
+            "depth": 15
+          },
+          "c1-door-door-shelf.A.c1-door-door-shelf-left-strip-notch": {
+            "u0": 15,
+            "u1": 31,
+            "v0": 0,
+            "v1": 85
+          },
+          "c1-door-front-panel.A.c1-door-front-panel-hinge-1": {
+            "diameter": 35,
+            "depth": 12.5,
+            "cx": 22.5,
+            "cy": 722.5
+          },
+          "c1-door-front-panel.A.c1-door-front-panel-hinge-2": {
+            "diameter": 35,
+            "depth": 12.5,
+            "cx": 22.5,
+            "cy": 100
+          },
+          "c1-door-front-panel.A.c1-door-front-panel-lock": {
+            "u0": 316.75,
+            "u1": 371.75,
+            "v0": 771.75,
+            "v1": 787.25,
+            "radius": 7.75
+          },
+          "c2-drawer-front-panel.A.c2-drawer-front-panel-lock": {
+            "u0": 192.125,
+            "u1": 247.125,
+            "v0": 245.5,
+            "v1": 261,
+            "radius": 7.75
+          },
+          "c2-door-front-panel.A.c2-door-front-panel-hinge-1": {
+            "diameter": 35,
+            "depth": 12.5,
+            "cx": 416.75,
+            "cy": 430.104
+          },
+          "c2-door-front-panel.A.c2-door-front-panel-hinge-2": {
+            "diameter": 35,
+            "depth": 12.5,
+            "cx": 416.75,
+            "cy": 93.646
+          },
+          "c2-door-front-panel.A.c2-door-front-panel-lock": {
+            "u0": 52.5,
+            "u1": 107.5,
+            "v0": 479.25,
+            "v1": 494.75,
+            "radius": 7.75
+          }
+        }
       }
     }
   ]

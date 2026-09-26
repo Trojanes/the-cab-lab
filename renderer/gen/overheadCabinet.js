@@ -1060,9 +1060,173 @@ function faceRef(board, faces) {
 
 // generators/_lib/finish.ts
 var DEFAULT_DOOR_COLOUR = "Gloss White";
+var DEFAULT_CARCASS_COLOUR = "White Stipple";
 function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+function doorSidesOf(params) {
+  return params && params.doorSides === "double" ? "double" : "single";
+}
+function carcassColourOf(params) {
+  const name = params && String(params.carcassColorName || "").trim();
+  if (name) return name;
+  const raw = params && String(params.carcassColor || "").trim();
+  return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
+}
+var bigFaces = (b) => (b.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
+function applyDoorSides(boards, params) {
+  const sides = doorSidesOf(params);
+  const carcass = carcassColourOf(params);
+  for (const b of boards) {
+    if (b.stock?.kind !== "door") continue;
+    const faces = bigFaces(b);
+    const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
+    if (!front) continue;
+    const back = faces.find((f) => f !== front);
+    if (!back) continue;
+    const { grain: _drop, ...rest } = back.finish ?? {};
+    back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
+    b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
+  }
+}
+
+// generators/_lib/grain.ts
+var SHEET_CROSS_MAX_MM = 1180;
+var SHEET_ALONG_MAX_MM = 2380;
+var PLANE_AXES = { XZ: ["x", "z"], YZ: ["y", "z"], XY: ["x", "y"] };
+var WORD = { x: "wide", y: "deep", z: "high" };
+function isDir(v) {
+  return v === "horizontal" || v === "vertical";
+}
+function grainOf(params, group, defaults) {
+  const stored = params && params.grain && typeof params.grain === "object" ? params.grain[group] : void 0;
+  return isDir(stored) ? stored : defaults[group] ?? "horizontal";
+}
+function grainChecked(params) {
+  return !!params && params.doorSeries === "hpl";
+}
+function colourFacesOf(b) {
+  return (b.faces ?? []).filter((f) => (f.id === "A" || f.id === "B") && f.finish?.colour);
+}
+var round1 = (v) => Math.round(v * 10) / 10;
+function applyGrain(boards, groupOf, params, defaults) {
+  const checked = grainChecked(params);
+  const groups = {};
+  for (const g of Object.keys(defaults)) groups[g] = grainOf(params, g, defaults);
+  const issues = [];
+  const present = /* @__PURE__ */ new Set();
+  for (const b of boards) {
+    const group = groupOf(b);
+    if (!group) continue;
+    const faces = colourFacesOf(b);
+    if (!faces.length) continue;
+    const dir = grainOf(params, group, defaults);
+    groups[group] = dir;
+    present.add(group);
+    const key = dir === "horizontal" ? "u" : "v";
+    for (const f of faces) f.finish = { ...f.finish, grain: key };
+    if (!checked) continue;
+    const [U, V] = PLANE_AXES[b.profilePlane] ?? PLANE_AXES.XY;
+    const alongAxis = key === "u" ? U : V;
+    const acrossAxis = key === "u" ? V : U;
+    const len = (a) => round1(b[`${a}1`] - b[`${a}0`]);
+    const across = len(acrossAxis);
+    const along = len(alongAxis);
+    if (across > SHEET_CROSS_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "across",
+        length: across,
+        word: WORD[acrossAxis],
+        limit: SHEET_CROSS_MAX_MM,
+        message: `${b.id} is ${across} ${WORD[acrossAxis]}: ${dir} grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+    if (along > SHEET_ALONG_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "along",
+        length: along,
+        word: WORD[alongAxis],
+        limit: SHEET_ALONG_MAX_MM,
+        message: `${b.id} is ${along} ${WORD[alongAxis]}: ${dir} grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+  }
+  return { groups, present: [...present], checked, issues };
+}
+
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
 }
 
 // generators/_lib/edgeBand.ts
@@ -1089,7 +1253,7 @@ function setEdgeBand(b, i, band) {
 }
 
 // generators/overheadCabinet/faces.ts
-var EPS = 0.01;
+var EPS2 = 0.01;
 function byId(boards) {
   return new Map(boards.map((b) => [b.id, b]));
 }
@@ -1177,14 +1341,14 @@ function buildOverheadFaces(fb) {
     const [tongueY0, tongueY1] = df.divider_tongue.y;
     const tongueH = Math.abs(df.divider_tongue.z[0] - df.divider_tongue.z[1]);
     const zTop = d.z1 - d.z0;
-    tagEdges(d, "tongue", { u0: tongueY0 - d.y0 - EPS, u1: tongueY1 - d.y0 + EPS, v0: -tongueH - EPS, v1: -EPS }, {
+    tagEdges(d, "tongue", { u0: tongueY0 - d.y0 - EPS2, u1: tongueY1 - d.y0 + EPS2, v0: -tongueH - EPS2, v1: -EPS2 }, {
       id: `${df.id}_TONGUE`,
       for: onRangehood ? "RGHD_TOP" : "BP",
       source: "overhead"
     });
     if (B.has("T3")) {
       const frontStepY1 = RULES.FRONT_TOP_NOTCH_Y_OFFSET_MM.value + RULES.FRONT_TOP_STEP_Y_MM.value;
-      tagEdges(d, "notch", { u0: -EPS, u1: frontStepY1 + EPS, v0: zTop - tch - slot - EPS, v1: zTop - tch + EPS }, {
+      tagEdges(d, "notch", { u0: -EPS2, u1: frontStepY1 + EPS2, v0: zTop - tch - slot - EPS2, v1: zTop - tch + EPS2 }, {
         id: `${df.id}_T3_STEP`,
         for: "T3",
         source: "overhead"
@@ -1192,7 +1356,7 @@ function buildOverheadFaces(fb) {
     }
     if (B.has("T4")) {
       const rearNotchH = RULES.T4_HEIGHT_MM.value - cpt;
-      tagEdges(d, "notch", { u0: d.y1 - d.y0 - slot - EPS, u1: d.y1 - d.y0 + EPS, v0: zTop - rearNotchH - EPS, v1: zTop - EPS }, {
+      tagEdges(d, "notch", { u0: d.y1 - d.y0 - slot - EPS2, u1: d.y1 - d.y0 + EPS2, v0: zTop - rearNotchH - EPS2, v1: zTop - EPS2 }, {
         id: `${df.id}_T4_NOTCH`,
         for: "T4",
         source: "overhead"
@@ -1325,14 +1489,14 @@ function buildOverheadFaces(fb) {
     const b = B.get(decl.targetPanelId);
     if (!a || !b) continue;
     if (decl.relationshipType === "face_contact") {
-      const fa = faceOf(a, a.y1 <= b.y0 + EPS ? "A" : "B");
+      const fa = faceOf(a, a.y1 <= b.y0 + EPS2 ? "A" : "B");
       const fbk = faceOf(b, fa.id === "A" ? "B" : "A");
       joints.push(joint(decl.declarationId, "face_contact", faceRef(a.id, [fa]), faceRef(b.id, [fbk]), { hardware: decl.allowedHardware, rule: decl.ruleId }));
       continue;
     }
     if (a.id === "BP") {
       if (b.category === "divider") {
-        const bottom = edgeFacesIn(b, { u0: -EPS, u1: b.y1 - b.y0 + EPS, v0: -EPS, v1: EPS });
+        const bottom = edgeFacesIn(b, { u0: -EPS2, u1: b.y1 - b.y0 + EPS2, v0: -EPS2, v1: EPS2 });
         joints.push(joint(decl.declarationId, "tongue_groove", faceRef("BP", ["A"]), faceRef(b.id, bottom), { hardware: decl.allowedHardware, rule: decl.ruleId }));
       } else {
         joints.push(joint(decl.declarationId, "butt", faceRef("BP", boundaryEdgeFaces(a, "-Y")), faceRef(b.id, ["A"]), { hardware: decl.allowedHardware, rule: decl.ruleId }));
@@ -2020,9 +2184,14 @@ function generateOverheadCabinetInner(rawParams) {
     carcassColorName: carcassColor.carcassColorName,
     doorColour: doorColourOf(rawParams)
   });
+  const grain = applyGrain(boards, (b) => b.stock?.kind === "door" ? "front" : null, rawParams, { front: "horizontal" });
+  applyDoorSides(boards, { ...rawParams, carcassColorName: carcassColor.carcassColorName });
+  const milling = applyMilling(boards);
   return {
     params: resolvedParams(),
     boards,
+    grain,
+    milling,
     features: [
       ...dividerFeatures,
       ...geometry.front_panels,

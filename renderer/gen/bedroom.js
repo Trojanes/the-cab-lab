@@ -454,8 +454,8 @@ function normalizeOhcZones(raw, opening) {
   }
   const scale = total / sum;
   const out = given.map((z, i) => ({ id: z.id || `ohc-${i + 1}`, width: round12(z.width * scale) }));
-  const partial = out.slice(0, -1).reduce((s, z) => s + z.width, 0);
-  out[out.length - 1].width = round12(total - partial);
+  const partial2 = out.slice(0, -1).reduce((s, z) => s + z.width, 0);
+  out[out.length - 1].width = round12(total - partial2);
   return out;
 }
 function setOhcBoundary(raw, index, x) {
@@ -780,6 +780,172 @@ function board(id, name, category, profilePlane, thicknessAxis, materialThicknes
   };
 }
 
+// generators/_lib/grain.ts
+var SHEET_CROSS_MAX_MM = 1180;
+var SHEET_ALONG_MAX_MM = 2380;
+var PLANE_AXES = { XZ: ["x", "z"], YZ: ["y", "z"], XY: ["x", "y"] };
+var WORD = { x: "wide", y: "deep", z: "high" };
+function isDir(v) {
+  return v === "horizontal" || v === "vertical";
+}
+function grainOf(params, group, defaults) {
+  const stored = params && params.grain && typeof params.grain === "object" ? params.grain[group] : void 0;
+  return isDir(stored) ? stored : defaults[group] ?? "horizontal";
+}
+function grainChecked(params) {
+  return !!params && params.doorSeries === "hpl";
+}
+function colourFacesOf(b) {
+  return (b.faces ?? []).filter((f) => (f.id === "A" || f.id === "B") && f.finish?.colour);
+}
+var round13 = (v) => Math.round(v * 10) / 10;
+function applyGrain(boards, groupOf, params, defaults) {
+  const checked = grainChecked(params);
+  const groups = {};
+  for (const g of Object.keys(defaults)) groups[g] = grainOf(params, g, defaults);
+  const issues = [];
+  const present = /* @__PURE__ */ new Set();
+  for (const b of boards) {
+    const group = groupOf(b);
+    if (!group) continue;
+    const faces = colourFacesOf(b);
+    if (!faces.length) continue;
+    const dir = grainOf(params, group, defaults);
+    groups[group] = dir;
+    present.add(group);
+    const key = dir === "horizontal" ? "u" : "v";
+    for (const f of faces) f.finish = { ...f.finish, grain: key };
+    if (!checked) continue;
+    const [U, V] = PLANE_AXES[b.profilePlane] ?? PLANE_AXES.XY;
+    const alongAxis = key === "u" ? U : V;
+    const acrossAxis = key === "u" ? V : U;
+    const len = (a) => round13(b[`${a}1`] - b[`${a}0`]);
+    const across = len(acrossAxis);
+    const along = len(alongAxis);
+    if (across > SHEET_CROSS_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "across",
+        length: across,
+        word: WORD[acrossAxis],
+        limit: SHEET_CROSS_MAX_MM,
+        message: `${b.id} is ${across} ${WORD[acrossAxis]}: ${dir} grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+    if (along > SHEET_ALONG_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "along",
+        length: along,
+        word: WORD[alongAxis],
+        limit: SHEET_ALONG_MAX_MM,
+        message: `${b.id} is ${along} ${WORD[alongAxis]}: ${dir} grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+  }
+  return { groups, present: [...present], checked, issues };
+}
+
+// generators/_lib/finish.ts
+var DEFAULT_CARCASS_COLOUR = "White Stipple";
+function doorSidesOf(params) {
+  return params && params.doorSides === "double" ? "double" : "single";
+}
+function carcassColourOf(params) {
+  const name = params && String(params.carcassColorName || "").trim();
+  if (name) return name;
+  const raw = params && String(params.carcassColor || "").trim();
+  return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
+}
+var bigFaces = (b) => (b.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
+function applyDoorSides(boards, params) {
+  const sides = doorSidesOf(params);
+  const carcass = carcassColourOf(params);
+  for (const b of boards) {
+    if (b.stock?.kind !== "door") continue;
+    const faces = bigFaces(b);
+    const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
+    if (!front) continue;
+    const back = faces.find((f) => f !== front);
+    if (!back) continue;
+    const { grain: _drop, ...rest } = back.finish ?? {};
+    back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
+    b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
+  }
+}
+
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS3 = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS3) return "B";
+  if (material(top) < material(bottom) - EPS3) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
+}
+
 // generators/_lib/preview.ts
 var PV = {
   bg: "#1d2025",
@@ -1017,7 +1183,7 @@ function generateBedroomSvgPreview(result, options = {}) {
 // generators/bedroom/generator.ts
 var DEFAULT_CPT = 16;
 var DEFAULT_COLOR = "White Stipple";
-var EPS3 = 1e-6;
+var EPS4 = 1e-6;
 var LAYOUT_KEYS = ["bootHeight", "wardrobeWidth", "ohcBottom", "fixedPanelTop"];
 var WARDROBE_STYLES = {
   style1: { label: "Style 1 \xB7 door over a fixed panel", layoutKey: "fixedPanelTop" },
@@ -1026,14 +1192,14 @@ var WARDROBE_STYLES = {
 function normalizeStyle(raw) {
   return raw != null && Object.prototype.hasOwnProperty.call(WARDROBE_STYLES, String(raw)) ? String(raw) : "style1";
 }
-function round13(v) {
+function round14(v) {
   return Math.round(v * 10) / 10;
 }
 function nookCutReach() {
   const cy = RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Y_MM.value;
   const cz = RULES.WARDROBE_NOOK_CUT_LOWER_CENTER_Z_MM.value;
   const rad = RULES.WARDROBE_NOOK_CUT_LOWER_RADIUS_MM.value;
-  return round13(cy + Math.sqrt(rad * rad - cz * cz));
+  return round14(cy + Math.sqrt(rad * rad - cz * cz));
 }
 function nookCutPath(bottomZ, topZ) {
   const uy = RULES.WARDROBE_NOOK_CUT_UPPER_CENTER_Y_MM.value;
@@ -1052,16 +1218,16 @@ function nookCutPath(bottomZ, topZ) {
     const out = [];
     for (let i = 1; i < n; i += 1) {
       const a = a0 + span * i / n;
-      out.push({ y: round13(cy + rad * Math.sin(a)), z: round13(cz + rad * Math.cos(a)) });
+      out.push({ y: round14(cy + rad * Math.sin(a)), z: round14(cz + rad * Math.cos(a)) });
     }
     return out;
   };
   return [
-    { y: round13(uy), z: round13(topZ) },
+    { y: round14(uy), z: round14(topZ) },
     ...samples(uy, uz, ur, 0, ang(uy, uz, meet[0], meet[1])),
-    { y: round13(meet[0]), z: round13(meet[1]) },
+    { y: round14(meet[0]), z: round14(meet[1]) },
     ...samples(ly, lz, lr, ang(ly, lz, meet[0], meet[1]), ang(ly, lz, floorY, bottomZ)),
-    { y: round13(floorY), z: round13(bottomZ) }
+    { y: round14(floorY), z: round14(bottomZ) }
   ];
 }
 function circleMeet(y1, z1, r1, y2, z2, r2) {
@@ -1098,7 +1264,7 @@ function normalizeProfile(raw, depth, height) {
   for (const p of raw) {
     const y = Number(Array.isArray(p) ? p[0] : NaN);
     const z = Number(Array.isArray(p) ? p[1] : NaN);
-    if (Number.isFinite(y) && Number.isFinite(z)) pts.push([round13(Math.max(0, Math.min(depth, y))), round13(Math.max(0, z))]);
+    if (Number.isFinite(y) && Number.isFinite(z)) pts.push([round14(Math.max(0, Math.min(depth, y))), round14(Math.max(0, z))]);
   }
   pts.sort((a, b) => a[0] - b[0]);
   if (!pts.length || pts[0][0] > 0) pts.unshift([0, pts.length ? pts[0][1] : height]);
@@ -1113,104 +1279,104 @@ function topLine(profile, depth, height, zTop) {
     const [y1, z1] = profile[i + 1];
     if ((z0 - zTop) * (z1 - zTop) < 0) {
       const y = y0 + (zTop - z0) * (y1 - y0) / (z1 - z0);
-      if (y > 0 && y < depth) ys.add(round13(y));
+      if (y > 0 && y < depth) ys.add(round14(y));
     }
   }
-  return [...ys].sort((a, b) => a - b).map((y) => ({ y, z: round13(Math.min(zTop, roofAt(profile, height, y))) }));
+  return [...ys].sort((a, b) => a - b).map((y) => ({ y, z: round14(Math.min(zTop, roofAt(profile, height, y))) }));
 }
 function sectionYZ(profile, depth, height, z0, zTop) {
   const top = topLine(profile, depth, height, zTop);
   const kept = [];
   for (let i = 0; i < top.length; i += 1) {
     const p = top[i];
-    if (p.z > z0 + EPS3) {
+    if (p.z > z0 + EPS4) {
       kept.push(p);
       continue;
     }
     if (kept.length) {
       const a = top[i - 1];
-      const y = a.z - p.z < EPS3 ? p.y : a.y + (a.z - z0) * (p.y - a.y) / (a.z - p.z);
-      kept.push({ y: round13(y), z: round13(z0) });
+      const y = a.z - p.z < EPS4 ? p.y : a.y + (a.z - z0) * (p.y - a.y) / (a.z - p.z);
+      kept.push({ y: round14(y), z: round14(z0) });
     }
     break;
   }
   if (!kept.length) return null;
   const yEnd = kept[kept.length - 1].y;
-  const out = [{ y: 0, z: round13(z0) }, { y: yEnd, z: round13(z0) }];
+  const out = [{ y: 0, z: round14(z0) }, { y: yEnd, z: round14(z0) }];
   for (let i = kept.length - 1; i >= 0; i -= 1) {
     const p = kept[i];
     const last = out[out.length - 1];
-    if (Math.abs(last.y - p.y) > EPS3 || Math.abs(last.z - p.z) > EPS3) out.push(p);
+    if (Math.abs(last.y - p.y) > EPS4 || Math.abs(last.z - p.z) > EPS4) out.push(p);
   }
-  out.push({ y: 0, z: round13(z0) });
+  out.push({ y: 0, z: round14(z0) });
   return out;
 }
 function sectionDepth(outline) {
   return outline ? Math.max(...outline.map((p) => p.y)) : 0;
 }
 function resolve(raw) {
-  const W = round13(asNum(raw.width, 0));
-  const D = round13(asNum(raw.depth, 0));
-  const H = round13(asNum(raw.height, 0));
+  const W = round14(asNum(raw.width, 0));
+  const D = round14(asNum(raw.depth, 0));
+  const H = round14(asNum(raw.height, 0));
   return {
     width: W,
     depth: D,
     height: H,
     roofProfile: normalizeProfile(raw.roofProfile, D, H),
-    bootHeight: round13(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)),
-    wardrobeWidth: round13(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value)),
-    ohcBottom: round13(asNum(raw.ohcBottom, RULES.OHC_BOTTOM_DEFAULT_MM.value)),
+    bootHeight: round14(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)),
+    wardrobeWidth: round14(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value)),
+    ohcBottom: round14(asNum(raw.ohcBottom, RULES.OHC_BOTTOM_DEFAULT_MM.value)),
     style: normalizeStyle(raw.style),
-    fixedPanelTop: round13(asNum(raw.fixedPanelTop, RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value)),
-    nookShelfBottom: nookWardrobeBottom({ bootHeight: round13(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)) }),
+    fixedPanelTop: round14(asNum(raw.fixedPanelTop, RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value)),
+    nookShelfBottom: nookWardrobeBottom({ bootHeight: round14(asNum(raw.bootHeight, RULES.BOOT_HEIGHT_DEFAULT_MM.value)) }),
     ledGroove: raw.ledGroove !== false,
     bedFrame: normalizeBedFrame(raw.bedFrame),
-    panelThickness: round13(asNum(raw.panelThickness, DEFAULT_CPT)),
-    doorPanelThickness: round13(asNum(raw.doorPanelThickness, RULES.DOOR_PANEL_THICKNESS_DEFAULT_MM.value)),
-    frontPanelThickness: round13(asNum(raw.frontPanelThickness, 0)),
+    panelThickness: round14(asNum(raw.panelThickness, DEFAULT_CPT)),
+    doorPanelThickness: round14(asNum(raw.doorPanelThickness, RULES.DOOR_PANEL_THICKNESS_DEFAULT_MM.value)),
+    frontPanelThickness: round14(asNum(raw.frontPanelThickness, 0)),
     carcassColor: String(raw.carcassColor || DEFAULT_COLOR),
     doorColor: String(raw.doorColorName || raw.doorColor || DEFAULT_COLOR),
-    ohcZones: normalizeOhcZones(raw.ohcZones, round13(W - 2 * round13(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value))))
+    ohcZones: normalizeOhcZones(raw.ohcZones, round14(W - 2 * round14(asNum(raw.wardrobeWidth, RULES.WARDROBE_WIDTH_DEFAULT_MM.value))))
   };
 }
 function layoutLimits(raw, key) {
   const p = resolve(raw);
   switch (key) {
     case "bootHeight":
-      return { min: RULES.BOOT_HEIGHT_MIN_MM.value, max: round13(p.ohcBottom - RULES.OPENING_HEIGHT_MIN_MM.value) };
+      return { min: RULES.BOOT_HEIGHT_MIN_MM.value, max: round14(p.ohcBottom - RULES.OPENING_HEIGHT_MIN_MM.value) };
     case "ohcBottom":
-      return { min: round13(p.bootHeight + RULES.OPENING_HEIGHT_MIN_MM.value), max: round13(p.height - RULES.OHC_HEIGHT_MIN_MM.value) };
+      return { min: round14(p.bootHeight + RULES.OPENING_HEIGHT_MIN_MM.value), max: round14(p.height - RULES.OHC_HEIGHT_MIN_MM.value) };
     case "wardrobeWidth":
-      return { min: RULES.WARDROBE_WIDTH_MIN_MM.value, max: round13((p.width - bedFrameWidth(p.bedFrame)) / 2) };
+      return { min: RULES.WARDROBE_WIDTH_MIN_MM.value, max: round14((p.width - bedFrameWidth(p.bedFrame)) / 2) };
     case "fixedPanelTop": {
       const floor = wardrobeFloorTop(p);
       const doorTop = t3TopOf(p);
       return {
-        min: round13(floor + RULES.WARDROBE_FIXED_PANEL_MIN_MM.value),
-        max: round13(doorTop - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - RULES.WARDROBE_DOOR_MIN_MM.value)
+        min: round14(floor + RULES.WARDROBE_FIXED_PANEL_MIN_MM.value),
+        max: round14(doorTop - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - RULES.WARDROBE_DOOR_MIN_MM.value)
       };
     }
   }
 }
 function wardrobeFloorTop(p) {
-  return round13(p.bootHeight + RULES.WARDROBE_FLOOR_RAISE_MM.value);
+  return round14(p.bootHeight + RULES.WARDROBE_FLOOR_RAISE_MM.value);
 }
 function nookWardrobeBottom(p) {
-  return round13(wardrobeFloorTop(p) + RULES.WARDROBE_NOOK_CUT_HEIGHT_MM.value);
+  return round14(wardrobeFloorTop(p) + RULES.WARDROBE_NOOK_CUT_HEIGHT_MM.value);
 }
 function t3TopOf(p) {
-  return round13(roofAt(p.roofProfile, p.height, RULES.WARDROBE_T2_BACK_MM.value) - RULES.WARDROBE_T2_HEIGHT_MM.value - RULES.WARDROBE_T3_CLEARANCE_MM.value);
+  return round14(roofAt(p.roofProfile, p.height, RULES.WARDROBE_T2_BACK_MM.value) - RULES.WARDROBE_T2_HEIGHT_MM.value - RULES.WARDROBE_T3_CLEARANCE_MM.value);
 }
 function setLayout(raw, key, value) {
   const { min, max } = layoutLimits(raw, key);
-  const v = round13(Math.max(min, Math.min(max, Number(value))));
+  const v = round14(Math.max(min, Math.min(max, Number(value))));
   if (raw[key] === v) return raw;
   const next = { ...raw, [key]: v };
   const own = WARDROBE_STYLES[normalizeStyle(next.style)].layoutKey;
   if (own && key !== own) {
     const lim = layoutLimits(next, own);
-    const cur = round13(asNum(next[own], RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
-    const clamped = round13(Math.max(lim.min, Math.min(lim.max, cur)));
+    const cur = round14(asNum(next[own], RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value));
+    const clamped = round14(Math.max(lim.min, Math.min(lim.max, cur)));
     if (clamped !== cur) next[own] = clamped;
   }
   return next;
@@ -1255,7 +1421,7 @@ function generateBedroom(raw) {
   dim("bedBox.x0", { W: P.W, bed: ref("bedBox.W") }, (t) => (t.W - t.bed) / 2);
   dim("bedBox.x1", { x0: ref("bedBox.x0"), bed: ref("bedBox.W") }, (t) => t.x0 + t.bed);
   const bedMargin = dim("layout.bedMargin", { opening: ref("layout.openingWidth"), bed: ref("bedBox.W") }, (t) => (t.opening - t.bed) / 2);
-  const roofMin = round13(Math.min(...profile.map((q) => q[1])));
+  const roofMin = round14(Math.min(...profile.map((q) => q[1])));
   if (W < 600) errors.push("width must be at least 600 mm");
   if (D < 300) errors.push("depth must be at least 300 mm");
   if (H < 600) errors.push("height must be at least 600 mm");
@@ -1264,20 +1430,20 @@ function generateBedroom(raw) {
   const lim = (key) => layoutLimits(p, key);
   if (p.bootHeight < lim("bootHeight").min) errors.push(`tunnel boot ${p.bootHeight} is lower than ${RULES.BOOT_HEIGHT_MIN_MM.value} mm`);
   if (p.wardrobeWidth < lim("wardrobeWidth").min) errors.push(`wardrobe ${p.wardrobeWidth} is narrower than ${RULES.WARDROBE_WIDTH_MIN_MM.value} mm`);
-  if (openingW < bedW - EPS3) errors.push(`the wardrobes leave only ${round13(openingW)} mm between them \u2014 the ${BED_FRAMES[p.bedFrame].label.toLowerCase()} bed frame needs ${bedW}`);
-  if (openingH < RULES.OPENING_HEIGHT_MIN_MM.value) errors.push(`only ${round13(openingH)} mm between the boot deck and the overhead (min ${RULES.OPENING_HEIGHT_MIN_MM.value})`);
-  if (ohcH < RULES.OHC_HEIGHT_MIN_MM.value) errors.push(`overhead is only ${round13(ohcH)} mm high at the room face (min ${RULES.OHC_HEIGHT_MIN_MM.value})`);
+  if (openingW < bedW - EPS4) errors.push(`the wardrobes leave only ${round14(openingW)} mm between them \u2014 the ${BED_FRAMES[p.bedFrame].label.toLowerCase()} bed frame needs ${bedW}`);
+  if (openingH < RULES.OPENING_HEIGHT_MIN_MM.value) errors.push(`only ${round14(openingH)} mm between the boot deck and the overhead (min ${RULES.OPENING_HEIGHT_MIN_MM.value})`);
+  if (ohcH < RULES.OHC_HEIGHT_MIN_MM.value) errors.push(`overhead is only ${round14(ohcH)} mm high at the room face (min ${RULES.OHC_HEIGHT_MIN_MM.value})`);
   for (const bay of p.ohcZones) {
-    if (bay.width < RULES.OHC_ZONE_MIN_MM.value - EPS3) errors.push(`overhead bay ${bay.width} is narrower than ${RULES.OHC_ZONE_MIN_MM.value} mm`);
+    if (bay.width < RULES.OHC_ZONE_MIN_MM.value - EPS4) errors.push(`overhead bay ${bay.width} is narrower than ${RULES.OHC_ZONE_MIN_MM.value} mm`);
   }
   if (p.style === "style1") {
     const splitLim = lim("fixedPanelTop");
-    if (p.fixedPanelTop < splitLim.min) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round13(p.fixedPanelTop - wardrobeFloorTop(p))} mm of panel above the wardrobe floor (min ${RULES.WARDROBE_FIXED_PANEL_MIN_MM.value})`);
-    if (p.fixedPanelTop > splitLim.max) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round13(t3TopOf(p) - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - p.fixedPanelTop)} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
+    if (p.fixedPanelTop < splitLim.min) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round14(p.fixedPanelTop - wardrobeFloorTop(p))} mm of panel above the wardrobe floor (min ${RULES.WARDROBE_FIXED_PANEL_MIN_MM.value})`);
+    if (p.fixedPanelTop > splitLim.max) errors.push(`the fixed panel top ${p.fixedPanelTop} leaves only ${round14(t3TopOf(p) - RULES.WARDROBE_DOOR_CLEARANCE_MM.value - p.fixedPanelTop)} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
   }
   if (p.style === "nook") {
     const bottom = nookWardrobeBottom(p);
-    const door = round13(t3TopOf(p) - bottom);
+    const door = round14(t3TopOf(p) - bottom);
     if (door < RULES.WARDROBE_DOOR_MIN_MM.value) errors.push(`the nook wardrobe bottom ${bottom} leaves only ${door} mm of door under T3 (min ${RULES.WARDROBE_DOOR_MIN_MM.value})`);
   }
   const zones = [];
@@ -1288,7 +1454,7 @@ function generateBedroom(raw) {
         errors.push(`${ZONE_LABEL[id]} has no room under the roof`);
         return;
       }
-      zones.push({ id, label: ZONE_LABEL[id], kind, x0: round13(x0), x1: round13(x1), y0: 0, y1: sectionDepth(outline), z0: round13(z0), z1: round13(roofTop ? H : zTop), roofTop, outlineYZ: outline });
+      zones.push({ id, label: ZONE_LABEL[id], kind, x0: round14(x0), x1: round14(x1), y0: 0, y1: sectionDepth(outline), z0: round14(z0), z1: round14(roofTop ? H : zTop), roofTop, outlineYZ: outline });
     };
     region("boot", "solid", 0, W, 0, bootTop, false);
     region("wardrobeL", "solid", 0, wardLx1, bootTop, H, true);
@@ -1296,12 +1462,12 @@ function generateBedroom(raw) {
     region("opening", "void", wardLx1, wardRx0, bootTop, ohcBot, false);
     region("ohc", "solid", wardLx1, wardRx0, ohcBot, H, true);
     const ohcZone = zones.find((z) => z.id === "ohc");
-    if (ohcZone && ohcZone.y1 < 100) warnings.push(`overhead is only ${round13(ohcZone.y1)} mm deep before the roof cuts it off`);
+    if (ohcZone && ohcZone.y1 < 100) warnings.push(`overhead is only ${round14(ohcZone.y1)} mm deep before the roof cuts it off`);
   }
   const boards = [];
   const joints = [];
   const bootZone = zones.find((z) => z.id === "boot");
-  if (!errors.length && bootZone && roofMin < p.bootHeight - EPS3) errors.push(`the roof comes down to ${roofMin} mm at the nose, below the boot deck (${p.bootHeight}) \u2014 the deck cannot run to the nose`);
+  if (!errors.length && bootZone && roofMin < p.bootHeight - EPS4) errors.push(`the roof comes down to ${roofMin} mm at the nose, below the boot deck (${p.bootHeight}) \u2014 the deck cannot run to the nose`);
   if (!errors.length && bootZone) {
     const CPT = P_cpt(p.panelThickness);
     const deckT = RULES.BOOT_DECK_THICKNESS_MM;
@@ -1354,7 +1520,7 @@ function generateBedroom(raw) {
     const DPT = param({ DPT: p.doorPanelThickness }).DPT;
     const roofFn = (y) => roofAt(profile, H, y);
     const t2Back = dim("top.T2.y1", { T2_BACK: RULES.WARDROBE_T2_BACK_MM }, (t) => t.T2_BACK);
-    const roofAtT2 = dim("top.roofAtT2", { y: ref("top.T2.y1") }, (t) => round13(roofFn(t.y)), { formula: "roof(T2.y1)" });
+    const roofAtT2 = dim("top.roofAtT2", { y: ref("top.T2.y1") }, (t) => round14(roofFn(t.y)), { formula: "roof(T2.y1)" });
     const t3Top = dim("top.T3.z1", { roof: ref("top.roofAtT2"), T2H: RULES.WARDROBE_T2_HEIGHT_MM, CL: RULES.WARDROBE_T3_CLEARANCE_MM }, (t) => t.roof - t.T2H - t.CL);
     const seat = dim("top.seat", { t3Top: ref("top.T3.z1"), T3: RULES.WARDROBE_T3_THICKNESS_MM }, (t) => t.t3Top - t.T3);
     const railZ0 = dim("top.rail.z0", { t3Top: ref("top.T3.z1"), CL: RULES.WARDROBE_T3_CLEARANCE_MM }, (t) => t.t3Top + t.CL);
@@ -1364,16 +1530,16 @@ function generateBedroom(raw) {
     const stripY = dim("wallStrip.y1", { D: P.D, STRIP: RULES.WARDROBE_WALL_STRIP_DEPTH_MM }, (t) => Math.min(t.D, t.STRIP));
     dim("top.T2.y0", { y1: ref("top.T2.y1"), T2T: RULES.WARDROBE_T2_THICKNESS_MM }, (t) => t.y1 - t.T2T);
     const t1Y0 = dim("top.T1.y0", { y1: ref("top.T2.y0"), T1T: RULES.WARDROBE_T1_THICKNESS_MM }, (t) => t.y1 - t.T1T);
-    dim("top.roofAtT1", { y: ref("top.T2.y0") }, (t) => round13(roofFn(t.y)), { formula: "roof(T1.y1)" });
+    dim("top.roofAtT1", { y: ref("top.T2.y0") }, (t) => round14(roofFn(t.y)), { formula: "roof(T1.y1)" });
     dim("top.T1.z1", { roof: ref("top.roofAtT1"), OVER: RULES.WARDROBE_T1_OVERSIZE_MM }, (t) => t.roof + t.OVER);
-    const roofAtLip = round13(roofFn(lipY1));
-    top = { seat: round13(seat), t3Top: round13(t3Top), roofAtT2: round13(roofAtT2), t2Height: round13(roofAtT2 - railZ0) };
-    if (seat - p.bootHeight < RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value) errors.push(`the roof at the T2 back (${round13(roofAtT2)}) leaves only ${round13(seat - p.bootHeight)} mm of colour panel above the boot deck (min ${RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value})`);
-    if (roofAtLip <= railZ0 + EPS3) errors.push(`the roof comes down to ${roofAtLip} mm at the T3 pocket end \u2014 no room for the panel above the pocket`);
-    if (t3Depth > D - EPS3) errors.push(`T3 depth ${round13(t3Depth)} is more than the body depth ${D}`);
-    if (stripY <= lipY1 + EPS3) errors.push(`the wall strip depth ${round13(stripY)} does not reach past the T3 pocket`);
-    if (round13(roofFn(stripY)) <= p.bootHeight + EPS3) errors.push(`the roof comes down to ${round13(roofFn(stripY))} mm at the wall strip's back, below the boot deck`);
-    if (t1Y0 < EPS3) errors.push("the top rails do not fit in front of the T2 back");
+    const roofAtLip = round14(roofFn(lipY1));
+    top = { seat: round14(seat), t3Top: round14(t3Top), roofAtT2: round14(roofAtT2), t2Height: round14(roofAtT2 - railZ0) };
+    if (seat - p.bootHeight < RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value) errors.push(`the roof at the T2 back (${round14(roofAtT2)}) leaves only ${round14(seat - p.bootHeight)} mm of colour panel above the boot deck (min ${RULES.WARDROBE_PANEL_MIN_HEIGHT_MM.value})`);
+    if (roofAtLip <= railZ0 + EPS4) errors.push(`the roof comes down to ${roofAtLip} mm at the T3 pocket end \u2014 no room for the panel above the pocket`);
+    if (t3Depth > D - EPS4) errors.push(`T3 depth ${round14(t3Depth)} is more than the body depth ${D}`);
+    if (stripY <= lipY1 + EPS4) errors.push(`the wall strip depth ${round14(stripY)} does not reach past the T3 pocket`);
+    if (round14(roofFn(stripY)) <= p.bootHeight + EPS4) errors.push(`the roof comes down to ${round14(roofFn(stripY))} mm at the wall strip's back, below the boot deck`);
+    if (t1Y0 < EPS4) errors.push("the top rails do not fit in front of the T2 back");
     if (!errors.length) warnings.push(`T1 is cut ${RULES.WARDROBE_T1_OVERSIZE_MM.value} mm above the roof by design \u2014 trim to the roof on site`);
     const nookOn = p.style === "nook";
     dim("front.floor.z1", { boot: ref("boot.z1"), RAISE: RULES.WARDROBE_FLOOR_RAISE_MM }, (t) => t.boot + t.RAISE);
@@ -1382,7 +1548,7 @@ function generateBedroom(raw) {
       dim("nook.z1", { floor: ref("front.floor.z1"), H: RULES.WARDROBE_NOOK_CUT_HEIGHT_MM }, (t) => t.floor + t.H);
       const reach = nookCutReach();
       dim("nook.cut.floorY", { reach }, (t) => t.reach, { formula: "lower arc meets the cut bottom" });
-      if (reach > D - EPS3) errors.push(`the nook cut reaches ${reach} mm back and the body is only ${D} deep`);
+      if (reach > D - EPS4) errors.push(`the nook cut reaches ${reach} mm back and the body is only ${D} deep`);
     }
     if (!errors.length) {
       const panelOutline = (id) => {
@@ -1390,9 +1556,9 @@ function generateBedroom(raw) {
         const bootZ = ref("boot.z1");
         o.add(lit(0), ex({ bootZ }, (t) => t.bootZ));
         o.add(ex({ D: P.D }, (t) => t.D), ex({ bootZ }, (t) => t.bootZ));
-        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS3 && y < D - EPS3).sort((a, b) => b - a);
-        o.add(ex({ D: P.D }, (t) => t.D), ex({ D: P.D }, (t) => round13(roofFn(t.D)), "roof(D)"));
-        for (const y of breaks) o.add(lit(round13(y)), ex({ y }, (t) => round13(roofFn(t.y)), `roof(${round13(y)})`));
+        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS4 && y < D - EPS4).sort((a, b) => b - a);
+        o.add(ex({ D: P.D }, (t) => t.D), ex({ D: P.D }, (t) => round14(roofFn(t.D)), "roof(D)"));
+        for (const y of breaks) o.add(lit(round14(y)), ex({ y }, (t) => round14(roofFn(t.y)), `roof(${round14(y)})`));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ roof: ref("top.roofAtT2") }, (t) => t.roof));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
@@ -1403,7 +1569,7 @@ function generateBedroom(raw) {
           for (const pt of nookCutPath(ref("nook.z0").value, ref("nook.z1").value)) o.add(lit(pt.y), lit(pt.z));
           o.add(lit(0), ex({ z: ref("nook.z0") }, (t) => t.z));
         }
-        return o.points.map(([py, pz]) => ({ y: round13(py), z: round13(pz) }));
+        return o.points.map(([py, pz]) => ({ y: round14(py), z: round14(pz) }));
       };
       const panelBox = (id, side) => {
         const outline = panelOutline(id);
@@ -1431,9 +1597,9 @@ function generateBedroom(raw) {
         same("nook.shelf.z0", "nook.z1");
         dim("nook.shelf.z1", { z0: ref("nook.shelf.z0"), CPT }, (t) => t.z0 + t.CPT);
         dim("nook.shelf.y1", { D: P.D, GAP: RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM, z: ref("nook.shelf.z1") }, (t) => yWhereRoofMeets(roofFn, t.D - t.GAP, t.z), { formula: "min(D - GAP, y where roof = shelf top)" });
-        if (ref("nook.base.y1").value < 50) errors.push(`the roof comes down to ${round13(roofFn(0))} mm at the room face, below the wardrobe floor (${round13(ref("front.floor.z1").value)})`);
-        if (ref("nook.shelf.y1").value < 50) errors.push(`the roof comes down to ${round13(roofFn(0))} mm at the room face \u2014 the nook shelf (${round13(ref("nook.shelf.z1").value)}) does not fit under it`);
-        else if (ref("nook.shelf.y1").value < D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - 0.5) warnings.push(`the nook shelf stops at ${round13(ref("nook.shelf.y1").value)} where the roof meets it, ${round13(D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - ref("nook.shelf.y1").value)} mm short of the ${RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value} mm nose gap`);
+        if (ref("nook.base.y1").value < 50) errors.push(`the roof comes down to ${round14(roofFn(0))} mm at the room face, below the wardrobe floor (${round14(ref("front.floor.z1").value)})`);
+        if (ref("nook.shelf.y1").value < 50) errors.push(`the roof comes down to ${round14(roofFn(0))} mm at the room face \u2014 the nook shelf (${round14(ref("nook.shelf.z1").value)}) does not fit under it`);
+        else if (ref("nook.shelf.y1").value < D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - 0.5) warnings.push(`the nook shelf stops at ${round14(ref("nook.shelf.y1").value)} where the roof meets it, ${round14(D - RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value - ref("nook.shelf.y1").value)} mm short of the ${RULES.WARDROBE_NOOK_SHELF_NOSE_GAP_MM.value} mm nose gap`);
       }
       const stripZ0Key = nookOn ? "nook.shelf.z1" : "boot.z1";
       if (shelfOn) {
@@ -1449,7 +1615,7 @@ function generateBedroom(raw) {
         dim("shelf.tongue.depth", { DPT, TIP: RULES.WARDROBE_SHELF_TONGUE_TIP_MM }, (t) => t.DPT / 2 - t.TIP);
         dim("shelf.groove.depth", { tongue: ref("shelf.tongue.depth"), EXTRA: RULES.WARDROBE_SHELF_GROOVE_EXTRA_MM }, (t) => t.tongue + t.EXTRA);
       }
-      const shelfNotch = shelfOn && RULES.WARDROBE_SHELF_STRIP_SETBACK_MM.value < stripY - EPS3;
+      const shelfNotch = shelfOn && RULES.WARDROBE_SHELF_STRIP_SETBACK_MM.value < stripY - EPS4;
       const stripOutline = (id) => {
         const o = new Outline(`${id}.pv`, ["y", "z"]);
         const bootZ = ref(stripZ0Key);
@@ -1462,15 +1628,15 @@ function generateBedroom(raw) {
           o.add(ex({ y: ref("shelf.notch.y0") }, (t) => t.y), ex({ z: ref("shelf.notch.z1") }, (t) => t.z));
           o.add(yBack(), ex({ z: ref("shelf.notch.z1") }, (t) => t.z));
         }
-        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS3 && y < stripY - EPS3).sort((a, b) => b - a);
-        o.add(yBack(), ex({ y: ref("wallStrip.y1") }, (t) => round13(roofFn(t.y)), "roof(wallStrip.y1)"));
-        for (const y of breaks) o.add(lit(round13(y)), ex({ y }, (t) => round13(roofFn(t.y)), `roof(${round13(y)})`));
+        const breaks = profile.map((q) => q[0]).filter((y) => y > t2Back + EPS4 && y < stripY - EPS4).sort((a, b) => b - a);
+        o.add(yBack(), ex({ y: ref("wallStrip.y1") }, (t) => round14(roofFn(t.y)), "roof(wallStrip.y1)"));
+        for (const y of breaks) o.add(lit(round14(y)), ex({ y }, (t) => round14(roofFn(t.y)), `roof(${round14(y)})`));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ roof: ref("top.roofAtT2") }, (t) => t.roof));
         o.add(ex({ y: ref("top.T2.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.rail.z0") }, (t) => t.z));
         o.add(ex({ y: ref("top.lip.y1") }, (t) => t.y), ex({ z: ref("top.seat") }, (t) => t.z));
         o.add(lit(0), ex({ z: ref("top.seat") }, (t) => t.z));
-        return o.points.map(([py, pz]) => ({ y: round13(py), z: round13(pz) }));
+        return o.points.map(([py, pz]) => ({ y: round14(py), z: round14(pz) }));
       };
       const stripBox = (id, side) => {
         const outline = stripOutline(id);
@@ -1551,7 +1717,7 @@ function generateBedroom(raw) {
             o.add(inset(), lit(0)).add(inset(), ySet()).add(wall(), ySet()).add(wall(), yD()).add(face(), yD());
             o.add(face(), y1t()).add(tip(), y1t()).add(tip(), y0t()).add(face(), y0t()).add(face(), lit(0));
           }
-          return o.points.map(([px2, py]) => ({ x: round13(px2), y: round13(py) }));
+          return o.points.map(([px2, py]) => ({ x: round14(px2), y: round14(py) }));
         };
         const shelfBox = (id, side) => {
           const outline = shelfOutline(id, side);
@@ -1588,7 +1754,7 @@ function generateBedroom(raw) {
         const Y1 = ex({ y: ref("top.T3.y1") }, (t) => t.y);
         if (side === "L") o.add(X0, Y0).add(X1, Y0).add(X1, YT).add(XN, YT).add(XN, Y1).add(X0, Y1);
         else o.add(X0, Y0).add(X1, Y0).add(X1, Y1).add(XN, Y1).add(XN, YT).add(X0, YT);
-        b.profileVector = o.points.map(([px2, py]) => ({ x: round13(px2), y: round13(py) }));
+        b.profileVector = o.points.map(([px2, py]) => ({ x: round14(px2), y: round14(py) }));
         return b;
       };
       const t3L = t3Box("WARD_L_T3", "L");
@@ -1674,7 +1840,7 @@ function generateBedroom(raw) {
             id: "GR_SHELF",
             kind: "groove",
             ...r,
-            depth: round13(grooveDepth),
+            depth: round14(grooveDepth),
             through: false,
             for: shelfId,
             key: `${panel.id}.feat.SHELF`,
@@ -1738,7 +1904,7 @@ function generateBedroom(raw) {
             faceA.features.push({
               id: `${door.id}_HINGE_${i}`,
               kind: "hole",
-              center: [round13(uHinge), round13(v)],
+              center: [round14(uHinge), round14(v)],
               diameter: RULES.WARDROBE_HINGE_DIAMETER_MM.value,
               depth: RULES.WARDROBE_HINGE_DEPTH_MM.value,
               through: false,
@@ -1755,7 +1921,7 @@ function generateBedroom(raw) {
         [stripL, t3L, "WARD_L_T3_strip", false],
         [stripR, t3R, "WARD_R_T3_strip", false]
       ]) {
-        const seatFaces = edgeFacesIn(panel, { u0: -EPS3, u1: lipY1 + EPS3, v0: seat - p.bootHeight - EPS3, v1: seat - p.bootHeight + EPS3 });
+        const seatFaces = edgeFacesIn(panel, { u0: -EPS4, u1: lipY1 + EPS4, v0: seat - p.bootHeight - EPS4, v1: seat - p.bootHeight + EPS4 });
         for (const f of seatFaces) f.features.push({ id: `${panel.id}_SEAT`, kind: "notch", for: t3.id, key: `${panel.id}.pv`, source: "bedroom.wardrobeTop" });
         joints.push(joint(jointId, "butt", faceRef(t3.id, ["B"]), faceRef(panel.id, seatFaces), { hardware: [], rule: "wardrobe_t3_on_panel_seat_v1" }));
         if (!rails) continue;
@@ -1776,8 +1942,8 @@ function generateBedroom(raw) {
         const yRear = ref("top.T3.y1").value;
         for (const [t3, side] of [[t3L, "L"], [t3R, "R"]]) {
           const xn = side === "L" ? panelL.x0 : panelR.x1;
-          const fullDepth = (x0, x1) => side === "L" ? x1 <= xn + EPS3 : x0 >= xn - EPS3;
-          const overPanel = (x0, x1) => side === "L" ? x0 >= xn - EPS3 : x1 <= xn + EPS3;
+          const fullDepth = (x0, x1) => side === "L" ? x1 <= xn + EPS4 : x0 >= xn - EPS4;
+          const overPanel = (x0, x1) => side === "L" ? x0 >= xn - EPS4 : x1 <= xn + EPS4;
           addT3LedChannels(t3, {
             t1FrontKey: "top.T1.y0",
             rearAt: (x0, x1) => fullDepth(x0, x1) ? yRear : overPanel(x0, x1) ? yTail : null,
@@ -1807,19 +1973,19 @@ function generateBedroom(raw) {
   }
   const provenance = endProvenance();
   const layout = {
-    openingWidth: round13(openingW),
-    openingHeight: round13(openingH),
+    openingWidth: round14(openingW),
+    openingHeight: round14(openingH),
     roofMin,
-    ohcHeight: round13(ohcH),
-    bedFrameWidth: round13(bedW),
-    bedMargin: round13(bedMargin),
+    ohcHeight: round14(ohcH),
+    bedFrameWidth: round14(bedW),
+    bedMargin: round14(bedMargin),
     top,
     ohc: ohcInfo,
     front: !top || errors.length ? null : p.style === "style1" ? {
       style: "style1",
       floorTop: wardrobeFloorTop(p),
       fixedPanelTop: p.fixedPanelTop,
-      doorBottom: round13(p.fixedPanelTop + RULES.WARDROBE_DOOR_CLEARANCE_MM.value),
+      doorBottom: round14(p.fixedPanelTop + RULES.WARDROBE_DOOR_CLEARANCE_MM.value),
       doorTop: top.t3Top,
       clearance: RULES.WARDROBE_DOOR_CLEARANCE_MM.value
     } : {
@@ -1831,9 +1997,19 @@ function generateBedroom(raw) {
       clearance: RULES.WARDROBE_DOOR_CLEARANCE_MM.value
     }
   };
+  const grain = applyGrain(
+    errors.length ? [] : boards,
+    (b) => b.id === "WARD_L_PANEL" || b.id === "WARD_R_PANEL" ? "side" : b.stock?.kind === "door" ? "front" : null,
+    raw,
+    { front: "horizontal", side: "vertical" }
+  );
+  if (!errors.length) applyDoorSides(boards, { ...raw, carcassColorName: p.carcassColor });
+  const milling = applyMilling(errors.length ? [] : boards);
   return {
     params: p,
     layout,
+    grain,
+    milling,
     zones: errors.length ? [] : zones,
     boards: errors.length ? [] : boards,
     joints: errors.length ? [] : joints,
@@ -1851,15 +2027,15 @@ function boardRect(id, name, category, profilePlane, thicknessAxis, materialThic
     name,
     category,
     boardType: "panel",
-    materialThickness: round13(materialThickness),
+    materialThickness: round14(materialThickness),
     profilePlane,
     thicknessAxis,
-    x0: round13(f.x0),
-    x1: round13(f.x1),
-    y0: round13(f.y0),
-    y1: round13(f.y1),
-    z0: round13(f.z0),
-    z1: round13(f.z1),
+    x0: round14(f.x0),
+    x1: round14(f.x1),
+    y0: round14(f.y0),
+    y1: round14(f.y1),
+    z0: round14(f.z0),
+    z1: round14(f.z1),
     source: "bedroom"
   };
 }

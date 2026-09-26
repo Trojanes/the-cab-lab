@@ -262,11 +262,79 @@ function faceRef(board2, faces) {
   return { board: board2, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
+}
+
 // generators/bedBox/generator.ts
 var BED_BOX_DEFAULT_HEIGHT = 398;
 var BED_BOX_MIN = { width: 300, depth: 300, height: 100 };
 var DEFAULT_COLOR = "White Stipple";
-var EPS = 1e-6;
+var EPS2 = 1e-6;
 function round1(v) {
   return Math.round(v * 10) / 10;
 }
@@ -424,23 +492,23 @@ function generateBedBox(raw) {
     const L = divLen;
     const ND = RULES.DIVIDER_NOTCH_DEPTH_MM.value;
     const notchBoxes = [
-      { id: "DIVIDER_NOTCH_END_LOW", for: "RAIL_END_LOW", u0: -EPS, u1: ND + EPS, v0: -EPS, v1: notchH + EPS },
-      { id: "DIVIDER_NOTCH_END_HIGH", for: "RAIL_END_HIGH", u0: -EPS, u1: ND + EPS, v0: H - notchH - EPS, v1: H + EPS },
-      { id: "DIVIDER_NOTCH_BODY_LOW", for: "RAIL_BODY_LOW", u0: L - ND - EPS, u1: L + EPS, v0: -EPS, v1: notchH + EPS },
-      { id: "DIVIDER_NOTCH_BODY_HIGH", for: "RAIL_BODY_HIGH", u0: L - ND - EPS, u1: L + EPS, v0: H - notchH - EPS, v1: H + EPS }
+      { id: "DIVIDER_NOTCH_END_LOW", for: "RAIL_END_LOW", u0: -EPS2, u1: ND + EPS2, v0: -EPS2, v1: notchH + EPS2 },
+      { id: "DIVIDER_NOTCH_END_HIGH", for: "RAIL_END_HIGH", u0: -EPS2, u1: ND + EPS2, v0: H - notchH - EPS2, v1: H + EPS2 },
+      { id: "DIVIDER_NOTCH_BODY_LOW", for: "RAIL_BODY_LOW", u0: L - ND - EPS2, u1: L + EPS2, v0: -EPS2, v1: notchH + EPS2 },
+      { id: "DIVIDER_NOTCH_BODY_HIGH", for: "RAIL_BODY_HIGH", u0: L - ND - EPS2, u1: L + EPS2, v0: H - notchH - EPS2, v1: H + EPS2 }
     ];
     const dividerTags = {};
     for (const nb of notchBoxes) {
       dividerTags[nb.for] = tagEdges(DIVIDER, "notch", nb, { id: nb.id, for: nb.for, key: "DIVIDER.cut", source: "bedBox.halfLap" });
     }
     for (const rail of [RAIL_END_LOW, RAIL_END_HIGH, RAIL_BODY_LOW, RAIL_BODY_HIGH]) {
-      const high = rail.z0 > EPS;
+      const high = rail.z0 > EPS2;
       const n = railNotch.get(rail.id);
       const nx0 = n.x0 - rail.x0;
       const nw = n.x1 - n.x0;
       const nd = RULES.RAIL_NOTCH_DEPTH_MM.value;
       const rh = rail.z1 - rail.z0;
-      const box = high ? { u0: nx0 - EPS, u1: nx0 + nw + EPS, v0: -EPS, v1: nd + EPS } : { u0: nx0 - EPS, u1: nx0 + nw + EPS, v0: rh - nd - EPS, v1: rh + EPS };
+      const box = high ? { u0: nx0 - EPS2, u1: nx0 + nw + EPS2, v0: -EPS2, v1: nd + EPS2 } : { u0: nx0 - EPS2, u1: nx0 + nw + EPS2, v0: rh - nd - EPS2, v1: rh + EPS2 };
       const railTags = tagEdges(rail, "notch", box, { id: `${rail.id}_NOTCH`, for: "DIVIDER", key: `${rail.id}.pv`, source: "bedBox.halfLap" });
       joints.push(joint(`${rail.id}_halflap`, "half_lap", faceRef("DIVIDER", dividerTags[rail.id] ?? []), faceRef(rail.id, railTags), { hardware: [], rule: "bed_box_half_lap_v1" }));
     }
@@ -458,7 +526,8 @@ function generateBedBox(raw) {
   const provenance = endProvenance();
   const params = { width: W, depth: D, height: H, panelThickness: t, frontPanelThickness: fpt, carcassColor: color };
   const zones = errors.length ? [] : [{ id: "box", x0: 0, x1: W, y0: 0, y1: D, z0: 0, z1: H }];
-  return { params, zones, boards: errors.length ? [] : boards, joints: errors.length ? [] : joints, features: [], validation: { errors, warnings }, debug: { boardFrame: "final", provenance } };
+  const milling = applyMilling(errors.length ? [] : boards);
+  return { params, zones, milling, boards: errors.length ? [] : boards, joints: errors.length ? [] : joints, features: [], validation: { errors, warnings }, debug: { boardFrame: "final", provenance } };
 }
 function board(id, name, category, profilePlane, thicknessAxis, materialThickness, f) {
   return {

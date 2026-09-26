@@ -7,12 +7,14 @@
  */
 import { beginProvenance, dim, endProvenance, param } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
-import { doorColourOf } from "../_lib/finish.ts";
+import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
+import { applyGrain } from "../_lib/grain.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox, refreshBoardBox } from "../_lib/recordBox.ts";
 import { buildKitchenFaces } from "./faces.ts";
 import type {
   Board, HingeRecord, Joint, KitchenParams, KitchenResult, KitchenZoneType,
-  LockRecord, MachiningMode, NotchRecord, SidePanelOptions, SlotRecord,
+  LockRecord, MachiningMode, NotchRecord, ScrewRecord, SidePanelOptions, SlotRecord,
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 
@@ -24,6 +26,21 @@ const asNum = (v: unknown, fb: number) => {
 };
 const r2 = (v: number) => Math.round(v * 1000) / 1000;
 const EPS = 0.001;
+
+/**
+ * A closed XY loop (last point = first) without repeated or collinear points:
+ * a tongue resolved to none leaves a zero-length step in the outline template.
+ */
+function cleanLoop(pts: { x: number; y: number }[]): { x: number; y: number }[] {
+  const same = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.abs(a.x - b.x) < EPS && Math.abs(a.y - b.y) < EPS;
+  const ring = pts.filter((p, i) => i === 0 || !same(p, pts[i - 1]));
+  if (ring.length > 1 && same(ring[0], ring[ring.length - 1])) ring.pop();
+  const out = ring.filter((p, i) => {
+    const a = ring[(i - 1 + ring.length) % ring.length], c = ring[(i + 1) % ring.length];
+    return Math.abs((p.x - a.x) * (c.y - a.y) - (p.y - a.y) * (c.x - a.x)) > EPS;
+  });
+  return out.length >= 3 ? [...out, out[0]] : pts;
+}
 
 /* ================= 参数解析 ================= */
 
@@ -66,8 +83,14 @@ const DEFAULT_SIDE: Required<SidePanelOptions> = {
   grooveVisible: true, extendT2T3B4ToOuterFace: true, strengtheningStripEnabled: false,
 };
 
-/** 面板类区（有 frontPanel → 视为可见邻区）。 */
+/** 面板类区（有 frontPanel）。 */
 const PANEL_ZONE_TYPES = new Set<KitchenZoneType>(["left_door", "right_door", "double_door", "drawer", "down_flap"]);
+/**
+ * Zones whose inside is seen when opened: a slot must not show there (half slot).
+ * A drawer zone is not one of them — the drawer box stands in front of the V panel,
+ * so a through slot facing it stays hidden.
+ */
+const VISIBLE_ZONE_TYPES = new Set<KitchenZoneType>(["left_door", "right_door", "double_door", "down_flap", "open", "custom"]);
 const DRAWER_BOTTOM_TYPES = new Set<KitchenZoneType>(["drawer", "down_flap"]);
 const FULL_SHELF_TYPES = new Set<KitchenZoneType>(["left_door", "right_door", "double_door", "open", "stove", "custom"]);
 
@@ -408,6 +431,25 @@ interface SlotRequest {
   z0: number;
   z1: number;
   isDrawer: boolean;
+  /** Front area of the board's zone, centreline to centreline: the larger side keeps its slots. */
+  area: number;
+  /** The board's depth span at the V (screw positions). */
+  boardY0: number;
+  boardY1: number;
+}
+
+/**
+ * Screw positions along a board's depth: SCREW_END_OFFSET from each end, the
+ * span between split evenly at no more than SCREW_MAX_SPACING, symmetric
+ * about the middle. A board shorter than two offsets gets one screw in the middle.
+ */
+export function screwPositions(y0: number, y1: number): number[] {
+  const L = y1 - y0;
+  const off = R.SCREW_END_OFFSET.value;
+  const S = L - 2 * off;
+  if (S <= EPS) return [r2(y0 + L / 2)];
+  const n = Math.ceil(S / R.SCREW_MAX_SPACING.value - 1e-9);
+  return Array.from({ length: n + 1 }, (_, k) => r2(y0 + off + (k * S) / n));
 }
 
 /** V 板槽面对侧的邻列在 z 高度是否为可见区（门板/open/custom）。 */
@@ -418,7 +460,7 @@ function neighborVisible(s: S, v: VPanel, face: "left" | "right", z0: number, z1
   if (!col) return false;
   const hit = col.zones.find((z) => z.z1 > z0 && z.z0 < z1);
   if (!hit) return false;
-  return PANEL_ZONE_TYPES.has(hit.zoneType) || hit.zoneType === "open" || hit.zoneType === "custom";
+  return VISIBLE_ZONE_TYPES.has(hit.zoneType);
 }
 
 const MACHINING_TABLE: Record<MachiningMode, ["through" | "half" | "none", "through" | "half" | "none"]> = {
@@ -435,60 +477,89 @@ const MACHINING_TABLE: Record<MachiningMode, ["through" | "half" | "none", "thro
   through_only: ["through", "through"],
 };
 
+type SlotKind = "through" | "half" | "none";
+
+/**
+ * One slot per functional board on each V it meets. The CNC cuts from one side
+ * only, so a V may carry any number of through slots but half slots on one face
+ * only:
+ *   1. half when the V's other face at that height looks into a visible zone, else through;
+ *   2. half slots on both faces: the side with the smaller zone area (summed) gets none;
+ *   3. slots on opposite faces closer than SLOT_MIN_GAP: the smaller zone of the pair gets none.
+ * A board with none is butt-jointed and screwed through the V (screwPositions).
+ * A machining preference chosen for the V (vPanelMachiningPreferences) overrides 2 and 3.
+ */
 function resolveSlots(
-  s: S, requests: SlotRequest[], vPanels: VPanel[], errors: string[],
-): { slots: SlotRecord[]; tongueOf: Map<string, { left: number; right: number }> } {
+  s: S, requests: SlotRequest[], vPanels: VPanel[],
+): { slots: SlotRecord[]; screws: ScrewRecord[]; tongueOf: Map<string, { left: number; right: number }> } {
   const slots: SlotRecord[] = [];
+  const screws: ScrewRecord[] = [];
   const tongueOf = new Map<string, { left: number; right: number }>();
-  const byV = new Map<number, { left?: SlotRequest; right?: SlotRequest }>();
+  const byV = new Map<number, { left: SlotRequest[]; right: SlotRequest[] }>();
   for (const q of requests) {
-    const e = byV.get(q.vIndex) ?? {};
-    e[q.side] = q;
+    const e = byV.get(q.vIndex) ?? { left: [], right: [] };
+    e[q.side].push(q);
     byV.set(q.vIndex, e);
   }
-  for (const [vi, pair] of byV) {
+  const zc = R.SLOT_Z_CLEARANCE.value;
+  for (const [vi, sides] of byV) {
     const v = vPanels[vi];
     // half 判定：槽面对侧（V 板另一面）邻区可见，或侧板 grooveVisible=false（外侧不可见）
-    const wantLeft = pair.left
-      ? neighborVisible(s, v, "right", pair.left.z0, pair.left.z1) || !v.grooveVisible
-      : false;
-    const wantRight = pair.right
-      ? neighborVisible(s, v, "left", pair.right.z0, pair.right.z1) || !v.grooveVisible
-      : false;
-
-    let resolveLeft: "through" | "half" | "none" | null = null;
-    let resolveRight: "through" | "half" | "none" | null = null;
-    if (wantLeft && wantRight) {
-      const mode = s.prefs.get(vi);
-      if (!mode) {
-        errors.push(`Unresolved double-sided half-slot conflict on V${vi}.`);
-        resolveLeft = "half"; resolveRight = "half"; // 报错但仍按 half 生成
-      } else {
-        [resolveLeft, resolveRight] = MACHINING_TABLE[mode];
+    const kind = new Map<SlotRequest, SlotKind>();
+    for (const q of [...sides.left, ...sides.right]) {
+      const other = q.side === "left" ? "right" : "left";
+      kind.set(q, neighborVisible(s, v, other, q.z0, q.z1) || !v.grooveVisible ? "half" : "through");
+    }
+    const halves = (list: SlotRequest[]) => list.filter((q) => kind.get(q) === "half");
+    const mode = s.prefs.get(vi);
+    if (mode && halves(sides.left).length && halves(sides.right).length) {
+      const [kl, kr] = MACHINING_TABLE[mode];
+      for (const q of sides.left) kind.set(q, kl);
+      for (const q of sides.right) kind.set(q, kr);
+    } else if (!mode) {
+      const hl = halves(sides.left), hr = halves(sides.right);
+      if (hl.length && hr.length) {
+        const area = (list: SlotRequest[]) => list.reduce((a, q) => a + q.area, 0);
+        for (const q of area(hl) < area(hr) ? hl : hr) kind.set(q, "none");
       }
-    } else {
-      resolveLeft = pair.left ? (wantLeft ? "half" : "through") : null;
-      resolveRight = pair.right ? (wantRight ? "half" : "through") : null;
+      // Opposite faces: two slots closer than the gap would cut into each other.
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const l of sides.left) {
+          for (const r of sides.right) {
+            if (kind.get(l) === "none" || kind.get(r) === "none") continue;
+            const gap = Math.max((r.z0 - zc) - (l.z1 + zc), (l.z0 - zc) - (r.z1 + zc));
+            if (gap >= R.SLOT_MIN_GAP.value - EPS) continue;
+            kind.set(l.area < r.area ? l : r, "none");
+            changed = true;
+          }
+        }
+      }
     }
 
-    const emit = (side: "left" | "right", kind: "through" | "half" | "none", q: SlotRequest) => {
+    const emit = (side: "left" | "right", k: SlotKind, q: SlotRequest) => {
       // V 板视角 side 是槽面（功能板所在侧）→ 功能板舌在相反端：
       // V 板 side="right"（功能板在 V 右侧）→ 功能板左舌；side="left" → 右舌。
       const boardSide = side === "right" ? "left" : "right";
       const t = tongueOf.get(q.boardId) ?? { left: 0, right: 0 };
-      if (kind === "none") {
+      if (k === "none") {
         t[boardSide] = 0;
         tongueOf.set(q.boardId, t);
+        const z = r2((q.z0 + q.z1) / 2);
+        screwPositions(q.boardY0, q.boardY1).forEach((y, i) => {
+          screws.push({ id: `${q.boardId}-V${vi}-screw-${i + 1}`, vPanelId: `V${vi}`, side, forBoard: q.boardId, y, z, diameter: R.SCREW_HOLE_DIAMETER.value });
+        });
         return;
       }
-      const tongue = kind === "through" ? s.CPT : v.thickness / 2; // through 舌 = CPT（与侧板厚无关）
+      const tongue = k === "through" ? s.CPT : v.thickness / 2; // through 舌 = CPT（与侧板厚无关）
       const clr = q.isDrawer ? R.DRAWER_SLOT_CLEARANCE.value : R.SHELF_SLOT_CLEARANCE.value;
       slots.push({
         id: `${q.boardId}-V${vi}-${side}`,
         vPanelId: `V${vi}`,
         side,
-        through: kind === "through",
-        depth: kind === "through" ? v.thickness : v.thickness / 2,
+        through: k === "through",
+        depth: k === "through" ? v.thickness : v.thickness / 2,
         y0: r2(q.tongueY0 - clr), y1: r2(q.tongueY1 + clr),
         z0: r2(q.z0 - R.SLOT_Z_CLEARANCE.value), z1: r2(q.z1 + R.SLOT_Z_CLEARANCE.value),
         forBoard: q.boardId,
@@ -496,10 +567,10 @@ function resolveSlots(
       t[boardSide] = tongue;
       tongueOf.set(q.boardId, t);
     };
-    if (pair.left && resolveLeft) emit("left", resolveLeft, pair.left);
-    if (pair.right && resolveRight) emit("right", resolveRight, pair.right);
+    for (const q of sides.left) emit("left", kind.get(q)!, q);
+    for (const q of sides.right) emit("right", kind.get(q)!, q);
   }
-  return { slots, tongueOf };
+  return { slots, screws, tongueOf };
 }
 
 /* ================= 主流程 ================= */
@@ -558,12 +629,12 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     boards.push(mkBoard("B2", "Bottom Carcass Panel", "bottom", "bottom_carcass", CPT, "carcass",
       "XZ", "Y", frontStop.x0, frontStop.x1, 0, CPT, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
   } else {
-    const toeY1 = R.STYLE1_TOE_KICK_Y.value - CPT;
-    const toeY0 = toeY1 - FPT;
+    const toeY0 = R.STYLE1_TOE_KICK_Y.value;
+    const toeY1 = toeY0 + FPT;
     boards.push(mkBoard("B1", "Bottom Front Panel", "bottom", "bottom_front", FPT, "door",
       "XZ", "Y", frontStop.x0, frontStop.x1, toeY0, toeY1, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
     boards.push(mkBoard("B2", "Bottom Carcass Panel", "bottom", "bottom_carcass", CPT, "carcass",
-      "XZ", "Y", frontStop.x0, frontStop.x1, toeY1, R.STYLE1_TOE_KICK_Y.value, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
+      "XZ", "Y", frontStop.x0, frontStop.x1, toeY1, r2(toeY1 + CPT), 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
   }
 
   /* ---- B3 底板（y∈[0,100] z∈[BCH,BCH+CPT]，V 缺口从后缘 y=100 凹进 20） ---- */
@@ -585,10 +656,12 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
 
   const addFuncBoard = (
     id: string, name: string, boardType: string, ci: number,
-    z0: number, z1: number, isDrawer: boolean,
+    z0: number, z1: number, isDrawer: boolean, zone: ZonePlan,
   ) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
+    // The zone's front, centreline to centreline: the side with more of it keeps its slots.
+    const area = ((vR.x0 + vR.x1) / 2 - (vL.x0 + vL.x1) / 2) * (zone.z1 - zone.z0);
     // A full-depth shelf stops on T3 / B4's front face when it shares their height.
     const intoRear = !isDrawer && (z0 < stripW || z1 > r2(H - stripW));
     const depth = isDrawer ? R.B3_DEPTH.value : (intoRear ? r2(cd - CPT) : cd);
@@ -599,8 +672,9 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       [{ x: clearX0, y: 0 }, { x: clearX1, y: 0 }, { x: clearX1, y: depth }, { x: clearX0, y: depth }, { x: clearX0, y: 0 }]);
     boards.push(board);
     funcBoards.push({ board, isDrawer, clearX0, clearX1, z0, z1 });
-    requests.push({ vIndex: vL.index, side: "right", boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer });
-    requests.push({ vIndex: vR.index, side: "left", boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer });
+    const at = { boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer, area, boardY0: 0, boardY1: depth };
+    requests.push({ vIndex: vL.index, side: "right", ...at });
+    requests.push({ vIndex: vR.index, side: "left", ...at });
   };
 
   s.columns.forEach((col, ci) => {
@@ -614,7 +688,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
         `${col.id}-${zone.id}-bottom`,
         isDrawer ? "Drawer Divider" : "Full Depth Shelf",
         isDrawer ? "drawer_divider" : "full_depth_shelf",
-        ci, z, zc, isDrawer,
+        ci, z, zc, isDrawer, zone,
       );
       // 门层板（门板区 shelfEnabled；drawer/flap 区无门层板）
       if (PANEL_ZONE_TYPES.has(zone.zoneType) && zone.zoneType !== "drawer" && zone.zoneType !== "down_flap"
@@ -630,7 +704,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
         }
         const centerZ = r2(shelfTopZ - CPT / 2);
         addFuncBoard(`${zone.id}-door-shelf`, "Door Shelf", "door_shelf", ci,
-          r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false);
+          r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false, zone);
       }
     }
   });
@@ -651,11 +725,11 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     }
     const centerZ = r2(shelfTopZ - CPT / 2);
     addFuncBoard(`${zone.id}-door-shelf`, "Door Shelf", "door_shelf", ci,
-      r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false);
+      r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false, zone);
   });
 
   /* ---- 槽解析 + 功能板舌轮廓（一步生成，两套模板对应黄金点列） ---- */
-  const { slots, tongueOf } = resolveSlots(s, requests, vPanels, errors);
+  const { slots, screws, tongueOf } = resolveSlots(s, requests, vPanels);
   for (const fb of funcBoards) {
     const t = tongueOf.get(fb.board.id) ?? { left: 0, right: 0 };
     const { clearX0: c0, clearX1: c1 } = fb;
@@ -694,7 +768,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       prof = [{ x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: by1 }, { x: c0, y: by1 }, { x: c0, y: 0 }];
     }
     fb.board.x0 = x0; fb.board.x1 = x1;
-    fb.board.profileVector = prof.map((p) => ({ ...(p as object) })) as Board["profileVector"];
+    fb.board.profileVector = cleanLoop(prof as { x: number; y: number }[]).map((p) => ({ ...p })) as Board["profileVector"];
   }
 
   /* ---- T 系统 + B4（V 缺口折轮廓；灶台列切 T1、轮拱切 B4） ---- */
@@ -950,7 +1024,11 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   /* ---- 组装结果 ---- */
   for (const b of boards) refreshBoardBox(b);
   attachFaces(boards);
-  const joints: Joint[] = buildKitchenFaces({ boards, slots, hinges, locks, notches, doorColour: doorColourOf(input) });
+  const joints: Joint[] = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input) });
+  // Fronts, the kick (B1) included: one group, horizontal unless chosen otherwise.
+  const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? "front" : null), input, { front: "horizontal" });
+  applyDoorSides(boards, input);
+  const milling = applyMilling(boards);
 
   const result: KitchenResult = {
     params: {
@@ -960,7 +1038,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       bottomClearanceStyle: s.style2 ? "style_2" : "style_1",
       frontClearance: fc, lockEnabled: s.lockOn,
     },
-    boards, slots, hinges, locks, notches, joints,
+    boards, grain, milling, slots, screws, hinges, locks, notches, joints,
     xBoundaries: s.xBoundaries,
     validation: { errors, warnings },
   };

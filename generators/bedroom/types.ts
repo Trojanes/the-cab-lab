@@ -66,6 +66,12 @@ export interface BedroomParams {
   carcassColor?: string;
   doorColor?: string;
   doorColorName?: string;
+  /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
+  doorSeries?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
+  /** Wood grain per group; missing = default (fronts horizontal, colour panels vertical). */
+  grain?: GrainParams;
 }
 
 export type BedroomLayoutKey = "bootHeight" | "wardrobeWidth" | "ohcBottom" | "fixedPanelTop";
@@ -80,6 +86,8 @@ export type BedFrame = "queen";
 export type WardrobeStyle = "style1" | "nook";
 
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+import type { GrainParams, GrainResult } from "../_lib/grain.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 export type { Face, FaceFeature, Joint } from "../_lib/model.ts";
 
 /**
@@ -213,6 +221,10 @@ export interface OhcLayout {
 export interface BedroomResult {
   params: BedroomResolvedParams;
   layout: BedroomLayoutInfo;
+  /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */
+  grain?: GrainResult;
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   zones: BedroomZone[];
   boards: Board[];
   joints: Joint[];

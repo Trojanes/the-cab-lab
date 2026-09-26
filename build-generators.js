@@ -14,6 +14,7 @@ const OUT_DIR = path.resolve(__dirname, "renderer", "gen");
 const ENTRIES = [
   { name: "smallCabinet", entry: path.join(MODULES_DIR, "smallCabinet", "generator.ts") },
   { name: "bedroom", entry: path.join(MODULES_DIR, "bedroom", "generator.ts") },
+  { name: "bedroomEast", entry: path.join(MODULES_DIR, "bedroomEast", "generator.ts") },
   { name: "bedBox", entry: path.join(MODULES_DIR, "bedBox", "generator.ts") },
   { name: "bedSideTable", entry: path.join(MODULES_DIR, "bedSideTable", "generator.ts") },
   { name: "overheadCabinet", entry: path.join(MODULES_DIR, "overheadCabinet", "generator.ts") },

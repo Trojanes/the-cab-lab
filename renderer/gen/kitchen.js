@@ -219,9 +219,173 @@ function faceRef(board, faces) {
 
 // generators/_lib/finish.ts
 var DEFAULT_DOOR_COLOUR = "Gloss White";
+var DEFAULT_CARCASS_COLOUR = "White Stipple";
 function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+function doorSidesOf(params) {
+  return params && params.doorSides === "double" ? "double" : "single";
+}
+function carcassColourOf(params) {
+  const name = params && String(params.carcassColorName || "").trim();
+  if (name) return name;
+  const raw = params && String(params.carcassColor || "").trim();
+  return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
+}
+var bigFaces = (b) => (b.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
+function applyDoorSides(boards, params) {
+  const sides = doorSidesOf(params);
+  const carcass = carcassColourOf(params);
+  for (const b of boards) {
+    if (b.stock?.kind !== "door") continue;
+    const faces = bigFaces(b);
+    const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
+    if (!front) continue;
+    const back = faces.find((f) => f !== front);
+    if (!back) continue;
+    const { grain: _drop, ...rest } = back.finish ?? {};
+    back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
+    b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
+  }
+}
+
+// generators/_lib/grain.ts
+var SHEET_CROSS_MAX_MM = 1180;
+var SHEET_ALONG_MAX_MM = 2380;
+var PLANE_AXES = { XZ: ["x", "z"], YZ: ["y", "z"], XY: ["x", "y"] };
+var WORD = { x: "wide", y: "deep", z: "high" };
+function isDir(v) {
+  return v === "horizontal" || v === "vertical";
+}
+function grainOf(params, group, defaults) {
+  const stored = params && params.grain && typeof params.grain === "object" ? params.grain[group] : void 0;
+  return isDir(stored) ? stored : defaults[group] ?? "horizontal";
+}
+function grainChecked(params) {
+  return !!params && params.doorSeries === "hpl";
+}
+function colourFacesOf(b) {
+  return (b.faces ?? []).filter((f) => (f.id === "A" || f.id === "B") && f.finish?.colour);
+}
+var round1 = (v) => Math.round(v * 10) / 10;
+function applyGrain(boards, groupOf, params, defaults) {
+  const checked = grainChecked(params);
+  const groups = {};
+  for (const g of Object.keys(defaults)) groups[g] = grainOf(params, g, defaults);
+  const issues = [];
+  const present2 = /* @__PURE__ */ new Set();
+  for (const b of boards) {
+    const group = groupOf(b);
+    if (!group) continue;
+    const faces = colourFacesOf(b);
+    if (!faces.length) continue;
+    const dir = grainOf(params, group, defaults);
+    groups[group] = dir;
+    present2.add(group);
+    const key = dir === "horizontal" ? "u" : "v";
+    for (const f of faces) f.finish = { ...f.finish, grain: key };
+    if (!checked) continue;
+    const [U, V] = PLANE_AXES[b.profilePlane] ?? PLANE_AXES.XY;
+    const alongAxis = key === "u" ? U : V;
+    const acrossAxis = key === "u" ? V : U;
+    const len = (a) => round1(b[`${a}1`] - b[`${a}0`]);
+    const across = len(acrossAxis);
+    const along = len(alongAxis);
+    if (across > SHEET_CROSS_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "across",
+        length: across,
+        word: WORD[acrossAxis],
+        limit: SHEET_CROSS_MAX_MM,
+        message: `${b.id} is ${across} ${WORD[acrossAxis]}: ${dir} grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+    if (along > SHEET_ALONG_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "along",
+        length: along,
+        word: WORD[alongAxis],
+        limit: SHEET_ALONG_MAX_MM,
+        message: `${b.id} is ${along} ${WORD[alongAxis]}: ${dir} grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+  }
+  return { groups, present: [...present2], checked, issues };
+}
+
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
 }
 
 // generators/_lib/recordBox.ts
@@ -264,7 +428,7 @@ function setEdgeBand(b, i, band) {
 }
 
 // generators/_lib/resolveJoints.ts
-var EPS = 0.6;
+var EPS2 = 0.6;
 function overlap(a0, a1, b0, b1) {
   return a0 < b1 - 0.01 && b0 < a1 - 0.01;
 }
@@ -279,10 +443,10 @@ function contact(a, b) {
     if (!ax.o1 || !ax.o2) continue;
     const gapRight = ax.b0 - ax.a1;
     const gapLeft = ax.a0 - ax.b1;
-    if (gapRight >= -EPS && (best == null || Math.abs(gapRight) < Math.abs(best.gap))) {
+    if (gapRight >= -EPS2 && (best == null || Math.abs(gapRight) < Math.abs(best.gap))) {
       best = { axis: ax.axis, aSide: "+", gap: gapRight };
     }
-    if (gapLeft >= -EPS && (best == null || Math.abs(gapLeft) < Math.abs(best.gap))) {
+    if (gapLeft >= -EPS2 && (best == null || Math.abs(gapLeft) < Math.abs(best.gap))) {
       best = { axis: ax.axis, aSide: "-", gap: gapLeft };
     }
   }
@@ -365,7 +529,7 @@ function relationshipDeclarationsForBoards(boardIds) {
 // generators/kitchen/rules.json
 var rules_default = {
   NOTCH_ALLOWANCE_EXTRA: { value: 1, doc: "\u8BA9\u4F4D\u7F3A\u53E3/\u69FD\u5BBD\u4F59\u91CF\uFF1Bna = \u677F\u539A + 1\u3002" },
-  STYLE1_TOE_KICK_Y: { value: 70, doc: "style_1 \u8DBE\u8E22\uFF1AV \u677F\u5E95\u6BB5\u524D\u7F18 Y\uFF1BB1 \u524D\u8138 = 70 \u2212 CPT \u2212 FPT\u3002" },
+  STYLE1_TOE_KICK_Y: { value: 70, doc: "style_1 toe kick: the side panel's front edge, and B1's front face. B1 and B2 sit behind it." },
   BOTTOM_SLOT_REAR_Y: { value: 80, doc: "V \u677F B3 \u53F0\u9636\u524D\u7F18 Y\uFF08z\u2208[BCH, BCH+na] \u6BB5\uFF09\u3002" },
   RECEIVER_NOTCH_DEPTH: { value: 85, doc: "r\uFF1AV \u677F\u9876\u524D T1 \u8BA9\u4F4D\u6DF1\uFF08Y \u5411\uFF09\uFF1B\u4EA6\u4E3A T3/B4 \u540E\u63A5\u6536\u7F3A\u53E3\u9AD8\uFF08Z \u5411\uFF09\u3002" },
   SUPPORT_STRIP_WIDTH: { value: 100, doc: "B3 \u6DF1\u5EA6\uFF1BT1/T2 \u6761\u5BBD\uFF1BT3/B4 \u6761\u9AD8\uFF1B\u52A0\u5F3A\u6761\u6DF1\u5EA6\u3002" },
@@ -377,6 +541,10 @@ var rules_default = {
   DRAWER_TONGUE_Y0: { value: 50, doc: "\u62BD\u5C49\u820C Y \u4E0B\u754C\uFF08[50, B3_DEPTH]\uFF09\u3002" },
   DRAWER_SLOT_CLEARANCE: { value: 5, doc: "\u62BD\u5C49\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\u3002" },
   SHELF_SLOT_CLEARANCE: { value: 6, doc: "\u529F\u80FD\u677F\u69FD\u76F8\u5BF9\u820C\u7684 Y \u5411\u4F59\u91CF\uFF08\u820C \xB16\uFF09\u3002" },
+  SLOT_MIN_GAP: { value: 20, doc: "V \u677F\u4E24\u9762\u7684\u69FD\uFF08\u5168\u69FD\u6216\u534A\u69FD\uFF09z \u5411\u81F3\u5C11\u76F8\u9694\u8FD9\u4E48\u591A\uFF08\u69FD\u8FB9\u5230\u69FD\u8FB9\uFF09\uFF0C\u5426\u5219\u9762\u79EF\u5C0F\u7684\u4E00\u4FA7\u90A3\u5757\u677F\u4E0D\u5F00\u69FD\u3001\u6539\u87BA\u4E1D\u3002CNC \u53EA\u4ECE\u4E0A\u9762\u5207\uFF1A\u534A\u69FD\u53EA\u80FD\u5728\u4E00\u9762\uFF0C\u4E24\u69FD\u592A\u8FD1\u4F1A\u5207\u5230\u4E00\u8D77\u3002" },
+  SCREW_END_OFFSET: { value: 100, doc: "\u4E0D\u5F00\u69FD\u7684\u529F\u80FD\u677F\u7528\u87BA\u4E1D\u4ECE V \u677F\u53E6\u4E00\u9762\u56FA\u5B9A\uFF1A\u9996\u5C3E\u4E24\u5B54\u79BB\u677F\u7684\u524D\u540E\u8FB9\u5404\u8FD9\u4E48\u8FDC\u3002\u677F\u6DF1\u4E0D\u8DB3 2 \u500D\u65F6\u53EA\u5728\u6B63\u4E2D\u6253\u4E00\u4E2A\u3002\u9AD8\u7EA7\u8BBE\u7F6E\u53EF\u8C03\u3002" },
+  SCREW_MAX_SPACING: { value: 150, doc: "\u9996\u5C3E\u4E24\u5B54\u4E4B\u95F4\u6309\u4E0D\u8D85\u8FC7\u8FD9\u4E2A\u95F4\u8DDD\u5E73\u5206\uFF08\u95F4\u9694\u6570 = \u4E2D\u6BB5 \xF7 \u6B64\u503C\u5411\u4E0A\u53D6\u6574\uFF09\uFF0C\u4EE5\u677F\u4E2D\u5FC3\u7EBF\u5BF9\u79F0\u3002\u9AD8\u7EA7\u8BBE\u7F6E\u53EF\u8C03\u3002" },
+  SCREW_HOLE_DIAMETER: { value: 3, doc: "\u87BA\u4E1D\u5B54\uFF1A\u901A\u5B54\uFF0C\u4E0D\u505A\u6C89\u5934\uFF1B\u9489\u5934\u5916\u9732\uFF0C\u8F66\u95F4\u8D34\u8D34\u7EB8\u3002" },
   HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
   HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
   HINGE_CUP_FROM_EDGE: { value: 22.5, doc: "\u676F\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
@@ -443,6 +611,23 @@ function buildKitchenFaces(fb) {
       for: s.forBoard,
       key,
       source: "kitchen"
+    });
+  }
+  for (const sc of fb.screws) {
+    const v = B.get(sc.vPanelId);
+    if (!v) continue;
+    const key = `${sc.vPanelId}.feat.${sc.id}`;
+    const cy = dim(`${key}.y`, { y: sc.y, y0: ref(`${sc.vPanelId}.y0`) }, (t) => t.y - t.y0);
+    const cz = dim(`${key}.z`, { z: sc.z, z0: ref(`${sc.vPanelId}.z0`) }, (t) => t.z - t.z0);
+    addFeature(v, sc.side === "right" ? "A" : "B", {
+      id: sc.id,
+      kind: "hole",
+      center: [cy, cz],
+      diameter: sc.diameter,
+      through: true,
+      for: sc.forBoard,
+      key,
+      source: "kitchen.screw"
     });
   }
   for (const h of fb.hinges) {
@@ -795,7 +980,17 @@ var asNum = (v, fb) => {
   return Number.isFinite(n) ? n : fb;
 };
 var r2 = (v) => Math.round(v * 1e3) / 1e3;
-var EPS2 = 1e-3;
+var EPS3 = 1e-3;
+function cleanLoop(pts) {
+  const same = (a, b) => Math.abs(a.x - b.x) < EPS3 && Math.abs(a.y - b.y) < EPS3;
+  const ring = pts.filter((p, i) => i === 0 || !same(p, pts[i - 1]));
+  if (ring.length > 1 && same(ring[0], ring[ring.length - 1])) ring.pop();
+  const out = ring.filter((p, i) => {
+    const a = ring[(i - 1 + ring.length) % ring.length], c = ring[(i + 1) % ring.length];
+    return Math.abs((p.x - a.x) * (c.y - a.y) - (p.y - a.y) * (c.x - a.x)) > EPS3;
+  });
+  return out.length >= 3 ? [...out, out[0]] : pts;
+}
 var DEFAULT_SIDE = {
   panelType: "carcass",
   frontVisible: false,
@@ -805,6 +1000,7 @@ var DEFAULT_SIDE = {
   strengtheningStripEnabled: false
 };
 var PANEL_ZONE_TYPES = /* @__PURE__ */ new Set(["left_door", "right_door", "double_door", "drawer", "down_flap"]);
+var VISIBLE_ZONE_TYPES = /* @__PURE__ */ new Set(["left_door", "right_door", "double_door", "down_flap", "open", "custom"]);
 var DRAWER_BOTTOM_TYPES = /* @__PURE__ */ new Set(["drawer", "down_flap"]);
 var FULL_SHELF_TYPES = /* @__PURE__ */ new Set(["left_door", "right_door", "double_door", "open", "stove", "custom"]);
 function pickSideOptions(col, side) {
@@ -929,19 +1125,19 @@ function mkBoard(id, name, category, boardType, thickness, kind, plane, axis, x0
   };
 }
 function edgeNotchRect(x0, x1, v0, h, notches, d, edge, mk) {
-  const N = notches.map(([a, b]) => [Math.max(a, x0), Math.min(b, x1)]).filter(([a, b]) => b - a > EPS2).sort((p, q) => p[0] - q[0]);
+  const N = notches.map(([a, b]) => [Math.max(a, x0), Math.min(b, x1)]).filter(([a, b]) => b - a > EPS3).sort((p, q) => p[0] - q[0]);
   const yN = v0, yF = v0 + h;
   if (edge === "far") {
     const pts2 = [mk(x0, yN), mk(x1, yN)];
     let zr = yF;
-    if (N.length && N[N.length - 1][1] >= x1 - EPS2) zr = yF - d;
+    if (N.length && N[N.length - 1][1] >= x1 - EPS3) zr = yF - d;
     pts2.push(mk(x1, zr));
     let cur2 = x1;
     for (let i = N.length - 1; i >= 0; i--) {
       const [a, b] = N[i];
-      if (b >= x1 - EPS2) {
+      if (b >= x1 - EPS3) {
         pts2.push(mk(a, yF - d), mk(a, yF));
-      } else if (a <= x0 + EPS2) {
+      } else if (a <= x0 + EPS3) {
         pts2.push(mk(b, yF), mk(b, yF - d), mk(x0, yF - d));
         cur2 = x0;
         break;
@@ -950,18 +1146,18 @@ function edgeNotchRect(x0, x1, v0, h, notches, d, edge, mk) {
       }
       cur2 = a;
     }
-    if (cur2 > x0 + EPS2) pts2.push(mk(x0, yF));
+    if (cur2 > x0 + EPS3) pts2.push(mk(x0, yF));
     pts2.push(mk(x0, yN));
     return pts2;
   }
   const pts = [];
-  const startLift = N.length && N[0][0] <= x0 + EPS2;
+  const startLift = N.length && N[0][0] <= x0 + EPS3;
   pts.push(mk(x0, startLift ? yN + d : yN));
   let cur = x0;
   for (const [a, b] of N) {
-    if (a <= x0 + EPS2) {
+    if (a <= x0 + EPS3) {
       pts.push(mk(b, yN + d), mk(b, yN));
-    } else if (b >= x1 - EPS2) {
+    } else if (b >= x1 - EPS3) {
       pts.push(mk(a, yN), mk(a, yN + d), mk(x1, yN + d));
       cur = x1;
       break;
@@ -970,7 +1166,7 @@ function edgeNotchRect(x0, x1, v0, h, notches, d, edge, mk) {
     }
     cur = b;
   }
-  if (cur < x1 - EPS2) pts.push(mk(x1, yN));
+  if (cur < x1 - EPS3) pts.push(mk(x1, yN));
   pts.push(mk(x1, yF), mk(x0, yF));
   pts.push(pts[0]);
   return pts;
@@ -1125,6 +1321,14 @@ function avoidanceForV(s, v) {
   const a = s.avoidances.find((a2) => a2.x0 < v.x1 && a2.x1 > v.x0 && a2.height > 0 && a2.depth > 0 && a2.x1 > a2.x0);
   return a && a.height < s.H ? { height: a.height, depth: a.depth } : void 0;
 }
+function screwPositions(y0, y1) {
+  const L = y1 - y0;
+  const off = RULES.SCREW_END_OFFSET.value;
+  const S = L - 2 * off;
+  if (S <= EPS3) return [r2(y0 + L / 2)];
+  const n = Math.ceil(S / RULES.SCREW_MAX_SPACING.value - 1e-9);
+  return Array.from({ length: n + 1 }, (_, k) => r2(y0 + off + k * S / n));
+}
 function neighborVisible(s, v, face, z0, z1) {
   const colIdx = face === "left" ? v.leftNeighborCol : v.rightNeighborCol;
   if (colIdx < 0) return false;
@@ -1132,7 +1336,7 @@ function neighborVisible(s, v, face, z0, z1) {
   if (!col) return false;
   const hit = col.zones.find((z) => z.z1 > z0 && z.z0 < z1);
   if (!hit) return false;
-  return PANEL_ZONE_TYPES.has(hit.zoneType) || hit.zoneType === "open" || hit.zoneType === "custom";
+  return VISIBLE_ZONE_TYPES.has(hit.zoneType);
 }
 var MACHINING_TABLE = {
   left_half_right_none: ["half", "none"],
@@ -1147,50 +1351,70 @@ var MACHINING_TABLE = {
   right_face_half_allowed: ["through", "half"],
   through_only: ["through", "through"]
 };
-function resolveSlots(s, requests, vPanels, errors) {
+function resolveSlots(s, requests, vPanels) {
   const slots = [];
+  const screws = [];
   const tongueOf = /* @__PURE__ */ new Map();
   const byV = /* @__PURE__ */ new Map();
   for (const q of requests) {
-    const e = byV.get(q.vIndex) ?? {};
-    e[q.side] = q;
+    const e = byV.get(q.vIndex) ?? { left: [], right: [] };
+    e[q.side].push(q);
     byV.set(q.vIndex, e);
   }
-  for (const [vi, pair] of byV) {
+  const zc = RULES.SLOT_Z_CLEARANCE.value;
+  for (const [vi, sides] of byV) {
     const v = vPanels[vi];
-    const wantLeft = pair.left ? neighborVisible(s, v, "right", pair.left.z0, pair.left.z1) || !v.grooveVisible : false;
-    const wantRight = pair.right ? neighborVisible(s, v, "left", pair.right.z0, pair.right.z1) || !v.grooveVisible : false;
-    let resolveLeft = null;
-    let resolveRight = null;
-    if (wantLeft && wantRight) {
-      const mode = s.prefs.get(vi);
-      if (!mode) {
-        errors.push(`Unresolved double-sided half-slot conflict on V${vi}.`);
-        resolveLeft = "half";
-        resolveRight = "half";
-      } else {
-        [resolveLeft, resolveRight] = MACHINING_TABLE[mode];
-      }
-    } else {
-      resolveLeft = pair.left ? wantLeft ? "half" : "through" : null;
-      resolveRight = pair.right ? wantRight ? "half" : "through" : null;
+    const kind = /* @__PURE__ */ new Map();
+    for (const q of [...sides.left, ...sides.right]) {
+      const other = q.side === "left" ? "right" : "left";
+      kind.set(q, neighborVisible(s, v, other, q.z0, q.z1) || !v.grooveVisible ? "half" : "through");
     }
-    const emit = (side, kind, q) => {
+    const halves = (list) => list.filter((q) => kind.get(q) === "half");
+    const mode = s.prefs.get(vi);
+    if (mode && halves(sides.left).length && halves(sides.right).length) {
+      const [kl, kr] = MACHINING_TABLE[mode];
+      for (const q of sides.left) kind.set(q, kl);
+      for (const q of sides.right) kind.set(q, kr);
+    } else if (!mode) {
+      const hl = halves(sides.left), hr = halves(sides.right);
+      if (hl.length && hr.length) {
+        const area = (list) => list.reduce((a, q) => a + q.area, 0);
+        for (const q of area(hl) < area(hr) ? hl : hr) kind.set(q, "none");
+      }
+      let changed = true;
+      while (changed) {
+        changed = false;
+        for (const l of sides.left) {
+          for (const r of sides.right) {
+            if (kind.get(l) === "none" || kind.get(r) === "none") continue;
+            const gap = Math.max(r.z0 - zc - (l.z1 + zc), l.z0 - zc - (r.z1 + zc));
+            if (gap >= RULES.SLOT_MIN_GAP.value - EPS3) continue;
+            kind.set(l.area < r.area ? l : r, "none");
+            changed = true;
+          }
+        }
+      }
+    }
+    const emit = (side, k, q) => {
       const boardSide = side === "right" ? "left" : "right";
       const t = tongueOf.get(q.boardId) ?? { left: 0, right: 0 };
-      if (kind === "none") {
+      if (k === "none") {
         t[boardSide] = 0;
         tongueOf.set(q.boardId, t);
+        const z = r2((q.z0 + q.z1) / 2);
+        screwPositions(q.boardY0, q.boardY1).forEach((y, i) => {
+          screws.push({ id: `${q.boardId}-V${vi}-screw-${i + 1}`, vPanelId: `V${vi}`, side, forBoard: q.boardId, y, z, diameter: RULES.SCREW_HOLE_DIAMETER.value });
+        });
         return;
       }
-      const tongue = kind === "through" ? s.CPT : v.thickness / 2;
+      const tongue = k === "through" ? s.CPT : v.thickness / 2;
       const clr = q.isDrawer ? RULES.DRAWER_SLOT_CLEARANCE.value : RULES.SHELF_SLOT_CLEARANCE.value;
       slots.push({
         id: `${q.boardId}-V${vi}-${side}`,
         vPanelId: `V${vi}`,
         side,
-        through: kind === "through",
-        depth: kind === "through" ? v.thickness : v.thickness / 2,
+        through: k === "through",
+        depth: k === "through" ? v.thickness : v.thickness / 2,
         y0: r2(q.tongueY0 - clr),
         y1: r2(q.tongueY1 + clr),
         z0: r2(q.z0 - RULES.SLOT_Z_CLEARANCE.value),
@@ -1200,10 +1424,10 @@ function resolveSlots(s, requests, vPanels, errors) {
       t[boardSide] = tongue;
       tongueOf.set(q.boardId, t);
     };
-    if (pair.left && resolveLeft) emit("left", resolveLeft, pair.left);
-    if (pair.right && resolveRight) emit("right", resolveRight, pair.right);
+    for (const q of sides.left) emit("left", kind.get(q), q);
+    for (const q of sides.right) emit("right", kind.get(q), q);
   }
-  return { slots, tongueOf };
+  return { slots, screws, tongueOf };
 }
 function generateKitchenCabinet(input) {
   beginProvenance();
@@ -1294,8 +1518,8 @@ function generateKitchenCabinet(input) {
       rectXZ(frontStop.x1 - frontStop.x0, BCH)
     ));
   } else {
-    const toeY1 = RULES.STYLE1_TOE_KICK_Y.value - CPT;
-    const toeY0 = toeY1 - FPT;
+    const toeY0 = RULES.STYLE1_TOE_KICK_Y.value;
+    const toeY1 = toeY0 + FPT;
     boards.push(mkBoard(
       "B1",
       "Bottom Front Panel",
@@ -1325,7 +1549,7 @@ function generateKitchenCabinet(input) {
       frontStop.x0,
       frontStop.x1,
       toeY1,
-      RULES.STYLE1_TOE_KICK_Y.value,
+      r2(toeY1 + CPT),
       0,
       BCH,
       rectXZ(frontStop.x1 - frontStop.x0, BCH)
@@ -1352,9 +1576,10 @@ function generateKitchenCabinet(input) {
   }
   const requests = [];
   const funcBoards = [];
-  const addFuncBoard = (id, name, boardType, ci, z0, z1, isDrawer) => {
+  const addFuncBoard = (id, name, boardType, ci, z0, z1, isDrawer, zone) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
+    const area = ((vR.x0 + vR.x1) / 2 - (vL.x0 + vL.x1) / 2) * (zone.z1 - zone.z0);
     const intoRear = !isDrawer && (z0 < stripW || z1 > r2(H - stripW));
     const depth = isDrawer ? RULES.B3_DEPTH.value : intoRear ? r2(cd - CPT) : cd;
     const ty0 = isDrawer ? RULES.DRAWER_TONGUE_Y0.value : r2(cd / 3);
@@ -1378,12 +1603,13 @@ function generateKitchenCabinet(input) {
     );
     boards.push(board);
     funcBoards.push({ board, isDrawer, clearX0, clearX1, z0, z1 });
-    requests.push({ vIndex: vL.index, side: "right", boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer });
-    requests.push({ vIndex: vR.index, side: "left", boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer });
+    const at = { boardId: id, tongueY0: ty0, tongueY1: ty1, z0, z1, isDrawer, area, boardY0: 0, boardY1: depth };
+    requests.push({ vIndex: vL.index, side: "right", ...at });
+    requests.push({ vIndex: vR.index, side: "left", ...at });
   };
   s.columns.forEach((col, ci) => {
     for (const zone of col.zones) {
-      if (zone.z0 <= BCH + EPS2) continue;
+      if (zone.z0 <= BCH + EPS3) continue;
       const isDrawer = DRAWER_BOTTOM_TYPES.has(zone.zoneType);
       const isShelf = FULL_SHELF_TYPES.has(zone.zoneType);
       if (!isDrawer && !isShelf) continue;
@@ -1395,7 +1621,8 @@ function generateKitchenCabinet(input) {
         ci,
         z,
         zc,
-        isDrawer
+        isDrawer,
+        zone
       );
       if (PANEL_ZONE_TYPES.has(zone.zoneType) && zone.zoneType !== "drawer" && zone.zoneType !== "down_flap" && zone.shelfEnabled) {
         if (zone.height < RULES.DOOR_SHELF_MIN_ZONE_HEIGHT.value) {
@@ -1415,14 +1642,15 @@ function generateKitchenCabinet(input) {
           ci,
           r2(centerZ - CPT / 2),
           r2(centerZ + CPT / 2),
-          false
+          false,
+          zone
         );
       }
     }
   });
   s.columns.forEach((col, ci) => {
     const zone = col.zones[col.zones.length - 1];
-    if (!zone || zone.z0 > BCH + EPS2) return;
+    if (!zone || zone.z0 > BCH + EPS3) return;
     if (!PANEL_ZONE_TYPES.has(zone.zoneType) || zone.zoneType === "drawer" || zone.zoneType === "down_flap") return;
     if (!zone.shelfEnabled) return;
     if (zone.height < RULES.DOOR_SHELF_MIN_ZONE_HEIGHT.value) {
@@ -1442,10 +1670,11 @@ function generateKitchenCabinet(input) {
       ci,
       r2(centerZ - CPT / 2),
       r2(centerZ + CPT / 2),
-      false
+      false,
+      zone
     );
   });
-  const { slots, tongueOf } = resolveSlots(s, requests, vPanels, errors);
+  const { slots, screws, tongueOf } = resolveSlots(s, requests, vPanels);
   for (const fb of funcBoards) {
     const t = tongueOf.get(fb.board.id) ?? { left: 0, right: 0 };
     const { clearX0: c0, clearX1: c1 } = fb;
@@ -1511,7 +1740,7 @@ function generateKitchenCabinet(input) {
     }
     fb.board.x0 = x0;
     fb.board.x1 = x1;
-    fb.board.profileVector = prof.map((p) => ({ ...p }));
+    fb.board.profileVector = cleanLoop(prof).map((p) => ({ ...p }));
   }
   const zTop0 = H - CPT;
   const rN = RULES.RECEIVER_NOTCH_DEPTH.value;
@@ -1540,7 +1769,7 @@ function generateKitchenCabinet(input) {
   };
   const notchIn = (n, x0, x1) => {
     const a = Math.max(n[0], x0), b = Math.min(n[1], x1);
-    return b - a > EPS2 ? [a, b] : null;
+    return b - a > EPS3 ? [a, b] : null;
   };
   const stoveXCutsForY = (y0, y1) => stoveCuts.filter((c) => !(y1 <= c.y0 || y0 >= c.y1)).map((c) => [c.x0, c.x1]);
   {
@@ -1737,7 +1966,7 @@ function generateKitchenCabinet(input) {
   }
   for (const st of strips) {
     const id = `${st.side}-side-strengthening-strip-${st.zoneId}`;
-    const covered = funcBoards.filter((fb) => fb.board.id.endsWith("-door-shelf") && fb.z0 >= st.z0 - EPS2 && fb.z1 <= st.z1 + EPS2);
+    const covered = funcBoards.filter((fb) => fb.board.id.endsWith("-door-shelf") && fb.z0 >= st.z0 - EPS3 && fb.z1 <= st.z1 + EPS3);
     let prof;
     if (covered.length) {
       const sz0 = r2(Math.min(...covered.map((f) => f.z0)) - RULES.STRENGTHENING_GROOVE_CLEARANCE.value);
@@ -1833,7 +2062,7 @@ function generateKitchenCabinet(input) {
       if (kind === "left_door") cx = r2(x1 - zone.lockSideCenterOffset);
       else if (kind === "right_door") cx = r2(x0 + zone.lockSideCenterOffset);
       else cx = r2((x0 + x1) / 2);
-      const dividerCenter = zone.z1 >= H - EPS2 ? r2(H - CPT / 2) : zone.z1;
+      const dividerCenter = zone.z1 >= H - EPS3 ? r2(H - CPT / 2) : zone.z1;
       const cz = r2(dividerCenter - CPT / 2 - RULES.LOCK_DROP.value);
       locks.push({
         id: `${id}-lock`,
@@ -1851,14 +2080,14 @@ function generateKitchenCabinet(input) {
       if (!PANEL_ZONE_TYPES.has(zone.zoneType)) continue;
       const x0 = ci === 0 ? s.leftOpts.frontVisible ? r2(leftInner + fc) : fc : colHasPanel(ci - 1) ? r2(col.x0 + fc / 2) : r2(col.x0 + CPT / 2);
       const x1 = ci === s.columns.length - 1 ? s.rightOpts.frontVisible ? r2(rightInner - fc) : r2(s.W - fc) : colHasPanel(ci + 1) ? r2(col.x1 - fc / 2) : r2(col.x1 + CPT / 2);
-      const zoneAbove = col.zones.find((z) => Math.abs(z.z0 - zone.z1) < EPS2);
+      const zoneAbove = col.zones.find((z) => Math.abs(z.z0 - zone.z1) < EPS3);
       let z1;
-      if (zone.z1 >= H - EPS2) z1 = r2(H - fc);
+      if (zone.z1 >= H - EPS3) z1 = r2(H - fc);
       else if (zoneAbove && PANEL_ZONE_TYPES.has(zoneAbove.zoneType)) z1 = r2(zone.z1 - fc / 2);
       else z1 = r2(zone.z1 + CPT / 2);
-      const zoneBelow = col.zones.find((z) => Math.abs(z.z1 - zone.z0) < EPS2);
+      const zoneBelow = col.zones.find((z) => Math.abs(z.z1 - zone.z0) < EPS3);
       let z0;
-      if (zone.z0 <= BCH + EPS2) z0 = s.style2 ? r2(BCH + fc) : BCH;
+      if (zone.z0 <= BCH + EPS3) z0 = s.style2 ? r2(BCH + fc) : BCH;
       else if (zoneBelow && PANEL_ZONE_TYPES.has(zoneBelow.zoneType)) z0 = r2(zone.z0 + fc / 2);
       else z0 = r2(zone.z0 - CPT / 2);
       const id = `${zone.id}-front-panel`;
@@ -1873,7 +2102,10 @@ function generateKitchenCabinet(input) {
   });
   for (const b of boards) refreshBoardBox(b);
   attachFaces(boards);
-  const joints = buildKitchenFaces({ boards, slots, hinges, locks, notches, doorColour: doorColourOf(input) });
+  const joints = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input) });
+  const grain = applyGrain(boards, (b) => b.stock?.kind === "door" ? "front" : null, input, { front: "horizontal" });
+  applyDoorSides(boards, input);
+  const milling = applyMilling(boards);
   const result = {
     params: {
       length: s.W,
@@ -1888,7 +2120,10 @@ function generateKitchenCabinet(input) {
       lockEnabled: s.lockOn
     },
     boards,
+    grain,
+    milling,
     slots,
+    screws,
     hinges,
     locks,
     notches,
@@ -1912,5 +2147,6 @@ function generateKitchenCabinet(input) {
 }
 export {
   generateKitchenCabinet,
-  generateKitchenSvgPreview
+  generateKitchenSvgPreview,
+  screwPositions
 };

@@ -89,9 +89,19 @@ export function builtInFinish() {
     door: {
       series: DEFAULT_DOOR_SERIES,
       mode: "one",
+      sides: "single",
       colors: [{ id: "A", series: DEFAULT_DOOR_SERIES, name: DEFAULT_DOOR_NAME }],
     },
   };
+}
+
+/**
+ * Door stock faces: "single" = the colour on the outside only, the back is the
+ * carcass colour; "double" = the colour on both faces. Carcass stock is always
+ * double (White Stipple both sides).
+ */
+export function doorSidesOf(raw) {
+  return raw === "double" ? "double" : "single";
 }
 
 export function normalizeFinish(raw) {
@@ -104,7 +114,7 @@ export function normalizeFinish(raw) {
   for (const c of colors) { c.series = series; c.name = coerceDoorName(series, c.name, c.id === "B" ? 1 : 0); }
   return {
     carcass: { name: CARCASS_COLOR },
-    door: { series, mode, colors },
+    door: { series, mode, sides: doorSidesOf(raw.door && raw.door.sides), colors },
   };
 }
 
@@ -164,6 +174,7 @@ export function cabinetColor(finish) {
     carcassColor: CARCASS_COLOR,
     carcassColorName: CARCASS_COLOR,
     doorSeries: f.door.series,
+    doorSides: f.door.sides,
     doorColor: door.name,
     doorColorName: door.name,
     colorSlot: "A",
@@ -188,9 +199,10 @@ export function describeMaterials(finish, stock) {
   const f = normalizeFinish(finish);
   const s = normalizeStock(stock);
   const series = DOOR_SERIES[f.door.series].label;
+  const sides = f.door.sides === "double" ? "double-sided" : "single-sided";
   const door = f.door.mode === "two"
-    ? `${series} · ${f.door.colors[0].name} / ${f.door.colors[1].name}`
-    : `${series} · ${f.door.colors[0].name}`;
+    ? `${series} · ${f.door.colors[0].name} / ${f.door.colors[1].name} · ${sides}`
+    : `${series} · ${f.door.colors[0].name} · ${sides}`;
   return [
     ["Carcass / partition", f.carcass.name],
     ["Door", door],

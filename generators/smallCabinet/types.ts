@@ -3,6 +3,8 @@
 export type SmallCabinetZoneType = "left_door" | "right_door" | "drawer";
 
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+import type { GrainParams, GrainResult } from "../_lib/grain.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 
 export type { Face, FaceFeature, Joint, ProfilePoint } from "../_lib/model.ts";
 
@@ -35,6 +37,8 @@ export interface SmallCabinetParams {
   carcassColorName?: string;
   /** Door colour (job catalogue colour A / B); the renderer's module registry passes these. */
   doorSeries?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
   doorColor?: string;
   doorColorName?: string;
   colorSlot?: string;
@@ -42,6 +46,8 @@ export interface SmallCabinetParams {
   leftSideDoorColor?: boolean;
   /** When true, right side panel uses door color slot. */
   rightSideDoorColor?: boolean;
+  /** Wood grain per group; missing = module default (fronts and door-panel sides horizontal). */
+  grain?: GrainParams;
   zones?: SmallCabinetZone[];
 }
 
@@ -78,6 +84,8 @@ export interface SmallCabinetFeature {
   x1?: number;
   depth?: number;
   insertionDepth?: number;
+  /** Through the receiving board (full groove). A half groove is blind. */
+  through?: boolean;
   source?: string;
 }
 
@@ -119,6 +127,10 @@ export interface SmallCabinetResult {
   zones: ResolvedZone[];
   /** Board layer: each board carries its faces (A / B / E<i>) with the features that belong to them. */
   boards: Board[];
+  /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */
+  grain?: GrainResult;
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   /** Flat legacy view of the same joinery (tongues, grooves, door locks); kept for existing consumers. */
   features: SmallCabinetFeature[];
   /** Face ↔ face joints: side grooves receiving shelf / back tongues. */

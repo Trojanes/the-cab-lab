@@ -7,7 +7,7 @@ import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, localRect, planeAxe
 import { resolveDeclaredJoints } from "../_lib/resolveJoints.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { RULES as R } from "./rules.ts";
-import type { HingeRecord, LockRecord, NotchRecord, SlotRecord } from "./types.ts";
+import type { HingeRecord, LockRecord, NotchRecord, ScrewRecord, SlotRecord } from "./types.ts";
 
 const CARCASS_COLOUR = "White Stipple";
 
@@ -25,6 +25,7 @@ function frontWorldY(b: Board): number | null {
 export function buildKitchenFaces(fb: {
   boards: Board[];
   slots: SlotRecord[];
+  screws: ScrewRecord[];
   hinges: HingeRecord[];
   locks: LockRecord[];
   notches: NotchRecord[];
@@ -52,6 +53,20 @@ export function buildKitchenFaces(fb: {
     addFeature(v, face, {
       id: s.id, kind: "groove", ...r, depth: s.depth, through: s.through,
       for: s.forBoard, key, source: "kitchen",
+    });
+  }
+
+  // Screws for a board that got no slot: through the V from the opposite face into the board's end.
+  // Through holes: listed on the board's side; the milling pass moves them to the V's milling face.
+  for (const sc of fb.screws) {
+    const v = B.get(sc.vPanelId);
+    if (!v) continue;
+    const key = `${sc.vPanelId}.feat.${sc.id}`;
+    const cy = dim(`${key}.y`, { y: sc.y, y0: ref(`${sc.vPanelId}.y0`) }, (t) => t.y - t.y0);
+    const cz = dim(`${key}.z`, { z: sc.z, z0: ref(`${sc.vPanelId}.z0`) }, (t) => t.z - t.z0);
+    addFeature(v, sc.side === "right" ? "A" : "B", {
+      id: sc.id, kind: "hole", center: [cy, cz], diameter: sc.diameter, through: true,
+      for: sc.forBoard, key, source: "kitchen.screw",
     });
   }
 

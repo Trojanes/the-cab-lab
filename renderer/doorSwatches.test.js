@@ -13,8 +13,17 @@ for (const name of doorColorList("acrylic")) {
   assert.ok(["matte", "gloss", "metallic"].includes(sw.finish), `${name}: finish ${sw.finish}`);
   assert.ok(sw.source, `${name}: source`);
 }
-for (const name of DOOR_SERIES.hpl.colors) assert.equal(doorSwatch(name), null, `${name}: HPL has no swatch yet`);
-for (const name of Object.keys(DOOR_SWATCHES)) assert.ok(doorColorList("acrylic").includes(name), `${name}: not in the catalogue`);
+// Every HPL decor has its 1 m image in renderer/textures/hpl, named as in the catalogue.
+const { existsSync } = await import("node:fs");
+const { fileURLToPath } = await import("node:url");
+for (const name of DOOR_SERIES.hpl.colors) {
+  const sw = doorSwatch(name);
+  assert.ok(sw && sw.finish === "wood", `${name}: no HPL swatch`);
+  assert.equal(sw.textureMm, 1000, `${name}: the image is 1 m`);
+  assert.ok(existsSync(fileURLToPath(sw.texture)), `${name}: image missing (${sw.texture})`);
+}
+const catalogue = [...doorColorList("acrylic"), ...DOOR_SERIES.hpl.colors];
+for (const name of Object.keys(DOOR_SWATCHES)) assert.ok(catalogue.includes(name), `${name}: not in the catalogue`);
 
 // Finishes follow the series: Gloss → gloss, Metallic → metallic, SuperMatt → matte.
 for (const g of DOOR_SERIES.acrylic.groups) {
@@ -25,4 +34,4 @@ for (const g of DOOR_SERIES.acrylic.groups) {
 assert.notEqual(doorSwatch("SuperMatt Silver").hex, doorSwatch("SuperMatt Ash").hex);
 assert.ok(METALLIC_FLAKES.diameterMm > 0 && METALLIC_FLAKES.perCm2 > 0 && METALLIC_FLAKES.tileMm > 0);
 
-console.log("doorSwatches: every Acrylic colour has a swatch");
+console.log("doorSwatches: every Acrylic colour has a swatch, every HPL decor its image");

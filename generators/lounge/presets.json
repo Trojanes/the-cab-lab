@@ -302,24 +302,24 @@
         },
         "features": {},
         "faceFeatures": {
-          "main_top.A.main_opening": {
+          "main_top.B.main_opening": {
             "u0": 300,
             "u1": 900,
             "v0": 150,
             "v1": 450
           },
-          "main_lid.A.main_lid_finger": {
+          "main_lid.B.main_lid_finger": {
             "diameter": 40,
             "cx": 298.5,
             "cy": 148.5
           },
-          "l_top.A.l_opening": {
+          "l_top.B.l_opening": {
             "u0": 200,
             "u1": 600,
             "v0": 400,
             "v1": 1200
           },
-          "l_lid.A.l_lid_finger": {
+          "l_lid.B.l_lid_finger": {
             "diameter": 40,
             "cx": 198.5,
             "cy": 398.5
@@ -489,13 +489,13 @@
         },
         "features": {},
         "faceFeatures": {
-          "i_top.A.i_opening": {
+          "i_top.B.i_opening": {
             "u0": 500,
             "u1": 1500,
             "v0": 150,
             "v1": 450
           },
-          "i_lid.A.i_lid_finger": {
+          "i_lid.B.i_lid_finger": {
             "diameter": 40,
             "cx": 498.5,
             "cy": 148.5
@@ -668,19 +668,19 @@
         },
         "features": {},
         "faceFeatures": {
-          "left_top.A.left_opening": {
+          "left_top.B.left_opening": {
             "u0": 150,
             "u1": 450,
             "v0": 400,
             "v1": 1200
           },
-          "back_top.A.back_opening": {
+          "back_top.B.back_opening": {
             "u0": 200,
             "u1": 600,
             "v0": 150,
             "v1": 450
           },
-          "right_top.A.right_opening": {
+          "right_top.B.right_opening": {
             "u0": 150,
             "u1": 450,
             "v0": 400,
@@ -996,24 +996,24 @@
         },
         "features": {},
         "faceFeatures": {
-          "left_top.A.left_opening": {
+          "left_top.B.left_opening": {
             "u0": 375,
             "u1": 1125,
             "v0": 200,
             "v1": 600
           },
-          "left_lid.A.left_lid_finger": {
+          "left_lid.B.left_lid_finger": {
             "diameter": 40,
             "cx": 373.5,
             "cy": 198.5
           },
-          "right_top.A.right_opening": {
+          "right_top.B.right_opening": {
             "u0": 375,
             "u1": 1125,
             "v0": 200,
             "v1": 600
           },
-          "right_lid.A.right_lid_finger": {
+          "right_lid.B.right_lid_finger": {
             "diameter": 40,
             "cx": 373.5,
             "cy": 198.5

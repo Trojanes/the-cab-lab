@@ -222,9 +222,173 @@ function faceRef(board, faces) {
 
 // generators/_lib/finish.ts
 var DEFAULT_DOOR_COLOUR = "Gloss White";
+var DEFAULT_CARCASS_COLOUR = "White Stipple";
 function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+function doorSidesOf(params) {
+  return params && params.doorSides === "double" ? "double" : "single";
+}
+function carcassColourOf(params) {
+  const name = params && String(params.carcassColorName || "").trim();
+  if (name) return name;
+  const raw = params && String(params.carcassColor || "").trim();
+  return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
+}
+var bigFaces = (b) => (b.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
+function applyDoorSides(boards, params) {
+  const sides = doorSidesOf(params);
+  const carcass = carcassColourOf(params);
+  for (const b of boards) {
+    if (b.stock?.kind !== "door") continue;
+    const faces = bigFaces(b);
+    const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
+    if (!front) continue;
+    const back = faces.find((f) => f !== front);
+    if (!back) continue;
+    const { grain: _drop, ...rest } = back.finish ?? {};
+    back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
+    b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
+  }
+}
+
+// generators/_lib/grain.ts
+var SHEET_CROSS_MAX_MM = 1180;
+var SHEET_ALONG_MAX_MM = 2380;
+var PLANE_AXES = { XZ: ["x", "z"], YZ: ["y", "z"], XY: ["x", "y"] };
+var WORD = { x: "wide", y: "deep", z: "high" };
+function isDir(v) {
+  return v === "horizontal" || v === "vertical";
+}
+function grainOf(params, group, defaults) {
+  const stored = params && params.grain && typeof params.grain === "object" ? params.grain[group] : void 0;
+  return isDir(stored) ? stored : defaults[group] ?? "horizontal";
+}
+function grainChecked(params) {
+  return !!params && params.doorSeries === "hpl";
+}
+function colourFacesOf(b) {
+  return (b.faces ?? []).filter((f) => (f.id === "A" || f.id === "B") && f.finish?.colour);
+}
+var round1 = (v) => Math.round(v * 10) / 10;
+function applyGrain(boards, groupOf, params, defaults) {
+  const checked = grainChecked(params);
+  const groups = {};
+  for (const g of Object.keys(defaults)) groups[g] = grainOf(params, g, defaults);
+  const issues = [];
+  const present2 = /* @__PURE__ */ new Set();
+  for (const b of boards) {
+    const group = groupOf(b);
+    if (!group) continue;
+    const faces = colourFacesOf(b);
+    if (!faces.length) continue;
+    const dir = grainOf(params, group, defaults);
+    groups[group] = dir;
+    present2.add(group);
+    const key = dir === "horizontal" ? "u" : "v";
+    for (const f of faces) f.finish = { ...f.finish, grain: key };
+    if (!checked) continue;
+    const [U, V] = PLANE_AXES[b.profilePlane] ?? PLANE_AXES.XY;
+    const alongAxis = key === "u" ? U : V;
+    const acrossAxis = key === "u" ? V : U;
+    const len = (a) => round1(b[`${a}1`] - b[`${a}0`]);
+    const across = len(acrossAxis);
+    const along = len(alongAxis);
+    if (across > SHEET_CROSS_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "across",
+        length: across,
+        word: WORD[acrossAxis],
+        limit: SHEET_CROSS_MAX_MM,
+        message: `${b.id} is ${across} ${WORD[acrossAxis]}: ${dir} grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+    if (along > SHEET_ALONG_MAX_MM) {
+      issues.push({
+        board: b.id,
+        group,
+        dir,
+        side: "along",
+        length: along,
+        word: WORD[alongAxis],
+        limit: SHEET_ALONG_MAX_MM,
+        message: `${b.id} is ${along} ${WORD[alongAxis]}: ${dir} grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 \xD7 2400)`
+      });
+    }
+  }
+  return { groups, present: [...present2], checked, issues };
+}
+
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
 }
 
 // generators/_lib/recordBox.ts
@@ -240,7 +404,7 @@ function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
 }
 
 // generators/_lib/resolveJoints.ts
-var EPS = 0.6;
+var EPS2 = 0.6;
 function overlap(a0, a1, b0, b1) {
   return a0 < b1 - 0.01 && b0 < a1 - 0.01;
 }
@@ -255,10 +419,10 @@ function contact(a, b) {
     if (!ax.o1 || !ax.o2) continue;
     const gapRight = ax.b0 - ax.a1;
     const gapLeft = ax.a0 - ax.b1;
-    if (gapRight >= -EPS && (best == null || Math.abs(gapRight) < Math.abs(best.gap))) {
+    if (gapRight >= -EPS2 && (best == null || Math.abs(gapRight) < Math.abs(best.gap))) {
       best = { axis: ax.axis, aSide: "+", gap: gapRight };
     }
-    if (gapLeft >= -EPS && (best == null || Math.abs(gapLeft) < Math.abs(best.gap))) {
+    if (gapLeft >= -EPS2 && (best == null || Math.abs(gapLeft) < Math.abs(best.gap))) {
       best = { axis: ax.axis, aSide: "-", gap: gapLeft };
     }
   }
@@ -361,6 +525,11 @@ function buildTallFaces(fb) {
       b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
       annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
+    } else if (b.id.startsWith("SidePanel_") && b.stock?.kind === "door") {
+      const left = b.id === "SidePanel_L";
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, left ? "B" : "A", { semantic: "outside", visible: true, finish: { colour: fb.doorColour } });
+      annotate(b, left ? "A" : "B", { semantic: "inside", visible: false });
     }
   }
   for (const s of fb.ziSlots) {
@@ -785,7 +954,7 @@ var asNum = (v, fb) => {
   return Number.isFinite(n) ? n : fb;
 };
 var r2 = (v) => Math.round(v * 1e3) / 1e3;
-var EPS2 = 1e-3;
+var EPS3 = 1e-3;
 var PANEL_TYPES = /* @__PURE__ */ new Set(["side_door", "left_side_door", "right_side_door", "double_door", "drawer", "top_flap", "bottom_flap"]);
 function applyFridgePrep(input, notes) {
   const zones = (input.zones ?? []).map((zone) => {
@@ -836,8 +1005,10 @@ function normalize(input, errors) {
   const fc = asNum(input.frontHardware?.frontClearance, RULES.DEFAULT_FRONT_CLEARANCE.value);
   const leftT = asNum(input.leftSidePanelThickness, 0);
   const rightT = asNum(input.rightSidePanelThickness, 0);
+  const leftFinish = input.leftSidePanelFinish === "colour" ? "colour" : "carcass";
+  const rightFinish = input.rightSidePanelFinish === "colour" ? "colour" : "carcass";
   for (const [name, t] of [["Left", leftT], ["Right", rightT]]) {
-    if (t !== 0 && t !== RULES.SIDE_PANEL_WHITELIST_15.value && t !== RULES.SIDE_PANEL_WHITELIST_16.value) {
+    if (t !== 0 && t !== RULES.SIDE_PANEL_WHITELIST_15.value && t !== RULES.SIDE_PANEL_WHITELIST_16.value && t !== FPT && t !== CPT) {
       errors.push(`${name} side panel thickness must be one of {0, 15, 16}.`);
     }
   }
@@ -870,6 +1041,8 @@ function normalize(input, errors) {
     dividerT,
     leftT,
     rightT,
+    leftFinish,
+    rightFinish,
     leftAdapt: input.leftSidePanelAdaptAvoidance ?? true,
     rightAdapt: input.rightSidePanelAdaptAvoidance ?? true,
     topSys: { style: topStyle, railH: topRailH, frontRail: topFront, insert: topInsert },
@@ -1926,14 +2099,14 @@ function generateGeneralTall(input) {
     const h34CutY0 = r2(md - RULES.H34_CLEARANCE_DEPTH.value);
     const rearBottomZ = r2(z0 - tongue);
     const h34Cuts = [];
-    const h34Bands = boards.filter((board) => board.id.startsWith("H34")).map((board) => ({ z0: Math.max(board.z0, z0), z1: Math.min(board.z1, z1) })).filter((band) => band.z1 - band.z0 > EPS2);
+    const h34Bands = boards.filter((board) => board.id.startsWith("H34")).map((board) => ({ z0: Math.max(board.z0, z0), z1: Math.min(board.z1, z1) })).filter((band) => band.z1 - band.z0 > EPS3);
     const t5z0 = r2(CH - RULES.T5_REAR_VERTICAL_HEIGHT.value - RULES.H34_Z_BELOW.value);
     const t5Top = r2(Math.min(z1, CH));
-    if (t5Top > Math.max(z0, t5z0) + EPS2) h34Bands.push({ z0: r2(Math.max(z0, t5z0)), z1: t5Top });
+    if (t5Top > Math.max(z0, t5z0) + EPS3) h34Bands.push({ z0: r2(Math.max(z0, t5z0)), z1: t5Top });
     h34Bands.sort((a, b) => a.z0 - b.z0);
     for (const band of h34Bands) {
       const prev = h34Cuts[h34Cuts.length - 1];
-      if (prev && band.z0 <= prev.z1 + EPS2) prev.z1 = r2(Math.max(prev.z1, band.z1));
+      if (prev && band.z0 <= prev.z1 + EPS3) prev.z1 = r2(Math.max(prev.z1, band.z1));
       else h34Cuts.push({ z0: r2(band.z0), z1: r2(band.z1) });
     }
     const rear = [[md, rearBottomZ]];
@@ -1941,13 +2114,13 @@ function generateGeneralTall(input) {
     for (const cut of h34Cuts) {
       const cz0 = r2(Math.max(cut.z0, zCursor));
       const cz1 = r2(cut.z1);
-      if (cz1 <= zCursor + EPS2) continue;
-      if (cz0 > zCursor + EPS2) rear.push([md, cz0]);
+      if (cz1 <= zCursor + EPS3) continue;
+      if (cz0 > zCursor + EPS3) rear.push([md, cz0]);
       rear.push([h34CutY0, cz0], [h34CutY0, cz1]);
-      if (cz1 < z1 - EPS2) rear.push([md, cz1]);
+      if (cz1 < z1 - EPS3) rear.push([md, cz1]);
       zCursor = cz1;
     }
-    if (z1 > zCursor + EPS2) rear.push([md, z1]);
+    if (z1 > zCursor + EPS3) rear.push([md, z1]);
     const prof = yz([
       [0, rearBottomZ],
       [ty0, rearBottomZ],
@@ -1977,8 +2150,8 @@ function generateGeneralTall(input) {
     ));
     for (const b of boundaries) {
       if (b.boundaryType !== "full_zi") continue;
-      const isUpper = Math.abs(b.z0 - z1) < EPS2;
-      const isLower = Math.abs(b.z1 - z0) < EPS2;
+      const isUpper = Math.abs(b.z0 - z1) < EPS3;
+      const isLower = Math.abs(b.z1 - z0) < EPS3;
       if (!isUpper && !isLower) continue;
       ziGrooves.push({
         id: `zi_groove_${vd.id}_${b.id}`,
@@ -2165,7 +2338,7 @@ function generateGeneralTall(input) {
       }
     }
   }
-  const mkSidePanel = (side, t, adapt) => {
+  const mkSidePanel = (side, t, adapt, finish) => {
     const x0 = side === "L" ? 0 : r2(s.CW - t);
     let prof;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
@@ -2178,7 +2351,7 @@ function generateGeneralTall(input) {
       "side_panel",
       "side_panel",
       t,
-      "carcass",
+      finish === "colour" ? "door" : "carcass",
       "YZ",
       "X",
       x0,
@@ -2190,8 +2363,8 @@ function generateGeneralTall(input) {
       prof
     ));
   };
-  if (s.leftT > 0) mkSidePanel("L", s.leftT, s.leftAdapt);
-  if (s.rightT > 0) mkSidePanel("R", s.rightT, s.rightAdapt);
+  if (s.leftT > 0) mkSidePanel("L", s.leftT, s.leftAdapt, s.leftFinish);
+  if (s.rightT > 0) mkSidePanel("R", s.rightT, s.rightAdapt, s.rightFinish);
   if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > RULES.AVOIDANCE_SUPPORT_THICKNESS.value) {
     const ad = s.avoid.depth, ah = s.avoid.height;
     const at = RULES.AVOIDANCE_SUPPORT_THICKNESS.value;
@@ -2236,6 +2409,14 @@ function generateGeneralTall(input) {
   }
   attachFaces(boards);
   const joints = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
+  const grain = applyGrain(
+    boards,
+    (b) => b.id.startsWith("SidePanel_") ? "side" : b.stock?.kind === "door" ? "front" : null,
+    input,
+    { front: "horizontal", side: "vertical" }
+  );
+  applyDoorSides(boards, input);
+  const milling = applyMilling(boards);
   const result = {
     params: {
       cabinetHeight: CH,
@@ -2248,6 +2429,8 @@ function generateGeneralTall(input) {
       ziThickness: s.ziT
     },
     boards,
+    grain,
+    milling,
     stack: [
       botSys,
       ...(() => {

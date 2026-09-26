@@ -271,6 +271,102 @@ function faceRef(board, faces) {
   return { board, faces: faces.map((f) => typeof f === "string" ? f : f.id) };
 }
 
+// generators/_lib/finish.ts
+var DEFAULT_CARCASS_COLOUR = "White Stipple";
+function doorSidesOf(params) {
+  return params && params.doorSides === "double" ? "double" : "single";
+}
+function carcassColourOf(params) {
+  const name = params && String(params.carcassColorName || "").trim();
+  if (name) return name;
+  const raw = params && String(params.carcassColor || "").trim();
+  return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
+}
+var bigFaces = (b) => (b.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
+function applyDoorSides(boards, params) {
+  const sides = doorSidesOf(params);
+  const carcass = carcassColourOf(params);
+  for (const b of boards) {
+    if (b.stock?.kind !== "door") continue;
+    const faces = bigFaces(b);
+    const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
+    if (!front) continue;
+    const back = faces.find((f) => f !== front);
+    if (!back) continue;
+    const { grain: _drop, ...rest } = back.finish ?? {};
+    back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
+    b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
+  }
+}
+
+// generators/_lib/milling.ts
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
+var CARCASS = /stipple/i;
+var EPS = 0.01;
+var partial = (f) => WORK.has(f.kind) && !f.through;
+var through = (f) => WORK.has(f.kind) && !!f.through;
+function bboxArea(pts) {
+  if (!pts || !pts.length) return 0;
+  const xs = pts.map((p) => Number(p.x ?? 0));
+  const ys = pts.map((p) => Number(p.y ?? 0));
+  return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
+}
+function slabRebateFace(b) {
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
+  const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
+  const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
+  const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
+  return null;
+}
+function colourFaceOf(b, A, B) {
+  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
+}
+function defaultFace(A, B, colour) {
+  if (colour) return colour.id === "A" ? "B" : "A";
+  const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
+  if (inward(B) && !inward(A)) return "B";
+  if (inward(A) && !inward(B)) return "A";
+  if (A.visible === true && B.visible !== true) return "B";
+  if (B.visible === true && A.visible !== true) return "A";
+  if (B.features.some(through) && !A.features.some(through)) return "B";
+  return "A";
+}
+function applyMilling(boards) {
+  const issues = [];
+  for (const b of boards) {
+    const A = b.faces?.find((f) => f.id === "A");
+    const B = b.faces?.find((f) => f.id === "B");
+    if (!A || !B) continue;
+    const rebate = slabRebateFace(b);
+    const onA = A.features.some(partial) || rebate === "A";
+    const onB = B.features.some(partial) || rebate === "B";
+    const colour = colourFaceOf(b, A, B);
+    let face;
+    if (onA && onB) {
+      face = defaultFace(A, B, colour);
+      issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
+    } else if (onA || onB) {
+      face = onA ? "A" : "B";
+      if (colour && colour.id === face) {
+        issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
+      }
+    } else {
+      face = defaultFace(A, B, colour);
+    }
+    const [to, from] = face === "A" ? [A, B] : [B, A];
+    const moving = from.features.filter(through);
+    if (moving.length) {
+      from.features = from.features.filter((f) => !through(f));
+      to.features.push(...moving);
+    }
+    b.milling = face;
+  }
+  return { issues };
+}
+
 // generators/bedSideTable/svgPreview.ts
 function fmt(v) {
   return Number.isInteger(v) ? String(v) : String(Number(v.toFixed(1)));
@@ -317,7 +413,7 @@ function generateBedSideSvg(result, options = {}) {
 
 // generators/bedSideTable/generator.ts
 var ZONE_TYPES = ["drawer", "left_door", "right_door"];
-var EPS = 0.01;
+var EPS2 = 0.01;
 function round1(v) {
   return Math.round(v * 10) / 10;
 }
@@ -479,6 +575,8 @@ function generateBedSideTable(raw) {
       b.stock = { kind: doorish ? "door" : "carcass", thickness: b.materialThickness, colour: doorish ? p.doorColor : p.carcassColor };
     }
     annotate(show, bedAtStart ? "B" : "A", { semantic: "outside", visible: true, finish: { colour: p.doorColor } });
+    for (const b of boards) if (b.category === "front_panel") annotate(b, "B", { semantic: "front", visible: true, finish: { colour: p.doorColor } });
+    applyDoorSides(boards, { doorSides: raw.doorSides, carcassColorName: p.carcassColor });
     const mid = shelves[1];
     const bedInner = bedAtStart ? "A" : "B";
     const wallInner = bedAtStart ? "B" : "A";
@@ -494,17 +592,17 @@ function generateBedSideTable(raw) {
         source: "bedSideTable"
       });
       for (const s of [shelves[0], shelves[2]]) {
-        tagEdges(side, "notch", { u0: sy0 - EPS, u1: sy1 + EPS, v0: s.sz0 - EPS, v1: s.sz1 + EPS }, { id: `SLOT_${s.id}`, for: s.id, key: `${side.id}.pv`, source: "bedSideTable" });
+        tagEdges(side, "notch", { u0: sy0 - EPS2, u1: sy1 + EPS2, v0: s.sz0 - EPS2, v1: s.sz1 + EPS2 }, { id: `SLOT_${s.id}`, for: s.id, key: `${side.id}.pv`, source: "bedSideTable" });
       }
     }
     for (const s of shelves) {
       const shelf = boards.find((b) => b.id === s.id);
       const w = shelf.x1 - shelf.x0;
       for (const [side, u0, u1] of [
-        [bedAtStart ? sideBed : sideWall, -EPS, t + EPS],
-        [bedAtStart ? sideWall : sideBed, w - t - EPS, w + EPS]
+        [bedAtStart ? sideBed : sideWall, -EPS2, t + EPS2],
+        [bedAtStart ? sideWall : sideBed, w - t - EPS2, w + EPS2]
       ]) {
-        const tags = tagEdges(shelf, "tongue", { u0, u1, v0: ty0 - EPS, v1: ty1 + EPS }, { id: `${s.id}_TONGUE_${side.id}`, for: side.id, key: `${s.id}.pv`, source: "bedSideTable" });
+        const tags = tagEdges(shelf, "tongue", { u0, u1, v0: ty0 - EPS2, v1: ty1 + EPS2 }, { id: `${s.id}_TONGUE_${side.id}`, for: side.id, key: `${s.id}.pv`, source: "bedSideTable" });
         const slotFaces = s.id === "SHELF_MID" ? [side.id === sideBed.id ? bedInner : wallInner] : side.faces.filter((f) => f.features.some((ft) => ft.id === `SLOT_${s.id}`)).map((f) => f.id);
         joints.push(joint(`${s.id}_${side.id}`, "tongue_groove", faceRef(side.id, slotFaces), faceRef(s.id, tags), { hardware: [], rule: "bedside_through_tongue_v1" }));
       }
@@ -533,8 +631,10 @@ function generateBedSideTable(raw) {
     }
   }
   const provenance = endProvenance();
+  const milling = applyMilling(errors.length ? [] : boards);
   return {
     params: p,
+    milling,
     boards: errors.length ? [] : boards,
     joints: errors.length ? [] : joints,
     validation: { errors, warnings },

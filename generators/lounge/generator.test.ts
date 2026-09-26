@@ -77,7 +77,9 @@ assert.equal(r.debug?.boardFrame, "final");
     assert.equal(typeof j.b?.board, "string", `${j.id} b.board`);
   }
   const top = b("main_top");
-  assert.ok(top.faces.find((f) => f.id === "A").features.some((x) => x.kind === "cutout"));
+  // The lid seat is a rebate in the underside slab: milled from B, the through opening listed there.
+  assert.equal(top.milling, "B");
+  assert.ok(top.faces.find((f) => f.id === "B").features.some((x) => x.kind === "cutout"));
 }
 
 const i = generateLounge({ style: "I_SHAPE", mainWidth: 2000, mainDepth: 600, height: 420 });

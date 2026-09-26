@@ -8,6 +8,8 @@
  * 重实现依据：docs/kitchen-cleanroom-spec.md（钉值验收 0.01mm）。
  */
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+import type { GrainParams, GrainResult } from "../_lib/grain.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 
 export type { Board, Joint } from "../_lib/model.ts";
 
@@ -89,6 +91,12 @@ export interface KitchenParams {
   /** Door colour name on the fronts' room face. Default Gloss White. */
   doorColor?: string;
   doorColorName?: string;
+  /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
+  doorSeries?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
+  /** Wood grain per group; missing = module default (fronts horizontal). */
+  grain?: GrainParams;
   columns: KitchenColumn[];
   wheelAvoidances?: WheelAvoidance[];
   vPanelMachiningPreferences?: MachiningPreference[];
@@ -115,6 +123,19 @@ export interface SlotRecord {
   z0: number;
   z1: number;
   forBoard: string;
+}
+
+/** A functional board that lost its slot on a V panel is screwed through the V from the other face. */
+export interface ScrewRecord {
+  id: string;
+  vPanelId: string;
+  /** The face of the V the board sits against; the screw goes in from the opposite face. */
+  side: "left" | "right";
+  forBoard: string;
+  /** Cabinet-frame centre (y along the board's depth, z at the board's mid-thickness). */
+  y: number;
+  z: number;
+  diameter: number;
 }
 
 export interface HingeRecord {
@@ -160,7 +181,13 @@ export interface KitchenResult {
     carcassDepth: number;
   };
   boards: ModelBoard[];
+  /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */
+  grain?: GrainResult;
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   slots: SlotRecord[];
+  /** Screw holes for functional boards that got no slot (double-sided half-slot conflict, slots too close). */
+  screws: ScrewRecord[];
   hinges: HingeRecord[];
   locks: LockRecord[];
   notches: NotchRecord[];

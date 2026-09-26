@@ -6,9 +6,8 @@ import * as THREE from "three";
 import { scene, camera, controls, canvas, renderer, setView, frame, rayFromClient } from "../space.js";
 import { MODULES, moduleIdForGenerator } from "../modules.js";
 import { boardMesh } from "../boardGeom.js";
-import { colourFaces, doorBodyMaterial } from "../doorFinish.js";
+import { doorMaterialFor } from "../doorFinish.js";
 import { STIPPLE_WHITE, carcassMat } from "../carcassFinish.js";
-import { doorSwatch } from "../doorSwatches.js";
 import { showTip, hideTip } from "../hud.js";
 import { log } from "../log.js";
 import { collectPins, pinsForBoard, mergePins, checkPins, countPins } from "../gen/pins.js";
@@ -511,9 +510,14 @@ function build3D(keepCamera) {
   const pr = Math.max(3, span / 260);
 
   for (const b of boards) {
-    const coatsOn = colourFaces(b);
-    const bodyHex = coatsOn.length ? (doorSwatch(coatsOn[0].finish.colour)?.hex ?? STIPPLE_WHITE) : null;
-    const mat = (bodyHex != null ? doorBodyMaterial(coatsOn[0].finish.colour) : b.category === "front_panel" ? frontMat : carcassMat).clone();
+    const door = doorMaterialFor(b);
+    const base = door || (b.category === "front_panel" ? frontMat : carcassMat);
+    // Resting tint after a highlight: the material's own colour (white under an image).
+    const bodyHex = door ? base.color.getHex() : null;
+    const mat = base.clone();
+    // clone() drops the shader hook that lays out stipple / flakes / wood.
+    mat.onBeforeCompile = base.onBeforeCompile;
+    mat.customProgramCacheKey = base.customProgramCacheKey;
     const { mesh, edges } = boardMesh(b, mat, edgeMat);
     mesh.userData = { kind: "board", boardId: b.id };
     const group = new THREE.Group();

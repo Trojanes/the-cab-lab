@@ -28,11 +28,15 @@ export interface BedSideParams {
   carcassColor?: string;
   doorColor?: string;
   doorColorName?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
 }
 
 export interface Board extends ModelBoard {}
 
 export interface BedSideResult {
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: import("../_lib/milling.ts").MillingResult;
   params: {
     width: number;
     depth: number;

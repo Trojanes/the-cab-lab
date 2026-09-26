@@ -6,7 +6,8 @@
  */
 import { beginProvenance, dim, endProvenance, param, ref } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
-import { doorColourOf } from "../_lib/finish.ts";
+import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox } from "../_lib/recordBox.ts";
 import { buildLoungeFaces } from "./faces.ts";
 import type {
@@ -416,10 +417,12 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
 
   attachFaces(boards);
   const joints: Joint[] = buildLoungeFaces({ boards, openings, lids, hinges, locks, grooves, doorColour: doorColourOf(raw) });
+  applyDoorSides(boards, raw);
+  const milling = applyMilling(boards);
 
   return {
     params: { style, height: H, partitionPanelThickness: ppt, panelHeight: Hprime },
-    boards, openings, lids, footprint, hinges, locks, grooves, joints,
+    boards, milling, openings, lids, footprint, hinges, locks, grooves, joints,
     validation: { errors, warnings },
     debug: { provenance: endProvenance(), boardFrame: "final" },
   };

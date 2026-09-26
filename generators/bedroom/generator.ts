@@ -57,6 +57,9 @@ import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same
 import { addFeature, annotate, attachFaces, boundaryEdgeFaces, edgeFacesIn, faceRef, joint, localRect, type Joint } from "../_lib/model.ts";
 import { buildBedroomOhc, equalOhcZones, normalizeOhcZones, setOhcBoundary, yWhereRoofMeets } from "./ohc.ts";
 import { addNookShelfLed, addT3LedChannels } from "./led.ts";
+import { applyGrain } from "../_lib/grain.ts";
+import { applyDoorSides } from "../_lib/finish.ts";
+import { applyMilling } from "../_lib/milling.ts";
 
 export { RULES } from "./rules.ts";
 export { equalOhcZones, normalizeOhcZones, setOhcBoundary };
@@ -1020,9 +1023,20 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
           clearance: R.WARDROBE_DOOR_CLEARANCE_MM.value,
         },
   };
+  // Wardrobe / overhead fronts horizontal; the colour panels run boot deck → roof (over 1180), vertical.
+  const grain = applyGrain(
+    errors.length ? [] : boards,
+    (b) => (b.id === "WARD_L_PANEL" || b.id === "WARD_R_PANEL" ? "side" : b.stock?.kind === "door" ? "front" : null),
+    raw,
+    { front: "horizontal", side: "vertical" },
+  );
+  if (!errors.length) applyDoorSides(boards, { ...raw, carcassColorName: p.carcassColor });
+  const milling = applyMilling(errors.length ? [] : boards);
   return {
     params: p,
     layout,
+    grain,
+    milling,
     zones: errors.length ? [] : zones,
     boards: errors.length ? [] : boards,
     joints: errors.length ? [] : joints,

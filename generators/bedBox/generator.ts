@@ -26,6 +26,7 @@ import type { BedBoxParams, BedBoxResult, Board } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same, type Term } from "../_lib/dim.ts";
 import { annotate, attachFaces, boundaryEdgeFaces, faceRef, joint, tagEdges, type FaceId, type Joint } from "../_lib/model.ts";
+import { applyMilling } from "../_lib/milling.ts";
 
 export { RULES } from "./rules.ts";
 
@@ -263,7 +264,8 @@ export function generateBedBox(raw: BedBoxParams): BedBoxResult {
   const provenance = endProvenance();
   const params = { width: W, depth: D, height: H, panelThickness: t, frontPanelThickness: fpt, carcassColor: color };
   const zones = errors.length ? [] : [{ id: "box" as const, x0: 0, x1: W, y0: 0, y1: D, z0: 0, z1: H }];
-  return { params, zones, boards: errors.length ? [] : boards, joints: errors.length ? [] : joints, features: [], validation: { errors, warnings }, debug: { boardFrame: "final", provenance } };
+  const milling = applyMilling(errors.length ? [] : boards);
+  return { params, zones, milling, boards: errors.length ? [] : boards, joints: errors.length ? [] : joints, features: [], validation: { errors, warnings }, debug: { boardFrame: "final", provenance } };
 }
 
 // --- helpers -----------------------------------------------------------------------

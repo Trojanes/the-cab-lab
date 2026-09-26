@@ -17,6 +17,8 @@ import { generateLounge } from "../lounge/generator.ts";
 import { loungeFootprintBoxes, loungeFromPolyline, pointInFootprintBoxes } from "../lounge/place.ts";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+/** Most a module's generator may take per run (defaults, averaged). Today they run in under 1 ms. */
+const GENERATE_BUDGET_MS = 5;
 
 function faceRefs(name: string, result: { joints?: Array<{ id?: string; a?: { board?: string }; b?: { board?: string } }> }) {
   for (const j of result.joints ?? []) {
@@ -193,6 +195,12 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
     const result = m.generate(params);
     const errs = result.validation?.errors ?? [];
     assert.equal(errs.length, 0, `${id} defaults: ${errs.join("; ")}`);
+    // Budget: every edit regenerates the cabinet, in the browser. Keep one run well under a frame.
+    const runs = 30;
+    const t0 = performance.now();
+    for (let i = 0; i < runs; i++) m.generate(params);
+    const ms = (performance.now() - t0) / runs;
+    assert.ok(ms < GENERATE_BUDGET_MS, `${id}: generate takes ${ms.toFixed(2)} ms, budget ${GENERATE_BUDGET_MS} ms`);
     const env = m.envelope(params);
     assert.ok(env.W > 0 && env.D > 0 && env.H > 0, `${id} envelope`);
     // Colour faces: every visible door-stock face carries the cabinet's door colour name.

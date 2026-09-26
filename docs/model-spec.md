@@ -67,11 +67,12 @@ interface Board {
   category: string;  role?: string; // role === category (model-layer name)
   boardType: string;
   materialThickness: number;
-  stock?: { kind: "carcass" | "partition" | "door"; thickness; colour? };
+  stock?: { kind: "carcass" | "partition" | "door"; thickness; colour?; sides?: 1 | 2 }; // door: 1 = single-sided (back = carcass colour), 2 = double
   profilePlane: "XY" | "XZ" | "YZ"; thicknessAxis: "X" | "Y" | "Z";
   x0 x1 y0 y1 z0 z1;                // cabinet frame, final pose
   profileVector? / cutProfileVector?; // the outline as emitted (see below)
   faces?: Face[];
+  milling?: "A" | "B";              // the face up on the CNC (_lib/milling.ts)
 }
 ```
 
@@ -99,7 +100,7 @@ interface Face {
   edge?: { from: [u, v]; to: [u, v] };
   semantic?: string;      // module annotation: front back top bottom inside outside
   visible?: boolean;      // when the module knows (fronts: B visible, A hidden)
-  finish?: { colour?: string; edgeBand?: EdgeBand };  // EdgeBand on E<i> only; absent = not banded
+  finish?: { colour?: string; edgeBand?: EdgeBand; grain?: "u" | "v" };  // EdgeBand on E<i> only; absent = not banded. grain: board-local axis of the wood grain on a colour face (_lib/grain.ts)
   features: FaceFeature[];
 }
 
@@ -119,7 +120,14 @@ interface FaceFeature {
   annotations.
 - A and B share one `(u, v)` frame (the board‑local frame). A through feature
   reads the same from either side; CNC flips the board, not the numbers. A
-  through feature is listed once, on the face it is drilled from (default A).
+  through feature is listed once, on the board's **milling face**.
+- **Milling face** (`board.milling`, `generators/_lib/milling.ts`): the CNC cuts
+  from above only, so all partial-depth work (groove, T-groove, blind hole, pocket,
+  a rebate in stacked slabs) is on one big face. Single-sided door stock is milled
+  from the back (the colour face lies on the table); double-sided / carcass stock
+  from the face that carries the work, else its inside / back face. Work on both
+  faces, or on a single-sided colour face, is a milling issue (`result.milling.issues`:
+  red in 3D, listed in the checks). An export milling from B mirrors one in-plane axis.
 - Edge normals are outward normals of the outline; `boundaryEdgeFaces(b, "-Y")`
   returns the edges on the outline's front boundary (not a tongue side or a
   step that happens to face the same way).

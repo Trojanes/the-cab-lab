@@ -41,14 +41,18 @@ function testTwoZoneDoorDrawer(): void {
 
   assert.ok(left && right && back && top && bottom && mid && fp1 && fp2);
 
-  // Through tongues: horizontal boards expand by full CPT on each side.
-  assert.equal(mid.x0, 0);
+  // Left side is an 18 mm door panel (half tongue 8.5). Right side is 16 mm carcass (through).
+  assert.equal(left.x1, 18);
+  assert.equal(right.x0, 584);
+  assert.equal(mid.x0, 9.5);
   assert.equal(mid.x1, 600);
-  assert.equal(top.x0, 0);
+  assert.equal(top.x0, 9.5);
   assert.equal(top.x1, 600);
-  assert.equal(bottom.x0, 0);
+  assert.equal(bottom.x0, 9.5);
   assert.equal(bottom.x1, 600);
-  assert.equal(back.x0, 0);
+  assert.equal(back.z0, 0);
+  assert.equal(back.z1, 800);
+  assert.equal(back.x0, 9.5);
   assert.equal(back.x1, 600);
 
   const { tongueY0, tongueY1 } = shelfTongueYRange(0, 544);
@@ -56,33 +60,33 @@ function testTwoZoneDoorDrawer(): void {
 
   // Front clearance + lock on side door only.
   assert.equal(fp1.z0, 385.3);
-  assert.equal(fp1.z1, 781.5);
+  assert.equal(fp1.z1, 797.5);
   assert.ok(fp1.lockCutout, "side door gets lock cutout");
   assert.ok(fp1.profileFeatures?.some((f) => f.type === "door_lock"));
   assert.equal(fp2.lockCutout, undefined);
-  assert.equal(fp2.z0, 18.5);
+  assert.equal(fp2.z0, 2.5);
   assert.equal(fp2.z1, 382.8);
 
-  // Grooves: TOP + BOTTOM + MID + BACK → 4 boards × 2 sides = 8
+  // Side grooves for 3 shelves + back, plus one groove in the back per shelf.
   const grooves = result.features.filter((f) => f.type === "side_groove");
-  assert.equal(grooves.length, 8);
-  const midGrooves = grooves.filter((g) => g.relatedBoardId === "MID_1");
+  assert.equal(grooves.length, 11);
+  const midGrooves = grooves.filter((g) => g.relatedBoardId === "MID_1" && g.targetBoardId !== "BACK");
   assert.equal(midGrooves.length, 2);
   for (const groove of midGrooves) {
     assert.equal(groove.y0, tongueY0 - GROOVE_LENGTH_OVERSIZE);
     assert.equal(groove.y1, tongueY1 + GROOVE_LENGTH_OVERSIZE);
-    assert.equal(groove.z0, 376 - GROOVE_THICKNESS_OVERSIZE);
-    assert.equal(groove.z1, 392 + GROOVE_THICKNESS_OVERSIZE);
-    assert.equal(groove.depth, 16);
+    assert.equal(groove.z0, 375.5);
+    assert.equal(groove.z1, 392.5);
+    assert.equal(groove.depth, groove.targetBoardId === "SIDE_L" ? 9 : 16);
+    assert.equal(groove.through, groove.targetBoardId === "SIDE_R");
   }
 
   const backGrooves = grooves.filter((g) => g.relatedBoardId === "BACK");
   assert.equal(backGrooves.length, 2);
   for (const groove of backGrooves) {
-    assert.equal(groove.depth, 16);
-    // thickness axis oversize on Y (back thickness)
-    assert.equal(groove.y0, 544 - GROOVE_THICKNESS_OVERSIZE);
-    assert.equal(groove.y1, 560 + GROOVE_THICKNESS_OVERSIZE);
+    assert.equal(groove.depth, groove.targetBoardId === "SIDE_L" ? 9 : 16);
+    assert.equal(groove.y0, 543);
+    assert.equal(groove.y1, 560);
   }
 
   assert.equal(result.features.filter((f) => f.type === "shelf_tongue").length, 6); // top/mid/bottom ×2
@@ -151,7 +155,7 @@ function testSingleRightDoor(): void {
   assert.equal(result.validation.errors.length, 0, result.validation.errors.join("; "));
   assert.equal(result.boards.filter((b) => b.id.startsWith("MID_")).length, 0);
   // TOP + BOTTOM + BACK → 6 side grooves
-  assert.equal(result.features.filter((f) => f.type === "side_groove").length, 6);
+  assert.equal(result.features.filter((f) => f.type === "side_groove").length, 8);
   const fp = boardById(result, "FP_1");
   assert.ok(fp?.lockCutout);
   assert.equal((fp as { thickness?: number })?.thickness, 18);
@@ -204,7 +208,7 @@ function testThreeZonesBoardCount(): void {
   });
   assert.equal(result.validation.errors.length, 0, result.validation.errors.join("; "));
   // TOP+BOTTOM+2×MID+BACK = 5 horiz/back × 2 sides = 10 grooves
-  assert.equal(result.features.filter((f) => f.type === "side_groove").length, 10);
+  assert.equal(result.features.filter((f) => f.type === "side_groove").length, 14);
   assert.equal(result.features.filter((f) => f.type === "door_lock").length, 2);
 }
 
@@ -237,7 +241,8 @@ function testFaceLayer(): void {
   const rightIn = right.faces!.find((f) => f.id === "B")!;
   assert.equal(leftIn.semantic, "inside");
   assert.equal(leftIn.features.filter((f) => f.kind === "groove").length, 4);
-  assert.equal(rightIn.features.filter((f) => f.kind === "groove").length, 4);
+  assert.equal(rightIn.features.filter((f) => f.kind === "cutout").length, 1);
+  assert.equal(rightIn.features.filter((f) => f.kind === "groove").length, 0);
   assert.equal(left.faces!.find((f) => f.id === "B")!.features.length, 0);
   assert.equal(right.faces!.find((f) => f.id === "A")!.features.length, 0);
   // Left side outer face takes the door colour (leftSideDoorColor), right keeps the carcass colour.
@@ -254,16 +259,19 @@ function testFaceLayer(): void {
   const tongueR = mid.faces!.filter((f) => f.features.some((x) => x.kind === "tongue" && x.for === "SIDE_R"));
   assert.equal(tongueL.length, 3);
   assert.equal(tongueR.length, 3);
-  for (const e of tongueL) assert.ok(e.edge!.from[0] <= 16 && e.edge!.to[0] <= 16, `${e.key} on the left tongue`);
-  for (const e of tongueR) assert.ok(e.edge!.from[0] >= 584 && e.edge!.to[0] >= 584, `${e.key} on the right tongue`);
+  for (const e of tongueL) assert.ok(e.edge!.from[0] <= 9 && e.edge!.to[0] <= 9, `${e.key} on the left tongue`);
+  for (const e of tongueR) assert.ok(e.edge!.from[0] >= 574 && e.edge!.to[0] >= 574, `${e.key} on the right tongue`);
   assert.equal(mid.faces!.find((f) => f.id === "A")!.features.length, 0);
 
-  // Door: lock slot on the room-side face B, through; drawer front has none.
+  // Door: lock slot through; listed on the milling face — the back A of single-sided door stock
+  // (the colour face B lies on the CNC table). Drawer front has none.
   const fp1 = boardById(result, "FP_1")!;
   const fp1Front = fp1.faces!.find((f) => f.id === "B")!;
   assert.equal(fp1Front.semantic, "front");
   assert.equal(fp1Front.visible, true);
-  const lock = fp1Front.features.find((f) => f.kind === "cutout")!;
+  assert.equal(fp1.milling, "A");
+  assert.equal(fp1Front.features.some((f) => f.kind === "cutout"), false, "nothing listed on the colour face");
+  const lock = fp1.faces!.find((f) => f.id === "A")!.features.find((f) => f.kind === "cutout")!;
   assert.ok(lock);
   assert.equal(lock.through, true);
   assert.equal(lock.radius, 7.75);

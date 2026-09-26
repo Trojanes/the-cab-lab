@@ -68,6 +68,8 @@ export interface BedBoxValidation {
 }
 
 export interface BedBoxResult {
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: import("../_lib/milling.ts").MillingResult;
   params: {
     width: number;
     depth: number;

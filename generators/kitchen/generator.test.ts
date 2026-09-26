@@ -53,14 +53,14 @@ function place(id: string) {
 }
 const r2 = (v: number) => Math.round(v * 1000) / 1000;
 
-/* ---------- 校验（黄金：errors 含 V1 冲突，warnings 空） ---------- */
-assert.deepEqual(r.validation.errors, ["Unresolved double-sided half-slot conflict on V1."]);
+/* ---------- 校验：V1 双侧半槽不再报错，自动解析（面积小的一侧改螺丝） ---------- */
+assert.deepEqual(r.validation.errors, []);
 assert.deepEqual(r.validation.warnings, []);
 assert.deepEqual(r.xBoundaries, [0, 444, 887]);
 
 /* ---------- 计数：7 骨架 + 3 V + 2 功能 + 1 加强条 + 3 门板 = 16 ---------- */
 assert.equal(r.boards.length, 16);
-assert.equal(r.slots.length, 4);
+assert.equal(r.slots.length, 3); // V1 drawer slot became screws
 assert.equal(r.hinges.length, 4);
 assert.equal(r.locks.length, 3);
 assert.ok(r.joints.some((j) => j.id === "kt_b1_b2_front_to_carcass_rail"), "B1↔B2 for style_1/2 explode");
@@ -93,9 +93,9 @@ assert.ok(r.joints.length >= 6, "V↔B3 and top rails declared");
 }
 
 /* ---------- B 系统骨架 ---------- */
-assert.deepEqual(place("B1"), { x0: 16, x1: 887, y0: 39, y1: 55, z0: 0, z1: 55 });
+assert.deepEqual(place("B1"), { x0: 16, x1: 887, y0: 70, y1: 86, z0: 0, z1: 55 });
 assert.equal(b("B1").materialThickness, 16);
-assert.deepEqual(place("B2"), { x0: 16, x1: 887, y0: 55, y1: 70, z0: 0, z1: 55 });
+assert.deepEqual(place("B2"), { x0: 16, x1: 887, y0: 86, y1: 101, z0: 0, z1: 55 });
 assert.deepEqual(place("B3"), { x0: 16, x1: 887, y0: 0, y1: 100, z0: 55, z1: 70 });
 // B3 V 缺口：V1 [436,452]、V2 [871.5,887]（V0 零宽自然消失）
 {
@@ -137,10 +137,11 @@ assert.deepEqual(b("c1-door-door-shelf").profileVector, [
   { x: 444, y: 169.333 }, { x: 436.5, y: 169.333 }, { x: 436.5, y: 254 }, { x: 16, y: 254 },
   { x: 16, y: 169.333 }, { x: 1, y: 169.333 }, { x: 1, y: 84.667 }, { x: 16, y: 84.667 }, { x: 16, y: 0 },
 ].map((q) => ({ x: r2(q.x), y: r2(q.y) })));
-assert.deepEqual(place("k-col-2-c2-drawer-bottom"), { x0: 444, x1: 887, y0: 0, y1: 150, z0: 572.5, z1: 587.5 });
+// No tongue into V1 (screwed): the board stops flush on V1's right face (451.5).
+assert.deepEqual(place("k-col-2-c2-drawer-bottom"), { x0: 451.5, x1: 887, y0: 0, y1: 150, z0: 572.5, z1: 587.5 });
 assert.deepEqual(b("k-col-2-c2-drawer-bottom").profileVector, [
   { x: 451.5, y: 0 }, { x: 872, y: 0 }, { x: 872, y: 50 }, { x: 887, y: 50 },
-  { x: 887, y: 150 }, { x: 444, y: 150 }, { x: 444, y: 50 }, { x: 451.5, y: 50 }, { x: 451.5, y: 0 },
+  { x: 887, y: 150 }, { x: 451.5, y: 150 }, { x: 451.5, y: 0 },
 ]);
 
 /* ---------- 加强条 ---------- */
@@ -209,9 +210,15 @@ assert.equal(b("c1-door-front-panel").stock?.kind, "door");
   const s1 = r.slots.find((x) => x.vPanelId === "V1" && x.forBoard === "c1-door-door-shelf")!;
   assert.ok(!s1.through, "V1 left half");
   assert.equal(s1.depth, 7.5);
-  const d1 = r.slots.find((x) => x.vPanelId === "V1" && x.forBoard === "k-col-2-c2-drawer-bottom")!;
-  assert.ok(!d1.through, "V1 right half");
-  assert.equal(d1.depth, 7.5);
+  // V1 would carry half slots on both faces. Column 1's door zone (825 high) outweighs the
+  // drawer zone (300): the drawer divider keeps no slot on V1 and is screwed through it.
+  assert.equal(r.slots.some((x) => x.vPanelId === "V1" && x.forBoard === "k-col-2-c2-drawer-bottom"), false, "V1 drawer: no slot");
+  const screws = r.screws.filter((x) => x.vPanelId === "V1" && x.forBoard === "k-col-2-c2-drawer-bottom");
+  assert.deepEqual(screws.map((x) => [x.y, x.z, x.diameter]), [[75, 580, 3]], "150 deep < 2 × 100: one screw in the middle");
+  const v1 = b("V1");
+  const hole = v1.faces!.flatMap((f) => f.features).find((f) => f.id === screws[0].id)!;
+  assert.equal(hole.kind, "hole");
+  assert.equal(hole.through, true);
   const d2 = r.slots.find((x) => x.vPanelId === "V2" && x.forBoard === "k-col-2-c2-drawer-bottom")!;
   assert.ok(d2.through, "V2 through");
   assert.deepEqual([d2.y0, d2.y1], [45, 155]); // 舌 ±5

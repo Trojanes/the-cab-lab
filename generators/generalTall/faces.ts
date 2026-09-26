@@ -24,6 +24,12 @@ export function buildTallFaces(fb: {
       b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
       annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
+    } else if (b.id.startsWith("SidePanel_") && b.stock?.kind === "door") {
+      // Colour side panel: door stock, the outside face carries the door colour (left −X = B, right +X = A).
+      const left = b.id === "SidePanel_L";
+      b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
+      annotate(b, left ? "B" : "A", { semantic: "outside", visible: true, finish: { colour: fb.doorColour } });
+      annotate(b, left ? "A" : "B", { semantic: "inside", visible: false });
     }
   }
 

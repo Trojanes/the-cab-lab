@@ -18,10 +18,15 @@
 
 import { computeFrontPanelBounds, frontPanelIsValid } from "./frontPanelCalculator.ts";
 import { attachFaces } from "../_lib/model.ts";
+import { applyGrain } from "../_lib/grain.ts";
+import { applyDoorSides } from "../_lib/finish.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { buildSmallCabinetFaces } from "./faces.ts";
 import {
   applyBackJoinery,
   applyHorizontalJoinery,
+  applyShelfBackTongue,
+  sideOutlineWithGrooves,
   attachSideGrooveProfileFeatures,
 } from "./shelfJoinery.ts";
 import type {
@@ -234,17 +239,24 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
   const features: SmallCabinetFeature[] = [];
   const resolvedZones: ResolvedZone[] = [];
 
+  // A door-panel side is front stock and takes a half groove. A carcass side is through.
+  const leftThick = leftSideDoorColor ? FPT : CPT;
+  const rightThick = rightSideDoorColor ? FPT : CPT;
+  const leftJoin = { thickness: leftThick, through: !leftSideDoorColor };
+  const rightJoin = { thickness: rightThick, through: !rightSideDoorColor };
+  const shelfY1 = round1(D - CPT);
+
   // Side panels — full height & structural depth (Y 0..D).
   pushBoard(boards, {
     id: "SIDE_L",
     name: "Left side",
     category: "side_panel",
     boardType: "left_side_panel",
-    materialThickness: CPT,
+    materialThickness: leftThick,
     profilePlane: "YZ",
     thicknessAxis: "X",
     x0: 0,
-    x1: CPT,
+    x1: leftThick,
     y0: 0,
     y1: D,
     z0: 0,
@@ -257,10 +269,10 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     name: "Right side",
     category: "side_panel",
     boardType: "right_side_panel",
-    materialThickness: CPT,
+    materialThickness: rightThick,
     profilePlane: "YZ",
     thicknessAxis: "X",
-    x0: W - CPT,
+    x0: W - rightThick,
     x1: W,
     y0: 0,
     y1: D,
@@ -279,13 +291,13 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     materialThickness: CPT,
     profilePlane: "XY",
     thicknessAxis: "Z",
-    x0: CPT,
-    x1: W - CPT,
+    x0: leftThick,
+    x1: W - rightThick,
     y0: 0,
-    y1: D - CPT,
+    y1: shelfY1,
     z0: 0,
     z1: CPT,
-    profileVector: rectProfile("XY", CPT, W - CPT, 0, D - CPT),
+    profileVector: rectProfile("XY", leftThick, W - rightThick, 0, shelfY1),
   };
   const top: Board = {
     id: "TOP",
@@ -295,20 +307,20 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     materialThickness: CPT,
     profilePlane: "XY",
     thicknessAxis: "Z",
-    x0: CPT,
-    x1: W - CPT,
+    x0: leftThick,
+    x1: W - rightThick,
     y0: 0,
-    y1: D - CPT,
+    y1: shelfY1,
     z0: H - CPT,
     z1: H,
-    profileVector: rectProfile("XY", CPT, W - CPT, 0, D - CPT),
+    profileVector: rectProfile("XY", leftThick, W - rightThick, 0, shelfY1),
   };
-  features.push(...applyHorizontalJoinery(bottom, CPT));
-  features.push(...applyHorizontalJoinery(top, CPT));
+  features.push(...applyHorizontalJoinery(bottom, leftJoin, rightJoin, D, H));
+  features.push(...applyHorizontalJoinery(top, leftJoin, rightJoin, D, H));
   pushBoard(boards, bottom);
   pushBoard(boards, top);
 
-  // Rear vertical — between top/bottom; side tongues (height/3).
+  // Rear vertical — full height, body between the side inner faces. Tongues enter the sides.
   const back: Board = {
     id: "BACK",
     name: "Rear vertical",
@@ -317,15 +329,15 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     materialThickness: CPT,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: CPT,
-    x1: W - CPT,
-    y0: D - CPT,
+    x0: leftThick,
+    x1: W - rightThick,
+    y0: shelfY1,
     y1: D,
-    z0: CPT,
-    z1: H - CPT,
-    profileVector: rectProfile("XZ", CPT, W - CPT, CPT, H - CPT),
+    z0: 0,
+    z1: H,
+    profileVector: rectProfile("XZ", leftThick, W - rightThick, 0, H),
   };
-  features.push(...applyBackJoinery(back, CPT));
+  features.push(...applyBackJoinery(back, leftJoin, rightJoin, H));
   pushBoard(boards, back);
 
   // Stack zones top→bottom inside interior [CPT, H-CPT].
@@ -365,23 +377,27 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
       materialThickness: CPT,
       profilePlane: "XY",
       thicknessAxis: "Z",
-      x0: CPT,
-      x1: W - CPT,
+      x0: leftThick,
+      x1: W - rightThick,
       y0: 0,
-      y1: D - CPT,
+      y1: shelfY1,
       z0,
       z1,
       notes: [`Centered on boundary between ${resolvedZones[i].id} and ${resolvedZones[i + 1].id}`],
-      profileVector: rectProfile("XY", CPT, W - CPT, 0, D - CPT),
+      profileVector: rectProfile("XY", leftThick, W - rightThick, 0, shelfY1),
     };
-    features.push(...applyHorizontalJoinery(mid, CPT));
+    features.push(...applyHorizontalJoinery(mid, leftJoin, rightJoin, D, H));
     pushBoard(boards, mid);
   }
 
-  const sideL = boards.find((b) => b.id === "SIDE_L");
-  const sideR = boards.find((b) => b.id === "SIDE_R");
-  if (sideL) attachSideGrooveProfileFeatures(sideL, features);
-  if (sideR) attachSideGrooveProfileFeatures(sideR, features);
+  for (const shelf of boards.filter((b) => b.category === "horizontal")) {
+    features.push(applyShelfBackTongue(shelf, leftThick, W - rightThick, CPT, H));
+  }
+  for (const side of boards.filter((b) => b.id === "SIDE_L" || b.id === "SIDE_R")) {
+    const grooves = features.filter((f) => f.type === "side_groove" && f.targetBoardId === side.id);
+    side.profileVector = sideOutlineWithGrooves(D, H, grooves);
+    attachSideGrooveProfileFeatures(side, features);
+  }
 
   // Front panels — clearance via calculator; door locks on side doors.
   for (let i = 0; i < resolvedZones.length; i += 1) {
@@ -484,8 +500,19 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
     doorColorName: doorColorName ? String(doorColorName) : undefined,
     params,
   });
+  // Fronts and door-panel sides: both horizontal unless chosen otherwise.
+  const grain = applyGrain(
+    boards,
+    (b) => (b.category === "front_panel" ? "front" : (b.id === "SIDE_L" || b.id === "SIDE_R") && b.useDoorColor ? "side" : null),
+    params,
+    { front: "horizontal", side: "horizontal" },
+  );
+  applyDoorSides(boards, { ...params, carcassColorName });
+  const milling = applyMilling(boards);
 
   return {
+    grain,
+    milling,
     params: {
       cabinetWidth: W,
       cabinetDepth: D,
@@ -537,6 +564,7 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
 
 export type { SmallCabinetParams, SmallCabinetResult } from "./types.ts";
 export { computeFrontPanelBounds } from "./frontPanelCalculator.ts";
+export { generateSmallCabinetSvgPreview } from "./svgPreview.ts";
 export {
   GROOVE_LENGTH_OVERSIZE,
   GROOVE_THICKNESS_OVERSIZE,

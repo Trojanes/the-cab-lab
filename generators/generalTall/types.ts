@@ -9,6 +9,8 @@
  * 端系统、立梃、横桥和避让都按这套接缝直接落位。
  */
 import type { Board as ModelBoard, Joint } from "../_lib/model.ts";
+import type { GrainParams, GrainResult } from "../_lib/grain.ts";
+import type { MillingResult } from "../_lib/milling.ts";
 
 export type { Board, Joint } from "../_lib/model.ts";
 
@@ -72,6 +74,15 @@ export interface GTParams {
   avoidance?: { enabled?: boolean; depth?: number; height?: number };
   leftSidePanelThickness?: number;
   rightSidePanelThickness?: number;
+  /** A side panel is carcass stock (default) or a colour panel: door stock, door colour outside. */
+  leftSidePanelFinish?: "colour" | "carcass";
+  rightSidePanelFinish?: "colour" | "carcass";
+  /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
+  doorSeries?: string;
+  /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
+  doorSides?: "single" | "double";
+  /** Wood grain per group; missing = module default (fronts horizontal, side panels vertical). */
+  grain?: GrainParams;
   leftSidePanelAdaptAvoidance?: boolean;
   rightSidePanelAdaptAvoidance?: boolean;
   exteriorSide?: "left" | "right" | "none";
@@ -163,6 +174,10 @@ export interface GTResult {
     ziThickness: number;
   };
   boards: ModelBoard[];
+  /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */
+  grain?: GrainResult;
+  /** Boards that need partial-depth work on both faces / on a single-sided colour face (_lib/milling.ts). */
+  milling?: MillingResult;
   stack: StackItem[];
   ziSlots: ZiSlotRecord[];
   ziGrooves: ZiGrooveRecord[];
