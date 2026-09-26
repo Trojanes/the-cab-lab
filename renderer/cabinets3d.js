@@ -3,7 +3,7 @@
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
 import { scene, camera, canvas } from "./space.js";
-import { doorBodyMaterial } from "./doorFinish.js";
+import { doorBodyMaterial, grainAxisOf } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
 import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden } from "./job.js";
 import { getModule } from "./modules.js";
@@ -741,7 +741,7 @@ function addBigFaceSheets(group, b, dim) {
     const geo = faceSheetGeometry(b, face, 0.6);
     if (!geo) continue;
     const mat = doorName
-      ? doorBodyMaterial(doorName, { dim: !!dim })
+      ? doorBodyMaterial(doorName, { dim: !!dim, grainAxis: grainAxisOf(b, face) })
       : (dim ? carcassDimMat : carcassMat);
     const sheet = new THREE.Mesh(geo, mat);
     sheet.renderOrder = 2;
@@ -788,7 +788,17 @@ function addEdgeBandMarks(group, b, dim) {
     }
     if (normal.lengthSq() < 1e-8) continue;
     normal.normalize();
-    const mat = band.colour === "White Stipple" ? (dim ? carcassDimMat : carcassMat) : doorBodyMaterial(band.colour, { dim: !!dim });
+    const grainFace = (b.faces || []).find((f) => (f.id === "A" || f.id === "B") && f.finish && f.finish.grain);
+    const cabinetAxis = grainFace ? grainAxisOf(b, grainFace) : null;
+    const g = new THREE.Vector3();
+    if (cabinetAxis) g[cabinetAxis] = 1;
+    const alongGrain = cabinetAxis ? Math.abs(along.dot(g)) : 1;
+    // Wood tape follows the board's grain. On a long edge that is the edge itself;
+    // on a short end the grain still points along the long side, through the thickness.
+    const grainAxis = !cabinetAxis || alongGrain >= 0.7 ? "x" : "y";
+    const mat = band.colour === "White Stipple"
+      ? (dim ? carcassDimMat : carcassMat)
+      : doorBodyMaterial(band.colour, { dim: !!dim, grainAxis });
     const bar = new THREE.Mesh(new THREE.BoxGeometry(len, thick, 0.2), mat);
     bar.position.set(
       (p0.x + p1.x) / 2 + normal.x * 0.15,
