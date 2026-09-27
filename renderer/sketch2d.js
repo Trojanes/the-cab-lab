@@ -160,17 +160,74 @@ export function pointInRing(p, ring) {
   return hit;
 }
 
+function onRingEdge(p, ring) {
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    if (Math.abs(orient(a, b, p)) < 1e-3 * Math.max(1, Math.hypot(b[0] - a[0], b[1] - a[1])) && onSegment(a, b, p)) return true;
+  }
+  return false;
+}
+
+/** Vertices and edge midpoints: enough to tell inside from outside when edges may touch. */
+function probes(ring) {
+  const out = ring.slice();
+  for (let i = 0; i < ring.length; i += 1) {
+    const a = ring[i];
+    const b = ring[(i + 1) % ring.length];
+    out.push([(a[0] + b[0]) / 2, (a[1] + b[1]) / 2]);
+  }
+  return out;
+}
+
+function properCross(a, b, c, d) {
+  const s = (x) => (Math.abs(x) < EPS ? 0 : Math.sign(x));
+  return s(orient(a, b, c)) * s(orient(a, b, d)) < 0 && s(orient(c, d, a)) * s(orient(c, d, b)) < 0;
+}
+
 /**
- * Rings that do not touch each other, sorted into boards: a ring inside an
- * even number of others is a board outline, inside an odd number it is a
- * through opening of the smallest ring around it. `{ outer, holes }[]` with
- * indices into `rings`.
+ * How closed ring `a` sits against ring `b`:
+ *   "cross"    they overlap (edges cross, or `a` is partly inside `b`)
+ *   "inside"   `a` lies within `b` (edges may touch)
+ *   "contains" `b` lies within `a`
+ *   "same"     every probe of both lies on the other's edges
+ *   "apart"    neither covers the other (edges may touch: two boards side by side)
+ */
+export function ringRelation(a, b) {
+  for (let i = 0; i < a.length; i += 1) {
+    for (let j = 0; j < b.length; j += 1) {
+      if (properCross(a[i], a[(i + 1) % a.length], b[j], b[(j + 1) % b.length])) return "cross";
+    }
+  }
+  const side = (x, y) => {
+    let inn = 0;
+    let out = 0;
+    for (const p of probes(x)) {
+      if (onRingEdge(p, y)) continue;
+      if (pointInRing(p, y)) inn += 1; else out += 1;
+    }
+    return { inn, out };
+  };
+  const ab = side(a, b);
+  const ba = side(b, a);
+  if (!ab.inn && !ab.out && !ba.inn && !ba.out) return "same";
+  if (ab.inn && ab.out) return "cross";
+  if (ba.inn && ba.out) return "cross";
+  if (ab.inn) return "inside";
+  if (ba.inn) return "contains";
+  return "apart";
+}
+
+/**
+ * Rings that do not overlap, sorted into boards: a ring inside an even number
+ * of others is a board outline, inside an odd number it is a through opening
+ * of the smallest ring around it. `{ outer, holes }[]` with indices into `rings`.
  */
 export function nestRings(rings) {
   const area = rings.map((r) => Math.abs(signedArea(r)));
   const parents = rings.map((r, i) => rings
     .map((o, j) => j)
-    .filter((j) => j !== i && area[j] > area[i] && pointInRing(r[0], rings[j])));
+    .filter((j) => j !== i && area[j] > area[i] && ringRelation(r, rings[j]) === "inside"));
   const boards = [];
   const byOuter = new Map();
   rings.forEach((_, i) => {
