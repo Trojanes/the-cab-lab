@@ -3,7 +3,7 @@
 // floor and the roof (world space, coincident points merged).
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
-import { camera, canvas, closestTOnLine, rayFromClient } from "./space.js";
+import { activeCamera, canvas, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
 import { cabinetFootprints, envelopeFootprint } from "./cabinets3d.js";
 import { partitionClearance } from "./materials.js";
@@ -350,13 +350,45 @@ function screenDistToSegment(clientX, clientY, a3, b3) {
  * Returns { [faceAxis]: { value, plane, distPx } } for up to two in-plane axes.
  * `exclude` skips faces of one cabinet (the one being moved).
  */
-export function nearestFaceAlign(clientX, clientY, plane, { band = INFER_BAND_PX * uiScale(), exclude = null } = {}) {
+/** World axis of an overhead's width (local X) after a 90° yaw. */
+function overheadWidthAxis(cab) {
+  const rz = ((Number(cab.pose && cab.pose.rotZ) || 0) % 360 + 360) % 360;
+  return Math.round(rz / 90) % 2 === 0 ? "x" : "y";
+}
+
+function overheadById(id) {
+  const cab = getJob().cabinets.find((c) => c.id === id);
+  return cab && cab.moduleId === "overheadCabinet" ? cab : null;
+}
+
+/** The two side faces that bound an overhead's width, in world axes. */
+export function overheadWidthFaces() {
+  const out = [];
+  for (const f of facePlanes()) {
+    const cab = overheadById(f.source);
+    if (cab && f.axis === overheadWidthAxis(cab)) out.push(f);
+  }
+  return out;
+}
+
+/** Floor, or the back wall: planes a kitchen's first two clicks land on, below an overhead. */
+function planeBelowOverhead(plane) {
+  if (!plane || plane.source !== "space") return false;
+  if (plane.axis === "z" && plane.dir > 0) return true;
+  if (plane.axis === "y" && plane.dir < 0) return true;
+  return false;
+}
+
+export function nearestFaceAlign(clientX, clientY, plane, { band = INFER_BAND_PX * uiScale(), exclude = null, extendOverheadWidth = false } = {}) {
   const out = {};
+  // An overhead's width faces are extended onto the floor and the back wall: those
+  // planes sit below the cabinet, so the side would otherwise not be a guide there.
+  const extended = extendOverheadWidth && planeBelowOverhead(plane) ? new Set(overheadWidthFaces()) : null;
   for (const f of facePlanes()) {
     if (f.axis === plane.axis || f.source === exclude) continue;
     // A face only aligns where it actually spans the working plane (with a little slack).
     const span = f.ext[plane.axis];
-    if (plane.value < span[0] - 1 || plane.value > span[1] + 1) continue;
+    if (!(extended && extended.has(f)) && (plane.value < span[0] - 1 || plane.value > span[1] + 1)) continue;
     const [a, b] = faceGuide(f, plane);
     const d = screenDistToSegment(clientX, clientY, a, b);
     if (d <= band && (!out[f.axis] || d < out[f.axis].distPx)) out[f.axis] = { value: f.value, plane: f, distPx: d };
@@ -405,7 +437,7 @@ export function describePoint(p, exclude = null) {
 
 const v = new THREE.Vector3();
 export function toClient(x, y, z) {
-  v.set(x, y, z).project(camera);
+  v.set(x, y, z).project(activeCamera());
   const r = canvas.getBoundingClientRect();
   return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height, behind: v.z > 1 };
 }

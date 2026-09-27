@@ -1,0 +1,143 @@
+{
+  "module": "bedroomEast",
+  "presets": [
+    {
+      "id": "bedroom1",
+      "label": "Bedroom 1 · east-west · 2275 wide · roof 1797, 46° down to 1150 at the nose",
+      "params": {
+        "width": 2275,
+        "height": 1797,
+        "roofProfile": [
+          [
+            0,
+            1797
+          ],
+          [
+            944,
+            1797
+          ],
+          [
+            1570,
+            1150
+          ]
+        ],
+        "panelThickness": 15
+      },
+      "pins": {
+        "boards": {},
+        "points": {},
+        "features": {},
+        "faceFeatures": {},
+        "zones": {
+          "boot": {
+            "x0": 0,
+            "x1": 2275,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 0,
+            "z1": 418
+          },
+          "mattress": {
+            "x0": 395,
+            "x1": 2275,
+            "y0": 0,
+            "y1": 814,
+            "z0": 0,
+            "z1": 418
+          },
+          "wardrobe": {
+            "x0": 0,
+            "x1": 395,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 418,
+            "z1": 1797
+          },
+          "opening": {
+            "x0": 395,
+            "x1": 2275,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 418,
+            "z1": 1418
+          },
+          "ohc": {
+            "x0": 395,
+            "x1": 2275,
+            "y0": 814,
+            "y1": 1310.7,
+            "z0": 1418,
+            "z1": 1797
+          }
+        }
+      }
+    },
+    {
+      "id": "flat-roof-narrow",
+      "label": "Flat roof · 1900 wide · mattress shorter than queen (warning)",
+      "params": {
+        "width": 1900,
+        "height": 1965,
+        "roofProfile": [
+          [
+            0,
+            1965
+          ],
+          [
+            1570,
+            1965
+          ]
+        ],
+        "panelThickness": 15
+      },
+      "pins": {
+        "boards": {},
+        "points": {},
+        "features": {},
+        "faceFeatures": {},
+        "zones": {
+          "boot": {
+            "x0": 0,
+            "x1": 1900,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 0,
+            "z1": 418
+          },
+          "mattress": {
+            "x0": 150,
+            "x1": 1900,
+            "y0": 0,
+            "y1": 814,
+            "z0": 0,
+            "z1": 418
+          },
+          "wardrobe": {
+            "x0": 0,
+            "x1": 150,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 418,
+            "z1": 1965
+          },
+          "opening": {
+            "x0": 150,
+            "x1": 1900,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 418,
+            "z1": 1418
+          },
+          "ohc": {
+            "x0": 150,
+            "x1": 1900,
+            "y0": 814,
+            "y1": 1570,
+            "z0": 1418,
+            "z1": 1965
+          }
+        }
+      }
+    }
+  ]
+}

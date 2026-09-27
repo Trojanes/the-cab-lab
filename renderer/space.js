@@ -3,6 +3,8 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
 import { grabPan, grabZoom, placeOrbitTarget, wheelZoomScale } from "./grab.js";
+import { faceViewFrame } from "./sketchBoard.js";
+import { log } from "./log.js";
 
 const GRID_MINOR_MM = 100;
 const GRID_MAJOR_MM = 1000;
@@ -14,6 +16,16 @@ scene.background = new THREE.Color(0x1a1c1f);
 
 export const camera = new THREE.PerspectiveCamera(50, 1, 10, 100000);
 camera.up.set(0, 0, 1);
+// Orthographic stand-in while a board is drawn on a face. The perspective
+// camera stays where it was and is restored when that drawing ends.
+const ortho = new THREE.OrthographicCamera(-1000, 1000, 1000, -1000, 10, 100000);
+ortho.up.set(0, 0, 1);
+let faceView = null;
+
+/** The camera currently drawn and picked with. */
+export function activeCamera() {
+  return faceView ? ortho : camera;
+}
 
 const mount = document.getElementById("viewport") || document.body;
 export const renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -249,7 +261,115 @@ export function drawSpace(resolved) {
 
 // --- views ----------------------------------------------------------------
 
+/**
+ * Look straight at a face. Orthographic, so a rectangle on that face stays a
+ * rectangle. Floor and ceiling are tilted a hair off ±Z. The previous
+ * perspective view is kept for `endFaceView`.
+ */
+export function beginFaceView(face) {
+  const frame = faceViewFrame(face);
+  if (!faceView) {
+    faceView = { pos: camera.position.clone(), target: controls.target.clone() };
+  }
+  const dist = Math.max(frame.radius * 4, 2000);
+  const c = frame.center;
+  const n = frame.normal;
+  ortho.position.set(c.x + n.x * dist, c.y + n.y * dist, c.z + n.z * dist);
+  ortho.up.set(0, 0, 1);
+  ortho.lookAt(c.x, c.y, c.z);
+  ortho.zoom = 1;
+  fitOrtho(frame.radius);
+  controls.object = ortho;
+  controls.target.set(c.x, c.y, c.z);
+  settleControls();
+  faceView.home = {
+    pos: ortho.position.clone(),
+    target: controls.target.clone(),
+    zoom: ortho.zoom,
+    top: ortho.top,
+    bottom: ortho.bottom,
+  };
+  syncFaceReset();
+}
+
+/** Back to the perspective view from before `beginFaceView`. */
+export function endFaceView() {
+  if (!faceView) return;
+  controls.object = camera;
+  camera.position.copy(faceView.pos);
+  controls.target.copy(faceView.target);
+  faceView = null;
+  camera.updateProjectionMatrix();
+  controls.update();
+  syncFaceReset();
+}
+
+/** Back to the orthographic view first given for this face. Stays in the sketch. */
+export function resetFaceView() {
+  const home = faceView && faceView.home;
+  if (!home) return;
+  const aspect = (mount.clientWidth || 1) / Math.max(mount.clientHeight || 1, 1);
+  ortho.position.copy(home.pos);
+  ortho.up.set(0, 0, 1);
+  ortho.zoom = home.zoom;
+  ortho.top = home.top;
+  ortho.bottom = home.bottom;
+  ortho.left = -home.top * aspect;
+  ortho.right = home.top * aspect;
+  ortho.updateProjectionMatrix();
+  controls.target.copy(home.target);
+  ortho.lookAt(home.target);
+  settleControls();
+  syncFaceReset();
+  log("board.view.reset");
+}
+
+/** Apply the pose now and drop leftover orbit inertia, so the view does not drift. */
+function settleControls() {
+  const damp = controls.dampingFactor;
+  controls.enableDamping = false;
+  controls.update();
+  controls.enableDamping = true;
+  controls.dampingFactor = damp;
+}
+
+function faceViewMoved() {
+  const home = faceView && faceView.home;
+  if (!home) return false;
+  return ortho.position.distanceToSquared(home.pos) > 1
+    || controls.target.distanceToSquared(home.target) > 1
+    || Math.abs(ortho.zoom - home.zoom) > 0.01;
+}
+
+let faceResetShown = false;
+function syncFaceReset() {
+  const show = faceViewMoved();
+  if (show === faceResetShown) return;
+  faceResetShown = show;
+  const btn = document.getElementById("faceReset");
+  if (btn) btn.classList.toggle("hidden", !show);
+}
+controls.addEventListener("change", syncFaceReset);
+const faceResetBtn = document.getElementById("faceReset");
+if (faceResetBtn) {
+  faceResetBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    resetFaceView();
+  });
+}
+
+function fitOrtho(radius) {
+  const aspect = (mount.clientWidth || 1) / Math.max(mount.clientHeight || 1, 1);
+  const halfH = Math.max(radius * 1.2, 200);
+  ortho.top = halfH;
+  ortho.bottom = -halfH;
+  ortho.left = -halfH * aspect;
+  ortho.right = halfH * aspect;
+  ortho.updateProjectionMatrix();
+}
+
 export function setView(name) {
+  endFaceView();
   const W = extent.maxX - extent.minX;
   const D = extent.maxY - extent.minY;
   const H = extent.height;
@@ -293,7 +413,7 @@ const ndc = new THREE.Vector2();
 export function rayFromClient(clientX, clientY) {
   const r = canvas.getBoundingClientRect();
   ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
+  raycaster.setFromCamera(ndc, activeCamera());
   return raycaster.ray;
 }
 
@@ -337,15 +457,16 @@ function isRoomGhost(obj) {
 function grabPoint(clientX, clientY) {
   // lookAt leaves the world matrix one step behind the quaternion. Refresh it
   // before the ray, or the grab dollys along the previous frame's view.
-  camera.updateMatrixWorld();
+  const cam = activeCamera();
+  cam.updateMatrixWorld();
   rayFromClient(clientX, clientY);
   const hits = raycaster.intersectObjects(scene.children, true);
-  camera.getWorldDirection(_grabFwd);
+  cam.getWorldDirection(_grabFwd);
   let ghost = null;
   for (const h of hits) {
     if (!isGrabSurface(h.object)) continue;
-    const viewDepth = _grabPt.copy(h.point).sub(camera.position).dot(_grabFwd);
-    if (viewDepth < camera.near) continue;
+    const viewDepth = _grabPt.copy(h.point).sub(cam.position).dot(_grabFwd);
+    if (viewDepth < cam.near) continue;
     const rec = { rayDist: h.distance, viewDepth };
     // A see-through wall sits in front of the cabinet. Grab the cabinet; the
     // wall only counts when nothing solid is behind it.
@@ -363,23 +484,26 @@ let grabDrag = null;
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button === 2 && !modifierDown(e)) {
+    const cam = activeCamera();
     const hit = grabPoint(e.clientX, e.clientY);
-    const depth = hit ? hit.viewDepth : camera.position.distanceTo(controls.target);
-    placeOrbitTarget(camera, controls.target, depth);
+    const depth = hit ? hit.viewDepth : cam.position.distanceTo(controls.target);
+    placeOrbitTarget(cam, controls.target, depth);
     grabDrag = { x: e.clientX, y: e.clientY, depth };
     return;
   }
   // Shift/Ctrl + middle button is OrbitControls' pan. Give it the same depth, and
   // apply it in one step so it does not coast behind the cursor.
   if (e.button === 1 && modifierDown(e)) {
+    const cam = activeCamera();
     const hit = grabPoint(e.clientX, e.clientY);
-    placeOrbitTarget(camera, controls.target, hit ? hit.viewDepth : camera.position.distanceTo(controls.target));
+    placeOrbitTarget(cam, controls.target, hit ? hit.viewDepth : cam.position.distanceTo(controls.target));
     controls.dampingFactor = 1;
     return;
   }
   if (e.button === 1) {
+    const cam = activeCamera();
     const hit = grabPoint(e.clientX, e.clientY);
-    if (hit) placeOrbitTarget(camera, controls.target, hit.viewDepth);
+    if (hit) placeOrbitTarget(cam, controls.target, hit.viewDepth);
   }
 }, true);
 
@@ -390,7 +514,7 @@ canvas.addEventListener("pointermove", (e) => {
   const dy = e.clientY - grabDrag.y;
   grabDrag.x = e.clientX;
   grabDrag.y = e.clientY;
-  grabPan(camera, controls.target, dx, dy, grabDrag.depth, canvas.clientHeight || 1);
+  grabPan(activeCamera(), controls.target, dx, dy, grabDrag.depth, canvas.clientHeight || 1);
 }, true);
 
 function endGrab() {
@@ -403,10 +527,12 @@ canvas.addEventListener("pointercancel", endGrab, true);
 canvas.addEventListener("wheel", (e) => {
   e.preventDefault();
   if (grabDrag) return;
+  const cam = activeCamera();
   const hit = grabPoint(e.clientX, e.clientY);
-  const dist = hit ? hit.rayDist : camera.position.distanceTo(controls.target);
-  grabZoom(camera, controls.target, ndc.x, ndc.y, dist, wheelZoomScale(e));
+  const dist = hit ? hit.rayDist : cam.position.distanceTo(controls.target);
+  grabZoom(cam, controls.target, ndc.x, ndc.y, dist, wheelZoomScale(e));
   controls.update();
+  syncFaceReset();
 }, { capture: true, passive: false });
 
 const hit = new THREE.Vector3();
@@ -441,6 +567,13 @@ function resize() {
   const h = mount.clientHeight || window.innerHeight;
   camera.aspect = w / Math.max(h, 1);
   camera.updateProjectionMatrix();
+  if (faceView) {
+    const halfH = ortho.top;
+    const aspect = w / Math.max(h, 1);
+    ortho.left = -halfH * aspect;
+    ortho.right = halfH * aspect;
+    ortho.updateProjectionMatrix();
+  }
   renderer.setSize(w, h);
 }
 if (typeof ResizeObserver === "function") new ResizeObserver(resize).observe(mount);
@@ -451,7 +584,7 @@ setView("3d");
 
 function tick() {
   controls.update();
-  renderer.render(scene, camera);
+  renderer.render(scene, activeCamera());
   requestAnimationFrame(tick);
 }
 tick();

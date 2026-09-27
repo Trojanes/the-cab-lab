@@ -72,9 +72,25 @@ interface Board {
   x0 x1 y0 y1 z0 z1;                // cabinet frame, final pose
   profileVector? / cutProfileVector?; // the outline as emitted (see below)
   faces?: Face[];
-  milling?: "A" | "B";              // the face up on the CNC (_lib/milling.ts)
+  milling?: "A" | "B" | "either";   // the face up on the CNC; either = free to flip (_lib/milling.ts)
 }
 ```
+
+**Sheet id.** Not stored. `sheetMaterial(board, params)` (`_lib/material.ts`) builds
+`{series}-{decor}-{1s|2s}-{thickness}` for the nest: carcass and partition are
+`pvc` (White Stipple, always `2s` — `pvc-white-stipple-2s-15`); door stock takes
+`params.doorSeries` (`acrylic` | `hpl`), the colour face's name, and `stock.sides`
+(`acrylic-gloss-white-1s-16`, `hpl-chestnut-1s-16`). `grained` is true for
+textured HPL except Felt Grey. The role stays `board.id`.
+
+**Export** (`.cnjob`, `generators/_lib/cnjob.ts`). One workpiece per board, id
+`cabinetId/boardId`, sheet from `sheetMaterial`. Snapshot A is the milling face:
+a board milled from B is mirrored in v first (`v' = vMin + vMax − v`) so the
+numbers are what the cutter sees looking down. Outer rings are counter-clockwise,
+through openings clockwise, the closing point is not repeated. Lock slots with a
+corner radius are tessellated arcs; a T-groove is a groove (centreline + width).
+`edgeBands` is empty until that module's edges are confirmed. A job with any red
+check is not written.
 
 **Board‑local frame.** `planeAxes(plane)` gives `(u, v, t)`:
 `XY → (x, y, z)`, `XZ → (x, z, y)`, `YZ → (y, z, x)`. Local `(u, v)` is
@@ -109,6 +125,7 @@ interface FaceFeature {
   kind: "groove" | "tgroove" | "hole" | "cutout"   // on A / B, face-local 2D
       | "tongue" | "notch";                          // tags on E<i>, no geometry of their own
   u0? u1? v0? v1?;  center?: [u, v];  diameter?;  radius?;
+  loop?: [u, v][];  // a cutout of any shape (a hole drawn in a sketch); u0..v1 is its bounding box
   depth?: number;   through?: boolean;
   for?: string;     // the board / hardware it exists for ("D0", "BP", "hinge", "led")
   key?: string;     // provenance prefix: `${key}.x0` … / `${key}.x` `.z` exist in debug.provenance
@@ -120,12 +137,14 @@ interface FaceFeature {
   annotations.
 - A and B share one `(u, v)` frame (the board‑local frame). A through feature
   reads the same from either side; CNC flips the board, not the numbers. A
-  through feature is listed once, on the board's **milling face**.
+  through feature is listed once, on the board's **milling face** when that face is fixed.
 - **Milling face** (`board.milling`, `generators/_lib/milling.ts`): the CNC cuts
   from above only, so all partial-depth work (groove, T-groove, blind hole, pocket,
   a rebate in stacked slabs) is on one big face. Single-sided door stock is milled
   from the back (the colour face lies on the table); double-sided / carcass stock
-  from the face that carries the work, else its inside / back face. Work on both
+  from the face that carries the work. Double-sided stock with no partial-depth work
+  is `"either"`: nesting may flip it to fit more boards; its through work stays on the
+  face it was listed on. Work on both
   faces, or on a single-sided colour face, is a milling issue (`result.milling.issues`:
   red in 3D, listed in the checks). An export milling from B mirrors one in-plane axis.
 - Edge normals are outward normals of the outline; `boundaryEdgeFaces(b, "-Y")`
@@ -136,11 +155,17 @@ interface FaceFeature {
 
 Stored on the edge face, not in a second coordinate system. `E<i>.finish.edgeBand`
 is `{ thickness, colour? }` (millimetres, catalogue colour name). No `edgeBand`
-on that face means the edge is not banded. A and B never carry one. Which
-edges get a band is decided later; `setEdgeBand(board, i, band | null)` only writes.
+on that face means the edge is not banded. A and B never carry one.
+`setEdgeBand(board, i, band | null)` only writes. Kitchen and overhead choose
+some edges; tall, small, bedroom and the bed side table choose none yet.
 
-Export is `edgeBandPart(board)` (`generators/_lib/edgeBand.ts`). Web, mobile
-and the app read this record and nothing else:
+`.cnjob` carries the same list as `edgeBands`: `{ i, thicknessMm, colorName? }`,
+edge i of `outerProfile.points`. Omitted or `[]` means the part is not banded
+(`snapshotEdgeBands`). Export sends `cnjobEdgeBands`, which is `[]` for every
+board until each module's edges are confirmed (`generators/_lib/edgeBand.ts`).
+
+`edgeBandPart(board)` is the in-app record. Web, mobile and the app read it
+and nothing else:
 
 ```ts
 interface EdgeBandPart {

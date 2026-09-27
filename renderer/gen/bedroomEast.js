@@ -1,5 +1,92 @@
 // Generated from generators/bedroomEast/generator.ts - do not edit.
 
+// generators/_lib/dim.ts
+var fresh = () => ({ entries: {}, rules: {} });
+var active = fresh();
+var collecting = false;
+function beginProvenance() {
+  active = fresh();
+  collecting = true;
+}
+function endProvenance() {
+  const out = active;
+  active = fresh();
+  collecting = false;
+  return out;
+}
+function isRule(v) {
+  return !!v && typeof v === "object" && v.__rule === true;
+}
+function isParam(v) {
+  return !!v && typeof v === "object" && v.__param === true;
+}
+function isRef(v) {
+  return !!v && typeof v === "object" && v.__ref === true;
+}
+function val(t) {
+  if (typeof t === "number") return t;
+  return t.value;
+}
+function param(inputs) {
+  const out = {};
+  for (const [name, v] of Object.entries(inputs)) {
+    out[name] = { __param: true, name, value: Number(v ?? 0) };
+  }
+  return out;
+}
+function ref(key) {
+  const entry = active.entries[key];
+  if (!entry) throw new Error(`dim ref: unknown key "${key}" (record it before referencing it)`);
+  return { __ref: true, key, value: entry.value };
+}
+function formulaOf(fn, override) {
+  if (override) return override;
+  const src = fn.toString();
+  let body = src;
+  const arrow = src.indexOf("=>");
+  if (arrow >= 0) {
+    body = src.slice(arrow + 2).trim();
+    if (body.startsWith("{")) {
+      const m = body.match(/return\s+([\s\S]*?);?\s*}$/);
+      body = m ? m[1] : body;
+    }
+  } else {
+    const m = src.match(/return\s+([\s\S]*?);?\s*}$/);
+    body = m ? m[1] : src;
+  }
+  const pm = src.match(/^\s*(?:function\s*)?\(?\s*([A-Za-z_$][\w$]*)\s*\)?\s*=>|^\s*function\s*\(\s*([A-Za-z_$][\w$]*)/);
+  const pname = pm && (pm[1] || pm[2]) || "t";
+  const re = new RegExp(`\\b${pname.replace(/\$/g, "\\$")}\\.`, "g");
+  return body.replace(re, "").replace(/\s+/g, " ").trim();
+}
+function dim(key, terms, fn, options = {}) {
+  const values = {};
+  for (const [name, t] of Object.entries(terms)) values[name] = val(t);
+  const value = fn(values);
+  const recorded = {};
+  for (const [name, t] of Object.entries(terms)) {
+    if (isRule(t)) {
+      recorded[name] = { kind: "rule", value: t.value, name: t.name, doc: t.doc };
+      active.rules[t.name] = { value: t.value, doc: t.doc, module: t.module };
+    } else if (isParam(t)) {
+      recorded[name] = { kind: "param", value: t.value, name: t.name };
+    } else if (isRef(t)) {
+      recorded[name] = { kind: "ref", value: t.value, ref: t.key };
+    } else {
+      recorded[name] = { kind: "value", value: t };
+    }
+  }
+  active.entries[key] = { key, value, formula: formulaOf(fn, options.formula), terms: recorded };
+  return value;
+}
+function defineRules(module, raw) {
+  const out = {};
+  for (const [name, r] of Object.entries(raw)) {
+    out[name] = { __rule: true, module, name, value: Number(r.value), doc: String(r.doc ?? "") };
+  }
+  return out;
+}
+
 // generators/bedroom/rules.json
 var rules_default = {
   BOOT_HEIGHT_DEFAULT_MM: { value: 398, doc: "Tunnel boot height (top of the boot deck above the floor) when the params give none. Bedroom Style 3 measures 398; the east-west bedroom 418." },
@@ -69,25 +156,10 @@ var rules_default = {
   OHC_ZONE_COUNT_DEFAULT: { value: 2, doc: "Overhead bays when the params give none. Two or three, up flaps only; two is the Style 3 split." }
 };
 
-// generators/_lib/dim.ts
-var fresh = () => ({ entries: {}, rules: {} });
-var active = fresh();
-function defineRules(module, raw) {
-  const out = {};
-  for (const [name, r] of Object.entries(raw)) {
-    out[name] = { __rule: true, module, name, value: Number(r.value), doc: String(r.doc ?? "") };
-  }
-  return out;
-}
-
 // generators/bedroom/rules.ts
 var RULES = defineRules("bedroom", rules_default);
 
 // generators/bedroom/generator.ts
-var EPS = 1e-6;
-function round1(v) {
-  return Math.round(v * 10) / 10;
-}
 function roofAt(profile, height, y) {
   if (!profile || profile.length < 2) return height;
   if (y <= profile[0][0]) return profile[0][1];
@@ -98,138 +170,182 @@ function roofAt(profile, height, y) {
   }
   return profile[profile.length - 1][1];
 }
-function topLine(profile, depth, height, zTop) {
-  const ys = /* @__PURE__ */ new Set([0, depth]);
-  for (const [y] of profile) if (y > 0 && y < depth) ys.add(y);
-  for (let i = 0; i < profile.length - 1; i += 1) {
-    const [y0, z0] = profile[i];
-    const [y1, z1] = profile[i + 1];
-    if ((z0 - zTop) * (z1 - zTop) < 0) {
-      const y = y0 + (zTop - z0) * (y1 - y0) / (z1 - z0);
-      if (y > 0 && y < depth) ys.add(round1(y));
-    }
-  }
-  return [...ys].sort((a, b) => a - b).map((y) => ({ y, z: round1(Math.min(zTop, roofAt(profile, height, y))) }));
-}
-function sectionYZ(profile, depth, height, z0, zTop) {
-  const top = topLine(profile, depth, height, zTop);
-  const kept = [];
-  for (let i = 0; i < top.length; i += 1) {
-    const p = top[i];
-    if (p.z > z0 + EPS) {
-      kept.push(p);
-      continue;
-    }
-    if (kept.length) {
-      const a = top[i - 1];
-      const y = a.z - p.z < EPS ? p.y : a.y + (a.z - z0) * (p.y - a.y) / (a.z - p.z);
-      kept.push({ y: round1(y), z: round1(z0) });
-    }
-    break;
-  }
-  if (!kept.length) return null;
-  const yEnd = kept[kept.length - 1].y;
-  const out = [{ y: 0, z: round1(z0) }, { y: yEnd, z: round1(z0) }];
-  for (let i = kept.length - 1; i >= 0; i -= 1) {
-    const p = kept[i];
-    const last = out[out.length - 1];
-    if (Math.abs(last.y - p.y) > EPS || Math.abs(last.z - p.z) > EPS) out.push(p);
-  }
-  out.push({ y: 0, z: round1(z0) });
-  return out;
-}
+
+// generators/bedroomEast/rules.json
+var rules_default2 = {
+  MATTRESS_DEPTH_MM: { value: 1570, doc: "Queen mattress width, laid across the van. The east-west bedroom's depth from the nose; fixed. Bedroom 1 measures 1570." },
+  MATTRESS_QUEEN_LENGTH_MM: { value: 1880, doc: "Queen mattress length. Below this the layout warns: the van is too narrow for a queen mattress across it. Bedroom 1: 2275 \u2212 395 = 1880." },
+  BODY_DEPTH_MM: { value: 756, doc: "Boot and wardrobe depth from the nose. The mattress continues past this into the room. Bedroom 1 measures 756." },
+  BOOT_HEIGHT_MM: { value: 418, doc: "Boot deck top above the floor. Bedroom 1 measures 400 \u2192 418." },
+  WARDROBE_MIN_MM: { value: 150, doc: "Narrowest wardrobe. Same minimum as the north-south wardrobe." },
+  OHC_BOTTOM_DEFAULT_MM: { value: 1418, doc: "Overhead door underside above the floor when the params give none. Bedroom 1 measures 1418 (doors 1418 \u2192 1738)." },
+  OHC_ZONE_COUNT_DEFAULT: { value: 3, doc: "Up-flap bays across the overhead when the params give none. Bedroom 1 has three. Two or three are allowed." },
+  OHC_ZONE_MIN_MM: { value: 150, doc: "Narrowest overhead bay, centreline to centreline. Same as the north-south overhead." },
+  OPENING_HEIGHT_MIN_MM: { value: 500, doc: "Least clear height between the boot deck and the overhead underside. Same as the north-south bedroom." },
+  OHC_HEIGHT_MIN_MM: { value: 150, doc: "Least overhead height under the roof at the body's room face. Same as the north-south bedroom." }
+};
+
+// generators/bedroomEast/rules.ts
+var RULES2 = defineRules("bedroomEast", rules_default2);
 
 // generators/bedroomEast/generator.ts
-var EAST_MATTRESS_DEPTH_MM = 1570;
-var EAST_BODY_DEPTH_MM = 756;
-var EAST_BOOT_HEIGHT_MM = 418;
-var EAST_WARDROBE_DEFAULT_MM = 395;
-var EAST_WARDROBE_MIN_MM = 150;
-var EAST_MATTRESS_MIN_MM = 1500;
-function round12(n) {
+function round1(n) {
   return Math.round(n * 10) / 10;
 }
+var bodyY0 = () => RULES2.MATTRESS_DEPTH_MM.value - RULES2.BODY_DEPTH_MM.value;
 function eastWardrobeMax(width) {
-  return round12(Math.max(EAST_WARDROBE_MIN_MM, width - EAST_MATTRESS_MIN_MM));
+  return round1(Math.max(RULES2.WARDROBE_MIN_MM.value, width - RULES2.MATTRESS_QUEEN_LENGTH_MM.value));
+}
+function wardrobeOf(raw) {
+  const W = round1(raw.width || 0);
+  return round1(Math.min(eastWardrobeMax(W), Math.max(RULES2.WARDROBE_MIN_MM.value, raw.wardrobeWidth ?? eastWardrobeMax(W))));
+}
+function profileOf(raw) {
+  const H = round1(raw.height || 0);
+  return raw.roofProfile && raw.roofProfile.length > 1 ? raw.roofProfile : [[0, H], [RULES2.MATTRESS_DEPTH_MM.value, H]];
+}
+function eastBays(raw, opening) {
+  const count = raw && (raw.length === 2 || raw.length === 3) ? raw.length : RULES2.OHC_ZONE_COUNT_DEFAULT.value;
+  const given = raw && raw.length === count ? raw : [];
+  const sum = given.reduce((s, z) => s + (Number.isFinite(z.width) ? z.width : 0), 0);
+  const total = round1(Math.max(0, opening));
+  if (sum <= 0) {
+    const each = round1(total / count);
+    return Array.from({ length: count }, (_, i) => ({ id: `ohc-${i + 1}`, width: i === count - 1 ? round1(total - each * (count - 1)) : each }));
+  }
+  const out = given.map((z, i) => ({ id: z.id || `ohc-${i + 1}`, width: round1(z.width * total / sum) }));
+  out[out.length - 1].width = round1(total - out.slice(0, -1).reduce((s, z) => s + z.width, 0));
+  return out;
+}
+function eastEqualBays(raw, count) {
+  return eastBays(Array.from({ length: count }, (_, i) => ({ id: `ohc-${i + 1}`, width: 1 })), round1(raw.width - wardrobeOf(raw)));
+}
+function eastSetBayBoundary(raw, index, x) {
+  const x0 = wardrobeOf(raw);
+  const bays = eastBays(raw.ohcZones, round1(raw.width - x0)).map((z) => ({ ...z }));
+  const left = bays[index];
+  const right = bays[index + 1];
+  if (!left || !right) return null;
+  const start = round1(x0 + bays.slice(0, index).reduce((s, z) => s + z.width, 0));
+  const total = round1(left.width + right.width);
+  const min = RULES2.OHC_ZONE_MIN_MM.value;
+  const at = round1(Math.max(start + min, Math.min(start + total - min, x)));
+  left.width = round1(at - start);
+  right.width = round1(total - left.width);
+  return bays;
+}
+function eastOhcBottomLimits(raw) {
+  const H = round1(raw.height || 0);
+  const roof = roofAt(profileOf(raw), H, bodyY0());
+  return { min: round1(RULES2.BOOT_HEIGHT_MM.value + RULES2.OPENING_HEIGHT_MIN_MM.value), max: round1(roof - RULES2.OHC_HEIGHT_MIN_MM.value) };
+}
+function sectionFrom(profile, height, y0, y1, z0, zTop = Infinity) {
+  const roof = (y) => roofAt(profile, height, y);
+  const top = (y) => Math.min(zTop, roof(y));
+  if (top(y0) <= z0 + 0.5) return null;
+  const cross = (a, b, f) => {
+    let lo = a;
+    let hi = b;
+    for (let k = 0; k < 30; k += 1) {
+      const mid = (lo + hi) / 2;
+      if (Math.sign(f(mid)) === Math.sign(f(lo))) lo = mid;
+      else hi = mid;
+    }
+    return (lo + hi) / 2;
+  };
+  const breaks = [y0, ...profile.map(([y]) => y).filter((y) => y > y0 + 0.01 && y < y1 - 0.01), y1];
+  const ys = [breaks[0]];
+  for (let i = 1; i < breaks.length; i += 1) {
+    const a = breaks[i - 1];
+    const b = breaks[i];
+    if (zTop < Infinity && (roof(a) - zTop) * (roof(b) - zTop) < 0) ys.push(cross(a, b, (y) => roof(y) - zTop));
+    ys.push(b);
+  }
+  const pts = [];
+  let end = y1;
+  for (let i = 0; i < ys.length; i += 1) {
+    const y = ys[i];
+    if (top(y) > z0 + 0.5) {
+      pts.push({ y: round1(y), z: round1(top(y)) });
+      continue;
+    }
+    end = round1(cross(ys[i - 1], y, (q) => top(q) - z0));
+    break;
+  }
+  return [{ y: y0, z: z0 }, { y: end, z: z0 }, ...pts.slice().reverse(), { y: y0, z: z0 }];
+}
+function box(y0, y1, z0, z1) {
+  return [{ y: y0, z: z0 }, { y: y1, z: z0 }, { y: y1, z: z1 }, { y: y0, z: z1 }, { y: y0, z: z0 }];
 }
 function generateBedroomEast(raw) {
   const errors = [];
-  const W = round12(raw.width || 0);
-  const H = round12(raw.height || 0);
-  const D = EAST_MATTRESS_DEPTH_MM;
-  const body = EAST_BODY_DEPTH_MM;
-  const boot = EAST_BOOT_HEIGHT_MM;
-  const maxW = eastWardrobeMax(W);
-  const wardrobe = round12(Math.min(maxW, Math.max(EAST_WARDROBE_MIN_MM, raw.wardrobeWidth ?? EAST_WARDROBE_DEFAULT_MM)));
-  const profile = raw.roofProfile && raw.roofProfile.length > 1 ? raw.roofProfile : [[0, H], [body, H]];
-  if (W < EAST_WARDROBE_MIN_MM + EAST_MATTRESS_MIN_MM) errors.push(`width ${W} cannot hold a ${EAST_MATTRESS_MIN_MM} mm mattress and a wardrobe`);
-  const mattress = round12(W - wardrobe);
+  const warnings = [];
+  const W = round1(raw.width || 0);
+  const H = round1(raw.height || 0);
+  const D = RULES2.MATTRESS_DEPTH_MM.value;
+  const profile = profileOf(raw);
+  const wardrobe = wardrobeOf(raw);
+  const ohcBottom = round1(raw.ohcBottom ?? RULES2.OHC_BOTTOM_DEFAULT_MM.value);
+  beginProvenance();
+  const Pm = param({ W, H, wardrobeWidth: wardrobe, ohcBottom });
+  const y0 = dim("body.y0", { D: RULES2.MATTRESS_DEPTH_MM, body: RULES2.BODY_DEPTH_MM }, (t) => t.D - t.body);
+  const bootTop = dim("boot.z1", { boot: RULES2.BOOT_HEIGHT_MM }, (t) => t.boot);
+  const wardX1 = dim("wardrobe.x1", { wardrobeWidth: Pm.wardrobeWidth }, (t) => t.wardrobeWidth);
+  const mattressLen = dim("mattress.length", { W: Pm.W, x0: ref("wardrobe.x1") }, (t) => t.W - t.x0);
+  dim("mattress.y1", { D: RULES2.MATTRESS_DEPTH_MM }, (t) => t.D);
+  const ohcZ0 = dim("ohc.z0", { ohcBottom: Pm.ohcBottom }, (t) => t.ohcBottom);
+  const opening = dim("ohc.width", { W: Pm.W, x0: ref("wardrobe.x1") }, (t) => t.W - t.x0);
+  const openingH = dim("layout.openingHeight", { top: ref("ohc.z0"), bottom: ref("boot.z1") }, (t) => t.top - t.bottom);
+  const roofAtFace = round1(roofAt(profile, H, y0));
+  const ohcH = round1(roofAtFace - ohcZ0);
+  if (W < RULES2.WARDROBE_MIN_MM.value + 1) errors.push(`width ${W} has no room for a wardrobe and a mattress`);
+  if (mattressLen < RULES2.MATTRESS_QUEEN_LENGTH_MM.value - 0.05) {
+    warnings.push(`the mattress is only ${round1(mattressLen)} mm long \u2014 a queen mattress needs ${RULES2.MATTRESS_QUEEN_LENGTH_MM.value}`);
+  }
+  if (openingH < RULES2.OPENING_HEIGHT_MIN_MM.value) errors.push(`only ${round1(openingH)} mm between the boot deck and the overhead (min ${RULES2.OPENING_HEIGHT_MIN_MM.value})`);
+  if (ohcH < RULES2.OHC_HEIGHT_MIN_MM.value) errors.push(`overhead is only ${ohcH} mm high at the body's room face (min ${RULES2.OHC_HEIGHT_MIN_MM.value})`);
+  const bays = eastBays(raw.ohcZones, opening);
+  for (const b of bays) {
+    if (b.width < RULES2.OHC_ZONE_MIN_MM.value - 0.05) errors.push(`overhead bay ${b.width} is narrower than ${RULES2.OHC_ZONE_MIN_MM.value} mm`);
+  }
   const zones = [];
   if (!errors.length) {
-    const box = (id, label, x0, x1, y1, z0, z1) => ({
-      id,
-      label,
-      kind: "solid",
-      x0,
-      x1,
-      y0: 0,
-      y1,
-      z0,
-      z1,
-      roofTop: false,
-      outlineYZ: [{ y: 0, z: z0 }, { y: y1, z: z0 }, { y: y1, z: z1 }, { y: 0, z: z1 }, { y: 0, z: z0 }]
-    });
-    zones.push(box("boot", "Boot", 0, W, body, 0, boot));
-    zones.push({
-      id: "mattress",
-      label: "Mattress",
-      kind: "solid",
-      x0: wardrobe,
-      x1: W,
-      y0: body,
-      y1: D,
-      z0: 0,
-      z1: boot,
-      roofTop: false,
-      outlineYZ: [
-        { y: body, z: 0 },
-        { y: D, z: 0 },
-        { y: D, z: boot },
-        { y: body, z: boot },
-        { y: body, z: 0 }
-      ]
-    });
-    const ward = sectionYZ(profile, body, H, boot, H);
-    if (ward) {
-      zones.push({
-        id: "wardrobe",
-        label: "Wardrobe",
-        kind: "solid",
-        x0: 0,
-        x1: wardrobe,
-        y0: 0,
-        y1: body,
-        z0: boot,
-        z1: H,
-        roofTop: true,
-        outlineYZ: ward
-      });
-    } else errors.push("the wardrobe has no room under the roof");
+    zones.push({ id: "boot", label: "Boot", kind: "solid", x0: 0, x1: W, y0, y1: D, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(y0, D, 0, bootTop) });
+    zones.push({ id: "mattress", label: "Mattress", kind: "solid", x0: wardX1, x1: W, y0: 0, y1: y0, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(0, y0, 0, bootTop) });
+    const region = (id, label, kind, x0, x1, z0, zTop = Infinity) => {
+      const outline = sectionFrom(profile, H, y0, D, z0, zTop);
+      if (!outline) {
+        errors.push(`${label} has no room under the roof`);
+        return;
+      }
+      zones.push({ id, label, kind, x0, x1, y0, y1: round1(Math.max(...outline.map((p) => p.y))), z0, z1: round1(Math.max(...outline.map((p) => p.z))), roofTop: zTop === Infinity, outlineYZ: outline });
+    };
+    region("wardrobe", "Wardrobe", "solid", 0, wardX1, bootTop);
+    region("opening", "Opening", "void", wardX1, W, bootTop, ohcZ0);
+    region("ohc", "Overhead", "solid", wardX1, W, ohcZ0);
   }
+  let x = wardX1;
+  const bayInfo = bays.map((b) => {
+    const out = { id: b.id, width: b.width, x0: round1(x), x1: round1(x + b.width) };
+    x += b.width;
+    return out;
+  });
+  const provenance = endProvenance();
   return {
-    params: { width: W, depth: D, height: H, wardrobeWidth: wardrobe, bootHeight: boot, bodyDepth: body, mattressDepth: D, mattressLength: mattress, roofProfile: profile },
+    params: { width: W, depth: D, height: H, wardrobeWidth: wardrobe, bootHeight: bootTop, bodyDepth: RULES2.BODY_DEPTH_MM.value, mattressDepth: D, mattressLength: round1(mattressLen), ohcBottom: ohcZ0, ohcZones: bays, roofProfile: profile },
     zones: errors.length ? [] : zones,
     boards: [],
-    validation: { errors, warnings: [] }
+    layout: { ohc: { bottom: ohcZ0, width: round1(opening), height: ohcH, zones: bayInfo } },
+    validation: { errors, warnings },
+    debug: { provenance }
   };
 }
 export {
-  EAST_BODY_DEPTH_MM,
-  EAST_BOOT_HEIGHT_MM,
-  EAST_MATTRESS_DEPTH_MM,
-  EAST_MATTRESS_MIN_MM,
-  EAST_WARDROBE_DEFAULT_MM,
-  EAST_WARDROBE_MIN_MM,
+  RULES2 as RULES,
+  eastBays,
+  eastEqualBays,
+  eastOhcBottomLimits,
+  eastSetBayBoundary,
   eastWardrobeMax,
   generateBedroomEast
 };

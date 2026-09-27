@@ -33,9 +33,19 @@ const rect = (id: string, extra: Partial<Board> = {}): Board => ({
   door.faces!.find((f) => f.id === "B")!.visible = true;
   door.faces!.find((f) => f.id === "B")!.finish = { colour: "Gloss White" };
   addFeature(door, "B", { id: "cup", kind: "hole", center: [22, 100], diameter: 35, depth: 12 });
-  const m = applyMilling([both, clean, door]);
+  const single = rect("SINGLE", { stock: { kind: "door", thickness: 16, sides: 1 } });
+  attachFaces([single]);
+  single.faces!.find((f) => f.id === "B")!.visible = true;
+  single.faces!.find((f) => f.id === "B")!.finish = { colour: "Gloss White" };
+  addFeature(single, "B", { id: "lock", kind: "cutout", u0: 10, u1: 20, v0: 10, v1: 20, through: true });
+  const m = applyMilling([both, clean, door, single]);
   assert.deepEqual(m.issues.map((i) => [i.board, i.reason]), [["BOTH", "both-faces"], ["DOOR", "colour-face"]]);
-  assert.equal(clean.milling, "B", "a board with only a through hole keeps the face it is listed on");
+  // Double-sided, only through work: either face may lie on the table (nesting can flip it).
+  assert.equal(clean.milling, "either");
+  assert.ok(clean.faces!.find((f) => f.id === "B")!.features.some((f) => f.id === "h1"), "through work stays where it was listed");
+  // Single-sided with only through work: the colour face lies on the table, milled from the back.
+  assert.equal(single.milling, "A");
+  assert.ok(single.faces!.find((f) => f.id === "A")!.features.some((f) => f.id === "lock"), "listed on the back");
 }
 
 /* ---- kitchen: left door zone with a mid shelf, right drawer over a door zone ---- */
@@ -110,7 +120,9 @@ for (const [name, r] of [
 ] as const) {
   assert.deepEqual((r as { milling?: { issues: unknown[] } }).milling!.issues, [], `${name}: milling issues`);
   for (const b of (r as { boards: Board[] }).boards) {
-    assert.ok(b.milling === "A" || b.milling === "B", `${name} ${b.id}: milling face`);
+    assert.ok(b.milling === "A" || b.milling === "B" || b.milling === "either", `${name} ${b.id}: milling face`);
+    const partialOn = (id: string) => b.faces!.find((f) => f.id === id)!.features.some((f) => ["groove", "tgroove", "hole", "cutout"].includes(f.kind) && !f.through);
+    if (b.milling === "either") assert.ok(!partialOn("A") && !partialOn("B") && !(b.stock?.kind === "door" && b.stock.sides === 1), `${name} ${b.id}: either only when free`);
     if (b.stock?.kind === "door" && b.stock.sides === 1) {
       const colour = b.faces!.find((f) => f.visible === true && f.finish?.colour && !/stipple/i.test(f.finish.colour));
       if (colour) assert.notEqual(b.milling, colour.id, `${name} ${b.id}: milled from the back`);

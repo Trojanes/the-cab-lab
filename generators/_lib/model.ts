@@ -29,7 +29,10 @@ export type ProfilePoint =
   | { y: number; z: number }
   | { x: number; z: number };
 
-/** Which sheet a board is cut from. `kind` matches job.stock (carcass / partition / door). */
+/**
+ * Which sheet a board is cut from. `kind` matches job.stock (carcass / partition / door).
+ * The nesting id is not stored; `sheetMaterial` (`material.ts`) builds it.
+ */
 export interface Stock {
   kind: "carcass" | "partition" | "door" | string;
   thickness: number;
@@ -56,6 +59,8 @@ export interface FaceFeature {
   diameter?: number;
   /** Corner radius of a rounded slot. */
   radius?: number;
+  /** A cutout of any shape: its closed loop in face-local (u, v). u0..v1 is then its bounding box. */
+  loop?: [number, number][];
   /** Into the board along -normal. Omitted on through features and tags. */
   depth?: number;
   through?: boolean;
@@ -130,8 +135,11 @@ export interface Board {
   role?: string;
   stock?: Stock;
   faces?: Face[];
-  /** The big face up on the CNC: all partial-depth work is on it, through work is listed on it (_lib/milling.ts). */
-  milling?: "A" | "B";
+  /**
+   * The big face up on the CNC: all partial-depth work is on it, through work is listed on it.
+   * "either" = double-sided with no partial-depth work: nesting may flip it (_lib/milling.ts).
+   */
+  milling?: "A" | "B" | "either";
 }
 
 export interface FaceRef {

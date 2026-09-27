@@ -323,4 +323,32 @@ assert.equal(r.debug?.boardFrame, "final");
   only("left-side-strengthening-strip-c1-door", ["-Y"], "White Stipple");
 }
 
+{
+  const entries = r.debug.provenance.entries;
+  const identity = (e: { formula: string; terms: Record<string, unknown> }) => {
+    const names = Object.keys(e.terms);
+    return names.length === 1 && e.formula === names[0];
+  };
+  for (const board of r.boards) {
+    for (const face of ["x0", "x1", "y0", "y1", "z0", "z1"] as const) {
+      const e = entries[`${board.id}.${face}`];
+      assert.ok(e, `${board.id}.${face} formula`);
+      assert.ok(Math.abs(e.value - board[face]) < 1e-6, `${board.id}.${face} value`);
+      assert.equal(identity(e), false, `${board.id}.${face} ${e.formula}`);
+    }
+    const pv = board.profileVector ?? [];
+    const [A, B] = board.profilePlane === "YZ" ? ["y", "z"] : board.profilePlane === "XZ" ? ["x", "z"] : ["x", "y"];
+    pv.forEach((p, i) => {
+      for (const axis of [A, B]) {
+        const e = entries[`${board.id}.pv[${i}].${axis}`];
+        assert.ok(e, `${board.id}.pv[${i}].${axis}`);
+        assert.ok(Math.abs(e.value - Number((p as Record<string, number>)[axis])) < 1e-6);
+      }
+    });
+  }
+  for (const j of r.joints) assert.equal(typeof j.rule, "string", j.id);
+  const notch = entries["V1.pv[2].y"];
+  assert.ok(Object.values(notch.terms).some((t) => t.kind === "rule" || t.kind === "ref"));
+}
+
 console.log("kitchen: all golden tests passed");

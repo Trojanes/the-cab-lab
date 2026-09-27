@@ -45,7 +45,7 @@ assertBench("kitchen", generateKitchenCabinet({
     { id: "k-col-1", width: 444, zones: [{ id: "c1-door", height: 825, zoneType: "left_door", shelfEnabled: true, shelfHeight: 400, leftSidePanelOptions: { panelType: "door", frontVisible: true, bchNotchEnabled: false, strengtheningStripEnabled: true } }] },
     { id: "k-col-2", width: 443, zones: [{ id: "c2-drawer", height: 300, zoneType: "drawer" }, { id: "c2-door", height: 525, zoneType: "right_door", shelfEnabled: false }] },
   ],
-}), "B3");
+}), "V1");
 
 assertBench("kitchen-style2", generateKitchenCabinet({
   globalSettings: { length: 887, depth: 270, height: 880 },
@@ -55,7 +55,7 @@ assertBench("kitchen-style2", generateKitchenCabinet({
     { id: "k-col-1", width: 444, zones: [{ id: "c1-door", height: 825, zoneType: "left_door", shelfEnabled: true, shelfHeight: 400 }] },
     { id: "k-col-2", width: 443, zones: [{ id: "c2-drawer", height: 300, zoneType: "drawer" }, { id: "c2-door", height: 525, zoneType: "right_door" }] },
   ],
-}), (id) => id === "B3" || id === "B2");
+}), "V1");
 
 assertBench("generalTall", generateGeneralTall({
   cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,
@@ -68,7 +68,7 @@ assertBench("generalTall", generateGeneralTall({
     { id: "zone-2", type: "drawer", height: 300 },
     { id: "zone-3", type: "double_door", height: 945, verticalDivider: true },
   ],
-}), "B3");
+}), "V1");
 
 assertBench("generalTall-style2", generateGeneralTall({
   cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,

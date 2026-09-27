@@ -1,0 +1,12 @@
+{
+  "MATTRESS_DEPTH_MM": { "value": 1570, "doc": "Queen mattress width, laid across the van. The east-west bedroom's depth from the nose; fixed. Bedroom 1 measures 1570." },
+  "MATTRESS_QUEEN_LENGTH_MM": { "value": 1880, "doc": "Queen mattress length. Below this the layout warns: the van is too narrow for a queen mattress across it. Bedroom 1: 2275 − 395 = 1880." },
+  "BODY_DEPTH_MM": { "value": 756, "doc": "Boot and wardrobe depth from the nose. The mattress continues past this into the room. Bedroom 1 measures 756." },
+  "BOOT_HEIGHT_MM": { "value": 418, "doc": "Boot deck top above the floor. Bedroom 1 measures 400 → 418." },
+  "WARDROBE_MIN_MM": { "value": 150, "doc": "Narrowest wardrobe. Same minimum as the north-south wardrobe." },
+  "OHC_BOTTOM_DEFAULT_MM": { "value": 1418, "doc": "Overhead door underside above the floor when the params give none. Bedroom 1 measures 1418 (doors 1418 → 1738)." },
+  "OHC_ZONE_COUNT_DEFAULT": { "value": 3, "doc": "Up-flap bays across the overhead when the params give none. Bedroom 1 has three. Two or three are allowed." },
+  "OHC_ZONE_MIN_MM": { "value": 150, "doc": "Narrowest overhead bay, centreline to centreline. Same as the north-south overhead." },
+  "OPENING_HEIGHT_MIN_MM": { "value": 500, "doc": "Least clear height between the boot deck and the overhead underside. Same as the north-south bedroom." },
+  "OHC_HEIGHT_MIN_MM": { "value": 150, "doc": "Least overhead height under the roof at the body's room face. Same as the north-south bedroom." }
+}

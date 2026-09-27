@@ -1,5 +1,10 @@
 import assert from "node:assert/strict";
-import { edgeBandPart, setEdgeBand } from "./edgeBand.ts";
+import { generateBedroom } from "../bedroom/generator.ts";
+import { generateBedSideTable } from "../bedSideTable/generator.ts";
+import { generateGeneralTall } from "../generalTall/generator.ts";
+import { generateKitchenCabinet } from "../kitchen/generator.ts";
+import { generateSmallCabinet } from "../smallCabinet/generator.ts";
+import { cnjobEdgeBands, edgeBandPart, setEdgeBand, snapshotEdgeBands } from "./edgeBand.ts";
 import { faceOf, type Board } from "./model.ts";
 
 function box(over: Partial<Board> & Pick<Board, "id" | "profilePlane" | "thicknessAxis">): Board {
@@ -82,6 +87,58 @@ function box(over: Partial<Board> & Pick<Board, "id" | "profilePlane" | "thickne
 for (const [i, band] of [[4, { thickness: 1 }], [-1, { thickness: 1 }], [1.5, { thickness: 1 }], [0, { thickness: 0 }], [0, { thickness: Number.NaN }]] as const) {
   const door = box({ id: "BAD", profilePlane: "XZ", thicknessAxis: "Y" });
   assert.throws(() => setEdgeBand(door, i as number, band), `${i} ${JSON.stringify(band)}`);
+}
+
+/* Snapshot shape follows the stored bands. Export sends none until a module is confirmed. */
+{
+  const door = box({ id: "FP0", profilePlane: "XZ", thicknessAxis: "Y", x0: 0, x1: 596, y0: -18, y1: 0, z0: 0, z1: 400 });
+  setEdgeBand(door, 0, { thickness: 1, colour: "Gloss White" });
+  setEdgeBand(door, 2, { thickness: 0.8 });
+  assert.deepEqual(snapshotEdgeBands(door), [
+    { i: 0, thicknessMm: 1, colorName: "Gloss White" },
+    { i: 2, thicknessMm: 0.8 },
+  ]);
+  assert.deepEqual(cnjobEdgeBands(door), []);
+}
+
+/* Tall, small, bedroom, bed side: no bands stored, so they export unbanded. */
+{
+  const tall = generateGeneralTall({
+    cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,
+    panelThickness: 15, frontPanelThickness: 16,
+    topSystem: { style: "style_1", frontRailHeight: 40 },
+    bottomSystem: { style: "style_1", frontRailHeight: 53 },
+    zones: [{ id: "zone-1", type: "side_door", height: 1400 }],
+  } as never);
+  const small = generateSmallCabinet({
+    cabinetWidth: 600, cabinetDepth: 560, cabinetHeight: 800,
+    panelThickness: 16, frontPanelThickness: 18, frontClearance: 2.5,
+    zones: [{ id: "upper", type: "left_door", height: 768 }],
+  });
+  const bedroom = generateBedroom({
+    width: 2275, depth: 756, height: 1788,
+    roofProfile: [[0, 1788], [177, 1749], [756, 1150]],
+    bootHeight: 398, wardrobeWidth: 330, ohcBottom: 1418,
+  });
+  const bedside = generateBedSideTable({ width: 330, depth: 200, height: 595, side: "left", shelfCenter: 395, clearance: 2.5 });
+  for (const result of [tall, small, bedroom, bedside]) {
+    assert.equal(result.validation.errors.length, 0, result.validation.errors.join("; "));
+    for (const b of result.boards) {
+      assert.deepEqual(snapshotEdgeBands(b), [], b.id);
+      assert.deepEqual(cnjobEdgeBands(b), [], b.id);
+    }
+  }
+}
+
+/* Kitchen already stores bands. Export still sends none. */
+{
+  const kitchen = generateKitchenCabinet({
+    globalSettings: { length: 887, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70, bottomClearanceStyle: "style_1",
+    columns: [{ id: "c1", width: 887, zones: [{ id: "z1", height: 810, zoneType: "left_door" }] }],
+  } as never);
+  assert.ok(kitchen.boards.some((b) => snapshotEdgeBands(b).length > 0), "kitchen stores some bands");
+  assert.ok(kitchen.boards.every((b) => cnjobEdgeBands(b).length === 0));
 }
 
 console.log("edgeBand ok");

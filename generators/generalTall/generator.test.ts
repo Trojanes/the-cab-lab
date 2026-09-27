@@ -478,4 +478,46 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.equal(crushed.cabinetHeight, 1355);
 }
 
+{
+  const traced = generateGeneralTall(UI);
+  const entries = traced.debug.provenance.entries;
+  const identity = (e: { formula: string; terms: Record<string, unknown> }) => {
+    const names = Object.keys(e.terms);
+    return names.length === 1 && e.formula === names[0];
+  };
+  for (const board of traced.boards) {
+    for (const face of ["x0", "x1", "y0", "y1", "z0", "z1"] as const) {
+      const e = entries[`${board.id}.${face}`];
+      assert.ok(e, `${board.id}.${face} formula`);
+      assert.ok(Math.abs(e.value - board[face]) < 1e-4, `${board.id}.${face}`);
+      assert.equal(identity(e), false, `${board.id}.${face} ${e?.formula}`);
+    }
+    const pv = board.profileVector ?? [];
+    const [A, B] = board.profilePlane === "YZ" ? ["y", "z"] : board.profilePlane === "XZ" ? ["x", "z"] : ["x", "y"];
+    pv.forEach((p, i) => {
+      for (const axis of [A, B]) {
+        const e = entries[`${board.id}.pv[${i}].${axis}`];
+        assert.ok(e, `${board.id}.pv[${i}].${axis}`);
+        assert.ok(Math.abs(e.value - Number((p as Record<string, number>)[axis])) < 1e-4);
+      }
+    });
+  }
+  for (const j of traced.joints) assert.equal(typeof j.rule, "string", j.id);
+  const fridge = generateGeneralTall({
+    cabinetHeight: 2100, cabinetWidth: 664, cabinetDepth: 600,
+    panelThickness: 16, frontPanelThickness: 16, ziThickness: 15, hThickness: 15,
+    topSystem: { style: "style_1", frontRailHeight: 40 },
+    bottomSystem: { style: "style_1", frontRailHeight: 53 },
+    zones: [
+      { id: "fridge-cavity", type: "fridge", height: 999, applianceHeightMm: 1470, applianceWidthMm: 619 },
+      { id: "open", type: "open_space", height: 505 },
+    ],
+  });
+  assert.ok(fridge.boards.some((b) => b.id === "V5"));
+  for (const j of fridge.joints) assert.equal(typeof j.rule, "string", j.id);
+  const v5 = fridge.boards.find((b) => b.id === "V5")!;
+  assert.ok((v5.profileVector?.length ?? 0) > 0);
+  assert.ok(fridge.debug.provenance.entries["V5.pv[0].y"]);
+}
+
 console.log("generalTall: all golden tests passed");

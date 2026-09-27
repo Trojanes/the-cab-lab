@@ -2,10 +2,10 @@
 import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
 import * as job from "./job.js";
 import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
-import { syncCabinets, syncPlanes } from "./cabinets3d.js";
-import { syncWalls } from "./walls3d.js";
+import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
+import { syncWalls, statusOf } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, overlaps } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -13,6 +13,7 @@ import { openSpaceDialog, isOpen as spaceDialogOpen } from "./spaceDialog.js";
 import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
 import { railContext } from "./benchMenu.js";
+import { buildCnjob } from "./gen/cnjob.js";
 
 attachJob(job);
 
@@ -51,6 +52,7 @@ function plannedButton(label, sub) {
 }
 
 for (const mod of Object.values(MODULES)) {
+  if (mod.command) continue;
   if (!grouped.has(mod.id)) list.append(moduleButton(mod));
 }
 
@@ -168,6 +170,10 @@ function refreshRail() {
     "resize.drag": "Resize — release to keep this size (one undo step)",
     "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
+    "board.pick": "Board — click the first point on a face · Esc cancels",
+    "board.draw": "Board — Polyline: click points, C or the first point closes, U undoes · Rectangle: two corners · type 600 · @100,-50 · 600<45 · 400,600 · F3 snap · F8 ortho · F10 polar · Enter / right-click finishes · Esc clears",
+    "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc redraws the corner",
+    "fit": "Fit to cabinets — click an overhead and a base, in either order · Enter fits the wall · Esc cancels",
   };
   const lBox = getLoungeStyle() === "L" && ["armed", "face", "extrude"].includes(mode);
   $("#modeHint").textContent = loungeStep
@@ -252,13 +258,17 @@ function refreshStatus() {
   const orientable = job.getJob().cabinets.some((c) => !MODULES[c.moduleId].noOrient);
   $('[data-action="orient"]').disabled = sel ? !!MODULES[sel.moduleId].noOrient : !orientable;
   $('[data-action="orient"]').title = sel && MODULES[sel.moduleId].noOrient
-    ? `Face — ${MODULES[sel.moduleId].label} has one door side (toward the room)`
+    ? (typeof MODULES[sel.moduleId].noOrient === "string"
+      ? `Face — ${MODULES[sel.moduleId].noOrient}`
+      : `Face — ${MODULES[sel.moduleId].label} has one door side (toward the room)`)
     : "Face (O) — click a side; doors face that way · Enter confirms · Esc restores";
   $('[data-action="orient"]').classList.toggle("active", getMode().startsWith("orient"));
   $('[data-action="resize"]').disabled = !job.getJob().cabinets.length;
   $('[data-action="resize"]').classList.toggle("active", getMode().startsWith("resize"));
   $('[data-action="plane"]').disabled = !job.hasSpace();
   $('[data-action="plane"]').classList.toggle("active", getMode().startsWith("plane"));
+  $('[data-action="board"]').disabled = !job.hasSpace();
+  $('[data-action="board"]').classList.toggle("active", getMode().startsWith("board"));
   const pl = job.getSelectedPlane();
   if (pl) $("#stSelection").textContent = `Selection: ${pl.id} (Plane)`;
   const wall = job.getSelectedWall();
@@ -292,16 +302,69 @@ async function doSave(forceDialog = false) {
   if (path) job.markSaved(path);
 }
 
+function exportFitIssues() {
+  const issues = [];
+  const jobData = job.getJob();
+  const wallIds = new Set(job.getWalls().map((w) => w.id));
+  const cabIds = new Set(jobData.cabinets.map((c) => c.id));
+  for (const cab of jobData.cabinets) {
+    if (!poseFits(cab, cab.pose)) issues.push(`${cab.id} is outside the space or overlaps an obstacle.`);
+    const hits = overlaps(cab, cab.pose);
+    const walls = hits.filter((id) => wallIds.has(id));
+    if (walls.length) issues.push(`${cab.id} overlaps partition ${walls.join(", ")}.`);
+    const doors = hits.filter((id) => !wallIds.has(id) && !cabIds.has(id));
+    if (doors.length) issues.push(`${cab.id} overlaps the sliding door ${doors.join(", ")}.`);
+  }
+  for (const wall of job.getWalls()) {
+    const st = statusOf(wall);
+    if (!st.ok) issues.push(`${wall.id}: ${st.issues.join("; ")}.`);
+  }
+  return issues;
+}
+
+async function doExport() {
+  if (!bridge) return console.warn("[ui] file bridge unavailable");
+  const cabinets = job.getJob().cabinets.map((cab) => {
+    const result = job.resultFor(cab.id);
+    return {
+      id: cab.id,
+      moduleId: cab.moduleId,
+      params: cab.params,
+      boards: result?.boards || [],
+      errors: result?.validation?.errors || [],
+      grainIssues: (result?.grain?.issues || []).map((i) => i.message),
+      millingIssues: (result?.milling?.issues || []).map((i) => i.message),
+    };
+  });
+  const built = buildCnjob({ jobId: "job", cabinets, fitIssues: exportFitIssues() });
+  if (!built.ok) {
+    log("file.export.blocked", { reasons: built.reasons });
+    const shown = built.reasons.slice(0, 12);
+    const more = built.reasons.length > shown.length ? `\n… and ${built.reasons.length - shown.length} more` : "";
+    window.alert(`Cannot export:\n\n${shown.join("\n")}${more}`);
+    return;
+  }
+  const current = job.getFilePath();
+  const stem = current ? current.replace(/\.json$/i, "") : "job";
+  const path = await bridge.saveCnjob(`${stem}.cnjob`, JSON.stringify(built.snapshot));
+  if (path) {
+    log("file.export", { path, boards: built.boardCount, materials: built.materialIds });
+    window.alert(`Exported ${built.boardCount} boards.`);
+  }
+}
+
 const ACTIONS = {
   new: doNew,
   open: doOpen,
   save: () => doSave(false),
+  export: doExport,
   undo: () => job.undo(),
   redo: () => job.redo(),
   move: () => startMove(),
   orient: () => startOrient(),
   plane: () => startPlane(),
   resize: () => startResize(),
+  board: () => startBoard(),
 };
 $$("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());

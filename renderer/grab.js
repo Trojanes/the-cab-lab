@@ -33,8 +33,12 @@ export function placeOrbitTarget(camera, target, distance) {
  * along the view axis, so the plane through that surface tracks the cursor.
  */
 export function grabPan(camera, target, dx, dy, viewDepth, clientHeight) {
-  if (!clientHeight || !(viewDepth > 0)) return;
-  const k = visibleHeightAt(viewDepth, camera.fov) / clientHeight;
+  if (!clientHeight) return;
+  const height = camera.isOrthographicCamera
+    ? (camera.top - camera.bottom) / (camera.zoom || 1)
+    : viewDepth > 0 ? visibleHeightAt(viewDepth, camera.fov) : 0;
+  if (!(height > 0)) return;
+  const k = height / clientHeight;
   camera.updateMatrixWorld();
   _x.setFromMatrixColumn(camera.matrixWorld, 0);
   _y.setFromMatrixColumn(camera.matrixWorld, 1);
@@ -62,6 +66,11 @@ export function wheelZoomScale(event) {
  * on the view axis at the new distance, so the next pan is 1:1 there.
  */
 export function grabZoom(camera, target, ndcX, ndcY, rayDist, scale) {
+  if (camera.isOrthographicCamera) {
+    camera.zoom = Math.min(80, Math.max(0.05, (camera.zoom || 1) / scale));
+    camera.updateProjectionMatrix();
+    return;
+  }
   const minDist = Math.max(camera.near * 2, 1);
   const dist = Math.max(rayDist, minDist);
   const next = Math.max(dist * scale, minDist);

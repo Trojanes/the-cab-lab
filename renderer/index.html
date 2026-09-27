@@ -23,6 +23,7 @@
         <button class="tb" data-action="new" title="New job (Ctrl+N)">New</button>
         <button class="tb" data-action="open" title="Open job (Ctrl+O)">Open</button>
         <button class="tb" data-action="save" title="Save job (Ctrl+S)">Save</button>
+        <button class="tb" data-action="export" title="Export .cnjob for OmniCAM">Export</button>
       </div>
       <div class="sep"></div>
       <div class="group">
@@ -75,6 +76,12 @@
           <path d="M8 7.2 L6.6 8.2 M8 7.2 L9.4 8.2"/>
         </svg>
       </button>
+      <button class="tb icon" data-action="board" title="Board (B) — click a face, click the opposite corner, pick the stock · thickness comes from the stock · Esc cancels" disabled aria-label="Board">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path d="M3.5 6 H12.5 V12.5 H3.5 Z"/>
+          <path d="M5 4.5 H14 V11"/>
+        </svg>
+      </button>
     </div>
 
     <aside id="leftrail">
@@ -91,6 +98,7 @@
     <main id="center">
       <div id="viewport">
         <!-- Floor plan: a 2D sheet over the 3D view where partition walls are drawn. Same job; the 3D follows. -->
+        <button id="faceReset" class="tb hidden" type="button" title="Back to the view this face started with">Reset view</button>
         <button id="floorplanBtn" class="tb fp-btn" title="Floor plan — draw partition walls in 2D over the 3D view; the 3D follows every change" disabled>
           <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" aria-hidden="true">
             <rect x="2" y="2.5" width="12" height="11"/>

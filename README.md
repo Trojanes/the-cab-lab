@@ -135,7 +135,11 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   Create cuts the hole; `Esc` / right-click cancels. Stored on the wall as `openings[] = { id, type: "showerDoor",
   from: lo|hi, offset, width, bottom, top }` — measured from the end you picked, so the door follows that end;
   hole bottom = floor + bottom, hole top = wall top − top (under the nose, the lowest roof over the door). The wall
-  is drawn as a board in the plane of its face with the hole cut out (`prismXZ` / `prismYZ` with holes). Refused
+  is drawn in the plane of its face with the hole cut out. A wall that fits **1200 × 2400** (the 1220 × 2440 sheet
+  with the border removed, either way round) stays one board; otherwise it is cut once into two boards that butt
+  together (`wallBoards`). A sliding door is cut inside the hole where both pieces fit; a shower door keeps the
+  hole on one board and warns in yellow that the board has a joint. The selected wall shows a yellow bar on the
+  cut — drag it (Shift = 1 mm); a piece still past the sheet is marked red. Refused
   when it leaves the wall, overlaps another door, is under 50 wide / high, or another partition meets the wall
   inside it. In the plan the wall is cut over the door (jamb lines, dashed door line); click the door to select it,
   Delete removes just the door; the right panel lists the wall's doors with editable offset / width / clearances.
@@ -193,7 +197,16 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   difference) and the cabinet-level fields folded below (outer size incl. doors, bottom height, stock). Zones are
   never narrower than 150 mm and always sum to W. Every editor action is one undo step. The orange vertical bars in
   3D are the same boundaries. Boards are emitted in their final assembled pose (fronts at local −Y, top at H).
-- **Bedroom** is a rail group: hovering it opens a flyout with **Body** (the nose slab below), **Bed Box** (below) and
+- **Bedroom › East-west** (`generators/bedroomEast`, layout only, no boards yet): the mattress lies across the van
+  against the right wall, one wardrobe stands against the left wall. One click puts it in the nose: its depth is the
+  queen mattress width, 1570, and cannot be changed. The boot (full width, top 418) and the wardrobe stand against the
+  nose, 756 deep; the mattress runs from the nose 1570 into the room. The wardrobe takes what a 1880 queen mattress
+  leaves (395 on a 2275 van) and can only be made narrower, which lengthens the mattress; a van too narrow for 1880
+  still builds, with a warning. The overhead spans from the wardrobe to the right wall above the body: door
+  underside 1418 by default (drag the orange line or type it), up to the roof, two or three up-flap bays (three equal
+  by default, the bay lines drag). The roof comes from the space, like the north-south body. Still regions only —
+  boards come later. Numbers are in `generators/bedroomEast/rules.json`.
+- **Bedroom** is a rail group: hovering it opens a flyout with **North-south** (the nose slab below), **East-west** (above), **Bed Box** (below) and
   **Bed Side Table** (a mirrored pair, needs the body): one against each wall, in front of the body's room face. Width is the wardrobe width. Placement is two clicks: drag the height first (it snaps to the underside of the wardrobe fixed panel), then drag the depth into the room (default 145). No back. Two carcass sides, top / bottom / one middle shelf (the orange line is the middle shelf's centreline, dragged in Z). Each shelf's tongues go through the sides to their outer faces over the middle third of the depth; each side has a through slot per shelf, 5 mm longer than the tongue at each end and 1 mm taller than the shelf — a hole for the middle shelf, notches at the side's edge for the top and bottom shelves. A door-stock panel stands outside the bed-side carcass panel, under the wardrobe's colour panel. Each table has two zones, drawer or a door hinged at the wall or at the bed. The fronts cover the whole table with one side clearance above the floor, between them, under the top and at both side edges. Removing one removes both. Groups are declared in `MODULE_GROUPS` in `renderer/modules.js`.
 - **Bedroom › Bed Box** (one per vehicle, needs the Body first — the flyout item is disabled until it exists): the bed
   base as **twelve boards**, standing in the Body's mattress opening and running into the room: glued to the Body's

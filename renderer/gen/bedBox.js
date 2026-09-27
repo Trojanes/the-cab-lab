@@ -287,14 +287,10 @@ function colourFaceOf(b, A, B) {
   if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
-function defaultFace(A, B, colour) {
+function reportFace(A, B, colour) {
   if (colour) return colour.id === "A" ? "B" : "A";
   const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
   if (inward(B) && !inward(A)) return "B";
-  if (inward(A) && !inward(B)) return "A";
-  if (A.visible === true && B.visible !== true) return "B";
-  if (B.visible === true && A.visible !== true) return "A";
-  if (B.features.some(through) && !A.features.some(through)) return "B";
   return "A";
 }
 function applyMilling(boards) {
@@ -309,15 +305,18 @@ function applyMilling(boards) {
     const colour = colourFaceOf(b, A, B);
     let face;
     if (onA && onB) {
-      face = defaultFace(A, B, colour);
+      face = reportFace(A, B, colour);
       issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
     } else if (onA || onB) {
       face = onA ? "A" : "B";
       if (colour && colour.id === face) {
         issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
       }
+    } else if (colour) {
+      face = colour.id === "A" ? "B" : "A";
     } else {
-      face = defaultFace(A, B, colour);
+      b.milling = "either";
+      continue;
     }
     const [to, from] = face === "A" ? [A, B] : [B, A];
     const moving = from.features.filter(through);

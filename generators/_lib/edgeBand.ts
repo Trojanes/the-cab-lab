@@ -6,7 +6,11 @@
  * in board-local (u, v) plus a sparse list keyed by the same segment index
  * the SVG path uses: edge i runs outline[i] → outline[(i+1) % n].
  *
- * Which edges receive a band is a later decision. Nothing here chooses them.
+ * Which edges receive a band is per module, decided later. Nothing here chooses
+ * them. A missing record is not banded.
+ *
+ * `.cnjob` writes `edgeBands` (`snapshotEdgeBands`). `cnjobEdgeBands` is what
+ * export sends today: nothing, until each module's edges are confirmed.
  */
 import { faceOf, localOutline, planeAxes, rectOutline, type Axis, type Board, type EdgeBand } from "./model.ts";
 
@@ -79,4 +83,30 @@ export function edgeBandPart(b: Board): EdgeBandPart {
 
 export function edgeBandParts(boards: Board[]): EdgeBandPart[] {
   return boards.map(edgeBandPart);
+}
+
+/** One banded outline edge in a `.cnjob` workpiece. Edge i runs point i → point (i + 1) mod n. */
+export interface SnapshotEdgeBand {
+  i: number;
+  thicknessMm: number;
+  colorName?: string;
+}
+
+/** The bands stored on this board, in the snapshot shape. Empty = not banded. */
+export function snapshotEdgeBands(board: Board): SnapshotEdgeBand[] {
+  return edgeBandPart(board).edgeBand.map((mark) => {
+    const band: SnapshotEdgeBand = { i: mark.i, thicknessMm: mark.t };
+    if (mark.colour) band.colorName = mark.colour;
+    return band;
+  });
+}
+
+/**
+ * Bands written into a `.cnjob` today. Every board exports unbanded.
+ * Kitchen and overhead already store bands; those stay on the board and
+ * are not sent until that module's edges are confirmed. Then this returns
+ * `snapshotEdgeBands(board)`.
+ */
+export function cnjobEdgeBands(_board: Board): SnapshotEdgeBand[] {
+  return [];
 }

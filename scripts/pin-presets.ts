@@ -21,6 +21,7 @@ if (!moduleId) {
 const GENERATORS: Record<string, () => Promise<(params: Record<string, unknown>) => { boards: unknown[]; features?: unknown[] }>> = {
   overheadCabinet: async () => (await import("../generators/overheadCabinet/generator.ts")).generateOverheadCabinet as never,
   bedroom: async () => (await import("../generators/bedroom/generator.ts")).generateBedroom as never,
+  bedroomEast: async () => (await import("../generators/bedroomEast/generator.ts")).generateBedroomEast as never,
   bedBox: async () => (await import("../generators/bedBox/generator.ts")).generateBedBox as never,
   kitchen: async () => (await import("../generators/kitchen/generator.ts")).generateKitchenCabinet as never,
   generalTall: async () => (await import("../generators/generalTall/generator.ts")).generateGeneralTall as never,

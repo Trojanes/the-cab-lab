@@ -249,6 +249,10 @@ function throughLoops(b) {
     if (face.id !== "A" && face.id !== "B") continue;
     for (const ft of face.features || []) {
       if (ft.kind !== "cutout" || !ft.through || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
+      if (Array.isArray(ft.loop) && ft.loop.length >= 3) {
+        loops.push(ft.loop.map(([u, v]) => p(b[`${U}0`] + u, b[`${V}0`] + v)));
+        continue;
+      }
       const u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
       const u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
       const v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);

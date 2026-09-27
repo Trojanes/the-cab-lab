@@ -4,13 +4,15 @@
  *
  *   - Partial-depth work (a groove, T-groove, blind hole such as a hinge cup,
  *     a pocket, or a rebate in stacked slabs) must all be on that face.
- *   - Through work (outline, through holes / slots) is cut from any side; it is
- *     listed on the milling face (A and B share one (u, v) frame, so the numbers
- *     do not change when a through feature moves face).
+ *   - Through work (outline, through holes / slots) is cut from any side; when
+ *     the milling face is fixed it is listed there (A and B share one (u, v)
+ *     frame, so the numbers do not change when a through feature moves face).
  *   - Single-sided door stock (`stock.sides` 1): the colour face lies on the
  *     table, so the milling face is the back.
- *   - Double-sided / carcass stock: the face that carries the work; with no
- *     partial-depth work, the back / inside face (else A).
+ *   - Double-sided / carcass stock: the face that carries the partial-depth
+ *     work; with none, "either" — the board may be milled from either face, so
+ *     nesting is free to flip it to fit more boards on a sheet. Its through
+ *     work stays on the face the generator listed it on.
  *
  * A board with partial-depth work on both faces, or on the colour face of
  * single-sided stock, cannot be made in one setup: a milling issue, reported
@@ -60,21 +62,20 @@ function colourFaceOf(b: Board, A: Face, B: Face): Face | null {
 }
 
 /**
- * The face used when nothing forces one: the back / inside face; else the face
- * the generator already lists the through work on; else A.
+ * The face named for a board that needs a second setup anyway (work on both
+ * faces): the back of single-sided stock, else the back / inside face, else A.
  */
-function defaultFace(A: Face, B: Face, colour: Face | null): FaceId {
+function reportFace(A: Face, B: Face, colour: Face | null): FaceId {
   if (colour) return colour.id === "A" ? "B" : "A";
   const inward = (f: Face) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
   if (inward(B) && !inward(A)) return "B";
-  if (inward(A) && !inward(B)) return "A";
-  if (A.visible === true && B.visible !== true) return "B";
-  if (B.visible === true && A.visible !== true) return "A";
-  if (B.features.some(through) && !A.features.some(through)) return "B";
   return "A";
 }
 
-/** Sets `board.milling`, moves through features onto that face, and lists the boards that need a second setup. */
+/**
+ * Sets `board.milling` (A | B | either), moves through features onto a fixed
+ * milling face, and lists the boards that need a second setup.
+ */
 export function applyMilling(boards: Board[]): MillingResult {
   const issues: MillingIssue[] = [];
   for (const b of boards) {
@@ -87,15 +88,19 @@ export function applyMilling(boards: Board[]): MillingResult {
     const colour = colourFaceOf(b, A, B);
     let face: FaceId;
     if (onA && onB) {
-      face = defaultFace(A, B, colour);
+      face = reportFace(A, B, colour);
       issues.push({ board: b.id, reason: "both-faces", message: `${b.id} has partial-depth machining on both faces: the CNC cuts from one side only` });
     } else if (onA || onB) {
       face = onA ? "A" : "B";
       if (colour && colour.id === face) {
         issues.push({ board: b.id, reason: "colour-face", message: `${b.id} is single-sided and has partial-depth machining on its colour face (${face})` });
       }
+    } else if (colour) {
+      face = colour.id === "A" ? "B" : "A";
     } else {
-      face = defaultFace(A, B, colour);
+      // Double-sided, nothing partial-depth: either face may lie on the table.
+      b.milling = "either";
+      continue;
     }
     const [to, from] = face === "A" ? [A, B] : [B, A];
     const moving = from.features.filter(through);

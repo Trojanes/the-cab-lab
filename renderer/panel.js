@@ -7,12 +7,13 @@ import { openSpaceDialog } from "./spaceDialog.js";
 import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
 import { describeMaterials, thickness, partitionClearance } from "./materials.js";
 import { sideOfRotZ, sideLabel, overlaps } from "./interact.js";
-import { wallLength, wallOrientation, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP } from "./walls.js";
+import { wallLength, wallOrientation, wallBoards, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP, SHEET_SHORT_MM, SHEET_LONG_MM } from "./walls.js";
 import { envelopeFootprint } from "./cabinets3d.js";
 import { statusOf } from "./walls3d.js";
 import { openFloorPlan } from "./floorplan.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "./boardModel.js";
 import { log } from "./log.js";
+import { outlineSpan } from "./sketchBoard.js";
 import { swatchChipStyle } from "./doorSwatches.js";
 
 const panel = document.getElementById("rightpanel");
@@ -1681,8 +1682,48 @@ function renderSmall(cab, mod, result, shared) {
   ].filter(Boolean));
 }
 
+function renderSketchPanel(cab) {
+  const result = job.resultFor(cab.id);
+  const p = cab.params;
+  const span = outlineSpan(p);
+  const stock = p.stock || {};
+  const name = stock.kind === "door" ? (stock.colour || "Door") : stock.kind === "partition" ? "Partition" : "Carcass";
+  const face = stock.kind !== "door" ? ""
+    : p.doorSides === "double" ? "colour on both faces"
+      : p.colorFace === "sketch" ? "colour on the sketch face" : "colour on the outer face";
+  const errors = [...(result?.validation?.errors || [])];
+  const warnings = result?.validation?.warnings || [];
+  const checks = errors.length || warnings.length
+    ? el("div", { class: "panel-section" }, [
+      el("div", { class: "sec-title", text: "Checks" }),
+      ...errors.map((m) => el("div", { class: "msg err", text: m })),
+      ...warnings.map((m) => el("div", { class: "msg warn", text: m })),
+    ])
+    : null;
+  const remove = el("button", { class: "tb danger", text: "Remove board", onclick: () => job.removeCabinet(cab.id) });
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: "Board" }),
+      el("div", { class: "panel-sub", text: cab.id }),
+    ]),
+    boardSection(),
+    section("Sketch", [
+      kv("Size", `${Math.round(span.u)} × ${Math.round(span.v)} mm`),
+      kv("Stock", `${name} · ${span.t} mm`),
+      face ? kv("Colour", face) : null,
+    ].filter(Boolean)),
+    checks,
+    el("div", { class: "panel-foot" }, [remove]),
+  ].filter(Boolean));
+  fillDrawer(result, errors, warnings);
+}
+
 function renderCabinet(cab) {
   const mod = getModule(cab.moduleId);
+  if (mod.panel === "sketch") {
+    renderSketchPanel(cab);
+    return;
+  }
   const result = job.resultFor(cab.id);
   const env = mod.envelope(cab.params);
   const p = cab.params;
@@ -1831,19 +1872,40 @@ function renderCabinet(cab) {
     return;
   }
   if (mod.panel === "bedroomEast") {
-    const setWard = (v) => job.setParams(cab.id, mod.setDivider(p, result, 0, v));
+    const rp = result?.params || {};
+    const setKey = (key, next) => {
+      job.setParams(cab.id, next);
+      log("bedroomEast.layout.set", { id: cab.id, key, from: p[key], to: next[key], how: "type", changed: JSON.stringify(next[key]) !== JSON.stringify(p[key]) });
+    };
+    const setWard = (v) => setKey("wardrobeWidth", { ...p, wardrobeWidth: Math.max(150, Math.min(mod.envelope(p).W, Math.round(v))) });
+    const bays = result?.layout?.ohc?.zones || [];
+    const ob = mod.ohcBottomLimits(rp.width ? rp : p);
+    const countField = el("label", { class: "field" }, [
+      el("span", { text: "Overhead bays" }),
+      el("select", { title: "Up flaps only. Bedroom 1 has three.", onchange: (e) => { const n = Number(e.target.value); e.target.blur(); setKey("ohcZones", mod.setOhcCount(p, n)); } }, [
+        el("option", { value: "2", text: "2 · up flaps", selected: bays.length === 2 }),
+        el("option", { value: "3", text: "3 · up flaps", selected: bays.length !== 2 }),
+      ]),
+    ]);
     panel.replaceChildren(...[
       el("div", { class: "panel-head" }, [
-        el("div", { class: "panel-title", text: "东西向" }),
-        el("div", { class: "panel-sub", text: `${cab.id} · wardrobe left · bed on the right` }),
+        el("div", { class: "panel-title", text: "East-west bedroom" }),
+        el("div", { class: "panel-sub", text: `${cab.id} · wardrobe left · mattress across the van · ${Math.round(env.W)} wide` }),
       ]),
       board,
       section("Layout", [
         numField("Wardrobe width (mm)", p.wardrobeWidth, setWard, { step: 10, min: 150 }),
-        numField("Mattress length (mm)", Math.round(env.W - p.wardrobeWidth), () => {}, { readOnly: "Van width minus the wardrobe. Drag the orange face in 3D." }),
-        numField("Mattress depth (mm)", 1570, () => {}, { readOnly: "Queen mattress width. Fixed." }),
-        numField("Boot / wardrobe depth (mm)", 756, () => {}, { readOnly: "Fixed. The mattress continues past this to 1570." }),
-        numField("Boot top (mm)", 418, () => {}, { readOnly: "Fixed." }),
+        numField("Mattress length (mm)", rp.mattressLength ?? Math.round(env.W - p.wardrobeWidth), () => {}, { readOnly: "Van width minus the wardrobe. A narrower wardrobe makes it longer." }),
+        numField("Mattress depth (mm)", rp.mattressDepth, () => {}, { readOnly: "Queen mattress width. Fixed (rules.json MATTRESS_DEPTH_MM)." }),
+        numField("Boot / wardrobe depth (mm)", rp.bodyDepth, () => {}, { readOnly: "From the nose. The mattress continues past this into the room (rules.json BODY_DEPTH_MM)." }),
+        numField("Boot top (mm)", rp.bootHeight, () => {}, { readOnly: "rules.json BOOT_HEIGHT_MM." }),
+      ]),
+      section("Overhead", [
+        numField("Door underside (mm)", rp.ohcBottom ?? p.ohcBottom, (v) => setKey("ohcBottom", mod.setOhcBottom(p, v)), { step: 10, min: ob.min }),
+        kv("Range", `${Math.round(ob.min)} – ${Math.round(ob.max)} · or drag the orange line in 3D`),
+        countField,
+        kv("Bays", bays.map((b) => Math.round(b.width)).join(" · ") || "—"),
+        el("button", { class: "tb", text: "Average", title: "Make the bays equal again", onclick: () => setKey("ohcZones", mod.setOhcCount(p, bays.length === 2 ? 2 : 3)) }),
       ]),
       checks,
       el("div", { class: "panel-foot" }, [remove]),
@@ -2077,6 +2139,9 @@ function doorBlockers(w, s) {
 function renderWall(w) {
   const st = statusOf(w);
   const s = st.solid;
+  const cut = wallBoards(w, job.getSpace(), job.getStock());
+  const sheetIssues = cut.issues || [];
+  const jointWarnings = cut.warnings || [];
   const stock = job.getStock();
   const cl = partitionClearance(stock);
   const blocked = [...(st.warnings || []), ...doorBlockers(w, s)];
@@ -2095,7 +2160,23 @@ function renderWall(w) {
       el("div", { class: "kv" }, [el("span", { text: `Reference face ${across}` }), el("b", { text: `${Math.round(w.at)} · grows ${w.side > 0 ? "+" : "−"}${across}` })]),
       el("div", { class: "kv" }, [el("span", { text: `Faces ${across}` }), el("b", { text: `${Math.round(w.axis === "x" ? s.x0 : s.y0)} … ${Math.round(w.axis === "x" ? s.x1 : s.y1)}` })]),
       el("div", { class: "kv" }, [el("span", { text: "Rests on" }), el("b", { text: `${anchorText(st.anchors.lo)} / ${anchorText(st.anchors.hi)}` })]),
+      cut.split
+        ? el("div", { class: "kv" }, [el("span", { text: cut.split.axis === "z" ? "Horizontal cut" : "Vertical cut" }), el("b", { text: `${Math.round(cut.split.at)} mm` })])
+        : el("div", { class: "kv" }, [el("span", { text: "Boards" }), el("b", { text: `1 · fits ${SHEET_SHORT_MM} × ${SHEET_LONG_MM}` })]),
+      el("div", { class: "empty small", text: cut.split
+        ? "Drag the yellow bar on the wall to move the cut. Shift = 1 mm. The two boards butt together. A piece past 1200 × 2400 is marked red."
+        : "This wall fits on one 1200 × 2400 board." }),
     ]),
+    w.fit ? section("Fit to cabinets", [
+      el("div", { class: "kv" }, [el("span", { text: "Overhead" }), el("b", { text: w.fit.overheadId })]),
+      el("div", { class: "kv" }, [el("span", { text: "Base" }), el("b", { text: w.fit.kitchenId })]),
+      s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Overhead depth" }), el("b", { text: `${Math.round(s.fitSteps.overheadDepth)} mm · bottom ${Math.round(s.fitSteps.overheadBottom)}` })]) : null,
+      s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Neck" }), el("b", { text: `${Math.round(s.fitSteps.neckDepth)} mm deep` })]) : null,
+      s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Base depth" }), el("b", { text: `${Math.round(s.fitSteps.kitchenDepth)} mm · top ${Math.round(s.fitSteps.kitchenTop)}` })]) : null,
+      numField("Corner radius", w.fit.radius ?? 50, (v) => job.setWallFit(w.id, { overheadId: w.fit.overheadId, kitchenId: w.fit.kitchenId, radius: Math.max(0, v) }, "radius"), { step: 1, min: 0 }),
+      el("div", { class: "empty small", text: "Upper depth is the overhead plus 20, and its lower edge is 20 above the overhead bottom. The gap between them is 100 deep. The base step is 50 above the base and 30 deeper than its total depth. The four step corners use this radius: two outer, two inner." }),
+      el("button", { class: "tb", text: "Clear cabinet fit", onclick: () => job.setWallFit(w.id, null, "clear") }),
+    ].filter(Boolean)) : null,
     section("Stock (from the job catalogue)", [
       el("div", { class: "kv" }, [el("span", { text: "Thickness" }), el("b", { text: `${s.thickness} mm · Partition` })]),
       el("div", { class: "kv" }, [el("span", { text: "Bottom" }), el("b", { text: `${cl.floor} mm above the floor` })]),
@@ -2139,11 +2220,13 @@ function renderWall(w) {
           })
         : [el("div", { class: "empty small", text: "No door yet. In the floor plan pick Shower door (D) or Sliding door (S): click an end of this wall, the door's first edge, its other edge (then the side it hangs on), then the numbers." })],
     ]),
-    st.issues.length || blocked.length
+    st.issues.length || sheetIssues.length || blocked.length || jointWarnings.length
       ? el("div", { class: "panel-section" }, [
           el("div", { class: "sec-title", text: "Checks" }),
           ...st.issues.map((m) => el("div", { class: "msg err", text: m })),
+          ...sheetIssues.map((m) => el("div", { class: "msg err", text: m })),
           ...blocked.map((m) => el("div", { class: "msg warn", text: m })),
+          ...jointWarnings.map((m) => el("div", { class: "msg warn", text: m })),
         ])
       : null,
     el("div", { class: "panel-section" }, [
@@ -2154,12 +2237,27 @@ function renderWall(w) {
       el("button", { class: "tb danger", text: "Remove wall", onclick: () => job.removeWall(w.id) }),
     ]),
   ].filter(Boolean));
+  const wallErr = [...st.issues, ...sheetIssues];
+  const wallWarn = [...blocked, ...jointWarnings];
   drawerChecks.replaceChildren(
-    st.issues.length || blocked.length
-      ? el("div", {}, [...st.issues.map((m) => el("div", { class: "msg err", text: m })), ...blocked.map((m) => el("div", { class: "msg warn", text: m }))])
+    wallErr.length || wallWarn.length
+      ? el("div", {}, [...wallErr.map((m) => el("div", { class: "msg err", text: m })), ...wallWarn.map((m) => el("div", { class: "msg warn", text: m }))])
       : el("div", { class: "empty ok", text: "Wall rests on a wall, stays inside the space and overlaps nothing." }),
   );
-  drawerBoards.replaceChildren(el("div", { class: "empty", text: "Partition walls are not cut into boards yet (v1)." }));
+  drawerBoards.replaceChildren(
+    cut.boards.length
+      ? el("table", { class: "grid" }, [
+          el("thead", {}, [el("tr", {}, ["ID", "Name", "Length", "Height", "Sheet"].map((h) => el("th", { text: h })))]),
+          el("tbody", {}, cut.boards.map((b) => el("tr", {}, [
+            el("td", { text: b.id }),
+            el("td", { text: b.name }),
+            el("td", { text: `${Math.round(b.length)}` }),
+            el("td", { text: `${Math.round(b.height)}` }),
+            el("td", { text: b.fits ? `${SHEET_SHORT_MM} × ${SHEET_LONG_MM}` : "over" }),
+          ]))),
+        ])
+      : el("div", { class: "empty", text: "No boards." }),
+  );
 }
 
 /** Which page the panel is showing. A board / face pick stays on the same page, so it does not slide. */

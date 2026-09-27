@@ -5,12 +5,13 @@
  * 轮廓直接按目标形态生成（规格坑③：不做 0.001 事后点改写；功能板舌一步到位；
  * T 系/B4 的 V 板让位折进轮廓，只有灶台列（T1）与轮拱 x 段（B4）才切段）。
  */
-import { beginProvenance, dim, endProvenance, param } from "../_lib/dim.ts";
+import { beginProvenance, dim, endProvenance, ex, lit, param, ref, type Expr } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox, refreshBoardBox } from "../_lib/recordBox.ts";
+import { evalExpr, recordLoop } from "../_lib/trace.ts";
 import { buildKitchenFaces } from "./faces.ts";
 import type {
   Board, HingeRecord, Joint, KitchenParams, KitchenResult, KitchenZoneType,
@@ -192,6 +193,42 @@ function validate(s: S, errors: string[], warnings: string[]): void {
 
 type P2 = { x: number; y: number } | { y: number; z: number } | { x: number; z: number };
 
+/** Face formulas, written again after refreshBoardBox so the bench does not keep `x0 = x0`. */
+let planned = new Map<string, Record<string, Expr>>();
+
+function resetPlans() { planned = new Map(); }
+
+function plan(id: string, faces: Record<string, Expr>) {
+  planned.set(id, { ...planned.get(id), ...faces });
+  for (const [face, e] of Object.entries(faces)) {
+    dim(`${id}.${face}`, e.terms, e.fn, { formula: e.formula });
+  }
+}
+
+function flushPlans() {
+  for (const [id, faces] of planned) {
+    for (const [face, e] of Object.entries(faces)) dim(`${id}.${face}`, e.terms, e.fn, { formula: e.formula });
+  }
+}
+
+function link(key: string): Expr {
+  return ex({ v: ref(key) }, (t) => t.v, `= ${key}`);
+}
+
+function qRound(e: Expr, formula?: string): Expr {
+  return { terms: e.terms, fn: (t) => Math.round(e.fn(t) * 1000) / 1000, formula: formula ?? e.formula };
+}
+
+function loopPts(id: string, axes: [string, string], pairs: [Expr, Expr][], round = false): P2[] {
+  return recordLoop(id, axes, pairs, round).map(([u, v]) => ({ [axes[0]]: u, [axes[1]]: v })) as P2[];
+}
+
+/** Local rectangle, origin at the board's minimum, closing point included. */
+function traceLocalRect(id: string, axes: [string, string], w: Expr, h: Expr): P2[] {
+  const o = lit(0);
+  return loopPts(id, axes, [[o, o], [w, o], [w, h], [o, h], [o, o]]);
+}
+
 function rectXZ(w: number, h: number): P2[] {
   return [{ x: 0, z: 0 }, { x: w, z: 0 }, { x: w, z: h }, { x: 0, z: h }, { x: 0, z: 0 }];
 }
@@ -216,9 +253,17 @@ function mkBoard(
   };
 }
 
+interface NotchTrace {
+  id: string;
+  axes: [string, string];
+  x0: Expr; x1: Expr; yN: Expr; h: Expr; d: Expr;
+  notches: { a: Expr; b: Expr }[];
+}
+
 /**
  * 矩形 + 缺口轮廓（全局 x ∈ [x0,x1]，v ∈ [v0, v0+h]；缺口 [a,b] 从 edge 边凹进深度 d）。
  * 缺口先裁到 [x0,x1]，零宽丢弃；贴左右缘时边自动中断。一步生成目标轮廓。
+ * `trace` 把每个顶点记成公式，数值与不记公式时相同。
  */
 function edgeNotchRect(
   x0: number, x1: number, v0: number, h: number,
@@ -226,65 +271,149 @@ function edgeNotchRect(
   d: number,
   edge: "near" | "far",
   mk: (u: number, v: number) => P2,
+  trace?: NotchTrace,
 ): P2[] {
+  const id = trace?.id;
+  if (trace && id) {
+    dim(`${id}.q.x0`, trace.x0.terms, trace.x0.fn, { formula: trace.x0.formula });
+    dim(`${id}.q.x1`, trace.x1.terms, trace.x1.fn, { formula: trace.x1.formula });
+    dim(`${id}.q.yN`, trace.yN.terms, trace.yN.fn, { formula: trace.yN.formula });
+    dim(`${id}.q.h`, trace.h.terms, trace.h.fn, { formula: trace.h.formula });
+    dim(`${id}.q.d`, trace.d.terms, trace.d.fn, { formula: trace.d.formula });
+    dim(`${id}.q.yF`, { yN: ref(`${id}.q.yN`), h: ref(`${id}.q.h`) }, (t) => t.yN + t.h, { formula: "yN + h" });
+    trace.notches.forEach((n, i) => {
+      dim(`${id}.q.n${i}.a`, n.a.terms, n.a.fn, { formula: n.a.formula });
+      dim(`${id}.q.n${i}.b`, n.b.terms, n.b.fn, { formula: n.b.formula });
+    });
+  }
+  const X0 = id ? link(`${id}.q.x0`) : lit(x0);
+  const X1 = id ? link(`${id}.q.x1`) : lit(x1);
+  const YN = id ? link(`${id}.q.yN`) : lit(v0);
+  const YF = id ? link(`${id}.q.yF`) : lit(v0 + h);
+  const yFd = id
+    ? ex({ yF: ref(`${id}.q.yF`), d: ref(`${id}.q.d`) }, (t) => t.yF - t.d, "yF - d")
+    : lit(v0 + h - d);
+  const yNd = id
+    ? ex({ yN: ref(`${id}.q.yN`), d: ref(`${id}.q.d`) }, (t) => t.yN + t.d, "yN + d")
+    : lit(v0 + d);
+  const clipA = (i: number) => ex(
+    { a: ref(`${id}.q.n${i}.a`), x0: ref(`${id}.q.x0`) },
+    (t) => Math.max(t.a, t.x0),
+    "max(a, x0)",
+  );
+  const clipB = (i: number) => ex(
+    { b: ref(`${id}.q.n${i}.b`), x1: ref(`${id}.q.x1`) },
+    (t) => Math.min(t.b, t.x1),
+    "min(b, x1)",
+  );
   const N = notches
-    .map(([a, b]) => [Math.max(a, x0), Math.min(b, x1)] as [number, number])
-    .filter(([a, b]) => b - a > EPS)
-    .sort((p, q) => p[0] - q[0]);
-  const yN = v0, yF = v0 + h; // near 边 v=v0，far 边 v=v0+h
+    .map(([a, b], i) => ({ a: Math.max(a, x0), b: Math.min(b, x1), ea: id ? clipA(i) : lit(a), eb: id ? clipB(i) : lit(b) }))
+    .filter((n) => n.b - n.a > EPS)
+    .sort((p, q) => p.a - q.a);
+  const yN = v0, yF = v0 + h;
+  const pairs: [Expr, Expr][] = [];
+  const pts: P2[] = [];
+  const push = (u: number, v: number, eu: Expr, ev: Expr) => {
+    pts.push(mk(u, v));
+    pairs.push([eu, ev]);
+  };
   if (edge === "far") {
-    // 底边 → 右缘 → far 边（从 x1 向 x0，带缺口）→ 左缘 → 闭合
-    const pts: P2[] = [mk(x0, yN), mk(x1, yN)];
+    push(x0, yN, X0, YN);
+    push(x1, yN, X1, YN);
     let zr = yF;
-    if (N.length && N[N.length - 1][1] >= x1 - EPS) zr = yF - d;
-    pts.push(mk(x1, zr));
+    let zrE = YF;
+    if (N.length && N[N.length - 1].b >= x1 - EPS) { zr = yF - d; zrE = yFd; }
+    push(x1, zr, X1, zrE);
     let cur = x1;
     for (let i = N.length - 1; i >= 0; i--) {
-      const [a, b] = N[i];
+      const { a, b, ea, eb } = N[i];
       if (b >= x1 - EPS) {
-        pts.push(mk(a, yF - d), mk(a, yF)); // 贴右缘
+        push(a, yF - d, ea, yFd);
+        push(a, yF, ea, YF);
       } else if (a <= x0 + EPS) {
-        pts.push(mk(b, yF), mk(b, yF - d), mk(x0, yF - d)); // 贴左缘
+        push(b, yF, eb, YF);
+        push(b, yF - d, eb, yFd);
+        push(x0, yF - d, X0, yFd);
         cur = x0;
         break;
       } else {
-        pts.push(mk(b, yF), mk(b, yF - d), mk(a, yF - d), mk(a, yF));
+        push(b, yF, eb, YF);
+        push(b, yF - d, eb, yFd);
+        push(a, yF - d, ea, yFd);
+        push(a, yF, ea, YF);
       }
       cur = a;
     }
-    if (cur > x0 + EPS) pts.push(mk(x0, yF));
-    pts.push(mk(x0, yN));
-    return pts;
-  }
-  // near 边凹进：底边（从 x0 向 x1，带缺口）→ 右缘 → far 边 → 左缘 → 闭合
-  const pts: P2[] = [];
-  const startLift = N.length && N[0][0] <= x0 + EPS; // 首缺口贴左缘：起点抬高 d
-  pts.push(mk(x0, startLift ? yN + d : yN));
-  let cur = x0;
-  for (const [a, b] of N) {
-    if (a <= x0 + EPS) {
-      pts.push(mk(b, yN + d), mk(b, yN)); // 贴左缘
-    } else if (b >= x1 - EPS) {
-      pts.push(mk(a, yN), mk(a, yN + d), mk(x1, yN + d)); // 贴右缘
-      cur = x1;
-      break;
-    } else {
-      pts.push(mk(a, yN), mk(a, yN + d), mk(b, yN + d), mk(b, yN));
+    if (cur > x0 + EPS) push(x0, yF, X0, YF);
+    push(x0, yN, X0, YN);
+  } else {
+    const startLift = N.length && N[0].a <= x0 + EPS;
+    push(x0, startLift ? yN + d : yN, X0, startLift ? yNd : YN);
+    let cur = x0;
+    for (const { a, b, ea, eb } of N) {
+      if (a <= x0 + EPS) {
+        push(b, yN + d, eb, yNd);
+        push(b, yN, eb, YN);
+      } else if (b >= x1 - EPS) {
+        push(a, yN, ea, YN);
+        push(a, yN + d, ea, yNd);
+        push(x1, yN + d, X1, yNd);
+        cur = x1;
+        break;
+      } else {
+        push(a, yN, ea, YN);
+        push(a, yN + d, ea, yNd);
+        push(b, yN + d, eb, yNd);
+        push(b, yN, eb, YN);
+      }
+      cur = b;
     }
-    cur = b;
+    if (cur < x1 - EPS) push(x1, yN, X1, YN);
+    push(x1, yF, X1, YF);
+    push(x0, yF, X0, YF);
+    push(x0, startLift ? yN + d : yN, X0, startLift ? yNd : YN);
   }
-  if (cur < x1 - EPS) pts.push(mk(x1, yN));
-  pts.push(mk(x1, yF), mk(x0, yF));
-  pts.push(pts[0]);
+  if (trace) {
+    const rec = recordLoop(trace.id, trace.axes, pairs, true);
+    if (rec.length !== pts.length) throw new Error(`${trace.id} trace length ${rec.length} != ${pts.length}`);
+    pts.forEach((p, i) => {
+      const got = p as unknown as Record<string, number>;
+      const av = got[trace.axes[0]];
+      const bv = got[trace.axes[1]];
+      if (Math.abs(rec[i][0] - av) > 1e-6 || Math.abs(rec[i][1] - bv) > 1e-6) {
+        throw new Error(`${trace.id} pv[${i}] ${rec[i][0]},${rec[i][1]} != ${av},${bv}`);
+      }
+    });
+  }
   return pts;
 }
 
 /** XY 板（{x,y} 点，全局坐标）带后缘(y1)/前缘(y0)缺口。 */
-const xyNotch = (x0: number, x1: number, y0: number, h: number, notches: [number, number][], d: number, edge: "near" | "far") =>
-  edgeNotchRect(x0, x1, y0, h, notches, d, edge, (u, v) => ({ x: r2(u), y: r2(v) }));
+function xyNotch(
+  id: string, x0: Expr, x1: Expr, y0: Expr, h: Expr,
+  notches: { a: Expr; b: Expr }[], d: Expr, edge: "near" | "far",
+): P2[] {
+  return edgeNotchRect(
+    evalExpr(x0), evalExpr(x1), evalExpr(y0), evalExpr(h),
+    notches.map((n) => [evalExpr(n.a), evalExpr(n.b)] as [number, number]),
+    evalExpr(d), edge,
+    (u, v) => ({ x: r2(u), y: r2(v) }),
+    { id, axes: ["x", "y"], x0, x1, yN: y0, h, d, notches },
+  );
+}
 /** XZ 板（{x,z} 点，全局坐标）带 z1/z0 边缺口。 */
-const xzNotch = (x0: number, x1: number, z0: number, h: number, notches: [number, number][], d: number, edge: "near" | "far") =>
-  edgeNotchRect(x0, x1, z0, h, notches, d, edge, (u, v) => ({ x: r2(u), z: r2(v) }));
+function xzNotch(
+  id: string, x0: Expr, x1: Expr, z0: Expr, h: Expr,
+  notches: { a: Expr; b: Expr }[], d: Expr, edge: "near" | "far",
+): P2[] {
+  return edgeNotchRect(
+    evalExpr(x0), evalExpr(x1), evalExpr(z0), evalExpr(h),
+    notches.map((n) => [evalExpr(n.a), evalExpr(n.b)] as [number, number]),
+    evalExpr(d), edge,
+    (u, v) => ({ x: r2(u), z: r2(v) }),
+    { id, axes: ["x", "z"], x0, x1, yN: z0, h, d, notches },
+  );
+}
 
 /* ================= V 板 ================= */
 
@@ -304,17 +433,24 @@ interface VPanel {
 function buildVPanels(s: S): VPanel[] {
   const vs: VPanel[] = [];
   const n = s.columns.length;
+  const leftDoor = s.leftOpts.panelType === "door";
+  const rightDoor = s.rightOpts.panelType === "door";
   vs.push({
     index: 0, id: "V0",
-    x0: 0, x1: r2(s.leftOpts.panelType === "door" ? s.FPT : s.CPT),
-    thickness: s.leftOpts.panelType === "door" ? s.FPT : s.CPT,
-    kind: s.leftOpts.panelType === "door" ? "door" : "carcass",
+    x0: 0, x1: r2(leftDoor ? s.FPT : s.CPT),
+    thickness: leftDoor ? s.FPT : s.CPT,
+    kind: leftDoor ? "door" : "carcass",
     leftNeighborCol: -1, rightNeighborCol: 0,
     frontVisible: s.leftOpts.frontVisible, grooveVisible: s.leftOpts.grooveVisible,
     bchNotch: s.leftOpts.bchNotchEnabled,
   });
+  plan("V0", {
+    x0: lit(0),
+    x1: leftDoor ? link("kitchen.FPT") : link("kitchen.CPT"),
+  });
   for (let i = 1; i < n; i++) {
     const xb = s.xBoundaries[i];
+    const col = s.columns[i - 1];
     vs.push({
       index: i, id: `V${i}`,
       x0: r2(xb - s.CPT / 2), x1: r2(xb + s.CPT / 2),
@@ -322,15 +458,24 @@ function buildVPanels(s: S): VPanel[] {
       leftNeighborCol: i - 1, rightNeighborCol: i,
       frontVisible: false, grooveVisible: true, bchNotch: true,
     });
+    const boundary = ref(`kitchen.col.${col.id}.x1`);
+    plan(`V${i}`, {
+      x0: qRound(ex({ xb: boundary, CPT: ref("kitchen.CPT") }, (t) => t.xb - t.CPT / 2), "boundary - CPT / 2"),
+      x1: qRound(ex({ xb: boundary, CPT: ref("kitchen.CPT") }, (t) => t.xb + t.CPT / 2), "boundary + CPT / 2"),
+    });
   }
   vs.push({
     index: n, id: `V${n}`,
-    x0: r2(s.W - (s.rightOpts.panelType === "door" ? s.FPT : s.CPT)), x1: s.W,
-    thickness: s.rightOpts.panelType === "door" ? s.FPT : s.CPT,
-    kind: s.rightOpts.panelType === "door" ? "door" : "carcass",
+    x0: r2(s.W - (rightDoor ? s.FPT : s.CPT)), x1: s.W,
+    thickness: rightDoor ? s.FPT : s.CPT,
+    kind: rightDoor ? "door" : "carcass",
     leftNeighborCol: n - 1, rightNeighborCol: -1,
     frontVisible: s.rightOpts.frontVisible, grooveVisible: s.rightOpts.grooveVisible,
     bchNotch: s.rightOpts.bchNotchEnabled,
+  });
+  plan(`V${n}`, {
+    x1: link("kitchen.W"),
+    x0: qRound(ex({ W: ref("kitchen.W"), t: rightDoor ? ref("kitchen.FPT") : ref("kitchen.CPT") }, (t) => t.W - t.t), "W - t"),
   });
   return vs;
 }
@@ -341,78 +486,95 @@ function buildVPanels(s: S): VPanel[] {
  * 前可见：前缘延至 −FPT；bchNotch=false → 全高平直并封掉顶部前让位（一步生成）。
  */
 function vPanelOutline(s: S, v: VPanel, avoidance?: { height: number; depth: number }, omitFrontTopReceiver = false): P2[] {
-  const t = v.thickness;
-  const na = t + R.NOTCH_ALLOWANCE_EXTRA.value;
-  const cd = s.cd, H = s.H, BCH = s.BCH;
-  const r = R.RECEIVER_NOTCH_DEPTH.value;
-  const bsY = R.BOTTOM_SLOT_REAR_Y.value;
-  const toeY = R.STYLE1_TOE_KICK_Y.value;
+  const id = v.id;
+  dim(`${id}.t`, v.kind === "door" ? { FPT: ref("kitchen.FPT") } : { CPT: ref("kitchen.CPT") }, v.kind === "door" ? (t) => t.FPT : (t) => t.CPT, { formula: v.kind === "door" ? "FPT" : "CPT" });
+  dim(`${id}.na`, { t: ref(`${id}.t`), extra: R.NOTCH_ALLOWANCE_EXTRA }, (t) => t.t + t.extra, { formula: "t + NOTCH_ALLOWANCE_EXTRA" });
+  const cd = link("kitchen.cd");
+  const H = link("kitchen.H");
+  const BCH = link("kitchen.BCH");
+  const na = link(`${id}.na`);
+  const recv = link("kitchen.recv");
+  const bsY = link("kitchen.bsY");
+  const toe = link("kitchen.toeY");
+  const zero = lit(0);
+  const frontY: Expr = v.frontVisible
+    ? ex({ FPT: ref("kitchen.FPT") }, (t) => -t.FPT, "-FPT")
+    : (s.style2 ? link("kitchen.CPT") : toe);
+  const cdNaR = ex({ cd: ref("kitchen.cd"), na: ref(`${id}.na`), r: ref("kitchen.recv") }, (t) => t.cd - t.na - t.r, "cd - na - r");
+  const cdNa = ex({ cd: ref("kitchen.cd"), na: ref(`${id}.na`) }, (t) => t.cd - t.na, "cd - na");
+  const Hna = ex({ H: ref("kitchen.H"), na: ref(`${id}.na`) }, (t) => t.H - t.na, "H - na");
+  const Hr = ex({ H: ref("kitchen.H"), r: ref("kitchen.recv") }, (t) => t.H - t.r, "H - r");
+  const BCHna = ex({ BCH: ref("kitchen.BCH"), na: ref(`${id}.na`) }, (t) => t.BCH + t.na, "BCH + na");
+  const draw = (pairs: [Expr, Expr][]) => loopPts(id, ["y", "z"], pairs);
 
   if (v.frontVisible) {
-    const frontY = -s.FPT;
     if (avoidance) {
-      const ad = avoidance.depth, ah = avoidance.height;
-      return [
-        { y: frontY, z: 0 }, { y: frontY, z: H },
-        { y: cd - na - r, z: H }, { y: cd - na - r, z: H - na },
-        { y: cd - na, z: H - na }, { y: cd - na, z: ah + r },
-        { y: cd, z: ah + r }, { y: cd, z: ah },
-        { y: cd - ad, z: ah }, { y: cd - ad, z: 0 },
-        { y: frontY, z: 0 },
-      ];
+      dim(`${id}.avoid.h`, { h: avoidance.height }, (t) => t.h, { formula: "avoidH" });
+      dim(`${id}.avoid.d`, { d: avoidance.depth }, (t) => t.d, { formula: "avoidD" });
+      const ah = link(`${id}.avoid.h`);
+      const ahR = ex({ ah: ref(`${id}.avoid.h`), r: ref("kitchen.recv") }, (t) => t.ah + t.r, "avoidH + r");
+      const cdAd = ex({ cd: ref("kitchen.cd"), ad: ref(`${id}.avoid.d`) }, (t) => t.cd - t.ad, "cd - avoidD");
+      return draw([
+        [frontY, zero], [frontY, H],
+        [cdNaR, H], [cdNaR, Hna],
+        [cdNa, Hna], [cdNa, ahR],
+        [cd, ahR], [cd, ah],
+        [cdAd, ah], [cdAd, zero],
+        [frontY, zero],
+      ]);
     }
     if (!v.bchNotch) {
-      // 全高平直 + 封掉顶部前让位（保留后侧 B4/T3 接收缺口）
-      return [
-        { y: frontY, z: 0 }, { y: frontY, z: H },
-        { y: cd - na - r, z: H }, { y: cd - na - r, z: H - na },
-        { y: cd - na, z: H - na }, { y: cd - na, z: H - r },
-        { y: cd, z: H - r }, { y: cd, z: r },
-        { y: cd - na, z: r }, { y: cd - na, z: 0 },
-        { y: frontY, z: 0 },
-      ];
+      return draw([
+        [frontY, zero], [frontY, H],
+        [cdNaR, H], [cdNaR, Hna],
+        [cdNa, Hna], [cdNa, Hr],
+        [cd, Hr], [cd, recv],
+        [cdNa, recv], [cdNa, zero],
+        [frontY, zero],
+      ]);
     }
-    // bchNotch=true：仅 z ≥ BCH + 板厚 + na 段延伸（保趾踢）
-    const zExt = BCH + t + na;
-    return [
-      { y: frontY, z: zExt }, { y: frontY, z: H },
-      { y: r, z: H }, { y: r, z: H - na },
-      { y: 0, z: H - na }, { y: 0, z: BCH + na },
-      { y: bsY, z: BCH + na }, { y: bsY, z: BCH },
-      { y: toeY, z: BCH }, { y: toeY, z: 0 },
-      { y: cd, z: 0 }, { y: cd, z: r },
-      { y: cd - na, z: r }, { y: cd - na, z: 0 },
-      { y: frontY, z: 0 },
-    ];
+    const zExt = ex({ BCH: ref("kitchen.BCH"), t: ref(`${id}.t`), na: ref(`${id}.na`) }, (t) => t.BCH + t.t + t.na, "BCH + t + na");
+    return draw([
+      [frontY, zExt], [frontY, H],
+      [recv, H], [recv, Hna],
+      [zero, Hna], [zero, BCHna],
+      [bsY, BCHna], [bsY, BCH],
+      [toe, BCH], [toe, zero],
+      [cd, zero], [cd, recv],
+      [cdNa, recv], [cdNa, zero],
+      [frontY, zero],
+    ]);
   }
 
-  const frontY = s.style2 ? s.CPT : toeY;
-  const base: P2[] = [
-    { y: frontY, z: 0 }, { y: frontY, z: BCH },
-    { y: bsY, z: BCH }, { y: bsY, z: BCH + na },
-    { y: 0, z: BCH + na }, { y: 0, z: H - na },
-    ...(omitFrontTopReceiver
-      ? [{ y: 0, z: H } as P2]
-      : [{ y: r, z: H - na }, { y: r, z: H }]),
-    { y: cd - na - r, z: H }, { y: cd - na - r, z: H - na },
-    { y: cd - na, z: H - na }, { y: cd - na, z: H - r },
-    { y: cd, z: H - r }, { y: cd, z: r },
-    { y: cd - na, z: r }, { y: cd - na, z: 0 },
-    { y: frontY, z: 0 },
+  const top: [Expr, Expr][] = omitFrontTopReceiver ? [[zero, H]] : [[recv, Hna], [recv, H]];
+  const base: [Expr, Expr][] = [
+    [frontY, zero], [frontY, BCH],
+    [bsY, BCH], [bsY, BCHna],
+    [zero, BCHna], [zero, Hna],
+    ...top,
+    [cdNaR, H], [cdNaR, Hna],
+    [cdNa, Hna], [cdNa, Hr],
+    [cd, Hr], [cd, recv],
+    [cdNa, recv], [cdNa, zero],
+    [frontY, zero],
   ];
   if (avoidance) {
-    const ad = avoidance.depth, ah = avoidance.height;
-    return [
+    dim(`${id}.avoid.h`, { h: avoidance.height }, (t) => t.h, { formula: "avoidH" });
+    dim(`${id}.avoid.d`, { d: avoidance.depth }, (t) => t.d, { formula: "avoidD" });
+    const ah = link(`${id}.avoid.h`);
+    const ahR = ex({ ah: ref(`${id}.avoid.h`), r: ref("kitchen.recv") }, (t) => t.ah + t.r, "avoidH + r");
+    const cdAd = ex({ cd: ref("kitchen.cd"), ad: ref(`${id}.avoid.d`) }, (t) => t.cd - t.ad, "cd - avoidD");
+    return draw([
       ...base.slice(0, 8),
-      { y: cd - na - r, z: H }, { y: cd - na - r, z: H - na },
-      { y: cd - na, z: H - na }, { y: cd - na, z: H - r },
-      { y: cd, z: H - r }, { y: cd, z: ah + r },
-      { y: cd - na, z: ah + r }, { y: cd - na, z: ah },
-      { y: cd - ad, z: ah }, { y: cd - ad, z: 0 },
-      { y: frontY, z: 0 },
-    ];
+      [cdNaR, H], [cdNaR, Hna],
+      [cdNa, Hna], [cdNa, Hr],
+      [cd, Hr], [cd, ahR],
+      [cdNa, ahR], [cdNa, ah],
+      [cdAd, ah], [cdAd, zero],
+      [frontY, zero],
+    ]);
   }
-  return base;
+  return draw(base);
 }
 
 function avoidanceForV(s: S, v: VPanel) {
@@ -546,16 +708,37 @@ function resolveSlots(
       if (k === "none") {
         t[boardSide] = 0;
         tongueOf.set(q.boardId, t);
+        dim(`kitchen.tongue.${q.boardId}.${boardSide}`, {}, () => 0, { formula: "0" });
         const z = r2((q.z0 + q.z1) / 2);
         screwPositions(q.boardY0, q.boardY1).forEach((y, i) => {
-          screws.push({ id: `${q.boardId}-V${vi}-screw-${i + 1}`, vPanelId: `V${vi}`, side, forBoard: q.boardId, y, z, diameter: R.SCREW_HOLE_DIAMETER.value });
+          const sid = `${q.boardId}-V${vi}-screw-${i + 1}`;
+          const L = q.boardY1 - q.boardY0;
+          const off = R.SCREW_END_OFFSET.value;
+          const span = L - 2 * off;
+          if (span <= EPS) {
+            dim(`kitchen.screw.${sid}.y`, { y0: q.boardY0, y1: q.boardY1 }, (t) => Math.round((t.y0 + (t.y1 - t.y0) / 2) * 1000) / 1000, { formula: "y0 + (y1 - y0) / 2" });
+          } else {
+            const n = Math.ceil(span / R.SCREW_MAX_SPACING.value - 1e-9);
+            dim(`kitchen.screw.${sid}.y`, { y0: q.boardY0, off: R.SCREW_END_OFFSET, span, n, k: i }, (t) => Math.round((t.y0 + t.off + (t.k * t.span) / t.n) * 1000) / 1000, { formula: "y0 + endOffset + k * span / n" });
+          }
+          dim(`kitchen.screw.${sid}.z`, { z0: ref(`${q.boardId}.z0`), z1: ref(`${q.boardId}.z1`) }, (t) => Math.round(((t.z0 + t.z1) / 2) * 1000) / 1000, { formula: "(z0 + z1) / 2" });
+          dim(`kitchen.screw.${sid}.d`, { d: R.SCREW_HOLE_DIAMETER }, (t) => t.d, { formula: "SCREW_HOLE_DIAMETER" });
+          screws.push({ id: sid, vPanelId: `V${vi}`, side, forBoard: q.boardId, y, z, diameter: R.SCREW_HOLE_DIAMETER.value });
         });
         return;
       }
       const tongue = k === "through" ? s.CPT : v.thickness / 2; // through 舌 = CPT（与侧板厚无关）
-      const clr = q.isDrawer ? R.DRAWER_SLOT_CLEARANCE.value : R.SHELF_SLOT_CLEARANCE.value;
+      if (k === "through") dim(`kitchen.tongue.${q.boardId}.${boardSide}`, { CPT: ref("kitchen.CPT") }, (t) => t.CPT, { formula: "CPT" });
+      else dim(`kitchen.tongue.${q.boardId}.${boardSide}`, { t: ref(`${v.id}.t`) }, (t) => t.t / 2, { formula: "t / 2" });
+      const clrRule = q.isDrawer ? R.DRAWER_SLOT_CLEARANCE : R.SHELF_SLOT_CLEARANCE;
+      const clr = clrRule.value;
+      const slotId = `${q.boardId}-V${vi}-${side}`;
+      dim(`kitchen.slot.${slotId}.y0`, { y: ref(`kitchen.ty.${q.boardId}.y0`), clr: clrRule }, (t) => Math.round((t.y - t.clr) * 1000) / 1000, { formula: "tongueY0 - clearance" });
+      dim(`kitchen.slot.${slotId}.y1`, { y: ref(`kitchen.ty.${q.boardId}.y1`), clr: clrRule }, (t) => Math.round((t.y + t.clr) * 1000) / 1000, { formula: "tongueY1 + clearance" });
+      dim(`kitchen.slot.${slotId}.z0`, { z: ref(`${q.boardId}.z0`), c: R.SLOT_Z_CLEARANCE }, (t) => Math.round((t.z - t.c) * 1000) / 1000, { formula: "boardZ0 - SLOT_Z_CLEARANCE" });
+      dim(`kitchen.slot.${slotId}.z1`, { z: ref(`${q.boardId}.z1`), c: R.SLOT_Z_CLEARANCE }, (t) => Math.round((t.z + t.c) * 1000) / 1000, { formula: "boardZ1 + SLOT_Z_CLEARANCE" });
       slots.push({
-        id: `${q.boardId}-V${vi}-${side}`,
+        id: slotId,
         vPanelId: `V${vi}`,
         side,
         through: k === "through",
@@ -575,11 +758,46 @@ function resolveSlots(
 
 /* ================= 主流程 ================= */
 
+function recordColumns(s: S) {
+  let prev = "kitchen.originX";
+  dim(prev, {}, () => 0, { formula: "0" });
+  for (const col of s.columns) {
+    const width = param({ width: col.width }).width;
+    dim(`kitchen.col.${col.id}.x0`, { x: ref(prev) }, (t) => t.x, { formula: `= ${prev}` });
+    dim(`kitchen.col.${col.id}.x1`, { x0: ref(`kitchen.col.${col.id}.x0`), width }, (t) => Math.round((t.x0 + t.width) * 1000) / 1000, { formula: "x0 + width" });
+    prev = `kitchen.col.${col.id}.x1`;
+    let zKey = "kitchen.H";
+    for (const zone of col.zones) {
+      const height = param({ height: zone.height }).height;
+      const z1 = `kitchen.zone.${col.id}.${zone.id}.z1`;
+      const z0 = `kitchen.zone.${col.id}.${zone.id}.z0`;
+      dim(z1, { z: ref(zKey) }, (t) => t.z, { formula: `= ${zKey}` });
+      dim(z0, { z1: ref(z1), height }, (t) => Math.round((t.z1 - t.height) * 1000) / 1000, { formula: "z1 - height" });
+      zKey = z0;
+    }
+  }
+}
+
 export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   beginProvenance();
+  resetPlans();
   const s = normalize(input);
   const P = param({ W: s.W, D: s.D, H: s.H, CPT: s.CPT, FPT: s.FPT, BCH: s.BCH, fc: s.fc, cd: s.cd });
   dim("kitchen.carcassDepth", { D: P.D, FPT: P.FPT }, (t) => t.D - t.FPT);
+  dim("kitchen.H", { H: P.H }, (t) => t.H, { formula: "H" });
+  dim("kitchen.W", { W: P.W }, (t) => t.W, { formula: "W" });
+  dim("kitchen.CPT", { CPT: P.CPT }, (t) => t.CPT, { formula: "CPT" });
+  dim("kitchen.FPT", { FPT: P.FPT }, (t) => t.FPT, { formula: "FPT" });
+  dim("kitchen.BCH", { BCH: P.BCH }, (t) => t.BCH, { formula: "BCH" });
+  dim("kitchen.fc", { fc: P.fc }, (t) => t.fc, { formula: "fc" });
+  dim("kitchen.cd", { D: P.D, FPT: P.FPT }, (t) => Math.round((t.D - t.FPT) * 1000) / 1000, { formula: "D - FPT" });
+  dim("kitchen.toeY", { y: R.STYLE1_TOE_KICK_Y }, (t) => t.y, { formula: "STYLE1_TOE_KICK_Y" });
+  dim("kitchen.bsY", { y: R.BOTTOM_SLOT_REAR_Y }, (t) => t.y, { formula: "BOTTOM_SLOT_REAR_Y" });
+  dim("kitchen.recv", { r: R.RECEIVER_NOTCH_DEPTH }, (t) => t.r, { formula: "RECEIVER_NOTCH_DEPTH" });
+  dim("kitchen.stripW", { w: R.SUPPORT_STRIP_WIDTH }, (t) => t.w, { formula: "SUPPORT_STRIP_WIDTH" });
+  dim("kitchen.notchD", { d: R.SUPPORT_STRIP_NOTCH_DEPTH }, (t) => t.d, { formula: "SUPPORT_STRIP_NOTCH_DEPTH" });
+  dim("kitchen.b3", { d: R.B3_DEPTH }, (t) => t.d, { formula: "B3_DEPTH" });
+  recordColumns(s);
   const errors: string[] = [];
   const warnings: string[] = [];
   validate(s, errors, warnings);
@@ -603,6 +821,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     const outline = vPanelOutline(s, v, av, omitT1 && !v.frontVisible);
     const label = v.index === 0 ? "Left End Panel"
       : v.index === vPanels.length - 1 ? "Right End Panel" : `Vertical Panel ${v.index}`;
+    plan(v.id, { y0: lit(0), y1: link("kitchen.cd"), z0: lit(0), z1: link("kitchen.H") });
     boards.push(mkBoard(v.id, label, "vertical", "vertical_panel", v.thickness, v.kind,
       "YZ", "X", v.x0, v.x1, 0, cd, 0, H, outline));
   }
@@ -616,32 +835,64 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     x1: (s.rightOpts.frontVisible && !s.rightOpts.extendT2T3B4ToOuterFace) ? rightInner : s.W,
   };
 
+  const frontX0: Expr = s.leftOpts.frontVisible ? link("V0.x1") : lit(0);
+  const frontX1: Expr = s.rightOpts.frontVisible ? link(`${vPanels[vPanels.length - 1].id}.x0`) : link("kitchen.W");
+  const rearX0: Expr = (s.leftOpts.frontVisible && !s.leftOpts.extendT2T3B4ToOuterFace) ? link("V0.x1") : lit(0);
+  const rearX1: Expr = (s.rightOpts.frontVisible && !s.rightOpts.extendT2T3B4ToOuterFace) ? link(`${vPanels[vPanels.length - 1].id}.x0`) : link("kitchen.W");
+  const localW = (boardId: string) => ex({ x1: ref(`${boardId}.x1`), x0: ref(`${boardId}.x0`) }, (t) => t.x1 - t.x0, "x1 - x0");
+
   /* ---- V 让位缺口（宽 = CPT + 1，与 V 板料厚无关；黄金 V0 心 8 → [0,16]） ---- */
   const vNotchRanges = vPanels.map((v) => {
     const c = (v.x0 + v.x1) / 2;
     return [r2(c - (CPT + R.NOTCH_ALLOWANCE_EXTRA.value) / 2), r2(c + (CPT + R.NOTCH_ALLOWANCE_EXTRA.value) / 2)] as [number, number];
   });
+  const vNotchExpr = vPanels.map((v) => {
+    dim(`kitchen.vnotch.${v.id}.x0`, {
+      c0: ref(`${v.id}.x0`), c1: ref(`${v.id}.x1`), CPT: ref("kitchen.CPT"), extra: R.NOTCH_ALLOWANCE_EXTRA,
+    }, (t) => Math.round(((t.c0 + t.c1) / 2 - (t.CPT + t.extra) / 2) * 1000) / 1000, { formula: "centre - (CPT + 1) / 2" });
+    dim(`kitchen.vnotch.${v.id}.x1`, {
+      c0: ref(`${v.id}.x0`), c1: ref(`${v.id}.x1`), CPT: ref("kitchen.CPT"), extra: R.NOTCH_ALLOWANCE_EXTRA,
+    }, (t) => Math.round(((t.c0 + t.c1) / 2 + (t.CPT + t.extra) / 2) * 1000) / 1000, { formula: "centre + (CPT + 1) / 2" });
+    return { a: link(`kitchen.vnotch.${v.id}.x0`), b: link(`kitchen.vnotch.${v.id}.x1`) };
+  });
 
   /* ---- B1 / B2（style_1 趾踢内缩 / style_2 平前） ---- */
   if (s.style2) {
+    plan("B1", {
+      x0: frontX0, x1: frontX1, y0: ex({ FPT: ref("kitchen.FPT") }, (t) => -t.FPT, "-FPT"), y1: lit(0),
+      z0: lit(0), z1: link("kitchen.BCH"),
+    });
+    plan("B2", {
+      x0: frontX0, x1: frontX1, y0: lit(0), y1: link("kitchen.CPT"),
+      z0: lit(0), z1: link("kitchen.BCH"),
+    });
     boards.push(mkBoard("B1", "Bottom Front Panel", "bottom", "bottom_front", FPT, "door",
-      "XZ", "Y", frontStop.x0, frontStop.x1, -FPT, 0, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
+      "XZ", "Y", frontStop.x0, frontStop.x1, -FPT, 0, 0, BCH, traceLocalRect("B1", ["x", "z"], localW("B1"), link("kitchen.BCH"))));
     boards.push(mkBoard("B2", "Bottom Carcass Panel", "bottom", "bottom_carcass", CPT, "carcass",
-      "XZ", "Y", frontStop.x0, frontStop.x1, 0, CPT, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
+      "XZ", "Y", frontStop.x0, frontStop.x1, 0, CPT, 0, BCH, traceLocalRect("B2", ["x", "z"], localW("B2"), link("kitchen.BCH"))));
   } else {
     const toeY0 = R.STYLE1_TOE_KICK_Y.value;
     const toeY1 = toeY0 + FPT;
+    const toeRear = ex({ y: ref("kitchen.toeY"), FPT: ref("kitchen.FPT") }, (t) => t.y + t.FPT, "toeY + FPT");
+    const b2Rear = qRound(ex({ y: ref("kitchen.toeY"), FPT: ref("kitchen.FPT"), CPT: ref("kitchen.CPT") }, (t) => t.y + t.FPT + t.CPT), "toeY + FPT + CPT");
+    plan("B1", { x0: frontX0, x1: frontX1, y0: link("kitchen.toeY"), y1: toeRear, z0: lit(0), z1: link("kitchen.BCH") });
+    plan("B2", { x0: frontX0, x1: frontX1, y0: toeRear, y1: b2Rear, z0: lit(0), z1: link("kitchen.BCH") });
     boards.push(mkBoard("B1", "Bottom Front Panel", "bottom", "bottom_front", FPT, "door",
-      "XZ", "Y", frontStop.x0, frontStop.x1, toeY0, toeY1, 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
+      "XZ", "Y", frontStop.x0, frontStop.x1, toeY0, toeY1, 0, BCH, traceLocalRect("B1", ["x", "z"], localW("B1"), link("kitchen.BCH"))));
     boards.push(mkBoard("B2", "Bottom Carcass Panel", "bottom", "bottom_carcass", CPT, "carcass",
-      "XZ", "Y", frontStop.x0, frontStop.x1, toeY1, r2(toeY1 + CPT), 0, BCH, rectXZ(frontStop.x1 - frontStop.x0, BCH)));
+      "XZ", "Y", frontStop.x0, frontStop.x1, toeY1, r2(toeY1 + CPT), 0, BCH, traceLocalRect("B2", ["x", "z"], localW("B2"), link("kitchen.BCH"))));
   }
 
   /* ---- B3 底板（y∈[0,100] z∈[BCH,BCH+CPT]，V 缺口从后缘 y=100 凹进 20） ---- */
   {
+    plan("B3", {
+      x0: frontX0, x1: frontX1, y0: lit(0), y1: link("kitchen.stripW"),
+      z0: link("kitchen.BCH"),
+      z1: qRound(ex({ BCH: ref("kitchen.BCH"), CPT: ref("kitchen.CPT") }, (t) => t.BCH + t.CPT), "BCH + CPT"),
+    });
     boards.push(mkBoard("B3", "Bottom Deck", "bottom", "bottom_deck", CPT, "carcass",
       "XY", "Z", frontStop.x0, frontStop.x1, 0, stripW, BCH, r2(BCH + CPT),
-      xyNotch(frontStop.x0, frontStop.x1, 0, stripW, vNotchRanges, notchD, "far")));
+      xyNotch("B3", frontX0, frontX1, lit(0), link("kitchen.stripW"), vNotchExpr, link("kitchen.notchD"), "far")));
   }
 
   /* ---- 功能板（先建槽请求，轮廓待槽解析后一步生成） ---- */
@@ -656,7 +907,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
 
   const addFuncBoard = (
     id: string, name: string, boardType: string, ci: number,
-    z0: number, z1: number, isDrawer: boolean, zone: ZonePlan,
+    z0: number, z1: number, z0e: Expr, z1e: Expr, isDrawer: boolean, zone: ZonePlan,
   ) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
@@ -667,6 +918,21 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     const depth = isDrawer ? R.B3_DEPTH.value : (intoRear ? r2(cd - CPT) : cd);
     const ty0 = isDrawer ? R.DRAWER_TONGUE_Y0.value : r2(cd / 3);
     const ty1 = isDrawer ? R.B3_DEPTH.value : r2((2 * cd) / 3);
+    dim(`kitchen.span.${id}.x0`, { x: ref(`${vL.id}.x1`) }, (t) => t.x, { formula: `= ${vL.id}.x1` });
+    dim(`kitchen.span.${id}.x1`, { x: ref(`${vR.id}.x0`) }, (t) => t.x, { formula: `= ${vR.id}.x0` });
+    if (isDrawer) {
+      dim(`kitchen.ty.${id}.y0`, { y: R.DRAWER_TONGUE_Y0 }, (t) => t.y, { formula: "DRAWER_TONGUE_Y0" });
+      dim(`kitchen.ty.${id}.y1`, { y: R.B3_DEPTH }, (t) => t.y, { formula: "B3_DEPTH" });
+    } else {
+      dim(`kitchen.ty.${id}.y0`, { cd: ref("kitchen.cd") }, (t) => Math.round((t.cd / 3) * 1000) / 1000, { formula: "cd / 3" });
+      dim(`kitchen.ty.${id}.y1`, { cd: ref("kitchen.cd") }, (t) => Math.round(((2 * t.cd) / 3) * 1000) / 1000, { formula: "2 * cd / 3" });
+    }
+    const depthE: Expr = isDrawer
+      ? link("kitchen.b3")
+      : intoRear
+        ? qRound(ex({ cd: ref("kitchen.cd"), CPT: ref("kitchen.CPT") }, (t) => t.cd - t.CPT), "cd - CPT")
+        : link("kitchen.cd");
+    plan(id, { y0: lit(0), y1: depthE, z0: z0e, z1: z1e });
     const board = mkBoard(id, name, "functional", boardType, CPT, "carcass",
       "XY", "Z", clearX0, clearX1, 0, depth, z0, z1,
       [{ x: clearX0, y: 0 }, { x: clearX1, y: 0 }, { x: clearX1, y: depth }, { x: clearX0, y: depth }, { x: clearX0, y: 0 }]);
@@ -677,6 +943,17 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     requests.push({ vIndex: vR.index, side: "left", ...at });
   };
 
+  const shelfBand = (colId: string, zone: ZonePlan) => {
+    const zKey = `kitchen.zone.${colId}.${zone.id}.z0`;
+    const shelfH = zone.shelfHeight ?? Math.round(zone.height / 2);
+    dim(`kitchen.shelf.${zone.id}.top`, { z0: ref(zKey), h: param({ shelfHeight: shelfH }).shelfHeight }, (t) => Math.round((t.z0 + t.h) * 1000) / 1000, { formula: "zoneZ0 + shelfHeight" });
+    dim(`kitchen.shelf.${zone.id}.center`, { top: ref(`kitchen.shelf.${zone.id}.top`), CPT: ref("kitchen.CPT") }, (t) => Math.round((t.top - t.CPT / 2) * 1000) / 1000, { formula: "shelfTop - CPT / 2" });
+    return {
+      z0e: qRound(ex({ c: ref(`kitchen.shelf.${zone.id}.center`), CPT: ref("kitchen.CPT") }, (t) => t.c - t.CPT / 2), "center - CPT / 2"),
+      z1e: qRound(ex({ c: ref(`kitchen.shelf.${zone.id}.center`), CPT: ref("kitchen.CPT") }, (t) => t.c + t.CPT / 2), "center + CPT / 2"),
+    };
+  };
+
   s.columns.forEach((col, ci) => {
     for (const zone of col.zones) {
       if (zone.z0 <= BCH + EPS) continue; // 底区不生成
@@ -684,11 +961,14 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       const isShelf = FULL_SHELF_TYPES.has(zone.zoneType);
       if (!isDrawer && !isShelf) continue;
       const z = r2(zone.z0 - CPT / 2), zc = r2(zone.z0 + CPT / 2);
+      const zKey = `kitchen.zone.${col.id}.${zone.id}.z0`;
+      const z0e = qRound(ex({ z: ref(zKey), CPT: ref("kitchen.CPT") }, (t) => t.z - t.CPT / 2), "zoneZ0 - CPT / 2");
+      const z1e = qRound(ex({ z: ref(zKey), CPT: ref("kitchen.CPT") }, (t) => t.z + t.CPT / 2), "zoneZ0 + CPT / 2");
       addFuncBoard(
         `${col.id}-${zone.id}-bottom`,
         isDrawer ? "Drawer Divider" : "Full Depth Shelf",
         isDrawer ? "drawer_divider" : "full_depth_shelf",
-        ci, z, zc, isDrawer, zone,
+        ci, z, zc, z0e, z1e, isDrawer, zone,
       );
       // 门层板（门板区 shelfEnabled；drawer/flap 区无门层板）
       if (PANEL_ZONE_TYPES.has(zone.zoneType) && zone.zoneType !== "drawer" && zone.zoneType !== "down_flap"
@@ -703,8 +983,9 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
           continue;
         }
         const centerZ = r2(shelfTopZ - CPT / 2);
+        const band = shelfBand(col.id, zone);
         addFuncBoard(`${zone.id}-door-shelf`, "Door Shelf", "door_shelf", ci,
-          r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false, zone);
+          r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), band.z0e, band.z1e, false, zone);
       }
     }
   });
@@ -724,51 +1005,51 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       return;
     }
     const centerZ = r2(shelfTopZ - CPT / 2);
+    const band = shelfBand(col.id, zone);
     addFuncBoard(`${zone.id}-door-shelf`, "Door Shelf", "door_shelf", ci,
-      r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), false, zone);
+      r2(centerZ - CPT / 2), r2(centerZ + CPT / 2), band.z0e, band.z1e, false, zone);
   });
 
   /* ---- 槽解析 + 功能板舌轮廓（一步生成，两套模板对应黄金点列） ---- */
   const { slots, screws, tongueOf } = resolveSlots(s, requests, vPanels);
   for (const fb of funcBoards) {
     const t = tongueOf.get(fb.board.id) ?? { left: 0, right: 0 };
+    const id = fb.board.id;
     const { clearX0: c0, clearX1: c1 } = fb;
     const x0 = r2(c0 - t.left), x1 = r2(c1 + t.right);
-    const by1 = fb.isDrawer ? R.B3_DEPTH.value : cd;
-    const ty0 = fb.isDrawer ? R.DRAWER_TONGUE_Y0.value : r2(cd / 3);
-    const ty1 = fb.isDrawer ? R.B3_DEPTH.value : r2((2 * cd) / 3);
-    let prof: P2[];
+    const C0 = link(`kitchen.span.${id}.x0`);
+    const C1 = link(`kitchen.span.${id}.x1`);
+    const TY0 = link(`kitchen.ty.${id}.y0`);
+    const TY1 = link(`kitchen.ty.${id}.y1`);
+    const X0 = qRound(ex({ c0: ref(`kitchen.span.${id}.x0`), tongue: ref(`kitchen.tongue.${id}.left`) }, (tn) => tn.c0 - tn.tongue), "clearX0 - tongue");
+    const X1 = qRound(ex({ c1: ref(`kitchen.span.${id}.x1`), tongue: ref(`kitchen.tongue.${id}.right`) }, (tn) => tn.c1 + tn.tongue), "clearX1 + tongue");
+    const Y0 = lit(0);
+    const BY1 = fb.isDrawer ? link("kitchen.b3") : link("kitchen.cd");
+    let pairs: [Expr, Expr][];
     if (fb.isDrawer) {
-      // 抽屉分隔板（黄金 9 点模板：body + 双侧舌，舌顶 = 板顶）
-      prof = [
-        { x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: ty0 },
-        { x: x1, y: ty0 }, { x: x1, y: ty1 }, { x: x0, y: ty1 },
-        { x: x0, y: ty0 }, { x: c0, y: ty0 }, { x: c0, y: 0 },
-      ];
+      pairs = [[C0, Y0], [C1, Y0], [C1, TY0], [X1, TY0], [X1, TY1], [X0, TY1], [X0, TY0], [C0, TY0], [C0, Y0]];
     } else if (t.left > 0 && t.right > 0) {
-      // 双舌（黄金 13 点模板）
-      prof = [
-        { x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: ty0 },
-        { x: x1, y: ty0 }, { x: x1, y: ty1 }, { x: c1, y: ty1 },
-        { x: c1, y: by1 }, { x: c0, y: by1 }, { x: c0, y: ty1 },
-        { x: x0, y: ty1 }, { x: x0, y: ty0 }, { x: c0, y: ty0 }, { x: c0, y: 0 },
-      ];
+      pairs = [[C0, Y0], [C1, Y0], [C1, TY0], [X1, TY0], [X1, TY1], [C1, TY1], [C1, BY1], [C0, BY1], [C0, TY1], [X0, TY1], [X0, TY0], [C0, TY0], [C0, Y0]];
     } else if (t.right > 0) {
-      prof = [
-        { x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: ty0 },
-        { x: x1, y: ty0 }, { x: x1, y: ty1 }, { x: c1, y: ty1 },
-        { x: c1, y: by1 }, { x: c0, y: by1 }, { x: c0, y: 0 },
-      ];
+      pairs = [[C0, Y0], [C1, Y0], [C1, TY0], [X1, TY0], [X1, TY1], [C1, TY1], [C1, BY1], [C0, BY1], [C0, Y0]];
     } else if (t.left > 0) {
-      prof = [
-        { x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: by1 }, { x: c0, y: by1 },
-        { x: c0, y: ty1 }, { x: x0, y: ty1 }, { x: x0, y: ty0 }, { x: c0, y: ty0 }, { x: c0, y: 0 },
-      ];
+      pairs = [[C0, Y0], [C1, Y0], [C1, BY1], [C0, BY1], [C0, TY1], [X0, TY1], [X0, TY0], [C0, TY0], [C0, Y0]];
     } else {
-      prof = [{ x: c0, y: 0 }, { x: c1, y: 0 }, { x: c1, y: by1 }, { x: c0, y: by1 }, { x: c0, y: 0 }];
+      pairs = [[C0, Y0], [C1, Y0], [C1, BY1], [C0, BY1], [C0, Y0]];
     }
+    const rows = pairs.map(([a, b]) => ({ x: evalExpr(a), y: evalExpr(b), e: [a, b] as [Expr, Expr] }));
+    const samePt = (p: { x: number; y: number }, q: { x: number; y: number }) => Math.abs(p.x - q.x) < EPS && Math.abs(p.y - q.y) < EPS;
+    const ring = rows.filter((p, i) => i === 0 || !samePt(p, rows[i - 1]));
+    if (ring.length > 1 && samePt(ring[0], ring[ring.length - 1])) ring.pop();
+    const kept = ring.filter((p, i) => {
+      const a = ring[(i - 1 + ring.length) % ring.length];
+      const c = ring[(i + 1) % ring.length];
+      return Math.abs((p.x - a.x) * (c.y - a.y) - (p.y - a.y) * (c.x - a.x)) > EPS;
+    });
+    const finalRows = kept.length >= 3 ? [...kept, kept[0]] : rows;
+    plan(id, { x0: X0, x1: X1 });
     fb.board.x0 = x0; fb.board.x1 = x1;
-    fb.board.profileVector = cleanLoop(prof as { x: number; y: number }[]).map((p) => ({ ...p })) as Board["profileVector"];
+    fb.board.profileVector = loopPts(id, ["x", "y"], finalRows.map((p) => p.e)) as Board["profileVector"];
   }
 
   /* ---- T 系统 + B4（V 缺口折轮廓；灶台列切 T1、轮拱切 B4） ---- */
@@ -807,14 +1088,37 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   const stoveXCutsForY = (y0: number, y1: number): [number, number][] =>
     stoveCuts.filter((c) => !(y1 <= c.y0 || y0 >= c.y1)).map((c) => [c.x0, c.x1] as [number, number]);
 
+  const knownX = (n: number, id: string, face: "x0" | "x1"): Expr => {
+    const candidates: { v: number; e: Expr }[] = [
+      { v: evalExpr(frontX0), e: frontX0 },
+      { v: evalExpr(frontX1), e: frontX1 },
+      { v: evalExpr(rearX0), e: rearX0 },
+      { v: evalExpr(rearX1), e: rearX1 },
+    ];
+    for (const v of vPanels) candidates.push({ v: v.x0, e: link(`${v.id}.x0`) }, { v: v.x1, e: link(`${v.id}.x1`) });
+    const hit = candidates.find((c) => Math.abs(c.v - n) < 1e-4);
+    if (hit) return hit.e;
+    return ex({ x: n }, (t) => t.x, `${id}.${face}`);
+  };
+  dim("kitchen.t3y0", { cd: ref("kitchen.cd"), CPT: ref("kitchen.CPT") }, (t) => Math.round((t.cd - t.CPT) * 1000) / 1000, { formula: "cd - CPT" });
+  dim("kitchen.t2y0", { y1: ref("kitchen.t3y0"), w: ref("kitchen.stripW") }, (t) => Math.round((t.y1 - t.w) * 1000) / 1000, { formula: "T3 front - stripW" });
+  dim("kitchen.topZ0", { H: ref("kitchen.H"), CPT: ref("kitchen.CPT") }, (t) => Math.round((t.H - t.CPT) * 1000) / 1000, { formula: "H - CPT" });
+  dim("kitchen.t3z0", { H: ref("kitchen.H"), w: ref("kitchen.stripW") }, (t) => Math.round((t.H - t.w) * 1000) / 1000, { formula: "H - stripW" });
+
   // T1 顶前条：y∈[0,100] z∈[H−CPT,H]；V 缺口从后缘 y=100 凹进 20；灶台列按 y 相交切段
   {
     const segs = segmentBy(frontStop.x0, frontStop.x1, stoveXCutsForY(0, stripW));
     segs.forEach(([a, b], i) => {
-      const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean) as [number, number][];
-      boards.push(mkBoard(`T1-${i + 1}`, "Top Front Rail", "top", "top_front_rail", CPT, "carcass",
+      const id = `T1-${i + 1}`;
+      const x0e = knownX(a, id, "x0");
+      const x1e = knownX(b, id, "x1");
+      plan(id, {
+        x0: x0e, x1: x1e, y0: lit(0), y1: link("kitchen.stripW"),
+        z0: link("kitchen.topZ0"), z1: link("kitchen.H"),
+      });
+      boards.push(mkBoard(id, "Top Front Rail", "top", "top_front_rail", CPT, "carcass",
         "XY", "Z", a, b, 0, stripW, zTop0, H,
-        xyNotch(a, b, 0, stripW, ns, notchD, "far")));
+        xyNotch(id, x0e, x1e, lit(0), link("kitchen.stripW"), vNotchExpr, link("kitchen.notchD"), "far")));
     });
   }
   // T2 顶后条：深 100，后边贴在 T3 前脸（cd−CPT），不伸进 T3。
@@ -823,10 +1127,16 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     const y0 = r2(y1 - stripW);
     const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, y1));
     segs.forEach(([a, b], i) => {
-      const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean) as [number, number][];
-      boards.push(mkBoard(`T2-${i + 1}`, "Top Rear Rail", "top", "top_rear_rail", CPT, "carcass",
+      const id = `T2-${i + 1}`;
+      const x0e = knownX(a, id, "x0");
+      const x1e = knownX(b, id, "x1");
+      plan(id, {
+        x0: x0e, x1: x1e, y0: link("kitchen.t2y0"), y1: link("kitchen.t3y0"),
+        z0: link("kitchen.topZ0"), z1: link("kitchen.H"),
+      });
+      boards.push(mkBoard(id, "Top Rear Rail", "top", "top_rear_rail", CPT, "carcass",
         "XY", "Z", a, b, y0, y1, zTop0, H,
-        xyNotch(a, b, y0, stripW, ns, notchD, "near")));
+        xyNotch(id, x0e, x1e, link("kitchen.t2y0"), link("kitchen.stripW"), vNotchExpr, link("kitchen.notchD"), "near")));
     });
   }
   // T3 顶后竖条：y∈[cd−CPT, cd] z∈[H−100, H]
@@ -834,10 +1144,16 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     const y0 = r2(cd - CPT), z0 = r2(H - stripW);
     const segs = segmentBy(rearStop.x0, rearStop.x1, stoveXCutsForY(y0, cd));
     segs.forEach(([a, b], i) => {
-      const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean) as [number, number][];
-      boards.push(mkBoard(`T3-${i + 1}`, "Top Rear Vertical", "top", "top_rear_vertical", CPT, "carcass",
+      const id = `T3-${i + 1}`;
+      const x0e = knownX(a, id, "x0");
+      const x1e = knownX(b, id, "x1");
+      plan(id, {
+        x0: x0e, x1: x1e, y0: link("kitchen.t3y0"), y1: link("kitchen.cd"),
+        z0: link("kitchen.t3z0"), z1: link("kitchen.H"),
+      });
+      boards.push(mkBoard(id, "Top Rear Vertical", "top", "top_rear_vertical", CPT, "carcass",
         "XZ", "Y", a, b, y0, cd, z0, H,
-        xzNotch(a, b, z0, stripW, ns, notchD, "near")));
+        xzNotch(id, x0e, x1e, link("kitchen.t3z0"), link("kitchen.stripW"), vNotchExpr, link("kitchen.notchD"), "near")));
     });
   }
   // B4 后下竖条：y∈[cd−CPT, cd] z∈[0,100]；V 缺口从顶缘 z=100 凹进 20；轮拱 x 段切分
@@ -846,10 +1162,16 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     const avCuts = s.avoidances.filter((a) => a.x1 > a.x0 && a.height > 0).map((a) => [a.x0, a.x1] as [number, number]);
     const segs = segmentBy(rearStop.x0, rearStop.x1, avCuts);
     segs.forEach(([a, b], i) => {
-      const ns = vNotchRanges.map((n) => notchIn(n, a, b)).filter(Boolean) as [number, number][];
-      boards.push(mkBoard(`B4-${i + 1}`, "Bottom Rear Vertical", "bottom", "bottom_rear_vertical", CPT, "carcass",
+      const id = `B4-${i + 1}`;
+      const x0e = knownX(a, id, "x0");
+      const x1e = knownX(b, id, "x1");
+      plan(id, {
+        x0: x0e, x1: x1e, y0: link("kitchen.t3y0"), y1: link("kitchen.cd"),
+        z0: lit(0), z1: link("kitchen.stripW"),
+      });
+      boards.push(mkBoard(id, "Bottom Rear Vertical", "bottom", "bottom_rear_vertical", CPT, "carcass",
         "XZ", "Y", a, b, y0, cd, 0, stripW,
-        xzNotch(a, b, 0, stripW, ns, notchD, "far")));
+        xzNotch(id, x0e, x1e, lit(0), link("kitchen.stripW"), vNotchExpr, link("kitchen.notchD"), "far")));
     });
   }
 
@@ -857,20 +1179,45 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   for (const a of s.avoidances) {
     if (!(a.x1 > a.x0) || !(a.height > 0) || !(a.depth > 0)) continue;
     const ad = a.depth, ah = a.height;
-    boards.push(mkBoard(`${a.id}-avoidance-top`, "Avoidance Top", "avoidance", "avoidance_top", CPT, "carcass",
+    const idTop = `${a.id}-avoidance-top`;
+    dim(`${a.id}.x0`, { x0: param({ x0: a.x0 }).x0 }, (t) => t.x0, { formula: "avoidX0" });
+    dim(`${a.id}.x1`, { x1: param({ x1: a.x1 }).x1 }, (t) => t.x1, { formula: "avoidX1" });
+    dim(`${a.id}.h`, { h: param({ height: a.height }).height }, (t) => t.h, { formula: "avoidH" });
+    dim(`${a.id}.d`, { d: param({ depth: a.depth }).depth }, (t) => t.d, { formula: "avoidD" });
+    const y0e = qRound(ex({ cd: ref("kitchen.cd"), d: ref(`${a.id}.d`) }, (t) => t.cd - t.d), "cd - avoidD");
+    const z0e = qRound(ex({ h: ref(`${a.id}.h`), CPT: ref("kitchen.CPT") }, (t) => t.h - t.CPT), "avoidH - CPT");
+    plan(idTop, {
+      x0: link(`${a.id}.x0`), x1: link(`${a.id}.x1`), y0: y0e, y1: link("kitchen.cd"),
+      z0: z0e, z1: link(`${a.id}.h`),
+    });
+    boards.push(mkBoard(idTop, "Avoidance Top", "avoidance", "avoidance_top", CPT, "carcass",
       "XY", "Z", a.x0, a.x1, r2(cd - ad), cd, r2(ah - CPT), ah,
-      xyNotch(a.x0, a.x1, r2(cd - ad), ad, [], notchD, "far")));
+      xyNotch(idTop, link(`${a.id}.x0`), link(`${a.id}.x1`), y0e, link(`${a.id}.d`), [], link("kitchen.notchD"), "far")));
     if (ah + R.RAISED_B4_HEIGHT.value <= H) {
-      boards.push(mkBoard(`${a.id}-B4`, "Raised Rear Vertical", "avoidance", "raised_b4", CPT, "carcass",
+      const id = `${a.id}-B4`;
+      const z1e = qRound(ex({ h: ref(`${a.id}.h`), rise: R.RAISED_B4_HEIGHT }, (t) => t.h + t.rise), "avoidH + RAISED_B4_HEIGHT");
+      plan(id, {
+        x0: link(`${a.id}.x0`), x1: link(`${a.id}.x1`),
+        y0: link("kitchen.t3y0"), y1: link("kitchen.cd"),
+        z0: link(`${a.id}.h`), z1: z1e,
+      });
+      boards.push(mkBoard(id, "Raised Rear Vertical", "avoidance", "raised_b4", CPT, "carcass",
         "XZ", "Y", a.x0, a.x1, r2(cd - CPT), cd, ah, r2(ah + R.RAISED_B4_HEIGHT.value),
-        rectXZ(r2(a.x1 - a.x0), R.RAISED_B4_HEIGHT.value)));
+        traceLocalRect(id, ["x", "z"], localW(id), ex({ rise: R.RAISED_B4_HEIGHT }, (t) => t.rise, "RAISED_B4_HEIGHT"))));
     } else {
       warnings.push(`Wheel avoidance ${a.id}: raised B4 exceeds height; skipped.`);
     }
     if (ah > CPT) {
-      boards.push(mkBoard(`${a.id}-avoidance-front`, "Avoidance Front", "avoidance", "avoidance_front", CPT, "carcass",
+      const id = `${a.id}-avoidance-front`;
+      const y1e = qRound(ex({ cd: ref("kitchen.cd"), d: ref(`${a.id}.d`), CPT: ref("kitchen.CPT") }, (t) => t.cd - t.d + t.CPT), "cd - avoidD + CPT");
+      const hE = qRound(ex({ h: ref(`${a.id}.h`), CPT: ref("kitchen.CPT") }, (t) => t.h - t.CPT), "avoidH - CPT");
+      plan(id, {
+        x0: link(`${a.id}.x0`), x1: link(`${a.id}.x1`), y0: y0e, y1: y1e,
+        z0: lit(0), z1: hE,
+      });
+      boards.push(mkBoard(id, "Avoidance Front", "avoidance", "avoidance_front", CPT, "carcass",
         "XZ", "Y", a.x0, a.x1, r2(cd - ad), r2(cd - ad + CPT), 0, r2(ah - CPT),
-        rectXZ(r2(a.x1 - a.x0), r2(ah - CPT))));
+        traceLocalRect(id, ["x", "z"], localW(id), hE)));
     } else {
       warnings.push(`Wheel avoidance ${a.id}: front cover height ≤ CPT; skipped.`);
     }
@@ -887,6 +1234,11 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       else if (fb.z0 < ah + R.RAISED_B4_HEIGHT.value) y1 = Math.min(y1, r2(cd - CPT)); // 与 [ah,ah+100] 相交
       if (y1 < fb.board.y1) {
         fb.board.y1 = y1;
+        plan(fb.board.id, {
+          y1: fb.z0 < ah
+            ? qRound(ex({ cd: ref("kitchen.cd"), d: ref(`${a.id}.d`), CPT: ref("kitchen.CPT") }, (t) => t.cd - t.d - t.CPT), "cd - avoidD - CPT")
+            : link("kitchen.t3y0"),
+        });
         warnings.push(`Functional board ${fb.board.id} shortened by wheel avoidance ${a.id}.`);
       }
     }
@@ -911,23 +1263,41 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       if (z1 > z0) strips.push({ zoneId: zone.id, side: "right", z0: r2(z0), z1: r2(z1), x0: r2(rightInner - CPT), x1: rightInner });
     }
   }
+  dim("kitchen.deckTop", { BCH: ref("kitchen.BCH"), CPT: ref("kitchen.CPT") }, (t) => Math.round((t.BCH + t.CPT) * 1000) / 1000, { formula: "BCH + CPT" });
   for (const st of strips) {
     const id = `${st.side}-side-strengthening-strip-${st.zoneId}`;
-    // 条槽由覆盖的 door-shelf 推导（y∈[80,100] × 层板 z ± 0.5）
+    const colId = st.side === "left" ? s.columns[0].id : s.columns[s.columns.length - 1].id;
+    const endId = st.side === "left" ? "V0" : vPanels[vPanels.length - 1].id;
+    plan(id, {
+      x0: st.side === "left"
+        ? link("V0.x1")
+        : qRound(ex({ x: ref(`${endId}.x0`), CPT: ref("kitchen.CPT") }, (t) => t.x - t.CPT), "inner - CPT"),
+      x1: st.side === "left"
+        ? qRound(ex({ x: ref("V0.x1"), CPT: ref("kitchen.CPT") }, (t) => t.x + t.CPT), "inner + CPT")
+        : link(`${endId}.x0`),
+      y0: lit(0),
+      y1: link("kitchen.stripW"),
+      z0: qRound(ex({ z: ref(`kitchen.zone.${colId}.${st.zoneId}.z0`), deck: ref("kitchen.deckTop") }, (t) => Math.max(t.z, t.deck)), "max(zoneZ0, BCH + CPT)"),
+      z1: qRound(ex({ z: ref(`kitchen.zone.${colId}.${st.zoneId}.z1`), cap: ref("kitchen.topZ0") }, (t) => Math.min(t.z, t.cap)), "min(zoneZ1, H - CPT)"),
+    });
     const covered = funcBoards.filter((fb) => fb.board.id.endsWith("-door-shelf") && fb.z0 >= st.z0 - EPS && fb.z1 <= st.z1 + EPS);
     let prof: P2[];
     if (covered.length) {
-      const sz0 = r2(Math.min(...covered.map((f) => f.z0)) - R.STRENGTHENING_GROOVE_CLEARANCE.value);
-      const sz1 = r2(Math.max(...covered.map((f) => f.z1)) + R.STRENGTHENING_GROOVE_CLEARANCE.value);
-      prof = [
-        { y: 0, z: st.z0 }, { y: stripW, z: st.z0 },
-        { y: stripW, z: sz0 }, { y: R.STRENGTHENING_GROOVE_Y0.value, z: sz0 },
-        { y: R.STRENGTHENING_GROOVE_Y0.value, z: sz1 }, { y: stripW, z: sz1 },
-        { y: stripW, z: st.z1 }, { y: 0, z: st.z1 },
-        { y: 0, z: st.z0 },
-      ];
+      const lo = covered.reduce((a, b) => (a.z0 < b.z0 ? a : b));
+      const hi = covered.reduce((a, b) => (a.z1 > b.z1 ? a : b));
+      dim(`${id}.gz0`, { z: ref(`${lo.board.id}.z0`), c: R.STRENGTHENING_GROOVE_CLEARANCE }, (t) => Math.round((t.z - t.c) * 1000) / 1000, { formula: "shelfZ0 - clearance" });
+      dim(`${id}.gz1`, { z: ref(`${hi.board.id}.z1`), c: R.STRENGTHENING_GROOVE_CLEARANCE }, (t) => Math.round((t.z + t.c) * 1000) / 1000, { formula: "shelfZ1 + clearance" });
+      const grooveY = ex({ y: R.STRENGTHENING_GROOVE_Y0 }, (t) => t.y, "STRENGTHENING_GROOVE_Y0");
+      const sw = link("kitchen.stripW");
+      const z0e = link(`${id}.z0`);
+      const z1e = link(`${id}.z1`);
+      const gz0 = link(`${id}.gz0`);
+      const gz1 = link(`${id}.gz1`);
+      prof = loopPts(id, ["y", "z"], [
+        [lit(0), z0e], [sw, z0e], [sw, gz0], [grooveY, gz0], [grooveY, gz1], [sw, gz1], [sw, z1e], [lit(0), z1e], [lit(0), z0e],
+      ], true);
     } else {
-      prof = rectYZ(stripW, r2(st.z1 - st.z0));
+      prof = traceLocalRect(id, ["y", "z"], link("kitchen.stripW"), qRound(ex({ z1: ref(`${id}.z1`), z0: ref(`${id}.z0`) }, (t) => t.z1 - t.z0), "z1 - z0"));
     }
     boards.push(mkBoard(id, `${st.side === "left" ? "Left" : "Right"} Side Strengthening Strip`, "support", "strengthening_strip",
       CPT, "carcass", "YZ", "X", st.x0, st.x1, 0, stripW, st.z0, st.z1, prof));
@@ -954,24 +1324,46 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       return;
     }
     boards.push(mkBoard(id, "Front Panel", "front_panel", "front_panel", FPT, "door",
-      "XZ", "Y", x0, x1, -FPT, 0, z0, z1, rectXZ(w, h)));
+      "XZ", "Y", x0, x1, -FPT, 0, z0, z1, traceLocalRect(id, ["x", "z"],
+        qRound(ex({ x1: ref(`${id}.x1`), x0: ref(`${id}.x0`) }, (t) => t.x1 - t.x0), "x1 - x0"),
+        qRound(ex({ z1: ref(`${id}.z1`), z0: ref(`${id}.z0`) }, (t) => t.z1 - t.z0), "z1 - z0"))));
     const hs = zone.hingeSettings;
     if (kind !== "drawer") {
       const L = kind === "down_flap" ? w : h;
       let sd = R.HINGE_SD_MIN.value + (L - R.HINGE_SD_SPAN.value) * R.SD_GAIN_NUM.value / R.SD_GAIN_DEN.value;
       sd = Math.min(R.HINGE_SD_MAX.value, Math.max(R.HINGE_SD_MIN.value, sd));
+      dim(`kitchen.hinge.${id}.sd`, {
+        min: R.HINGE_SD_MIN, max: R.HINGE_SD_MAX, span: R.HINGE_SD_SPAN,
+        num: R.SD_GAIN_NUM, den: R.SD_GAIN_DEN, L,
+      }, (t) => Math.min(t.max, Math.max(t.min, t.min + (t.L - t.span) * t.num / t.den)), { formula: "clamp(min, max, min + (L - span) * num / den)" });
       const fromEdge = hs.cupCenterFromEdge;
-      let centers: { x: number; z: number }[];
+      const edgeTerm = Math.abs(fromEdge - R.HINGE_CUP_FROM_EDGE.value) < 1e-9
+        ? R.HINGE_CUP_FROM_EDGE
+        : param({ cupCenterFromEdge: fromEdge }).cupCenterFromEdge;
+      let centers: { x: number; z: number; xe: Expr; ze: Expr }[];
       if (kind === "down_flap") {
-        centers = [{ x: r2(x0 + sd), z: r2(z0 + fromEdge) }, { x: r2(x1 - sd), z: r2(z0 + fromEdge) }];
+        const ze = qRound(ex({ z0: ref(`${id}.z0`), edge: edgeTerm }, (t) => t.z0 + t.edge), "z0 + cupFromEdge");
+        centers = [
+          { x: r2(x0 + sd), z: r2(z0 + fromEdge), xe: qRound(ex({ x0: ref(`${id}.x0`), sd: ref(`kitchen.hinge.${id}.sd`) }, (t) => t.x0 + t.sd), "x0 + sd"), ze },
+          { x: r2(x1 - sd), z: r2(z0 + fromEdge), xe: qRound(ex({ x1: ref(`${id}.x1`), sd: ref(`kitchen.hinge.${id}.sd`) }, (t) => t.x1 - t.sd), "x1 - sd"), ze },
+        ];
       } else {
         const hingeLeft = kind === "left_door" || (kind === "double_door" && leaf === "left");
         const cx = hingeLeft ? r2(x0 + fromEdge) : r2(x1 - fromEdge);
-        centers = [{ x: cx, z: r2(z1 - sd) }, { x: cx, z: r2(z0 + sd) }];
-        if (hs.useThreeHinges) centers.push({ x: cx, z: r2((z0 + z1) / 2) });
+        const xe = hingeLeft
+          ? qRound(ex({ x0: ref(`${id}.x0`), edge: edgeTerm }, (t) => t.x0 + t.edge), "x0 + cupFromEdge")
+          : qRound(ex({ x1: ref(`${id}.x1`), edge: edgeTerm }, (t) => t.x1 - t.edge), "x1 - cupFromEdge");
+        centers = [
+          { x: cx, z: r2(z1 - sd), xe, ze: qRound(ex({ z1: ref(`${id}.z1`), sd: ref(`kitchen.hinge.${id}.sd`) }, (t) => t.z1 - t.sd), "z1 - sd") },
+          { x: cx, z: r2(z0 + sd), xe, ze: qRound(ex({ z0: ref(`${id}.z0`), sd: ref(`kitchen.hinge.${id}.sd`) }, (t) => t.z0 + t.sd), "z0 + sd") },
+        ];
+        if (hs.useThreeHinges) centers.push({ x: cx, z: r2((z0 + z1) / 2), xe, ze: qRound(ex({ z0: ref(`${id}.z0`), z1: ref(`${id}.z1`) }, (t) => (t.z0 + t.z1) / 2), "(z0 + z1) / 2") });
       }
       centers.forEach((c, i) => {
-        hinges.push({ id: `${id}-hinge-${i + 1}`, panelId: id, centerX: c.x, centerZ: c.z, diameter: hs.cupDiameter, depth: hs.cupDepth });
+        const hid = `${id}-hinge-${i + 1}`;
+        dim(`kitchen.hinge.${hid}.x`, c.xe.terms, c.xe.fn, { formula: c.xe.formula });
+        dim(`kitchen.hinge.${hid}.z`, c.ze.terms, c.ze.fn, { formula: c.ze.formula });
+        hinges.push({ id: hid, panelId: id, centerX: c.x, centerZ: c.z, diameter: hs.cupDiameter, depth: hs.cupDepth });
       });
     }
     if (s.lockOn && zone.lockEnabled) {
@@ -979,8 +1371,18 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       if (kind === "left_door") cx = r2(x1 - zone.lockSideCenterOffset);
       else if (kind === "right_door") cx = r2(x0 + zone.lockSideCenterOffset);
       else cx = r2((x0 + x1) / 2);
-      const dividerCenter = zone.z1 >= H - EPS ? r2(H - CPT / 2) : zone.z1; // 上分隔心
+      const dividerCenter = zone.z1 >= H - EPS ? r2(H - CPT / 2) : zone.z1;
       const cz = r2(dividerCenter - CPT / 2 - R.LOCK_DROP.value);
+      const lockId = `${id}-lock`;
+      const off = Math.abs(zone.lockSideCenterOffset - R.LOCK_SIDE_OFFSET.value) < 1e-9
+        ? R.LOCK_SIDE_OFFSET
+        : param({ lockSideCenterOffset: zone.lockSideCenterOffset }).lockSideCenterOffset;
+      if (kind === "left_door") dim(`kitchen.lock.${lockId}.x`, { x1: ref(`${id}.x1`), off }, (t) => Math.round((t.x1 - t.off) * 1000) / 1000, { formula: "x1 - lockSideOffset" });
+      else if (kind === "right_door") dim(`kitchen.lock.${lockId}.x`, { x0: ref(`${id}.x0`), off }, (t) => Math.round((t.x0 + t.off) * 1000) / 1000, { formula: "x0 + lockSideOffset" });
+      else dim(`kitchen.lock.${lockId}.x`, { x0: ref(`${id}.x0`), x1: ref(`${id}.x1`) }, (t) => Math.round(((t.x0 + t.x1) / 2) * 1000) / 1000, { formula: "(x0 + x1) / 2" });
+      dim(`kitchen.lock.${lockId}.z`, {
+        divider: dividerCenter, CPT: ref("kitchen.CPT"), drop: R.LOCK_DROP,
+      }, (t) => Math.round((t.divider - t.CPT / 2 - t.drop) * 1000) / 1000, { formula: "dividerCenter - CPT / 2 - LOCK_DROP" });
       locks.push({
         id: `${id}-lock`, panelId: id, centerX: cx, centerZ: cz,
         width: R.LOCK_WIDTH.value, height: R.LOCK_HEIGHT.value, radius: r2(R.LOCK_HEIGHT.value / 2),
@@ -1010,12 +1412,53 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
       else if (zoneBelow && PANEL_ZONE_TYPES.has(zoneBelow.zoneType)) z0 = r2(zone.z0 + fc / 2);
       else z0 = r2(zone.z0 - CPT / 2);
 
+      const zKey1 = `kitchen.zone.${col.id}.${zone.id}.z1`;
+      const zKey0 = `kitchen.zone.${col.id}.${zone.id}.z0`;
+      const x0e: Expr = ci === 0
+        ? (s.leftOpts.frontVisible
+          ? qRound(ex({ x: ref("V0.x1"), fc: ref("kitchen.fc") }, (t) => t.x + t.fc), "inner + fc")
+          : link("kitchen.fc"))
+        : (colHasPanel(ci - 1)
+          ? qRound(ex({ x: ref(`kitchen.col.${col.id}.x0`), fc: ref("kitchen.fc") }, (t) => t.x + t.fc / 2), "colX0 + fc / 2")
+          : qRound(ex({ x: ref(`kitchen.col.${col.id}.x0`), CPT: ref("kitchen.CPT") }, (t) => t.x + t.CPT / 2), "colX0 + CPT / 2"));
+      const x1e: Expr = ci === s.columns.length - 1
+        ? (s.rightOpts.frontVisible
+          ? qRound(ex({ x: ref(`${vPanels[vPanels.length - 1].id}.x0`), fc: ref("kitchen.fc") }, (t) => t.x - t.fc), "inner - fc")
+          : qRound(ex({ W: ref("kitchen.W"), fc: ref("kitchen.fc") }, (t) => t.W - t.fc), "W - fc"))
+        : (colHasPanel(ci + 1)
+          ? qRound(ex({ x: ref(`kitchen.col.${col.id}.x1`), fc: ref("kitchen.fc") }, (t) => t.x - t.fc / 2), "colX1 - fc / 2")
+          : qRound(ex({ x: ref(`kitchen.col.${col.id}.x1`), CPT: ref("kitchen.CPT") }, (t) => t.x - t.CPT / 2), "colX1 - CPT / 2"));
+      const z1e: Expr = zone.z1 >= H - EPS
+        ? qRound(ex({ H: ref("kitchen.H"), fc: ref("kitchen.fc") }, (t) => t.H - t.fc), "H - fc")
+        : (zoneAbove && PANEL_ZONE_TYPES.has(zoneAbove.zoneType)
+          ? qRound(ex({ z: ref(zKey1), fc: ref("kitchen.fc") }, (t) => t.z - t.fc / 2), "zoneZ1 - fc / 2")
+          : qRound(ex({ z: ref(zKey1), CPT: ref("kitchen.CPT") }, (t) => t.z + t.CPT / 2), "zoneZ1 + CPT / 2"));
+      const z0e: Expr = zone.z0 <= BCH + EPS
+        ? (s.style2
+          ? qRound(ex({ BCH: ref("kitchen.BCH"), fc: ref("kitchen.fc") }, (t) => t.BCH + t.fc), "BCH + fc")
+          : link("kitchen.BCH"))
+        : (zoneBelow && PANEL_ZONE_TYPES.has(zoneBelow.zoneType)
+          ? qRound(ex({ z: ref(zKey0), fc: ref("kitchen.fc") }, (t) => t.z + t.fc / 2), "zoneZ0 + fc / 2")
+          : qRound(ex({ z: ref(zKey0), CPT: ref("kitchen.CPT") }, (t) => t.z - t.CPT / 2), "zoneZ0 - CPT / 2"));
+      const y0e = ex({ FPT: ref("kitchen.FPT") }, (t) => -t.FPT, "-FPT");
+      const placeLeaf = (leafId: string, lx0: Expr, lx1: Expr) => {
+        plan(leafId, { x0: lx0, x1: lx1, y0: y0e, y1: lit(0), z0: z0e, z1: z1e });
+      };
+
       const id = `${zone.id}-front-panel`;
       if (zone.zoneType === "double_door") {
         const mid = r2((x0 + x1) / 2);
+        dim(`kitchen.leaf.${id}.x0`, x0e.terms, x0e.fn, { formula: x0e.formula });
+        dim(`kitchen.leaf.${id}.x1`, x1e.terms, x1e.fn, { formula: x1e.formula });
+        dim(`kitchen.leaf.${id}.mid`, { x0: ref(`kitchen.leaf.${id}.x0`), x1: ref(`kitchen.leaf.${id}.x1`) }, (t) => Math.round(((t.x0 + t.x1) / 2) * 1000) / 1000, { formula: "(x0 + x1) / 2" });
+        const leftX1 = qRound(ex({ mid: ref(`kitchen.leaf.${id}.mid`), fc: ref("kitchen.fc") }, (t) => t.mid - t.fc / 2), "mid - fc / 2");
+        const rightX0 = qRound(ex({ mid: ref(`kitchen.leaf.${id}.mid`), fc: ref("kitchen.fc") }, (t) => t.mid + t.fc / 2), "mid + fc / 2");
+        placeLeaf(`${id}-left`, x0e, leftX1);
+        placeLeaf(`${id}-right`, rightX0, x1e);
         emitDoorPanel(`${id}-left`, zone, x0, r2(mid - fc / 2), z0, z1, "double_door", "left");
         emitDoorPanel(`${id}-right`, zone, r2(mid + fc / 2), x1, z0, z1, "double_door", "right");
       } else {
+        placeLeaf(id, x0e, x1e);
         emitDoorPanel(id, zone, x0, x1, z0, z1, zone.zoneType as "left_door" | "right_door" | "drawer" | "down_flap");
       }
     }
@@ -1023,6 +1466,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
 
   /* ---- 组装结果 ---- */
   for (const b of boards) refreshBoardBox(b);
+  flushPlans();
   attachFaces(boards);
   const joints: Joint[] = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input) });
   // Fronts, the kick (B1) included: one group, horizontal unless chosen otherwise.

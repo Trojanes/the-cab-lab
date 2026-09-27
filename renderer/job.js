@@ -5,10 +5,11 @@ import { getModule } from "./modules.js";
 import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
 import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
-import { normalizeWall, normalizeOpening } from "./walls.js";
+import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
+bindCabinets(() => job.cabinets);
 
 // A new job has no space yet: defining the space is step one.
 function newJob() {
@@ -397,6 +398,45 @@ export function removeOpening(wallId, opId) {
   pushHistory();
   log("opening.remove", { wallId, id: opId, opening: wall.openings[i] });
   wall.openings.splice(i, 1);
+  dirty = true;
+  emit("job");
+}
+
+/**
+ * Where a partition is cut into two boards. `split` = { axis: "u"|"z", at }.
+ * Drag previews pass history: false and commit the snapshot once at the end.
+ * The cut is pulled out of a shower-door hole so that hole stays on one board.
+ */
+export function setWallSplit(id, split, { history = true } = {}) {
+  const wall = getWall(id);
+  if (!wall || !split) return;
+  const solid = wallSolid(wall, getSpace(), getStock());
+  const next = placeSplit(solid, split);
+  if (wall.split && wall.split.axis === next.axis && Math.abs(wall.split.at - next.at) < 0.05) return;
+  if (history) pushHistory();
+  wall.split = next;
+  dirty = true;
+  emit("job");
+}
+
+/** Remember which overhead and base a partition follows. `fit` null clears it. */
+export function setWallFit(id, fit, how = "ok") {
+  const wall = getWall(id);
+  if (!wall) return;
+  const radius = Number(fit && fit.radius);
+  const next = fit && fit.overheadId && fit.kitchenId
+    ? {
+      overheadId: String(fit.overheadId),
+      kitchenId: String(fit.kitchenId),
+      radius: Number.isFinite(radius) && radius >= 0 ? Math.round(radius * 10) / 10 : 50,
+    }
+    : null;
+  if (!next && !wall.fit) return;
+  if (next && wall.fit && wall.fit.overheadId === next.overheadId && wall.fit.kitchenId === next.kitchenId && wall.fit.radius === next.radius) return;
+  pushHistory();
+  if (next) wall.fit = next;
+  else delete wall.fit;
+  log(next ? "wall.fit" : "wall.fit.clear", { id, how, overheadId: next && next.overheadId, kitchenId: next && next.kitchenId, radius: next && next.radius });
   dirty = true;
   emit("job");
 }

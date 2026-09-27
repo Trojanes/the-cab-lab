@@ -1,9 +1,9 @@
 /**
  * Kitchen face layer: slots / hinges / locks on A·B, joints as FaceRefs.
  */
-import { dim, ref } from "../_lib/dim.ts";
+import { dim, ref, valueOf } from "../_lib/dim.ts";
 import { setEdgeBand } from "../_lib/edgeBand.ts";
-import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, localRect, planeAxes, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
+import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, faceRef, joint, localRect, planeAxes, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
 import { resolveDeclaredJoints } from "../_lib/resolveJoints.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { RULES as R } from "./rules.ts";
@@ -48,8 +48,10 @@ export function buildKitchenFaces(fb: {
     const r = localRect(v, { y: [s.y0, s.y1], z: [s.z0, s.z1] });
     const face = s.side === "right" ? "A" : "B";
     const key = `${s.vPanelId}.feat.${s.id}`;
-    dim(`${key}.y0`, { y0: s.y0, boardY0: ref(`${s.vPanelId}.y0`) }, (t) => t.y0 - t.boardY0);
-    dim(`${key}.z0`, { z0: s.z0, boardZ0: ref(`${s.vPanelId}.z0`) }, (t) => t.z0 - t.boardZ0);
+    const slotY0 = Number.isFinite(valueOf(`kitchen.slot.${s.id}.y0`)) ? ref(`kitchen.slot.${s.id}.y0`) : s.y0;
+    const slotZ0 = Number.isFinite(valueOf(`kitchen.slot.${s.id}.z0`)) ? ref(`kitchen.slot.${s.id}.z0`) : s.z0;
+    dim(`${key}.y0`, { y0: slotY0, boardY0: ref(`${s.vPanelId}.y0`) }, (t) => t.y0 - t.boardY0);
+    dim(`${key}.z0`, { z0: slotZ0, boardZ0: ref(`${s.vPanelId}.z0`) }, (t) => t.z0 - t.boardZ0);
     addFeature(v, face, {
       id: s.id, kind: "groove", ...r, depth: s.depth, through: s.through,
       for: s.forBoard, key, source: "kitchen",
@@ -62,8 +64,10 @@ export function buildKitchenFaces(fb: {
     const v = B.get(sc.vPanelId);
     if (!v) continue;
     const key = `${sc.vPanelId}.feat.${sc.id}`;
-    const cy = dim(`${key}.y`, { y: sc.y, y0: ref(`${sc.vPanelId}.y0`) }, (t) => t.y - t.y0);
-    const cz = dim(`${key}.z`, { z: sc.z, z0: ref(`${sc.vPanelId}.z0`) }, (t) => t.z - t.z0);
+    const sy = Number.isFinite(valueOf(`kitchen.screw.${sc.id}.y`)) ? ref(`kitchen.screw.${sc.id}.y`) : sc.y;
+    const sz = Number.isFinite(valueOf(`kitchen.screw.${sc.id}.z`)) ? ref(`kitchen.screw.${sc.id}.z`) : sc.z;
+    const cy = dim(`${key}.y`, { y: sy, y0: ref(`${sc.vPanelId}.y0`) }, (t) => t.y - t.y0);
+    const cz = dim(`${key}.z`, { z: sz, z0: ref(`${sc.vPanelId}.z0`) }, (t) => t.z - t.z0);
     addFeature(v, sc.side === "right" ? "A" : "B", {
       id: sc.id, kind: "hole", center: [cy, cz], diameter: sc.diameter, through: true,
       for: sc.forBoard, key, source: "kitchen.screw",
@@ -74,8 +78,10 @@ export function buildKitchenFaces(fb: {
     const fp = B.get(h.panelId);
     if (!fp) continue;
     const key = `${h.panelId}.feat.${h.id}`;
-    const cx = dim(`${key}.x`, { centerX: h.centerX, x0: ref(`${h.panelId}.x0`) }, (t) => t.centerX - t.x0);
-    const cz = dim(`${key}.z`, { centerZ: h.centerZ, z0: ref(`${h.panelId}.z0`) }, (t) => t.centerZ - t.z0);
+    const hx = Number.isFinite(valueOf(`kitchen.hinge.${h.id}.x`)) ? ref(`kitchen.hinge.${h.id}.x`) : h.centerX;
+    const hz = Number.isFinite(valueOf(`kitchen.hinge.${h.id}.z`)) ? ref(`kitchen.hinge.${h.id}.z`) : h.centerZ;
+    const cx = dim(`${key}.x`, { centerX: hx, x0: ref(`${h.panelId}.x0`) }, (t) => t.centerX - t.x0);
+    const cz = dim(`${key}.z`, { centerZ: hz, z0: ref(`${h.panelId}.z0`) }, (t) => t.centerZ - t.z0);
     addFeature(fp, "A", {
       id: h.id, kind: "hole", center: [cx, cz],
       diameter: h.diameter, depth: h.depth, for: "hinge", key, source: "kitchen",
@@ -86,8 +92,10 @@ export function buildKitchenFaces(fb: {
     const fp = B.get(lock.panelId);
     if (!fp) continue;
     const key = `${lock.panelId}.feat.${lock.id}`;
-    const cx = dim(`${key}.x`, { centerX: lock.centerX, x0: ref(`${lock.panelId}.x0`) }, (t) => t.centerX - t.x0);
-    const cz = dim(`${key}.z`, { centerZ: lock.centerZ, z0: ref(`${lock.panelId}.z0`) }, (t) => t.centerZ - t.z0);
+    const lx = Number.isFinite(valueOf(`kitchen.lock.${lock.id}.x`)) ? ref(`kitchen.lock.${lock.id}.x`) : lock.centerX;
+    const lz = Number.isFinite(valueOf(`kitchen.lock.${lock.id}.z`)) ? ref(`kitchen.lock.${lock.id}.z`) : lock.centerZ;
+    const cx = dim(`${key}.x`, { centerX: lx, x0: ref(`${lock.panelId}.x0`) }, (t) => t.centerX - t.x0);
+    const cz = dim(`${key}.z`, { centerZ: lz, z0: ref(`${lock.panelId}.z0`) }, (t) => t.centerZ - t.z0);
     addFeature(fp, "A", {
       id: lock.id, kind: "cutout",
       u0: cx - lock.width / 2, u1: cx + lock.width / 2,
@@ -133,5 +141,29 @@ export function buildKitchenFaces(fb: {
     else if (b.boardType === "bottom_rear_vertical") band(b, "+Z", carcass);
   }
 
-  return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
+  const pair = (a: string, b: string) => (a < b ? `${a}|${b}` : `${b}|${a}`);
+  const skip = new Set<string>();
+  const hardware: Joint[] = [];
+  for (const s of fb.slots) {
+    const key = pair(s.vPanelId, s.forBoard);
+    if (skip.has(key)) continue;
+    skip.add(key);
+    const face = s.side === "right" ? "A" : "B";
+    hardware.push(joint(`kt_tongue_${s.id}`, "tongue_groove", faceRef(s.vPanelId, [face]), faceRef(s.forBoard, ["A"]), {
+      rule: "kitchen_tongue_in_v_slot_v1",
+    }));
+  }
+  for (const sc of fb.screws) {
+    const key = pair(sc.vPanelId, sc.forBoard);
+    if (skip.has(key)) continue;
+    skip.add(key);
+    const face = sc.side === "right" ? "B" : "A";
+    hardware.push(joint(`kt_screw_${sc.id}`, "butt", faceRef(sc.vPanelId, [face]), faceRef(sc.forBoard, ["A"]), {
+      hardware: ["screw_hole"], rule: "kitchen_screw_through_v_v1",
+    }));
+  }
+  return [
+    ...resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(fb.boards, skip)),
+    ...hardware,
+  ];
 }

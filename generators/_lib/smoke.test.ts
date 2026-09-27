@@ -167,7 +167,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   for (const id of ["overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge"]) {
     assert.ok(benchable.includes(id), `bench lists ${id}`);
   }
-  const bundles = ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "pins"];
+  const bundles = ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "sketchBoard", "pins"];
   for (const name of bundles) {
     assert.ok(existsSync(join(root, "renderer", "gen", `${name}.js`)), `bundle ${name}.js`);
   }
@@ -237,7 +237,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   assert.equal(moduleIdForGenerator("lounge"), "loungeGenerator");
   assert.equal(generatorDir("kitchenCabinet"), "kitchen");
   for (const id of Object.keys(MODULES)) {
-    assert.ok(existsSync(join(root, "generators", generatorDir(id), "presets.json")) || id === "smallCabinet", `${id} presets or smallCabinet`);
+    assert.ok(existsSync(join(root, "generators", generatorDir(id), "presets.json")) || id === "smallCabinet" || MODULES[id].command, `${id} presets or smallCabinet`);
   }
 
   const html = readFileSync(join(root, "renderer", "index.html"), "utf8");

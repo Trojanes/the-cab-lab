@@ -2,7 +2,7 @@
 // wireframe, and (when selected) resize / divider handles. Nothing here
 // changes geometry — handles only report which parameter they drive.
 import * as THREE from "three";
-import { scene, camera, canvas } from "./space.js";
+import { scene, camera, activeCamera, canvas } from "./space.js";
 import { doorBodyMaterial, grainAxisOf } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
 import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden } from "./job.js";
@@ -58,9 +58,11 @@ export function groupFor(id) {
   return groups.get(id) || null;
 }
 
-/** Envelope in cabinet-local mm: x 0..W, y -FPT..D, z 0..H. */
+/** Envelope in cabinet-local mm: x 0..W, y -FPT..D, z 0..H. A module with `localBox` supplies its own. */
 export function envelopeBox(cab, result) {
-  const env = getModule(cab.moduleId).envelope(cab.params);
+  const mod = getModule(cab.moduleId);
+  if (typeof mod.localBox === "function") return mod.localBox(cab.params);
+  const env = mod.envelope(cab.params);
   const fpt = result?.params?.frontPanelThickness ?? cab.params.frontPanelThickness ?? 16;
   return { x0: 0, x1: env.W, y0: -fpt, y1: env.D, z0: 0, z1: env.H, W: env.W, D: env.D, H: env.H, fpt };
 }
@@ -535,7 +537,8 @@ export function setHandleHover(mesh, hovered) {
   // An arrow handle is several meshes in one group: light them all.
   const targets = mesh.parent && mesh.parent.userData && mesh.parent.userData.arrow ? mesh.parent.children : [mesh];
   for (const m of targets) {
-    if (m.userData.handle.type === "divider") m.material = hovered ? handleHoverMat : dividerMat;
+    if (m.userData.handle.type === "wallSplit") m.material.color.setHex(hovered ? 0xffffff : 0xf5d76e);
+    else if (m.userData.handle.type === "divider") m.material = hovered ? handleHoverMat : dividerMat;
     else m.material = hovered ? handleHoverMat : handleMat;
   }
 }
@@ -805,7 +808,10 @@ function addEdgeBandMarks(group, b, dim) {
       (p0.y + p1.y) / 2 + normal.y * 0.15,
       (p0.z + p1.z) / 2 + normal.z * 0.15,
     );
-    bar.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, thickAxis, normal));
+    // A rotation needs a right-handed basis; a mirrored one (det −1) turned door side tapes sideways.
+    const across = thickAxis.clone();
+    if (new THREE.Vector3().crossVectors(along, across).dot(normal) < 0) across.negate();
+    bar.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(along, across, normal));
     bar.renderOrder = 6;
     bar.userData = { kind: "edgeBand" };
     group.add(bar);
@@ -864,13 +870,13 @@ scene.add(faceHint);
  */
 const HINT_TONES = { "": 0x4f86e0, pending: 0xf0a050, done: 0x7cf09c, warn: 0xd94b4b };
 let hintTimer = null;
-export function showFaceHint(face, { tone = "" } = {}) {
+export function showFaceHint(face, { tone = "", color = null } = {}) {
   const e = face.ext;
   const size = { x: e.x[1] - e.x[0], y: e.y[1] - e.y[0], z: e.z[1] - e.z[0] };
   size[face.axis] = 2;
   const strong = tone !== "";
   if (hintTimer) { clearTimeout(hintTimer); hintTimer = null; }
-  faceHint.material.color.setHex(HINT_TONES[tone] ?? HINT_TONES[""]);
+  faceHint.material.color.setHex(color != null ? color : (HINT_TONES[tone] ?? HINT_TONES[""]));
   faceHint.material.opacity = strong ? 0.35 : 0.08;
   faceHint.material.depthTest = !strong; // the chosen side reads through the door panel it sits on
   faceHint.material.needsUpdate = true;
@@ -926,6 +932,114 @@ export function hideGhost() {
   ghostBEdges.visible = false;
   hideNoseGhost();
   hideWidthRect();
+}
+
+// Board sketch: the path being drawn is one preallocated line (only its
+// positions change on a pointer move). The closed shape becomes a solid once.
+const SKETCH_MAX = 512;
+const sketchGeo = new THREE.BufferGeometry();
+sketchGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3));
+const sketchMat = new THREE.LineBasicMaterial({ color: 0x4f86e0, depthTest: false, transparent: true });
+const sketchLine = new THREE.Line(sketchGeo, sketchMat);
+sketchLine.frustumCulled = false;
+sketchLine.renderOrder = 29;
+sketchLine.visible = false;
+scene.add(sketchLine);
+
+/** `points` = world {x, y, z}; `closed` joins the last to the first; `bad` draws it red. */
+export function showSketchPath(points, { closed = false, bad = false } = {}) {
+  const n = Math.min(points.length, SKETCH_MAX - 1);
+  if (n < 2) { sketchLine.visible = false; return; }
+  const pos = sketchGeo.attributes.position;
+  for (let i = 0; i < n; i += 1) pos.setXYZ(i, points[i].x, points[i].y, points[i].z);
+  let count = n;
+  if (closed) { pos.setXYZ(n, points[0].x, points[0].y, points[0].z); count += 1; }
+  pos.needsUpdate = true;
+  sketchGeo.setDrawRange(0, count);
+  sketchMat.color.setHex(bad ? 0xd94b4b : 0x4f86e0);
+  sketchLine.visible = true;
+}
+export function hideSketchPath() {
+  sketchLine.visible = false;
+}
+
+let sketchSolid = null;
+const sketchSolidMat = new THREE.MeshBasicMaterial({ color: 0x4f86e0, transparent: true, opacity: 0.22, side: THREE.DoubleSide, depthWrite: false });
+const sketchEdgeMat = new THREE.LineBasicMaterial({ color: 0x4f86e0 });
+const sketchSkinMat = new THREE.MeshBasicMaterial({ transparent: true, opacity: 0.75, side: THREE.DoubleSide, depthWrite: false, polygonOffset: true, polygonOffsetFactor: -1, polygonOffsetUnits: -1 });
+
+/** Shape (u, v, w) → world for a face whose normal is `axis`, w measured from `t`. */
+function uvwMatrix(axis, t) {
+  if (axis === "x") return new THREE.Matrix4().set(0, 0, 1, t, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1);
+  if (axis === "y") return new THREE.Matrix4().set(1, 0, 0, 0, 0, 0, 1, t, 0, 1, 0, 0, 0, 0, 0, 1);
+  return new THREE.Matrix4().set(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, t, 0, 0, 0, 1);
+}
+
+/**
+ * Boards `[{ outer, holes }]` ([u, v] rings on the face) as slabs from t0 to
+ * t1 along the face normal. `colour` (hex) paints a skin at `colourAt`. Built
+ * once per call; the previous one is disposed.
+ */
+export function showSketchSolid(axis, shapes, t0, t1, { colour = null, colourAt = null, bad = false } = {}) {
+  hideSketchSolid();
+  if (!shapes || !shapes.length) return;
+  sketchSolid = new THREE.Group();
+  sketchEdgeMat.color.setHex(bad ? 0xf0a050 : 0x4f86e0);
+  if (colour != null) sketchSkinMat.color.setHex(colour);
+  for (const s of shapes) {
+    if (!s.outer || s.outer.length < 3) continue;
+    const shape = new THREE.Shape(s.outer.map(([u, v]) => new THREE.Vector2(u, v)));
+    for (const h of s.holes || []) shape.holes.push(new THREE.Path(h.map(([u, v]) => new THREE.Vector2(u, v))));
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(t1 - t0, 0.1), bevelEnabled: false });
+    geo.applyMatrix4(uvwMatrix(axis, t0));
+    sketchSolid.add(new THREE.Mesh(geo, sketchSolidMat));
+    const edges = new THREE.LineSegments(new THREE.EdgesGeometry(geo), sketchEdgeMat);
+    edges.renderOrder = 6;
+    sketchSolid.add(edges);
+    if (colour != null && colourAt != null) {
+      const skin = new THREE.ShapeGeometry(shape);
+      skin.applyMatrix4(uvwMatrix(axis, colourAt));
+      const m = new THREE.Mesh(skin, sketchSkinMat);
+      m.renderOrder = 7;
+      sketchSolid.add(m);
+    }
+  }
+  scene.add(sketchSolid);
+}
+
+// Closed shapes already in the sketch: one line set, rebuilt when a shape is added or removed.
+let sketchProfiles = null;
+const sketchProfileMat = new THREE.LineBasicMaterial({ color: 0xd8dde4, depthTest: false, transparent: true });
+/** `rings` = closed loops of world {x, y, z}. */
+export function showSketchProfiles(rings) {
+  hideSketchProfiles();
+  const pos = [];
+  for (const r of rings || []) {
+    for (let i = 0; i < r.length; i += 1) {
+      const a = r[i];
+      const b = r[(i + 1) % r.length];
+      pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+    }
+  }
+  if (!pos.length) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  sketchProfiles = new THREE.LineSegments(geo, sketchProfileMat);
+  sketchProfiles.renderOrder = 28;
+  sketchProfiles.frustumCulled = false;
+  scene.add(sketchProfiles);
+}
+export function hideSketchProfiles() {
+  if (!sketchProfiles) return;
+  scene.remove(sketchProfiles);
+  sketchProfiles.geometry.dispose();
+  sketchProfiles = null;
+}
+export function hideSketchSolid() {
+  if (!sketchSolid) return;
+  scene.remove(sketchSolid);
+  sketchSolid.traverse((o) => { if (o.geometry) o.geometry.dispose(); });
+  sketchSolid = null;
 }
 
 /**
@@ -1056,14 +1170,20 @@ snapMarker.visible = false;
 snapMarker.renderOrder = 30;
 scene.add(snapMarker);
 
+/** Screen-sized marker: ortho uses the view height, perspective uses distance. */
+function markerRadius(pos) {
+  const cam = activeCamera();
+  const h = canvas.clientHeight || 800;
+  if (cam.isOrthographicCamera) return Math.max(6, (10 * (cam.top - cam.bottom)) / ((cam.zoom || 1) * h));
+  return Math.max(6, pos.distanceTo(cam.position) * 0.004);
+}
+
 export function showSnapMarker(x, y, z, { feature = true } = {}) {
   snapMarker.visible = true;
   snapMarker.material = feature ? snapMat : gridMat;
   snapMarker.position.set(x, y, z);
   // Keep the marker a roughly constant screen size.
-  const dist = snapMarker.position.distanceTo(camera.position);
-  const r = Math.max(6, dist * 0.004) * (feature ? 1 : 0.6);
-  snapMarker.scale.setScalar(r);
+  snapMarker.scale.setScalar(markerRadius(snapMarker.position) * (feature ? 1 : 0.6));
 }
 export function hideSnapMarker() {
   snapMarker.visible = false;
@@ -1104,8 +1224,7 @@ export function showInference(from, to, dir) {
   inferLine.visible = true;
   onLineMarker.visible = true;
   onLineMarker.position.set(to.x, to.y, to.z);
-  const dist = onLineMarker.position.distanceTo(camera.position);
-  onLineMarker.scale.setScalar(Math.max(8, dist * 0.005));
+  onLineMarker.scale.setScalar(markerRadius(onLineMarker.position));
 }
 export function hideInference() {
   inferLine.visible = false;

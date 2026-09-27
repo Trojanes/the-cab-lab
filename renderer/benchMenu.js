@@ -5,9 +5,11 @@
 import * as THREE from "three";
 import { canvas, rayFromClient } from "./space.js";
 import { pickables } from "./cabinets3d.js";
+import { wallPickables } from "./walls3d.js";
 import { MODULES } from "./modules.js";
 import * as job from "./job.js";
 import { log } from "./log.js";
+import { startFitPick, cancelFitPick, isFitPicking, boardRightClick } from "./interact.js";
 
 const bridge = window.cablab || null;
 
@@ -69,10 +71,28 @@ canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
   const d = rightDown;
   rightDown = null;
+  if (isFitPicking()) { cancelFitPick("right-click"); return; }
   if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
+  if (boardRightClick()) return;
   const ray = rayFromClient(e.clientX, e.clientY);
   const rc = new THREE.Raycaster(ray.origin, ray.direction);
-  const hit = rc.intersectObjects(pickables(), false).find((h) => h.object.userData.kind === "board");
+  const hits = rc.intersectObjects([...pickables(), ...wallPickables()], false);
+  const first = hits[0];
+  const ud = first && first.object.userData;
+  if (ud && (ud.kind === "wall" || ud.wallId)) {
+    const wall = job.getWall(ud.wallId);
+    if (!wall) return;
+    const cabs = job.getJob().cabinets;
+    const ready = cabs.some((c) => c.moduleId === "overheadCabinet") && cabs.some((c) => c.moduleId === "kitchenCabinet");
+    const items = [
+      { title: wall.id },
+      { label: "Fit to cabinets", disabled: !ready, run: () => startFitPick(wall.id) },
+    ];
+    if (wall.fit) items.push({ label: "Clear cabinet fit", run: () => job.setWallFit(wall.id, null, "clear") });
+    showContextMenu(e.clientX, e.clientY, items);
+    return;
+  }
+  const hit = hits.find((h) => h.object.userData.kind === "board");
   if (!hit) return;
   const cab = job.getJob().cabinets.find((c) => c.id === hit.object.userData.cabId);
   if (!cab) return;

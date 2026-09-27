@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 contextBridge.exposeInMainWorld("cablab", {
   openJob: () => ipcRenderer.invoke("job:open"),
   saveJob: (filePath, text) => ipcRenderer.invoke("job:save", filePath, text),
+  saveCnjob: (filePath, snapshotJson) => ipcRenderer.invoke("cnjob:save", filePath, snapshotJson),
   openDxf: () => ipcRenderer.invoke("dxf:open"),
   readSettings: () => ipcRenderer.invoke("settings:read"),
   writeSettings: (text) => ipcRenderer.invoke("settings:write", text),

@@ -81,5 +81,5 @@ export function buildTallFaces(fb: {
     });
   }
 
-  return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
+  return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(fb.boards));
 }

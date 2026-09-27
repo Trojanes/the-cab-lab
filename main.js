@@ -27,6 +27,7 @@ if (gotSingleInstanceLock) {
 }
 
 const JOB_FILTERS = [{ name: "Cab Lab job", extensions: ["json"] }];
+const CNJOB_FILTERS = [{ name: "OmniCAM job", extensions: ["cnjob"] }];
 const DXF_FILTERS = [{ name: "DXF drawing", extensions: ["dxf"] }];
 
 // --- user settings -------------------------------------------------------------
@@ -128,6 +129,25 @@ ipcMain.handle("job:save", async (event, filePath, text) => {
     target = res.filePath;
   }
   fs.writeFileSync(target, text, "utf8");
+  return target;
+});
+
+ipcMain.handle("cnjob:save", async (event, defaultPath, snapshotJson) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const res = await dialog.showSaveDialog(win, { defaultPath: defaultPath || "job.cnjob", filters: CNJOB_FILTERS });
+  if (res.canceled || !res.filePath) return null;
+  let target = res.filePath;
+  if (!target.toLowerCase().endsWith(".cnjob")) target += ".cnjob";
+  const { zipStore } = require("./cnjobZip.js");
+  const manifest = JSON.stringify({
+    format: "cabinetnc.manufacturing-snapshot",
+    schemaVersion: "1.1.0",
+    payload: "snapshot.json",
+  });
+  fs.writeFileSync(target, zipStore([
+    { name: "manifest.json", data: Buffer.from(manifest) },
+    { name: "snapshot.json", data: Buffer.from(String(snapshotJson)) },
+  ]));
   return target;
 });
 

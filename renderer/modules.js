@@ -3,7 +3,8 @@
 // divider handles exist. The renderer only reads this; formulas stay in the
 // generators.
 import { generateSmallCabinet, generateSmallCabinetSvgPreview } from "./gen/smallCabinet.js";
-import { generateBedroomEast, EAST_MATTRESS_DEPTH_MM, EAST_BODY_DEPTH_MM, EAST_BOOT_HEIGHT_MM, EAST_WARDROBE_DEFAULT_MM, EAST_WARDROBE_MIN_MM, EAST_MATTRESS_MIN_MM, eastWardrobeMax } from "./gen/bedroomEast.js";
+import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, setOhcBoundary as setBedroomOhcBoundary, equalOhcZones as bedroomEqualOhcZones, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES, WARDROBE_STYLES as BEDROOM_WARDROBE_STYLES } from "./gen/bedroom.js";
+import { generateBedroomEast, eastWardrobeMax, eastEqualBays, eastSetBayBoundary, eastOhcBottomLimits, RULES as EAST_RULES } from "./gen/bedroomEast.js";
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
@@ -12,6 +13,8 @@ import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview } from 
 import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
+import { generateSketchBoard } from "./gen/sketchBoard.js";
+import { localBoxOf } from "./sketchBoard.js";
 
 function materialsOf(materials) {
   return {
@@ -1183,49 +1186,146 @@ const loungeGenerator = {
 
 const bedroomEast = {
   id: "bedroomEast",
-  label: "东西向",
-  sub: "wardrobe left · bed on the right",
+  label: "East-west",
+  sub: "wardrobe left · mattress across",
   placement: "nose",
-  fixedDepth: EAST_MATTRESS_DEPTH_MM,
+  fixedDepth: EAST_RULES.MATTRESS_DEPTH_MM.value,
   single: true,
   roofAware: true,
   volumeOnly: true,
   panel: "bedroomEast",
-  defaultSize: { W: 2275, D: EAST_MATTRESS_DEPTH_MM, H: 1797 },
-  minSize: { W: EAST_WARDROBE_MIN_MM + EAST_MATTRESS_MIN_MM, D: EAST_MATTRESS_DEPTH_MM, H: 600 },
+  defaultSize: { W: 2275, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: 1797 },
+  minSize: { W: EAST_RULES.WARDROBE_MIN_MM.value + 1, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: 600 },
   defaults(W, D, H, materials) {
     const { stock } = materialsOf(materials);
     const width = round1(W);
+    const depth = EAST_RULES.MATTRESS_DEPTH_MM.value;
     return {
       width,
-      depth: EAST_MATTRESS_DEPTH_MM,
+      depth,
       height: round1(H),
-      roofProfile: [[0, round1(H)], [EAST_BODY_DEPTH_MM, round1(H)]],
-      wardrobeWidth: Math.min(EAST_WARDROBE_DEFAULT_MM, eastWardrobeMax(width)),
-      bootHeight: EAST_BOOT_HEIGHT_MM,
+      roofProfile: [[0, round1(H)], [depth, round1(H)]],
+      wardrobeWidth: eastWardrobeMax(width),
+      ohcBottom: EAST_RULES.OHC_BOTTOM_DEFAULT_MM.value,
       panelThickness: thickness(stock, "carcass"),
     };
   },
+  ohcBottomLimits(params) { return eastOhcBottomLimits(params); },
+  setOhcBottom(params, value) {
+    const lim = eastOhcBottomLimits(params);
+    return { ...params, ohcBottom: round1(Math.max(lim.min, Math.min(lim.max, value))) };
+  },
+  setOhcCount(params, count) { return { ...params, ohcZones: eastEqualBays(params, count) }; },
   generate(params) { return generateBedroomEast(params); },
-  envelope(params) { return { W: params.width, D: EAST_MATTRESS_DEPTH_MM, H: params.height }; },
+  envelope(params) { return { W: params.width, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: params.height }; },
   setEnvelope(params, { W, H }) {
-    const next = { ...params, depth: EAST_MATTRESS_DEPTH_MM };
+    const next = { ...params, depth: EAST_RULES.MATTRESS_DEPTH_MM.value };
     if (W != null) {
       next.width = round1(W);
-      next.wardrobeWidth = Math.min(next.wardrobeWidth ?? EAST_WARDROBE_DEFAULT_MM, eastWardrobeMax(next.width));
+      next.wardrobeWidth = Math.min(next.wardrobeWidth ?? eastWardrobeMax(next.width), eastWardrobeMax(next.width));
     }
     if (H != null) next.height = round1(H);
     return next;
   },
-  dividers(params) {
-    const W = params.width;
-    const max = eastWardrobeMax(W);
-    return [{ index: 0, key: "wardrobeWidth", axis: "x", pos: params.wardrobeWidth, min: EAST_WARDROBE_MIN_MM, max, span: [EAST_BOOT_HEIGHT_MM, params.height], front: 20 }];
+  /** Width, height and roof come from the vehicle, like the north-south body. */
+  withSpace(params, resolved, pose) {
+    const next = bedroom.withSpace({ ...params, depth: EAST_RULES.MATTRESS_DEPTH_MM.value }, resolved, pose);
+    if (next.width !== params.width && params.wardrobeWidth > eastWardrobeMax(next.width)) {
+      return { ...next, wardrobeWidth: eastWardrobeMax(next.width) };
+    }
+    return next.width === params.width && next.height === params.height && next.roofProfile === params.roofProfile && next.depth === params.depth ? params : next;
   },
-  setDivider(params, _result, _index, pos) {
-    const max = eastWardrobeMax(params.width);
-    const wardrobeWidth = round1(Math.max(EAST_WARDROBE_MIN_MM, Math.min(max, pos)));
+  envelopeProfile(params) {
+    return params.roofProfile || [[0, params.height], [EAST_RULES.MATTRESS_DEPTH_MM.value, params.height]];
+  },
+  /**
+   * Orange bars on the body's room face: the wardrobe face, the overhead
+   * underside, and one per overhead bay boundary.
+   */
+  dividers(params, result) {
+    if (!result || result.validation?.errors?.length) return [];
+    const rp = result.params;
+    const W = rp.width;
+    const front = -(EAST_RULES.MATTRESS_DEPTH_MM.value - EAST_RULES.BODY_DEPTH_MM.value) + 20;
+    const boot = rp.bootHeight;
+    const wardTop = result.zones.find((z) => z.id === "wardrobe")?.z1 ?? rp.height;
+    const ohcTop = result.zones.find((z) => z.id === "ohc")?.z1 ?? rp.height;
+    const ob = eastOhcBottomLimits(rp);
+    const bars = [
+      { index: 0, key: "wardrobeWidth", axis: "x", pos: rp.wardrobeWidth, min: EAST_RULES.WARDROBE_MIN_MM.value, max: eastWardrobeMax(W), span: [boot, wardTop], front },
+      { index: 1, key: "ohcBottom", axis: "z", pos: rp.ohcBottom, min: ob.min, max: ob.max, span: [rp.wardrobeWidth, W], front },
+    ];
+    const bays = result.layout?.ohc?.zones || [];
+    bays.slice(0, -1).forEach((bay, i) => {
+      const total = bay.width + bays[i + 1].width;
+      bars.push({ index: bars.length, key: "ohcZone", zoneIndex: i, axis: "x", pos: bay.x1, min: round1(bay.x0 + EAST_RULES.OHC_ZONE_MIN_MM.value), max: round1(bay.x0 + total - EAST_RULES.OHC_ZONE_MIN_MM.value), span: [rp.ohcBottom, ohcTop], front });
+    });
+    return bars;
+  },
+  setDivider(params, result, index, pos) {
+    const d = this.dividers(params, result).find((b) => b.index === index);
+    if (!d) return params;
+    if (d.key === "ohcZone") {
+      const bays = eastSetBayBoundary(params, d.zoneIndex, Math.round(pos));
+      return bays ? { ...params, ohcZones: bays } : params;
+    }
+    if (d.key === "ohcBottom") return this.setOhcBottom(params, Math.round(pos));
+    const wardrobeWidth = round1(Math.max(EAST_RULES.WARDROBE_MIN_MM.value, Math.min(eastWardrobeMax(params.width), pos)));
     return { ...params, wardrobeWidth };
+  },
+};
+
+const sketchBoard = {
+  id: "sketchBoard",
+  label: "Board",
+  sub: "one rectangle on a face",
+  panel: "sketch",
+  /** Started from the command bar, not the module rail. */
+  command: true,
+  noOrient: "a drawn board stays on the face it was sketched on",
+  handles: [],
+  resizeFaces: [],
+  minSize: { W: 50, D: 50, H: 1 },
+  defaultSize: { W: 400, D: 600, H: 16 },
+
+  defaults(_w, _d, _h, materials) {
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
+    return {
+      plane: "XY",
+      pull: 1,
+      outline: [{ u: 0, v: 0 }, { u: 400, v: 0 }, { u: 400, v: 600 }, { u: 0, v: 600 }],
+      stock: { kind: "carcass", thickness: thickness(stock, "carcass") },
+      carcassColorName: color.carcassColorName,
+      colorFace: "pull",
+    };
+  },
+
+  generate(params) {
+    return generateSketchBoard(params);
+  },
+
+  envelope(params) {
+    const b = localBoxOf(params);
+    return { W: b.W, D: b.D, H: b.H };
+  },
+
+  /** Real local box, including a slab that grows back through t = 0. */
+  localBox(params) {
+    return localBoxOf(params);
+  },
+
+  footprintBoxes(params) {
+    const b = localBoxOf(params);
+    return [{ id: "board", x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, z0: b.z0, z1: b.z1 }];
+  },
+
+  setEnvelope(params) {
+    return params;
+  },
+
+  dividers() {
+    return [];
   },
 };
 
@@ -1239,6 +1339,7 @@ export const MODULES = {
   generalTallCabinet,
   loungeGenerator,
   bedSideTable,
+  sketchBoard,
 };
 
 /**
@@ -1272,10 +1373,10 @@ export const MODULE_GROUPS = [
   {
     id: "bedroom",
     label: "Bedroom",
-    sub: "南北 / 东西",
+    sub: "north-south / east-west",
     items: [
-      { moduleId: "bedroom", label: "南北向", sub: "wardrobes both sides" },
-      { moduleId: "bedroomEast", label: "东西向", sub: "wardrobe left · mattress 1570" },
+      { moduleId: "bedroom", label: "North-south", sub: "wardrobes both sides" },
+      { moduleId: "bedroomEast", label: "East-west", sub: "wardrobe left · mattress across" },
       { moduleId: "bedBox", label: "Bed Box", sub: "bed base · needs the body" },
       { moduleId: "bedSideTable", label: "Bed Side Table", sub: "pair · needs the body" },
     ],

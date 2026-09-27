@@ -3,12 +3,13 @@
  * y=0 是门背。门在 −门厚..0。侧板后缘 = midDepth。立板从 y=0 起，比门厚基准朝前一个门厚。
  * 顶轨后缘停在立板前脸之前一个门厚。底部横桥在避让打开时抬到避让高度。
  */
-import { beginProvenance, dim, endProvenance, param, ref, same } from "../_lib/dim.ts";
+import { beginProvenance, dim, endProvenance, ex, lit, param, ref, same, valueOf, type Expr } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox } from "../_lib/recordBox.ts";
+import { evalExpr, recordLoop } from "../_lib/trace.ts";
 import { buildTallFaces } from "./faces.ts";
 import type {
   Board, GTParams, GTResult, GTZone, GTZoneType, HingeRecord, Joint,
@@ -274,6 +275,18 @@ function yz(pts: [number, number][]): P2[] {
   return pts.map(([y, z]) => ({ y: r2(y), z: r2(z) }));
 }
 
+function link(key: string): Expr {
+  return ex({ v: ref(key) }, (t) => t.v, `= ${key}`);
+}
+
+function yzTrace(id: string, pairs: [Expr, Expr][]): P2[] {
+  return recordLoop(id, ["y", "z"], pairs, true).map(([y, z]) => ({ y, z }));
+}
+
+function xyTrace(id: string, pairs: [Expr, Expr][]): P2[] {
+  return recordLoop(id, ["x", "y"], pairs, true).map(([x, y]) => ({ x, y }));
+}
+
 function mkBoard(
   id: string, name: string, category: string, boardType: string, thickness: number,
   kind: "carcass" | "door",
@@ -294,112 +307,285 @@ function mkBoard(
 /* ================= V 立梃轮廓 ================= */
 
 /** V1/V2 轮廓，点已经是柜体 Y。整体比门厚基准朝前一个门厚，前脸贴在顶轨后缘。 */
-function v12Profile(s: S, slots: { z0: number; z1: number }[], yOrigin: number): P2[] {
-  const CH = s.CH;
-  const tRear = R.V12_Y_REAR.value;
-  const slotY = R.V12_ZI_SLOT_INNER.value;
-  const frontY = R.V12_Y_FRONT_FACE.value;
-  const stepY = R.V12_Y_STEP_INNER.value;
+function v12Profile(s: S, slots: { z0: number; z1: number; boundaryId: string }[], id: string): P2[] {
+  const shift = (localKey: string): Expr => ex(
+    { y: ref(localKey), o: ref("tall.stileY0") },
+    (t) => t.y + t.o,
+    `${localKey.slice("tall.v12.".length)} + stileY0`,
+  );
+  const front = shift("tall.v12.front");
+  const rear = shift("tall.v12.rear");
+  const step = shift("tall.v12.step");
+  const slotY = shift("tall.v12.slot");
+  const zero = lit(0);
+  const CH = link("tall.CH");
   const topStyle1 = s.topSys.style === "style_1";
   const botStyle1 = s.botSys.style === "style_1";
-  const notchD = R.STYLE_2_END_NOTCH_DEPTH.value;
-  const notchT = R.V34_END_NOTCH_THICKNESS.value;
-  const pts: [number, number][] = botStyle1 ? [[frontY, 0], [tRear, 0]] : [[tRear, 0]];
+  const pairs: [Expr, Expr][] = botStyle1 ? [[front, zero], [rear, zero]] : [[rear, zero]];
   for (const sl of slots) {
-    pts.push([tRear, r2(sl.z0)], [slotY, r2(sl.z0)], [slotY, r2(sl.z1)], [tRear, r2(sl.z1)]);
+    const z0 = link(`tall.slot.${sl.boundaryId}.z0`);
+    const z1 = link(`tall.slot.${sl.boundaryId}.z1`);
+    pairs.push([rear, z0], [slotY, z0], [slotY, z1], [rear, z1]);
   }
-  pts.push([tRear, CH]);
+  pairs.push([rear, CH]);
   if (topStyle1) {
-    const insT = R.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    const topFrontRail = r2(CH - (s.topSys.railH - insT));
-    pts.push(
-      [frontY, CH], [frontY, topFrontRail], [stepY, topFrontRail],
-      [stepY, r2(topFrontRail - insT)], [0, r2(topFrontRail - insT)],
-    );
+    dim(`${id}.topRail`, { CH: ref("tall.CH"), railH: ref("tall.topRailH"), ins: ref("tall.insertT") }, (t) => Math.round((t.CH - (t.railH - t.ins)) * 1000) / 1000, { formula: "CH - (railH - insertT)" });
+    dim(`${id}.topBelow`, { rail: ref(`${id}.topRail`), ins: ref("tall.insertT") }, (t) => Math.round((t.rail - t.ins) * 1000) / 1000, { formula: "topRail - insertT" });
+    const topRail = link(`${id}.topRail`);
+    const below = link(`${id}.topBelow`);
+    pairs.push([front, CH], [front, topRail], [step, topRail], [step, below], [zero, below]);
   } else {
-    pts.push([notchD, CH], [notchD, r2(CH - notchT)], [0, r2(CH - notchT)]);
+    const notchD = shift("tall.v12.notchD");
+    const notchZ = ex({ CH: ref("tall.CH"), t: ref("tall.notchT") }, (t) => Math.round((t.CH - t.t) * 1000) / 1000, "CH - notchT");
+    pairs.push([notchD, CH], [notchD, notchZ], [zero, notchZ]);
   }
   if (botStyle1) {
-    const insT = R.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    const botRail = s.botSys.railH;
-    pts.push(
-      [0, r2(botRail)], [stepY, r2(botRail)], [stepY, r2(botRail - insT)],
-      [frontY, r2(botRail - insT)], [frontY, 0],
-    );
+    const botRail = link("tall.botRailH");
+    const below = ex({ rail: ref("tall.botRailH"), ins: ref("tall.insertT") }, (t) => Math.round((t.rail - t.ins) * 1000) / 1000, "botRail - insertT");
+    pairs.push([zero, botRail], [step, botRail], [step, below], [front, below], [front, zero]);
   } else {
-    pts.push([0, notchT], [notchD, notchT], [notchD, 0], [tRear, 0]);
+    const notchD = shift("tall.v12.notchD");
+    const notchT = link("tall.notchT");
+    pairs.push([zero, notchT], [notchD, notchT], [notchD, zero], [rear, zero]);
   }
-  return yz(pts.map(([y, z]) => [y + yOrigin, z]));
+  return yzTrace(id, pairs);
 }
 
 /**
  * V3/V4 轮廓，直接写成柜体 Y（后立梃贴墙：局部 0 = 柜体 yOff = midDepth−150）。
  * 路径与 spec §8.3 一致：底边 → 后缘上到顶 L 缺口 → 沿前缘下行插入 Zi 槽。
  */
-function v34Profile(s: S, slots: { z0: number; z1: number }[], warnings: string[], yOff: number, rear = R.V34_Y_REAR.value): P2[] {
-  const CH = s.CH;
-  const tRear = rear;
-  const slotY = R.V34_ZI_SLOT_INNER.value;
-  const nh = R.V34_NOTCH_HEIGHT.value;
-  const ni = Math.max(0, tRear - (R.V34_Y_REAR.value - R.V34_TOP_NOTCH_INNER_Y.value));
-  const nf = Math.max(0, Math.min(ni, tRear - (R.V34_Y_REAR.value - R.V34_TOP_NOTCH_FRONT_Y.value)));
-  const nt = R.V34_END_NOTCH_THICKNESS.value;
-  const Y = (y: number) => r2(y + yOff);
-  const kept: { z0: number; z1: number }[] = [];
-  for (const sl of slots) {
-    if (sl.z0 < CH - nh && sl.z1 > 0) kept.push(sl);
-    else warnings.push(`Zi slot at z [${r2(sl.z0)}, ${r2(sl.z1)}] intersects avoidance/edge on V3/V4; slot omitted.`);
-  }
-  kept.sort((a, b) => b.z1 - a.z1);
-  let start: [number, number][];
-  if (s.avoid.enabled && s.avoid.height > 0 && s.avoid.depth > 0) {
-    const ah = s.avoid.height, ad = s.avoid.depth;
-    if (ad <= 150) {
-      start = [
-        [0, 0], [R.V_AVOIDANCE_PARTIAL_FRONT_Y.value, 0],
-        [R.V_AVOIDANCE_PARTIAL_FRONT_Y.value, ah], [tRear, ah],
-      ];
-    } else {
-      start = [[0, ah], [tRear, ah]];
-    }
+function v34Profile(s: S, slots: { z0: number; z1: number; boundaryId: string }[], warnings: string[], id: string): P2[] {
+  const CH = link("tall.CH");
+  const rear = link("tall.v34.rear");
+  const off = link("tall.v34.yOff");
+  const yAt = (local: Expr, name: string) => {
+    dim(`${id}.ly.${name}`, local.terms, local.fn, { formula: local.formula });
+    return ex({ y: ref(`${id}.ly.${name}`), off: ref("tall.v34.yOff") }, (t) => Math.round((t.y + t.off) * 1000) / 1000, `${local.formula ?? name} + yOff`);
+  };
+  const slotY = yAt(ex({ y: R.V34_ZI_SLOT_INNER }, (t) => t.y, "V34_ZI_SLOT_INNER"), "slot");
+  const yRear = yAt(rear, "rear");
+  const yZero = off;
+  dim(`${id}.ni`, {
+    rear: ref("tall.v34.rear"), span: R.V34_Y_REAR, inner: R.V34_TOP_NOTCH_INNER_Y,
+  }, (t) => Math.max(0, t.rear - (t.span - t.inner)), { formula: "max(0, rear - (V34_Y_REAR - notchInner))" });
+  dim(`${id}.nf`, {
+    ni: ref(`${id}.ni`), rear: ref("tall.v34.rear"), span: R.V34_Y_REAR, front: R.V34_TOP_NOTCH_FRONT_Y,
+  }, (t) => Math.max(0, Math.min(t.ni, t.rear - (t.span - t.front))), { formula: "max(0, min(ni, rear - (V34_Y_REAR - notchFront)))" });
+  const yNi = yAt(link(`${id}.ni`), "ni");
+  const yNf = yAt(link(`${id}.nf`), "nf");
+  const zNotch = ex({ CH: ref("tall.CH"), nh: R.V34_NOTCH_HEIGHT }, (t) => Math.round((t.CH - t.nh) * 1000) / 1000, "CH - notchH");
+  const zThick = ex({ CH: ref("tall.CH"), nt: R.V34_END_NOTCH_THICKNESS }, (t) => Math.round((t.CH - t.nt) * 1000) / 1000, "CH - notchT");
+  const kept = slots.filter((sl) => {
+    const ok = sl.z0 < s.CH - R.V34_NOTCH_HEIGHT.value && sl.z1 > 0;
+    if (!ok) warnings.push(`Zi slot at z [${r2(sl.z0)}, ${r2(sl.z1)}] intersects avoidance/edge on V3/V4; slot omitted.`);
+    return ok;
+  }).sort((a, b) => b.z1 - a.z1);
+  const pairs: [Expr, Expr][] = [];
+  const ah = s.avoid.enabled && s.avoid.height > 0 && s.avoid.depth > 0 ? s.avoid.height : 0;
+  if (ah > 0 && s.avoid.depth <= 150) {
+    const yPartial = yAt(ex({ y: R.V_AVOIDANCE_PARTIAL_FRONT_Y }, (t) => t.y, "V_AVOIDANCE_PARTIAL_FRONT_Y"), "partial");
+    const zAh = ex({ h: ah }, (t) => t.h, "avoidH");
+    pairs.push([yZero, lit(0)], [yPartial, lit(0)], [yPartial, zAh], [yRear, zAh]);
+  } else if (ah > 0) {
+    const zAh = ex({ h: ah }, (t) => t.h, "avoidH");
+    pairs.push([yZero, zAh], [yRear, zAh]);
   } else {
-    start = [[0, 0], [tRear, 0]];
+    pairs.push([yZero, lit(0)], [yRear, lit(0)]);
   }
-  const pts: [number, number][] = [
-    ...start,
-    [tRear, r2(CH - nh)], [ni, r2(CH - nh)], [ni, r2(CH - nt)], [nf, r2(CH - nt)], [nf, CH], [0, CH],
-  ];
+  const zStart = pairs[0][1];
+  pairs.push([yRear, zNotch], [yNi, zNotch], [yNi, zThick], [yNf, zThick], [yNf, CH], [yZero, CH]);
   for (const sl of kept) {
-    pts.push([0, r2(sl.z1)], [slotY, r2(sl.z1)], [slotY, r2(sl.z0)], [0, r2(sl.z0)]);
+    const z0 = link(`tall.slot.${sl.boundaryId}.z0`);
+    const z1 = link(`tall.slot.${sl.boundaryId}.z1`);
+    pairs.push([yZero, z1], [slotY, z1], [slotY, z0], [yZero, z0]);
   }
-  pts.push([0, start[0][1]]);
-  return yz(pts.map(([y, z]) => [Y(y), z]));
+  pairs.push([yZero, zStart]);
+  return yzTrace(id, pairs);
 }
 
 /* ================= Zi 边界板轮廓（柜体坐标，x 从侧板内缘起） ================= */
 
-function fullZiProfile(s: S): P2[] {
-  const x = (v: number) => r2(v + s.dx);
-  const mw = s.midWidth, md = s.midDepth, nd = R.ZI_FULL_FRONT_REAR_NOTCH_DEPTH.value;
-  return [
-    { x: x(s.CPT), y: 0 }, { x: x(s.CPT), y: nd }, { x: x(0), y: nd }, { x: x(0), y: r2(md - nd) },
-    { x: x(s.CPT), y: r2(md - nd) }, { x: x(s.CPT), y: md }, { x: x(mw - s.CPT), y: md },
-    { x: x(mw - s.CPT), y: r2(md - nd) }, { x: x(mw), y: r2(md - nd) }, { x: x(mw), y: nd },
-    { x: x(mw - s.CPT), y: nd }, { x: x(mw - s.CPT), y: 0 }, { x: x(s.CPT), y: 0 },
-  ];
+function xOf(id: string, name: string, local: Expr): Expr {
+  dim(`${id}.lx.${name}`, local.terms, local.fn, { formula: local.formula });
+  return ex({ x: ref(`${id}.lx.${name}`), dx: ref("tall.leftT") }, (t) => Math.round((t.x + t.dx) * 1000) / 1000, `${local.formula ?? name} + leftSide`);
 }
-function halfZiProfile(s: S): P2[] {
-  const x = (v: number) => r2(v + s.dx);
-  const mw = s.midWidth;
-  const nd = R.ZI_HALF_FRONT_NOTCH_DEPTH.value;
-  const dep = R.ZI_HALF_DEPTH.value;
-  return [
-    { x: x(0), y: 0 }, { x: x(0), y: nd }, { x: x(s.CPT), y: nd }, { x: x(s.CPT), y: dep },
-    { x: x(mw - s.CPT), y: dep }, { x: x(mw - s.CPT), y: nd }, { x: x(mw), y: nd }, { x: x(mw), y: 0 }, { x: x(0), y: 0 },
-  ];
+
+function fullZiProfile(id: string, yCap: number | null): P2[] {
+  const capY = (e: Expr, name: string): Expr => {
+    if (yCap == null) return e;
+    dim(`${id}.yc.${name}`, e.terms, e.fn, { formula: e.formula });
+    return ex({ y: ref(`${id}.yc.${name}`), cap: yCap }, (t) => Math.min(t.y, t.cap), `min(${e.formula ?? name}, avoidShort)`);
+  };
+  const cpt = ex({ CPT: ref("tall.CPT") }, (t) => t.CPT, "CPT");
+  const zero = lit(0);
+  const mw = link("tall.mw");
+  const md = link("tall.md");
+  const nd = ex({ d: R.ZI_FULL_FRONT_REAR_NOTCH_DEPTH }, (t) => t.d, "ZI_FULL_FRONT_REAR_NOTCH_DEPTH");
+  const back = ex({ md: ref("tall.md"), d: R.ZI_FULL_FRONT_REAR_NOTCH_DEPTH }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - notch");
+  const xCpt = xOf(id, "cpt", cpt);
+  const x0 = xOf(id, "0", zero);
+  const xMw = xOf(id, "mw", mw);
+  const xMwC = xOf(id, "mwC", ex({ mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => t.mw - t.CPT, "midWidth - CPT"));
+  const y0 = capY(lit(0), "0");
+  const yNd = capY(nd, "nd");
+  const yBack = capY(back, "back");
+  const yMd = capY(md, "md");
+  return xyTrace(id, [
+    [xCpt, y0], [xCpt, yNd], [x0, yNd], [x0, yBack], [xCpt, yBack], [xCpt, yMd], [xMwC, yMd],
+    [xMwC, yBack], [xMw, yBack], [xMw, yNd], [xMwC, yNd], [xMwC, y0], [xCpt, y0],
+  ]);
+}
+
+function halfZiProfile(id: string): P2[] {
+  const cpt = ex({ CPT: ref("tall.CPT") }, (t) => t.CPT, "CPT");
+  const zero = lit(0);
+  const nd = ex({ d: R.ZI_HALF_FRONT_NOTCH_DEPTH }, (t) => t.d, "ZI_HALF_FRONT_NOTCH_DEPTH");
+  const dep = ex({ d: R.ZI_HALF_DEPTH }, (t) => t.d, "ZI_HALF_DEPTH");
+  const x0 = xOf(id, "0", zero);
+  const xCpt = xOf(id, "cpt", cpt);
+  const xMw = xOf(id, "mw", link("tall.mw"));
+  const xMwC = xOf(id, "mwC", ex({ mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => t.mw - t.CPT, "midWidth - CPT"));
+  return xyTrace(id, [
+    [x0, lit(0)], [x0, nd], [xCpt, nd], [xCpt, dep], [xMwC, dep], [xMwC, nd], [xMw, nd], [xMw, lit(0)], [x0, lit(0)],
+  ]);
+}
+
+function insertProfile(id: string): P2[] {
+  const dx = link("tall.leftT");
+  const notch = ex({ n: R.STYLE_1_INSERT_FRONT_NOTCH_DEPTH }, (t) => t.n, "STYLE_1_INSERT_FRONT_NOTCH_DEPTH");
+  const depth = ex({ d: R.STYLE_1_INSERT_BOARD_DEPTH }, (t) => t.d, "STYLE_1_INSERT_BOARD_DEPTH");
+  const xIn = ex({ dx: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.dx + t.CPT) * 1000) / 1000, "left + CPT");
+  const xOut = ex({ dx: ref("tall.leftT"), mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => Math.round((t.dx + t.mw - t.CPT) * 1000) / 1000, "left + midWidth - CPT");
+  const xEnd = ex({ dx: ref("tall.leftT"), mw: ref("tall.mw") }, (t) => Math.round((t.dx + t.mw) * 1000) / 1000, "left + midWidth");
+  return xyTrace(id, [
+    [dx, lit(0)], [dx, notch], [xIn, notch], [xIn, depth], [xOut, depth], [xOut, notch], [xEnd, notch], [xEnd, lit(0)],
+  ]);
 }
 
 /* ================= 主流程 ================= */
+
+function stampTallBoards(s: S, boards: Board[]) {
+  dim("tall.topFront", { h: s.topSys.frontRail }, (t) => t.h, { formula: "frontRail" });
+  dim("tall.botFront", { h: s.botSys.frontRail }, (t) => t.h, { formula: "frontRail" });
+  const zero = lit(0);
+  const ch = link("tall.CH");
+  const dx = link("tall.leftT");
+  const xEnd = ex({ x: ref("tall.leftT"), mw: ref("tall.mw") }, (t) => Math.round((t.x + t.mw) * 1000) / 1000, "left + midWidth");
+  const xL1 = ex({ L: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.L + t.CPT) * 1000) / 1000, "left + CPT");
+  const xR1 = ex({ CW: ref("tall.CW"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.R) * 1000) / 1000, "CW - right");
+  const xR0 = ex({ CW: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CW - t.R - t.CPT) * 1000) / 1000, "CW - right - CPT");
+  const yRear1 = ex({ y: ref("tall.v34.yOff"), r: ref("tall.v34.rear") }, (t) => Math.round((t.y + t.r) * 1000) / 1000, "yOff + rear");
+  const negF = ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT");
+  const md = link("tall.md");
+  const sideY1 = ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth");
+  const hTop0 = ex({ CH: ref("tall.CH"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH - t.h) * 1000) / 1000, "CH - H_SUPPORT_HEIGHT");
+  const hHi = ex({ h: R.H_SUPPORT_HEIGHT }, (t) => t.h, "H_SUPPORT_HEIGHT");
+  const hX1 = ex({ x: ref("tall.leftT"), t: R.H_SUPPORT_THICKNESS }, (t) => Math.round((t.x + t.t) * 1000) / 1000, "left + H thickness");
+  const hX0 = ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: R.H_SUPPORT_THICKNESS }, (t) => Math.round((t.x + t.mw - t.t) * 1000) / 1000, "left + midWidth - H thickness");
+  const t1z0 = ex({ CH: ref("tall.CH"), h: ref("tall.topFront") }, (t) => Math.round((t.CH - t.h) * 1000) / 1000, "CH - frontRail");
+  const t3z0 = ex({ CH: ref("tall.CH"), h: ref("tall.topRailH") }, (t) => Math.round((t.CH - t.h) * 1000) / 1000, "CH - topRailH");
+  const insY = ex({ d: R.STYLE_1_INSERT_BOARD_DEPTH }, (t) => t.d, "STYLE_1_INSERT_BOARD_DEPTH");
+  const t5z0 = ex({ CH: ref("tall.CH"), h: R.T5_REAR_VERTICAL_HEIGHT }, (t) => Math.round((t.CH - t.h) * 1000) / 1000, "CH - T5 height");
+  const t4y0 = ex({ y: ref("tall.t5Front"), d: R.T4_REAR_HORIZONTAL_DEPTH }, (t) => Math.round((t.y - t.d) * 1000) / 1000, "T5 front - T4 depth");
+  const t4z0 = ex({ CH: ref("tall.CH"), t: R.STYLE_1_FIRST_RAIL_THICKNESS }, (t) => Math.round((t.CH - t.t) * 1000) / 1000, "CH - rail thickness");
+  const t4z1 = ex({ CH: ref("tall.CH"), inset: R.T45_WALL_INSET }, (t) => Math.round((t.CH - t.inset) * 1000) / 1000, "CH - wall inset");
+  const h34y0 = ex({ md: ref("tall.md"), d: R.H34_DEPTH }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - H34 depth");
+  dim("tall.fc", { fc: s.fc }, (t) => t.fc, { formula: "frontClearance" });
+  dim("tall.leaf.x0", { L: ref("tall.leftT"), fc: ref("tall.fc") }, (t) => Math.round((t.L + t.fc) * 1000) / 1000, { formula: "left + clearance" });
+  dim("tall.leaf.x1", { CW: ref("tall.CW"), R: ref("tall.rightT"), fc: ref("tall.fc") }, (t) => Math.round((t.CW - t.R - t.fc) * 1000) / 1000, { formula: "CW - right - clearance" });
+  dim("tall.leaf.midL", { x0: ref("tall.leaf.x0"), x1: ref("tall.leaf.x1"), fc: ref("tall.fc") }, (t) => Math.round(((t.x0 + t.x1) / 2 - t.fc / 2) * 1000) / 1000, { formula: "mid - clearance / 2" });
+  dim("tall.leaf.midR", { x0: ref("tall.leaf.x0"), x1: ref("tall.leaf.x1"), fc: ref("tall.fc") }, (t) => Math.round(((t.x0 + t.x1) / 2 + t.fc / 2) * 1000) / 1000, { formula: "mid + clearance / 2" });
+  for (const b of boards) {
+    const put = (face: "x0" | "x1" | "y0" | "y1" | "z0" | "z1", e: Expr) => {
+      if (Math.abs(evalExpr(e) - b[face]) > 0.05) return;
+      dim(`${b.id}.${face}`, e.terms, e.fn, { formula: e.formula });
+    };
+    const id = b.id;
+    if (id === "V1" || id === "V3") { put("x0", dx); put("x1", xL1); }
+    if (id === "V2" || id === "V4") { put("x0", xR0); put("x1", xR1); }
+    if (id === "V1" || id === "V2") { put("y0", link("tall.stileY0")); put("y1", link("tall.v12Rear")); put("z0", zero); put("z1", ch); }
+    if (id === "V3" || id === "V4") { put("y0", link("tall.v34.yOff")); put("y1", yRear1); put("z0", zero); put("z1", ch); }
+    if (id === "V5") {
+      const onLeft = s.exteriorSide !== "left";
+      put("x0", onLeft ? xL1 : ex({ x: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.x - t.R - 2 * t.CPT) * 1000) / 1000, "CW - right - 2 CPT"));
+      put("x1", onLeft ? ex({ L: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.L + 2 * t.CPT) * 1000) / 1000, "left + 2 CPT") : ex({ CW: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CW - t.R - t.CPT) * 1000) / 1000, "CW - right - CPT"));
+      put("y0", link("tall.FPT"));
+      put("y1", sideY1);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "fridgeZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "fridgeZ1"));
+    }
+    if (/^(T[1-5]|B[1-3]|TH1|BH1)$/.test(id) || id.startsWith("Zi_")) { put("x0", dx); put("x1", xEnd); }
+    if (id === "T1" || id === "T2") { put("z0", t1z0); put("z1", ch); }
+    if (id === "T1" || id === "B1") { put("y0", link("tall.railY0")); put("y1", link("tall.t1Rear")); }
+    if (id === "T2" || id === "B2") { put("y0", link("tall.t1Rear")); put("y1", link("tall.railRear")); }
+    if (id === "B1" || id === "B2") { put("z0", zero); put("z1", link("tall.botFront")); }
+    if (id === "T3") { put("y0", zero); put("y1", insY); put("z0", t3z0); put("z1", t1z0); }
+    if (id === "B3") { put("y0", zero); put("y1", insY); put("z0", link("tall.botFront")); put("z1", link("tall.botRailH")); }
+    if (id === "T5") { put("y0", link("tall.t5Front")); put("y1", link("tall.t5Rear")); put("z0", t5z0); put("z1", ch); }
+    if (id === "T4") { put("y0", t4y0); put("y1", link("tall.t5Front")); put("z0", t4z0); put("z1", t4z1); }
+    if (id.startsWith("Zi_")) { put("y0", zero); put("y1", md); put("z0", ex({ z: b.z0 }, (t) => t.z, "boundaryZ0")); put("z1", ex({ z: b.z1 }, (t) => t.z, "boundaryZ1")); }
+    if (id.startsWith("H13")) { put("x0", dx); put("x1", hX1); put("y0", link("tall.hY0")); put("y1", link("tall.hY1")); }
+    if (id.startsWith("H24")) { put("x0", hX0); put("x1", xEnd); put("y0", link("tall.hY0")); put("y1", link("tall.hY1")); }
+    if (id.startsWith("H34")) {
+      put("x0", hX1);
+      put("x1", hX0);
+      if (Number.isFinite(valueOf("V5.x1"))) put("x0", link("V5.x1"));
+      if (Number.isFinite(valueOf("V5.x0"))) put("x1", link("V5.x0"));
+      put("y0", h34y0);
+      put("y1", md);
+    }
+    if (/_mid$/.test(id) && id.startsWith("H")) {
+      if (Number.isFinite(valueOf("tall.hMid.z0"))) {
+        put("z0", link("tall.hMid.z0"));
+        put("z1", link("tall.hMid.z1"));
+      } else {
+        put("z0", ex({ CH: ref("tall.CH"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH / 2 - t.h / 2) * 1000) / 1000, "CH / 2 - H / 2"));
+        put("z1", ex({ CH: ref("tall.CH"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH / 2 + t.h / 2) * 1000) / 1000, "CH / 2 + H / 2"));
+      }
+    }
+    if (id.startsWith("VD_")) {
+      put("x0", ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: param({ divider: s.dividerT }).divider }, (t) => Math.round((t.x + t.mw / 2 - t.t / 2) * 1000) / 1000, "centre - divider / 2"));
+      put("x1", ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: param({ divider: s.dividerT }).divider }, (t) => Math.round((t.x + t.mw / 2 + t.t / 2) * 1000) / 1000, "centre + divider / 2"));
+      put("y0", zero);
+      put("y1", md);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "zoneZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "zoneZ1"));
+    }
+    if (id.startsWith("FP_")) {
+      if (id.endsWith("_L")) { put("x0", link("tall.leaf.x0")); put("x1", link("tall.leaf.midL")); }
+      else if (id.endsWith("_R")) { put("x0", link("tall.leaf.midR")); put("x1", link("tall.leaf.x1")); }
+      else { put("x0", link("tall.leaf.x0")); put("x1", link("tall.leaf.x1")); }
+      put("y0", negF);
+      put("y1", zero);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "leafZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "leafZ1"));
+    }
+    if (/_top$/.test(id) && id.startsWith("H")) { put("z0", hTop0); put("z1", ch); }
+    if (/_bottom$/.test(id) && id.startsWith("H")) { put("z0", zero); put("z1", hHi); }
+    if (id.startsWith("FP_") || id.endsWith("FixedFrontPanel")) { put("y0", negF); put("y1", zero); }
+    if (id.startsWith("SidePanel_")) { put("y0", negF); put("y1", md); put("z0", zero); put("z1", ch); }
+    if (id.startsWith("SidePanel_L")) { put("x0", zero); put("x1", link("tall.leftT")); }
+    if (id.startsWith("SidePanel_R")) { put("x1", link("tall.CW")); put("x0", ex({ CW: ref("tall.CW"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.R) * 1000) / 1000, "CW - right")); }
+    if (id === "avoidance_horizontal" || id === "Avoidance_Vertical") { put("x0", dx); put("x1", xEnd); }
+    if (s.avoid.enabled) {
+      const avoidH = ex({ h: s.avoid.height }, (t) => t.h, "avoidH");
+      const avoidZ0 = ex({ h: s.avoid.height, t: R.AVOIDANCE_SUPPORT_THICKNESS }, (t) => Math.round((t.h - t.t) * 1000) / 1000, "avoidH - support");
+      if (id === "avoidance_horizontal") { put("z0", avoidZ0); put("z1", avoidH); }
+      if (id === "Avoidance_Vertical") {
+        put("y0", link("tall.avoidY0"));
+        put("y1", ex({ y: ref("tall.avoidY0"), t: R.AVOIDANCE_SUPPORT_THICKNESS }, (t) => Math.round((t.y + t.t) * 1000) / 1000, "avoidY0 + support"));
+        put("z0", zero);
+        put("z1", avoidZ0);
+      }
+    }
+    if (id.endsWith("_fridge") && Number.isFinite(valueOf("tall.hFridge.z0"))) {
+      put("z0", link("tall.hFridge.z0"));
+      put("z1", link("tall.hFridge.z1"));
+    }
+    if (id.startsWith("VD_") || id.startsWith("DS_")) { put("y0", zero); put("y1", md); }
+  }
+}
 
 export function generateGeneralTall(input: GTParams): GTResult {
   beginProvenance();
@@ -410,8 +596,26 @@ export function generateGeneralTall(input: GTParams): GTResult {
   const s = normalize(prepared, errors);
   warnings.push(...fridgeNotes);
   const P = param({ CH: s.CH, CW: s.CW, CD: s.CD, CPT: s.CPT, FPT: s.FPT });
+  dim("tall.CH", { CH: P.CH }, (t) => t.CH, { formula: "CH" });
+  dim("tall.CW", { CW: P.CW }, (t) => t.CW, { formula: "CW" });
+  dim("tall.CPT", { CPT: P.CPT }, (t) => t.CPT, { formula: "CPT" });
+  dim("tall.FPT", { FPT: P.FPT }, (t) => t.FPT, { formula: "FPT" });
+  dim("tall.leftT", { t: param({ leftSide: s.leftT }).leftSide }, (t) => t.t, { formula: "leftSide" });
+  dim("tall.rightT", { t: param({ rightSide: s.rightT }).rightSide }, (t) => t.t, { formula: "rightSide" });
+  dim("tall.mw", { CW: ref("tall.CW"), L: ref("tall.leftT"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.L - t.R) * 1000) / 1000, { formula: "CW - sides" });
   dim("tall.midDepth", { CD: P.CD, FPT: P.FPT }, (t) => t.CD - t.FPT);
+  dim("tall.md", { CD: P.CD, FPT: P.FPT }, (t) => Math.round((t.CD - t.FPT) * 1000) / 1000, { formula: "CD - FPT" });
   const stileY0 = dim("tall.stileY0", { FPT: P.FPT }, () => 0);
+  dim("tall.v12.front", { y: R.V12_Y_FRONT_FACE }, (t) => t.y, { formula: "V12_Y_FRONT_FACE" });
+  dim("tall.v12.rear", { y: R.V12_Y_REAR }, (t) => t.y, { formula: "V12_Y_REAR" });
+  dim("tall.v12.step", { y: R.V12_Y_STEP_INNER }, (t) => t.y, { formula: "V12_Y_STEP_INNER" });
+  dim("tall.v12.slot", { y: R.V12_ZI_SLOT_INNER }, (t) => t.y, { formula: "V12_ZI_SLOT_INNER" });
+  dim("tall.v12.notchD", { d: R.STYLE_2_END_NOTCH_DEPTH }, (t) => t.d, { formula: "STYLE_2_END_NOTCH_DEPTH" });
+  dim("tall.notchT", { t: R.V34_END_NOTCH_THICKNESS }, (t) => t.t, { formula: "V34_END_NOTCH_THICKNESS" });
+  dim("tall.insertT", { t: R.STYLE_1_INSERT_SLOT_THICKNESS }, (t) => t.t, { formula: "STYLE_1_INSERT_SLOT_THICKNESS" });
+  dim("tall.topRailH", { h: s.topSys.railH }, (t) => t.h, { formula: "topRailH" });
+  dim("tall.botRailH", { h: s.botSys.railH }, (t) => t.h, { formula: "botRailH" });
+  dim("tall.ziT", { t: param({ ziThickness: s.ziT }).ziThickness }, (t) => t.t, { formula: "ziThickness" });
   const v12Rear = dim("tall.v12Rear", { y0: ref("tall.stileY0"), rear: R.V12_Y_REAR }, (t) => t.y0 + t.rear);
   const railRear = dim("tall.railRear", { face: R.V12_Y_FRONT_FACE }, (t) => t.face);
   const railY0 = dim("tall.railY0", {
@@ -471,10 +675,14 @@ export function generateGeneralTall(input: GTParams): GTResult {
   const v12Slots = boundaries
     .filter((b) => b.boundaryType === "full_zi" || b.boundaryType === "half_zi")
     .map((b) => ({ z0: r2(b.centerZ - (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
-  /* ---- V3/V4 Zi 槽（仅 full） ---- */
   const v34Slots = boundaries
     .filter((b) => b.boundaryType === "full_zi")
     .map((b) => ({ z0: r2(b.centerZ - (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
+  for (const b of boundaries) {
+    if (b.boundaryType !== "full_zi" && b.boundaryType !== "half_zi") continue;
+    dim(`tall.slot.${b.id}.z0`, { cz: b.centerZ, zi: ref("tall.ziT"), clr: R.ZI_SLOT_CLEARANCE }, (t) => Math.round((t.cz - (t.zi + t.clr) / 2) * 1000) / 1000, { formula: "centerZ - (ziT + 1) / 2" });
+    dim(`tall.slot.${b.id}.z1`, { cz: b.centerZ, zi: ref("tall.ziT"), clr: R.ZI_SLOT_CLEARANCE }, (t) => Math.round((t.cz + (t.zi + t.clr) / 2) * 1000) / 1000, { formula: "centerZ + (ziT + 1) / 2" });
+  }
 
   /* ---- 立梃在侧板内侧。四块立板比门厚基准朝前一个门厚：前脸贴顶轨后缘，后缘贴横桥前端。 ---- */
   const sideY0 = FPT;
@@ -486,9 +694,9 @@ export function generateGeneralTall(input: GTParams): GTResult {
   const v12Y0 = stileY0;
   const v12Y1 = v12Rear;
   boards.push(mkBoard("V1", "Front Stile Left", "vertical_structure", "V1", CPT, "carcass",
-    "YZ", "X", vLeftX0, vLeftX1, v12Y0, v12Y1, 0, CH, v12Profile(s, v12Slots, v12Y0)));
+    "YZ", "X", vLeftX0, vLeftX1, v12Y0, v12Y1, 0, CH, v12Profile(s, v12Slots, "V1")));
   boards.push(mkBoard("V2", "Front Stile Right", "vertical_structure", "V2", CPT, "carcass",
-    "YZ", "X", vRightX0, vRightX1, v12Y0, v12Y1, 0, CH, v12Profile(s, v12Slots, v12Y0)));
+    "YZ", "X", vRightX0, vRightX1, v12Y0, v12Y1, 0, CH, v12Profile(s, v12Slots, "V2")));
 
   /* ---- V3/V4 后立梃：同样朝前一个门厚。后缘贴侧板后缘 midDepth。 ---- */
   const v34Y1 = r2(stileY0 + md);
@@ -497,10 +705,16 @@ export function generateGeneralTall(input: GTParams): GTResult {
   if (v34Y0 < v12Y1) v34Y0 = v12Y1;
   const v34Depth = r2(Math.max(0, v34Y1 - v34Y0));
   const v34Rear = Math.min(R.V34_Y_REAR.value, v34Depth);
+  dim("tall.v34.yOff", { y0: stileY0, md: ref("tall.md"), rear: R.V34_Y_REAR, stop: v12Y1 }, (t) => {
+    let y = Math.round((t.y0 + Math.max(0, t.md - t.rear)) * 1000) / 1000;
+    if (y < t.stop) y = t.stop;
+    return y;
+  }, { formula: "max(stile + max(0, midDepth - V34_Y_REAR), frontStileRear)" });
+  dim("tall.v34.rear", { depth: v34Depth, rear: R.V34_Y_REAR }, (t) => Math.min(t.rear, t.depth), { formula: "min(V34_Y_REAR, depth)" });
   boards.push(mkBoard("V3", "Rear Stile Left", "vertical_structure", "V3", CPT, "carcass",
-    "YZ", "X", vLeftX0, vLeftX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)));
+    "YZ", "X", vLeftX0, vLeftX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, "V3")));
   boards.push(mkBoard("V4", "Rear Stile Right", "vertical_structure", "V4", CPT, "carcass",
-    "YZ", "X", vRightX0, vRightX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)));
+    "YZ", "X", vRightX0, vRightX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, "V4")));
 
   if (fridgeZoneItem) {
     const v5OnLeft = s.exteriorSide !== "left";
@@ -514,10 +728,12 @@ export function generateGeneralTall(input: GTParams): GTResult {
     }
     boards.push(mkBoard("V5", "V5", "vertical_structure", "V5", CPT, "carcass",
       "YZ", "X", v5x0, v5x1, sideY0, sideY1, fridgeZoneItem.z0, fridgeZoneItem.z1,
-      yz([
-        [sideY0, fridgeZoneItem.z0], [sideY1, fridgeZoneItem.z0],
-        [sideY1, fridgeZoneItem.z1], [sideY0, fridgeZoneItem.z1],
-        [sideY0, fridgeZoneItem.z0],
+      yzTrace("V5", [
+        [link("tall.FPT"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
+        [ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
+        [ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth"), ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1")],
+        [link("tall.FPT"), ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1")],
+        [link("tall.FPT"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
       ])));
     warnings.push(
       `Fridge zone ${fridgeZoneItem.zone.id}: V5 on ${v5OnLeft ? "left" : "right"} (exteriorSide=${s.exteriorSide}).`,
@@ -544,16 +760,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
   /* ---- 端系统。顶轨坐在 tall.railY0；T5 后缘坐在 tall.t5Rear（侧板后缘内侧 1 mm） ---- */
   {
     const insDepth = R.STYLE_1_INSERT_BOARD_DEPTH.value;
-    const notch = R.STYLE_1_INSERT_FRONT_NOTCH_DEPTH.value;
     const t1H = R.STYLE_1_FIRST_RAIL_THICKNESS.value;
     const t2H = R.STYLE_1_SECOND_RAIL_THICKNESS.value;
-    const insT = R.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    // Ears stay in front of the stile step (y = 80). The board necks in after `notch`
-    // so the rear run clears V1/V2. A front notch put the ears into the stile.
-    const insertProfile = (): P2[] => [
-      { x: dx, y: 0 }, { x: dx, y: notch }, { x: r2(dx + CPT), y: notch }, { x: r2(dx + CPT), y: insDepth },
-      { x: r2(dx + mw - CPT), y: insDepth }, { x: r2(dx + mw - CPT), y: notch }, { x: r2(dx + mw), y: notch }, { x: r2(dx + mw), y: 0 },
-    ];
     if (s.topSys.style === "style_1") {
       const topBand0 = r2(CH - s.topSys.railH);
       const topRail0 = r2(CH - s.topSys.frontRail);
@@ -566,7 +774,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same("T2.y0", "tall.t1Rear");
       same("T2.y1", "tall.railRear");
       boards.push(mkBoard("T3", "Top Insert Board", "top_system", "T3", CPT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, insDepth, topBand0, topRail0, insertProfile()));
+        "XY", "Z", dx, r2(dx + mw), 0, insDepth, topBand0, topRail0, insertProfile("T3")));
     } else if (s.topSys.style === "style_2") {
       const sysH = s.topSys.frontRail;
       const th = R.STYLE_2_FRONT_SYSTEM_THICKNESS.value;
@@ -589,7 +797,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same("B2.y0", "tall.t1Rear");
       same("B2.y1", "tall.railRear");
       boards.push(mkBoard("B3", "Bottom Insert Board", "bottom_system", "B3", CPT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, insDepth, botRail1, botBand1, insertProfile()));
+        "XY", "Z", dx, r2(dx + mw), 0, insDepth, botRail1, botBand1, insertProfile("B3")));
     } else if (s.botSys.style === "style_2") {
       const sysH = s.botSys.frontRail;
       const th = R.STYLE_2_FRONT_SYSTEM_THICKNESS.value;
@@ -631,14 +839,13 @@ export function generateGeneralTall(input: GTParams): GTResult {
       && b.z0 < s.avoid.height && b.z1 > 0 && !isDividerSupportBoundary(b);
     if (type === "half_zi") {
       y1 = md; // bbox 用 midDepth（轮廓仅前 150，坑②：profile/bbox 双参考）
-      prof = halfZiProfile(s);
+      prof = halfZiProfile(`Zi_${b.id}`);
+    } else if (hitsAvoid) {
+      type = "shortened_zi";
+      y1 = avoidShortY;
+      prof = fullZiProfile(`Zi_${b.id}`, y1);
     } else {
-      prof = fullZiProfile(s);
-      if (hitsAvoid) {
-        type = "shortened_zi";
-        y1 = avoidShortY;
-        prof = fullZiProfile(s).map((p) => ("y" in p && !("z" in p) ? { ...p, y: Math.min((p as { y: number }).y, y1) } : p));
-      }
+      prof = fullZiProfile(`Zi_${b.id}`, null);
     }
     boards.push(mkBoard(`Zi_${b.id}`, `Boundary ${b.id}`, "boundary_panel", type, s.ziT, "carcass",
       "XY", "Z", dx, r2(dx + mw), 0, y1, b.z0, b.z1, prof));
@@ -667,6 +874,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
     : undefined;
   if (vdShelf) {
     const above0 = r2(vdShelf.z1 - 1);
+    dim("tall.hMid.z0", { z: vdShelf.z1 }, (t) => Math.round((t.z - 1) * 1000) / 1000, { formula: "divider top - 1" });
+    dim("tall.hMid.z1", { z0: ref("tall.hMid.z0"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z0 + t.h) * 1000) / 1000, { formula: "z0 + H height" });
     for (const h of hMid) {
       h.z0 = above0; h.z1 = r2(above0 + Hspan);
     }
@@ -739,6 +948,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
     const below = boundaries.find((b) => b.id === `boundary-${fridgeZoneItem.zone.id}`);
     const hz0 = below ? below.z1 : fridgeZoneItem.z0;
     const hz1 = r2(hz0 + R.H_SUPPORT_HEIGHT.value);
+    dim("tall.hFridge.z0", { z: hz0 }, (t) => t.z, { formula: "boundary above the fridge" });
+    dim("tall.hFridge.z1", { z0: ref("tall.hFridge.z0"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z0 + t.h) * 1000) / 1000, { formula: "z0 + H height" });
     const hFridge: HSpec[] = [
       { name: "H13_fridge", z0: hz0, z1: hz1 },
       { name: "H24_fridge", z0: hz0, z1: hz1 },
@@ -820,23 +1031,39 @@ export function generateGeneralTall(input: GTParams): GTResult {
       if (prev && band.z0 <= prev.z1 + EPS) prev.z1 = r2(Math.max(prev.z1, band.z1));
       else h34Cuts.push({ z0: r2(band.z0), z1: r2(band.z1) });
     }
+    const yMd = link("tall.md");
+    const yCut = ex({ md: ref("tall.md"), d: R.H34_CLEARANCE_DEPTH }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - H34_CLEARANCE_DEPTH");
+    const yTy0 = ex({ md: ref("tall.md") }, (t) => Math.round((t.md / 3) * 1000) / 1000, "midDepth / 3");
+    const yTy1 = ex({ md: ref("tall.md") }, (t) => Math.round(((2 * t.md) / 3) * 1000) / 1000, "2 * midDepth / 3");
+    dim(`${vd.id}.tongue`, { CPT: ref("tall.CPT"), c: R.DIVIDER_TONGUE_GROOVE_CLEARANCE }, (t) => Math.round((t.CPT / 2 - t.c) * 1000) / 1000, { formula: "CPT / 2 - clearance" });
+    const zTongue = ex({ z: z0, tongue: ref(`${vd.id}.tongue`) }, (t) => Math.round((t.z - t.tongue) * 1000) / 1000, "zoneZ0 - tongue");
+    const zZone0 = ex({ z: z0 }, (t) => t.z, "zoneZ0");
+    const zZone1 = ex({ z: z1 }, (t) => t.z, "zoneZ1");
+    const pairs: [Expr, Expr][] = [
+      [lit(0), zTongue], [yTy0, zTongue], [yTy0, zZone0], [yTy1, zZone0], [yTy1, zTongue],
+    ];
     const rear: [number, number][] = [[md, rearBottomZ]];
     let zCursor = rearBottomZ;
+    let cutN = 0;
+    const pushRear = (y: Expr, z: number, formula: string) => {
+      dim(`${vd.id}.rz.${cutN}`, { z }, (t) => t.z, { formula });
+      pairs.push([y, link(`${vd.id}.rz.${cutN}`)]);
+      cutN += 1;
+    };
+    pushRear(yMd, rearBottomZ, "zoneZ0 - tongue");
     for (const cut of h34Cuts) {
       const cz0 = r2(Math.max(cut.z0, zCursor));
       const cz1 = r2(cut.z1);
       if (cz1 <= zCursor + EPS) continue;
-      if (cz0 > zCursor + EPS) rear.push([md, cz0]);
-      rear.push([h34CutY0, cz0], [h34CutY0, cz1]);
-      if (cz1 < z1 - EPS) rear.push([md, cz1]);
+      if (cz0 > zCursor + EPS) pushRear(yMd, cz0, "H34 or T5 band");
+      pushRear(yCut, cz0, "H34 or T5 band");
+      pushRear(yCut, cz1, "H34 or T5 band");
+      if (cz1 < z1 - EPS) pushRear(yMd, cz1, "H34 or T5 band");
       zCursor = cz1;
     }
-    if (z1 > zCursor + EPS) rear.push([md, z1]);
-    const prof: P2[] = yz([
-      [0, rearBottomZ], [ty0, rearBottomZ], [ty0, z0], [ty1, z0], [ty1, rearBottomZ],
-      ...rear,
-      [0, z1], [0, rearBottomZ],
-    ]);
+    if (z1 > zCursor + EPS) pushRear(yMd, z1, "zoneZ1");
+    pairs.push([lit(0), zZone1], [lit(0), zTongue]);
+    const prof: P2[] = yzTrace(vd.id, pairs);
     boards.push(mkBoard(vd.id, `Vertical Divider ${zoneItem.zone.id}`, "vertical_divider", "vertical_divider",
       s.dividerT, "carcass", "YZ", "X", x0, x1, 0, md, z0, z1, prof));
     // 上下边界的 full_zi 挂 zi_groove（x 已是装配位 = dx + core）
@@ -1000,7 +1227,14 @@ export function generateGeneralTall(input: GTParams): GTResult {
     let prof: P2[] | undefined;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
       const ad = s.avoid.depth, ah = s.avoid.height;
-      prof = yz([[-FPT, 0], [r2(md - ad), 0], [r2(md - ad), ah], [md, ah], [md, CH], [-FPT, CH]]);
+      prof = yzTrace(`SidePanel_${side}`, [
+        [ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT"), lit(0)],
+        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - avoidD"), lit(0)],
+        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - avoidD"), ex({ h: s.avoid.height }, (t) => t.h, "avoidH")],
+        [link("tall.md"), ex({ h: s.avoid.height }, (t) => t.h, "avoidH")],
+        [link("tall.md"), link("tall.CH")],
+        [ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT"), link("tall.CH")],
+      ]);
     }
     boards.push(mkBoard(`SidePanel_${side}`, `Side Panel ${side === "L" ? "Left" : "Right"}`, "side_panel", "side_panel",
       t, finish === "colour" ? "door" : "carcass", "YZ", "X", x0, r2(x0 + t), -FPT, md, 0, CH, prof));
@@ -1023,6 +1257,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
   }
 
   /* ---- 组装 ---- */
+  stampTallBoards(s, boards);
   attachFaces(boards);
   const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
   // Fronts (doors, fixed fronts, T1 / B1) horizontal; colour side panels vertical.

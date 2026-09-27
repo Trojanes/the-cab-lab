@@ -24,7 +24,7 @@ import { snap } from "./job.js";
 import { cabinetFootprints } from "./cabinets3d.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { thickness } from "./materials.js";
-import { wallSolid, wallStatus, wallBoxes, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
+import { wallSolid, wallStatus, wallBoxes, wallBoards, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
 import { solidBoxes } from "./walls3d.js";
 import { buildFeatures, nearestEdge, projectOnEdge, pointOnEdge, featureUsOnEdge, distToEdge } from "./features2d.js";
 import { disarm, cancelMove, cancelOrient, evalDim, sideOfRotZ } from "./interact.js";
@@ -1693,6 +1693,12 @@ function render() {
         ctx.fillText(`${o.type === "slidingDoor" ? "slide" : "door"} ${Math.round(o.width)}`, 0, (thickness(stock, "partition") * view.k) / 2 + 8);
         ctx.restore();
       }
+    }
+    const cut = wallBoards(w, sp, stock);
+    if (cut.split && cut.split.axis === "u") {
+      const u = cut.split.at;
+      if (s.solid.along === "x") line(u, s.y[0], u, s.y[1], C.dim, 2);
+      else line(s.x[0], u, s.x[1], u, C.dim, 2);
     }
   }
 
