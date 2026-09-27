@@ -140,6 +140,8 @@ export interface Board {
    * "either" = double-sided with no partial-depth work: nesting may flip it (_lib/milling.ts).
    */
   milling?: "A" | "B" | "either";
+  /** The outline or a cutout loop has arcs drawn as chords (a sketched fillet or circle). */
+  tessellated?: boolean;
 }
 
 export interface FaceRef {

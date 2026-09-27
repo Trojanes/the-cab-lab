@@ -1,11 +1,13 @@
-// A rectangle sketched on an axis-aligned face, turned into one board's params.
+// A closed shape sketched on an axis-aligned face, turned into one board's params.
 // The preview uses the returned world box directly. The generator runs once,
 // when the board is committed — not while the cursor is moving.
 //
-// Cabinet origin sits on the sketch plane at the rectangle's minimum corner.
-// The outline is (0, 0) → (du, dv) on that plane. Thickness grows along the
-// face normal (`pull` +1 with the positive axis, −1 against it), by the
-// stock thickness copied into `choice`. It is not a free distance.
+// Cabinet origin sits on the sketch plane at the shape's minimum corner (arcs
+// included). The outline is stored relative to it, with each edge's bulge.
+// Thickness grows along the face normal (`pull` +1 with the positive axis, −1
+// against it), by the stock thickness copied into `choice`. It is not a free
+// distance.
+import { tessellateRing } from "./gen/sketchBoard.js";
 
 export const BOARD_MIN = 50;
 
@@ -126,7 +128,8 @@ export function localBoxOf(params) {
   let maxU = -Infinity;
   let minV = Infinity;
   let maxV = -Infinity;
-  for (const p of (params && params.outline) || []) {
+  const outline = (params && params.outline) || [];
+  for (const p of outline.some((q) => q && q.b) ? tessellateRing(outline) : outline) {
     const u = Number(p.u);
     const v = Number(p.v);
     if (!Number.isFinite(u) || !Number.isFinite(v)) continue;
@@ -189,16 +192,34 @@ export function sketchBoardPlacement(face, a, b, choice) {
  * is relative to it. Null when the bounding box is under BOARD_MIN.
  */
 export function sketchBoardFromPoints(face, pts, choice, holes = []) {
-  if (!face || !Array.isArray(pts) || pts.length < 3 || !choice || !(choice.thickness > 0)) return null;
+  if (!face || !Array.isArray(pts)) return null;
   const [u, v] = UV[face.axis] || [];
   if (!u) return null;
-  const us = pts.map((p) => Number(p[u]));
-  const vs = pts.map((p) => Number(p[v]));
-  const u0 = r3(Math.min(...us));
-  const v0 = r3(Math.min(...vs));
-  const du = r3(Math.max(...us) - u0);
-  const dv = r3(Math.max(...vs) - v0);
+  const item = (list) => ({ pts: list.map((p) => [Number(p[u]), Number(p[v])]), b: [] });
+  return sketchBoardFromUV(face, item(pts), choice, holes.map(item));
+}
+
+/**
+ * A sketch item `{ pts: [[u, v]], b: [bulge] }` (closed) with its opening
+ * items, on the face plane. Null when the shape's box is under BOARD_MIN.
+ */
+export function sketchBoardFromUV(face, item, choice, holes = []) {
+  if (!face || !item || !Array.isArray(item.pts) || item.pts.length < 2 || !choice || !(choice.thickness > 0)) return null;
+  const [u, v] = UV[face.axis] || [];
+  if (!u) return null;
+  const ring = (it) => it.pts.map((p, i) => {
+    const b = (it.b && it.b[i]) || 0;
+    return b ? { u: Number(p[0]), v: Number(p[1]), b } : { u: Number(p[0]), v: Number(p[1]) };
+  });
+  const outer = ring(item);
+  if (outer.length < 3 && !outer.some((p) => p.b)) return null;
+  const flat = tessellateRing(outer);
+  const u0 = r3(Math.min(...flat.map((p) => p.u)));
+  const v0 = r3(Math.min(...flat.map((p) => p.v)));
+  const du = r3(Math.max(...flat.map((p) => p.u)) - u0);
+  const dv = r3(Math.max(...flat.map((p) => p.v)) - v0);
   if (!(du >= BOARD_MIN) || !(dv >= BOARD_MIN)) return null;
+  const rel = (p) => (p.b ? { u: r3(p.u - u0), v: r3(p.v - v0), b: p.b } : { u: r3(p.u - u0), v: r3(p.v - v0) });
   const s = { u, v, du, dv, u0, v0 };
   const pull = face.dir < 0 ? -1 : 1;
   const pose = { x: 0, y: 0, z: 0, rotX: 0, rotY: 0, rotZ: 0 };
@@ -209,8 +230,8 @@ export function sketchBoardFromPoints(face, pts, choice, holes = []) {
   const params = {
     plane: PLANE[face.axis],
     pull,
-    outline: pts.map((p, i) => ({ u: r3(us[i] - u0), v: r3(vs[i] - v0) })),
-    ...(holes.length ? { holes: holes.map((h) => h.map((p) => ({ u: r3(Number(p[u]) - u0), v: r3(Number(p[v]) - v0) }))) } : {}),
+    outline: outer.map(rel),
+    ...(holes.length ? { holes: holes.map((h) => ring(h).map(rel)) } : {}),
     stock: {
       kind: choice.kind,
       thickness: choice.thickness,

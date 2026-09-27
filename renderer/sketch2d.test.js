@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import {
-  axisForScreen, cornerFromPair, fromUV, orthoPoint, parseEntry, pathSnaps, perpendicularFoot,
-  pointFromEntry, polarPoint, ringCrosses, ringProblem, roundLength, screenAxes, segmentHitsPath, toUV,
+  axisForScreen, cornerFromPair, fromUV, nestRings, orthoPoint, parseEntry, pathSnaps, perpendicularFoot,
+  pointFromEntry, polarPoint, ringCrosses, ringProblem, ringRelation, ringsTouch, roundLength, screenAxes, segmentHitsPath, toUV,
 } from "./sketch2d.js";
 
 /* ---- face frame: (u, v) are the model's planeAxes ---- */
@@ -75,4 +75,25 @@ import {
   assert.deepEqual(cornerFromPair([1000, 0], parseEntry("400,600"), { axes, cursor: [1300, 300] }), [1400, 600], "cursor on the other side flips width");
 }
 
-console.log("sketch2d: ortho, polar, crossings, snaps, typed entry");
+/* ---- several shapes in one sketch: boards, openings, islands ---- */
+{
+  const sq = (u0, v0, u1, v1) => [[u0, v0], [u1, v0], [u1, v1], [u0, v1]];
+  const panel = sq(0, 0, 1000, 800);
+  const hole = sq(200, 200, 400, 400);
+  const island = sq(250, 250, 350, 350);
+  const beside = sq(1000, 0, 1500, 800);
+  assert.equal(ringRelation(hole, panel), "inside");
+  assert.equal(ringRelation(panel, hole), "contains");
+  assert.equal(ringRelation(beside, panel), "apart", "two boards sharing an edge");
+  assert.equal(ringRelation(sq(900, 100, 1200, 300), panel), "cross");
+  assert.equal(ringRelation(sq(0, 0, 1000, 800), panel), "same");
+  assert.equal(ringsTouch(sq(0, 200, 300, 400), panel), true, "an opening on the edge touches");
+  const plan = nestRings([panel, hole, island, beside]);
+  assert.deepEqual(plan, [
+    { outer: 0, holes: [1] },
+    { outer: 2, holes: [] },
+    { outer: 3, holes: [] },
+  ]);
+}
+
+console.log("sketch2d: ortho, polar, crossings, snaps, typed entry, nesting");

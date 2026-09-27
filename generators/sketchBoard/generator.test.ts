@@ -175,11 +175,11 @@ function face(board: { faces?: Array<{ id: string; finish?: { colour?: string; g
   const hole = part.features.find((f) => f.kind === "throughProfile");
   assert.ok(hole && hole.through && hole.geometry.profile.points.length === 4, "the export cuts the opening");
   assert.deepEqual(r.params.holes[0], [
+    { u: 100, v: 100 },
     { u: 100, v: 200 },
     { u: 200, v: 200 },
     { u: 200, v: 100 },
-    { u: 100, v: 100 },
-  ]);
+  ], "turned clockwise, starting where it was drawn");
 }
 
 /* ---- an opening outside the outline is refused ---- */
@@ -216,6 +216,41 @@ function face(board: { faces?: Array<{ id: string; finish?: { colour?: string; g
   });
   assert.deepEqual(bow.boards, []);
   assert.ok(bow.validation.errors.some((e) => e.includes("crosses itself")));
+}
+
+/* ---- arcs: a rounded corner, a round opening, a circle made of two points ---- */
+{
+  const q = Math.tan(Math.PI / 8);
+  const r = generateSketchBoard({
+    ...carcass,
+    outline: [
+      { u: 0, v: 0 }, { u: 400, v: 0 }, { u: 400, v: 550, b: q }, { u: 350, v: 600 }, { u: 0, v: 600 },
+    ],
+    holes: [[{ u: 250, v: 300, b: 1 }, { u: 150, v: 300, b: 1 }]],
+  });
+  assert.deepEqual(r.validation.errors, []);
+  const b = r.boards[0]!;
+  assert.equal(b.tessellated, true);
+  assert.deepEqual([b.x0, b.x1, b.y0, b.y1], [0, 400, 0, 600]);
+  assert.ok(b.profileVector!.length > 10, "the rounded corner is drawn as chords");
+  const mid = b.profileVector!.find((p) => "x" in p && Math.abs(p.x - (350 + 50 * Math.SQRT1_2)) < 1 && Math.abs(p.y - (550 + 50 * Math.SQRT1_2)) < 1);
+  assert.ok(mid, "the corner bulges out to radius 50 about (350, 550)");
+  const cut = b.faces!.flatMap((f) => f.features).find((f) => f.kind === "cutout")!;
+  assert.ok(cut.loop!.length > 20 && Math.abs(cut.u0! - 150) < 0.1 && Math.abs(cut.u1! - 250) < 0.1, "a Ø100 opening");
+  assert.deepEqual(r.params.outline[2], { u: 400, v: 550, b: q }, "the bulge is kept in the params");
+  const built = buildCnjob({ jobId: "t", cabinets: [{ id: "cab-1", moduleId: "sketchBoard", params: r.params, boards: r.boards }] });
+  assert.ok(built.ok);
+  const geo = (built as { snapshot: { workpieces: Array<{ geometry: { quality: string } }> } }).snapshot.workpieces[0]!.geometry;
+  assert.equal(geo.quality, "tessellated");
+
+  const disc = generateSketchBoard({ ...carcass, outline: [{ u: 200, v: 100, b: 1 }, { u: 0, v: 100, b: 1 }] });
+  assert.deepEqual(disc.validation.errors, []);
+  const d = disc.boards[0]!;
+  assert.ok(Math.abs(d.x0) < 0.1 && Math.abs(d.x1 - 200) < 0.1 && Math.abs(d.y0) < 0.1 && Math.abs(d.y1 - 200) < 0.1, "a Ø200 disc");
+  // Drawn clockwise, it is wound counter-clockwise with the bulges flipped.
+  const cw = generateSketchBoard({ ...carcass, outline: [{ u: 200, v: 100, b: -1 }, { u: 0, v: 100, b: -1 }] });
+  assert.deepEqual(cw.validation.errors, []);
+  assert.ok(cw.params.outline.every((p) => (p.b ?? 0) > 0));
 }
 
 /* ---- an open sketch is refused ---- */

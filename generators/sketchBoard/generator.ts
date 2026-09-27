@@ -33,6 +33,8 @@ export type SketchStockKind = "carcass" | "partition" | "door";
 export interface SketchPoint {
   u: number;
   v: number;
+  /** Bulge of the edge from this point to the next: tan(sweep / 4), + counter-clockwise, 0 / omitted straight. */
+  b?: number;
 }
 
 export interface SketchBoardParams {
@@ -105,9 +107,11 @@ function openRing(raw: SketchPoint[] | undefined, label: string, errors: string[
       errors.push(`${label} has a point that is not a number`);
       return null;
     }
+    const b = Number(p?.b);
+    const bulge = Number.isFinite(b) && Math.abs(b) > 1e-9 ? b : 0;
     const prev = pts[pts.length - 1];
     if (prev && prev.u === u && prev.v === v) continue;
-    pts.push({ u, v });
+    pts.push(bulge ? { u, v, b: bulge } : { u, v });
   }
   if (pts.length > 1) {
     const a = pts[0]!;
@@ -127,9 +131,60 @@ function signedArea(pts: SketchPoint[]): number {
   return s / 2;
 }
 
+/** Arcs become chords at most this far from the curve, and at most ARC_STEP_MAX apart. */
+const ARC_CHORD_MM = 0.05;
+const ARC_STEP_MAX = (5 * Math.PI) / 180;
+
+/**
+ * A closed ring with bulged edges as plain points (no repeated first point).
+ * The renderer places boards with this same function, so the box it expects
+ * is the box the generator makes.
+ */
+export function tessellateRing(pts: SketchPoint[]): SketchPoint[] {
+  const out: SketchPoint[] = [];
+  const n = pts.length;
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i]!;
+    const b = pts[(i + 1) % n]!;
+    out.push({ u: a.u, v: a.v });
+    const bulge = a.b ?? 0;
+    const chord = Math.hypot(b.u - a.u, b.v - a.v);
+    if (!bulge || chord < 1e-9) continue;
+    const sweep = 4 * Math.atan(bulge);
+    const du = (b.u - a.u) / chord;
+    const dv = (b.v - a.v) / chord;
+    const h = chord / 2 / Math.tan(sweep / 2);
+    const cu = (a.u + b.u) / 2 - dv * h;
+    const cv = (a.v + b.v) / 2 + du * h;
+    const r = Math.hypot(a.u - cu, a.v - cv);
+    const a0 = Math.atan2(a.v - cv, a.u - cu);
+    const step = Math.min(ARC_STEP_MAX, 2 * Math.acos(Math.max(-1, 1 - ARC_CHORD_MM / r)));
+    const k = Math.max(2, Math.ceil(Math.abs(sweep) / step));
+    for (let j = 1; j < k; j += 1) {
+      const t = a0 + (sweep * j) / k;
+      out.push({ u: r3(cu + r * Math.cos(t)), v: r3(cv + r * Math.sin(t)) });
+    }
+  }
+  return out;
+}
+
+const hasArcs = (pts: SketchPoint[]) => pts.some((p) => !!p.b);
+
+/** Same ring the other way round; each edge keeps its curve, so its bulge changes sign. */
+function reverseRing(pts: SketchPoint[]): SketchPoint[] {
+  const n = pts.length;
+  const out: SketchPoint[] = [];
+  for (let i = 0; i < n; i += 1) {
+    const p = pts[(n - i) % n]!;
+    const b = -(pts[(n - 1 - i) % n]!.b ?? 0);
+    out.push(b ? { u: p.u, v: p.v, b } : { u: p.u, v: p.v });
+  }
+  return out;
+}
+
 function wind(pts: SketchPoint[], ccw: boolean): SketchPoint[] {
-  if (pts.length < 3) return pts;
-  return (signedArea(pts) > 0) === ccw ? pts.slice() : pts.slice().reverse();
+  if (pts.length < 2) return pts;
+  return (signedArea(tessellateRing(pts)) > 0) === ccw ? pts.slice() : reverseRing(pts);
 }
 
 function onBoundary(poly: SketchPoint[], u: number, v: number): boolean {
@@ -238,11 +293,14 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
   if (thickness == null || thickness <= 0) errors.push("the board has no thickness");
 
   const outline = openRing(raw?.outline, "the outline", errors);
-  if (outline && outline.length < 3) errors.push("the outline needs at least 3 points");
-  if (outline && outline.length >= 3 && Math.abs(signedArea(outline)) < 1e-6) errors.push("the outline has no area");
-  if (outline && outline.length >= 4 && ringCrosses(outline)) errors.push("the outline crosses itself");
+  const enough = (r: SketchPoint[]) => r.length >= 3 || (r.length === 2 && hasArcs(r));
+  const flat = outline && enough(outline) ? tessellateRing(outline) : [];
+  if (outline && !enough(outline)) errors.push("the outline needs at least 3 points");
+  if (outline && enough(outline) && Math.abs(signedArea(flat)) < 1e-6) errors.push("the outline has no area");
+  if (flat.length >= 4 && ringCrosses(flat)) errors.push("the outline crosses itself");
 
-  const outer = outline && outline.length >= 3 && Math.abs(signedArea(outline)) >= 1e-6 ? wind(outline, true) : [];
+  const outer = outline && enough(outline) && Math.abs(signedArea(flat)) >= 1e-6 ? wind(outline, true) : [];
+  const outerFlat = outer.length ? tessellateRing(outer) : [];
   const holes: SketchPoint[][] = [];
   const rawHoles = raw?.holes ?? [];
   if (raw?.holes != null && !Array.isArray(raw.holes)) errors.push("the openings are missing");
@@ -251,16 +309,16 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
       const label = `opening ${i + 1}`;
       const ring = openRing(loop, label, errors);
       if (!ring) return;
-      if (ring.length < 3) {
+      if (!enough(ring)) {
         errors.push(`${label} needs at least 3 points`);
         return;
       }
-      if (Math.abs(signedArea(ring)) < 1e-6) {
+      if (Math.abs(signedArea(tessellateRing(ring))) < 1e-6) {
         errors.push(`${label} has no area`);
         return;
       }
       const wound = wind(ring, false);
-      if (outer.length && !holeInside(outer, wound)) errors.push(`${label} is not inside the outline`);
+      if (outerFlat.length && !holeInside(outerFlat, tessellateRing(wound))) errors.push(`${label} is not inside the outline`);
       holes.push(wound);
     });
   }
@@ -308,8 +366,9 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
     return fail();
   }
 
-  const recorded = recordRing(`${BOARD_ID}.pt`, outer);
-  const recordedHoles = holes.map((loop, i) => recordRing(`${BOARD_ID}.hole${i}`, loop));
+  const recorded = recordRing(`${BOARD_ID}.pt`, outerFlat);
+  const recordedHoles = holes.map((loop, i) => recordRing(`${BOARD_ID}.hole${i}`, tessellateRing(loop)));
+  const curved = hasArcs(outer) || holes.some(hasArcs);
   const [U, V, T] = planeAxes(plane);
   let minU = Infinity;
   let maxU = -Infinity;
@@ -347,6 +406,7 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
     },
     ...recordBoardBox(BOARD_ID, box.x0, box.x1, box.y0, box.y1, box.z0, box.z1),
     profileVector: closedProfile(plane, recorded),
+    ...(curved ? { tessellated: true } : {}),
   };
 
   attachFaces([board]);
@@ -378,7 +438,7 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
   const milling = applyMilling([board]);
 
   return {
-    params: { ...params, outline: recorded, holes: recordedHoles },
+    params,
     boards: [board],
     joints: [],
     features: [],

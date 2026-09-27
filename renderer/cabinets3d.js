@@ -936,7 +936,7 @@ export function hideGhost() {
 
 // Board sketch: the path being drawn is one preallocated line (only its
 // positions change on a pointer move). The closed shape becomes a solid once.
-const SKETCH_MAX = 512;
+const SKETCH_MAX = 4096; // points, arcs included
 const sketchGeo = new THREE.BufferGeometry();
 sketchGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3));
 const sketchMat = new THREE.LineBasicMaterial({ color: 0x4f86e0, depthTest: false, transparent: true });
@@ -1009,21 +1009,53 @@ export function showSketchSolid(axis, shapes, t0, t1, { colour = null, colourAt 
 
 // Closed shapes already in the sketch: one line set, rebuilt when a shape is added or removed.
 let sketchProfiles = null;
-const sketchProfileMat = new THREE.LineBasicMaterial({ color: 0xd8dde4, depthTest: false, transparent: true });
-/** `rings` = closed loops of world {x, y, z}. */
-export function showSketchProfiles(rings) {
+const sketchProfileMat = new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true });
+
+// The item or piece a modify tool is about to act on: one preallocated orange line.
+const pickGeo = new THREE.BufferGeometry();
+pickGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3));
+const pickMat = new THREE.LineBasicMaterial({ color: 0xf0a050, depthTest: false, transparent: true });
+const pickLine = new THREE.Line(pickGeo, pickMat);
+pickLine.frustumCulled = false;
+pickLine.renderOrder = 30;
+pickLine.visible = false;
+scene.add(pickLine);
+/** Highlight world points (`closed` joins the ends); `bad` draws it red. */
+export function showSketchPick(points, { closed = false, bad = false } = {}) {
+  const n = Math.min(points.length, SKETCH_MAX - 1);
+  if (n < 2) { pickLine.visible = false; return; }
+  const pos = pickGeo.attributes.position;
+  for (let i = 0; i < n; i += 1) pos.setXYZ(i, points[i].x, points[i].y, points[i].z);
+  let count = n;
+  if (closed) { pos.setXYZ(n, points[0].x, points[0].y, points[0].z); count += 1; }
+  pos.needsUpdate = true;
+  pickGeo.setDrawRange(0, count);
+  pickMat.color.setHex(bad ? 0xd94b4b : 0xf0a050);
+  pickLine.visible = true;
+}
+export function hideSketchPick() {
+  pickLine.visible = false;
+}
+/** `lines` = `{ pts: [world {x, y, z}], closed }`; open lines are dimmer. */
+export function showSketchProfiles(lines) {
   hideSketchProfiles();
   const pos = [];
-  for (const r of rings || []) {
-    for (let i = 0; i < r.length; i += 1) {
+  const col = [];
+  for (const l of lines || []) {
+    const r = l.pts;
+    const count = l.closed ? r.length : r.length - 1;
+    const c = l.closed ? [0.85, 0.87, 0.89] : [0.55, 0.6, 0.66];
+    for (let i = 0; i < count; i += 1) {
       const a = r[i];
       const b = r[(i + 1) % r.length];
       pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
+      col.push(...c, ...c);
     }
   }
   if (!pos.length) return;
   const geo = new THREE.BufferGeometry();
   geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
+  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
   sketchProfiles = new THREE.LineSegments(geo, sketchProfileMat);
   sketchProfiles.renderOrder = 28;
   sketchProfiles.frustumCulled = false;

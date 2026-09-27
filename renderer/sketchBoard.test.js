@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { generateSketchBoard } from "../generators/sketchBoard/generator.ts";
 import {
   BOARD_MIN, colourFaceValue, faceViewFrame, localBoxOf, onSketchFace, onSketchPlane, outlineSpan, remembered,
-  sketchBoardFromPoints, sketchBoardPlacement, stockChoices,
+  sketchBoardFromPoints, sketchBoardFromUV, sketchBoardPlacement, stockChoices,
 } from "./sketchBoard.js";
 import { fromUV } from "./sketch2d.js";
 
@@ -91,6 +91,24 @@ const carcass = { id: "carcass", kind: "carcass", thickness: 16, carcassColorNam
   assert.deepEqual(worldOf(placed.pose, b), placed.box);
   assert.deepEqual([placed.box.x0, placed.box.x1, placed.box.y0, placed.box.y1, placed.box.z0, placed.box.z1], [984, 1000, 100, 700, 50, 650]);
   assert.equal(b.faces.filter((f) => f.id.startsWith("E")).length, 6, "one edge face per outline edge");
+}
+
+/* ---- a disc and a filleted rectangle: the placement box is the generated box ---- */
+{
+  const face = { axis: "z", value: 0, dir: 1 };
+  const disc = sketchBoardFromUV(face, { pts: [[600, 300], [400, 300]], b: [1, 1] }, carcass);
+  assert.ok(disc);
+  const d = generateSketchBoard(disc.params);
+  assert.deepEqual(d.validation.errors, []);
+  const w = worldOf(disc.pose, d.boards[0]);
+  for (const k of ["x0", "x1", "y0", "y1", "z0", "z1"]) assert.ok(Math.abs(w[k] - disc.box[k]) < 0.01, `disc ${k}`);
+  assert.ok(Math.abs(disc.box.x0 - 400) < 0.01 && Math.abs(disc.box.y0 - 200) < 0.01 && Math.abs(disc.box.y1 - 400) < 0.01);
+  const q = Math.tan(Math.PI / 8);
+  const round = sketchBoardFromUV(face, { pts: [[0, 0], [500, 0], [500, 350], [450, 400], [0, 400]], b: [0, 0, q, 0, 0] }, carcass);
+  const g = generateSketchBoard(round.params);
+  assert.deepEqual(g.validation.errors, []);
+  assert.deepEqual(worldOf(round.pose, g.boards[0]), round.box);
+  assert.equal(round.params.outline[2].b, q);
 }
 
 /* ---- under the minimum, no board ---- */

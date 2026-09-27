@@ -277,9 +277,9 @@ function buildBoard(jobId, cab, board, reasons) {
         reasons.push(`${where}: ${id} has no outline`);
         continue;
       }
-      const radius = f.radius ?? 0;
+      const radius = f.loop ? 0 : f.radius ?? 0;
       if (radius > 0.05) tessellated.value = true;
-      const loop = mapRing(roundedRect(f.u0, f.v0, f.u1, f.v1, radius), frame, !f.through);
+      const loop = mapRing(f.loop ?? roundedRect(f.u0, f.v0, f.u1, f.v1, radius), frame, !f.through);
       if (loop.length < 3) {
         reasons.push(`${where}: ${id} has no outline`);
         continue;
@@ -325,8 +325,8 @@ function buildBoard(jobId, cab, board, reasons) {
       decorId: decorSlug(sheet.colorName)
     },
     geometry: {
-      quality: tessellated.value ? "tessellated" : "exact",
-      toleranceMm: tessellated.value ? 0.3 : 0.01,
+      quality: tessellated.value || board.tessellated ? "tessellated" : "exact",
+      toleranceMm: tessellated.value ? 0.3 : board.tessellated ? 0.05 : 0.01,
       outerProfile: { closed: true, points: outer },
       nestingPolygon: outer
     },

@@ -22,7 +22,6 @@ import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { getPreset } from "./presets.js";
 import {
   pickables, groupFor, envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, setHandleHover, faceUnderHit, disarmHandle,
-  showSketchPath, hideSketchPath, showSketchSolid, hideSketchSolid,
   showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showLoungeGhost, hideLoungeGhost, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
   showFaceHint, hideFaceHint, flashFaceHint,
   setMoveOpen, placeMoveTriad, hideMoveTriad, layoutMoveTriad, setMoveHover,
@@ -40,12 +39,11 @@ import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } f
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, boardCornerLocals } from "./pose.js";
 import { faceLabel } from "./boardModel.js";
-import { BOARD_MIN, colourFaceValue, onSketchFace, onSketchPlane, remembered, sketchBoardFromPoints, stockChoices } from "./sketchBoard.js";
 import {
-  toUV, fromUV, orthoPoint, polarPoint, roundLength, segmentHitsPath, pathSnaps,
-  parseEntry, pointFromEntry, cornerFromPair, ringProblem, screenAxes,
-} from "./sketch2d.js";
-import { doorSwatch } from "./doorSwatches.js";
+  initBoardSketch, boardActive, boardMode, startBoard, cancelBoard, boardPointerDown, boardPointerMove, boardKeydown,
+} from "./boardSketch.js";
+
+export { startBoard, boardRightClick, boardUndoKey } from "./boardSketch.js";
 
 const FRONT_THICKNESS_DEFAULT = 16;
 const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
@@ -64,7 +62,6 @@ let bed = null; // bed box placement: { moduleId, step: width | depth, editId, W
 let lounge = null; // lounge placement: { style: I|L|U, step, a, b, depth, roomSign, side, wing, height, locked }
 let lshape = null; // lounge L in 3D: { step: box | edge | pull, box, front, frame, lit, end, len, locked, snap, clamped, lastClient }
 let cplane = null; // construction plane: { step: pick | offset, face, offset, locked, snapLabel, clamped }
-let board = null; // drawn board: { step: pick | corner | stock, face, anchor, corner, choice }
 let lastSize = null; // { moduleId, W, D, H } of the last created box
 let lastCreated = null; // cabinet id that digits re-type while still armed
 let hoverHandle = null;
@@ -99,7 +96,7 @@ export function getMode() {
   if (cplane) return cplane.step === "pick" ? "plane.pick" : "plane.offset";
   if (lshape && lshape.step !== "box") return `lounge.${lshape.step}`;
   if (fitPick) return "fit";
-  if (board) return `board.${board.step}`;
+  if (boardActive()) return boardMode();
   if (rb) return rb.step;
   if (placing) return "armed";
   return "idle";
@@ -3784,715 +3781,24 @@ function endRetype(commit) {
 }
 
 // --- drawn board --------------------------------------------------------------------
-// Click a face (that click is the first point), draw a closed polyline or a
-// rectangle on it, pick the stock. While drawing only the path line moves;
-// the closed shape is built once, and the generator runs once, on commit.
-//
-// Drawing aids, AutoCAD style: F3 object snap, F8 ortho (Shift flips it for a
-// moment), F10 polar 45°. Digits open the entry field: 600 · @100,-50 ·
-// 600<45 · 400,600. C closes, U undoes a point, Enter / right-click finishes,
-// Esc clears the shape (a second Esc picks another face).
-
-const boardCard = document.createElement("div");
-boardCard.id = "boardCard";
-boardCard.className = "hidden";
-document.getElementById("moveCard").parentElement.append(boardCard);
-for (const type of ["pointerdown", "pointerup", "wheel", "contextmenu", "dblclick"]) {
-  boardCard.addEventListener(type, (e) => e.stopPropagation());
-}
-boardCard.addEventListener("keydown", (e) => {
-  if (!board) return;
-  if (e.target && e.target.dataset && e.target.dataset.entry != null) return; // the entry field handles its own keys
-  if (board.step !== "stock") return;
-  if (e.key === "Enter") { e.preventDefault(); e.stopPropagation(); finishBoard("enter"); }
-  else if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); boardBack(); }
+// The Board command is boardSketch.js. It borrows these to stop the other commands.
+initBoardSketch({
+  stopOthers() {
+    endResize("tool off");
+    cancelMove();
+    cancelAlign();
+    cancelPointAlign();
+    cancelOrient();
+    cancelNose();
+    cancelBedBox();
+    cancelLounge();
+    cancelPlane();
+    cancelFitPick("tool off");
+    endRetype(false);
+    if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
+  },
+  emitMode,
 });
-
-let boardTool = "line";
-const boardAids = { osnap: true, ortho: false, polar: false };
-const BOARD_AID_KEYS = { F3: "osnap", F8: "ortho", F10: "polar" };
-const SNAP_LABEL = { close: "Close", endpoint: "Endpoint", midpoint: "Midpoint", intersection: "Intersection", perpendicular: "Perpendicular" };
-
-function boardChoices() {
-  return stockChoices(job.getFinish(), job.getStock());
-}
-
-function boardClearPreview() {
-  hideGhost();
-  hideFaceHint();
-  hideSnapMarker();
-  hideAlignLines();
-  hideInference();
-  hideSketchPath();
-  hideSketchSolid();
-  hideTip();
-}
-
-const sketchWorld = (uv) => fromUV(board.face, uv[0], uv[1]);
-
-/** The point drawing continues from: the last polyline point, or the rectangle's first corner. */
-function boardLast() {
-  if (!board) return null;
-  if (board.tool === "rect") return board.anchor;
-  return board.path.length ? board.path[board.path.length - 1] : null;
-}
-
-/** Screen images (px per mm, y down) of +u and +v at the drawing's last point. */
-function boardScreenAxes() {
-  const at = boardLast() || toUV(board.face, faceCentre(board.face));
-  const o = toClient(...xyz(sketchWorld(at)));
-  const pu = toClient(...xyz(sketchWorld([at[0] + 100, at[1]])));
-  const pv = toClient(...xyz(sketchWorld([at[0], at[1] + 100])));
-  return screenAxes([(pu.x - o.x) / 100, (pu.y - o.y) / 100], [(pv.x - o.x) / 100, (pv.y - o.y) / 100]);
-}
-const xyz = (p) => [p.x, p.y, p.z];
-function faceCentre(face) {
-  const c = {};
-  for (const a of ["x", "y", "z"]) c[a] = (face.ext[a][0] + face.ext[a][1]) / 2;
-  c[face.axis] = face.value;
-  return c;
-}
-
-/** Screen angle (degrees, counter-clockwise from right) of a → b in (u, v). */
-function screenAngle(a, b) {
-  const p = toClient(...xyz(sketchWorld(a)));
-  const q = toClient(...xyz(sketchWorld(b)));
-  const deg = Math.round((Math.atan2(-(q.y - p.y), q.x - p.x) * 180) / Math.PI);
-  return deg < 0 ? deg + 360 : deg;
-}
-
-/** Closed outline being committed, as [u, v]. */
-function boardRing() {
-  if (!board) return null;
-  return board.ring || null;
-}
-
-function boardPlaced() {
-  const ring = boardRing();
-  if (!ring) return null;
-  return sketchBoardFromPoints(board.face, ring.map(sketchWorld), board.choice);
-}
-
-/** Bounding-box corners of the ring in world, for the room check. */
-function ringCorners() {
-  const ring = boardRing();
-  const us = ring.map((p) => p[0]);
-  const vs = ring.map((p) => p[1]);
-  return [sketchWorld([Math.min(...us), Math.min(...vs)]), sketchWorld([Math.max(...us), Math.max(...vs)])];
-}
-
-export function startBoard() {
-  if (board) { cancelBoard("toggle"); return; }
-  if (!job.hasSpace()) { log("board.blocked", { reason: "no space" }); return; }
-  const mem = job.getJob().sketchBoard;
-  const choice = remembered(mem, boardChoices());
-  if (!choice) { log("board.blocked", { reason: "no stock" }); return; }
-  endResize("tool off");
-  cancelMove();
-  cancelAlign();
-  cancelPointAlign();
-  cancelOrient();
-  cancelNose();
-  cancelBedBox();
-  cancelLounge();
-  cancelPlane();
-  cancelFitPick("tool off");
-  endRetype(false);
-  if (placing) { placing = null; rb = null; lshape = null; lastCreated = null; clearPreview(); }
-  board = {
-    step: "pick", face: null, tool: boardTool, path: [], anchor: null, cursor: null, ring: null,
-    snaps: null, choice, colorFace: mem && mem.colorFace === "sketch" ? "sketch" : "pull",
-  };
-  canvas.style.cursor = "crosshair";
-  log("board.arm", { tool: boardTool, aids: { ...boardAids } });
-  emitMode();
-}
-
-function cancelBoard(how) {
-  if (!board) return;
-  const step = board.step;
-  board = null;
-  boardCard.classList.add("hidden");
-  boardClearPreview();
-  endFaceView();
-  canvas.style.cursor = "";
-  log("board.cancel", { step, how });
-  emitMode();
-}
-
-function boardBack() {
-  if (!board) return;
-  if (board.step === "stock") {
-    // Reopen the shape: the polyline keeps its points, a rectangle its first corner.
-    board.step = "draw";
-    board.ring = null;
-    hideSketchSolid();
-    log("board.back", { step: "draw" });
-    paintDrawCard();
-    boardDrawPreview(null);
-    emitMode();
-    return;
-  }
-  if (board.step === "draw" && (board.path.length || board.anchor)) {
-    board.path = [];
-    board.anchor = null;
-    board.snaps = null;
-    hideSketchPath();
-    log("board.back", { step: "draw", cleared: true });
-    paintDrawNote();
-    emitMode();
-    return;
-  }
-  if (board.step === "draw") {
-    board.step = "pick";
-    board.face = null;
-    board.cursor = null;
-    boardCard.classList.add("hidden");
-    boardClearPreview();
-    endFaceView();
-    log("board.back", { step: "pick" });
-    emitMode();
-    return;
-  }
-  cancelBoard("esc");
-}
-
-/** Right-click without a drag: Enter. True when the Board command took it. */
-export function boardRightClick() {
-  if (!board) return false;
-  if (board.step === "draw") boardEnter("right-click");
-  else if (board.step === "stock") finishBoard("right-click");
-  return true;
-}
-
-/** A corner of this face, else any feature point in its plane, or null. Object snap only. */
-function planeFeature(e, face) {
-  const hit = nearestSnap(e.clientX, e.clientY, { filter: (p) => onSketchFace(p, face) })
-    || nearestSnap(e.clientX, e.clientY, { filter: (p) => onSketchPlane(p, face) });
-  return hit ? { ...hit, [face.axis]: face.value } : null;
-}
-
-function pointOnSketchFace(e, face) {
-  // This face's own corners first, then any other feature point that lies in the plane.
-  const hit = boardAids.osnap ? planeFeature(e, face) : null;
-  if (hit) {
-    return {
-      x: hit.x, y: hit.y, z: hit.z,
-      feature: true, segs: [], tips: [`Corner · ${describePoint(hit)}`],
-    };
-  }
-  const g = planePointAt(e.clientX, e.clientY, threePlane(face.axis, face.value));
-  if (!g) return null;
-  const pt = { x: g.x, y: g.y, z: g.z };
-  const al = boardAids.osnap ? nearestFaceAlign(e.clientX, e.clientY, { axis: face.axis, value: face.value }) : {};
-  const segs = [];
-  const tips = [];
-  for (const a of inPlaneAxes(face.axis)) {
-    if (al[a]) {
-      pt[a] = al[a].value;
-      segs.push(faceGuide(al[a].plane, { axis: face.axis, value: face.value }));
-      tips.push(`Flush with ${al[a].plane.label}`);
-    } else pt[a] = job.snap(pt[a]);
-  }
-  pt[face.axis] = face.value;
-  const c = clampToSpace(pt);
-  c[face.axis] = face.value;
-  return { x: c.x, y: c.y, z: c.z, outside: c.outside, segs, tips };
-}
-
-/** Room along the face normal. A floor rectangle uses the roof over that rectangle, not the whole space. */
-function boardRoom(face, a, b) {
-  if (!face) return 0;
-  if (face.axis === "z" && face.dir > 0 && a && b) {
-    const sp = job.getSpace();
-    if (!sp) return Infinity;
-    return minClearHeight(sp, Math.min(a.y, b.y), Math.max(a.y, b.y)) - face.value;
-  }
-  return extrudeRoom(face);
-}
-
-/** The closed shape as a solid, with the colour skin. Built once per call. */
-function boardSolidPreview() {
-  const ring = boardRing();
-  if (!ring) { hideSketchSolid(); return; }
-  const [a, b] = ringCorners();
-  const room = boardRoom(board.face, a, b);
-  const tight = board.choice.thickness > room + 0.5;
-  const t = board.choice.thickness;
-  const f = board.face;
-  const t0 = f.dir < 0 ? f.value - t : f.value;
-  const swatch = board.choice.kind === "door" ? doorSwatch(board.choice.colour) : null;
-  const where = board.choice.single ? board.choice.colorFace : "pull";
-  const at = colourFaceValue(f, t, where);
-  // A skin exactly on the solid's face would fight it; lift it a hair outward.
-  const lift = at === f.value ? -0.3 * (f.dir < 0 ? -1 : 1) : 0.3 * (f.dir < 0 ? -1 : 1);
-  showSketchSolid(f.axis, ring, t0, t0 + t, { colour: swatch ? swatch.hex : null, colourAt: at + lift, bad: tight });
-}
-
-function boardHoverPick(e) {
-  const hit = pickFace(e.clientX, e.clientY);
-  if (!hit) { hideFaceHint(); hideTip(); return; }
-  showFaceHint(hit.face);
-  const room = extrudeRoom(hit.face);
-  showTip(e.clientX, e.clientY, [
-    hit.face.label,
-    room < 1 ? "No room off this face" : `Click the first point · ${boardTool === "rect" ? "rectangle" : "polyline"}`,
-    "Esc cancels",
-  ], room < 1 ? "warn" : "");
-}
-
-/** Snap candidates from the path; recomputed only when the path changes. */
-function boardPathSnaps() {
-  if (!board.snaps) {
-    const from = boardLast();
-    board.snaps = board.tool === "line"
-      ? pathSnaps(board.path, { from })
-      : board.anchor ? [{ uv: board.anchor, kind: "endpoint", index: 0 }] : [];
-  }
-  return board.snaps;
-}
-
-/**
- * Where the cursor lands on the face, in (u, v):
- * object snap (path points, face corners, plane corners) → ortho / polar from
- * the last point → flush lines and the 10 mm grid.
- */
-function resolveDraw(e) {
-  const face = board.face;
-  const g = planePointAt(e.clientX, e.clientY, threePlane(face.axis, face.value));
-  if (!g) return null;
-  const raw = toUV(face, g);
-  const last = boardLast();
-  if (boardAids.osnap) {
-    const radius = SNAP_RADIUS_PX * uiScale();
-    let best = null;
-    for (const c of boardPathSnaps()) {
-      const s = toClient(...xyz(sketchWorld(c.uv)));
-      if (s.behind) continue;
-      const d = Math.hypot(s.x - e.clientX, s.y - e.clientY);
-      if (d > radius) continue;
-      // Closing wins inside the aperture so the ring is easy to close.
-      const rank = c.kind === "close" ? -1 : d;
-      if (!best || rank < best.rank) best = { rank, uv: c.uv, kind: c.kind, label: SNAP_LABEL[c.kind] };
-    }
-    if (!best || best.kind !== "close") {
-      const f = planeFeature(e, face);
-      if (f) {
-        const s = toClient(f.x, f.y, f.z);
-        const d = Math.hypot(s.x - e.clientX, s.y - e.clientY);
-        if (!best || d < best.rank) best = { rank: d, uv: toUV(face, f), kind: "feature", label: `Corner · ${describePoint(f)}` };
-      }
-    }
-    if (best) return { uv: best.uv, kind: best.kind, label: best.label, feature: true };
-  }
-  if (last && board.tool === "line") {
-    if (boardAids.ortho !== e.shiftKey) {
-      return { uv: roundLength(last, orthoPoint(last, raw)), kind: "ortho", label: "Ortho" };
-    }
-    if (boardAids.polar) {
-      const p = polarPoint(last, raw);
-      if (p) return { uv: roundLength(last, p), kind: "polar", label: "Polar" };
-    }
-  }
-  const pt = pointOnSketchFace(e, face);
-  if (!pt) return null;
-  return { uv: toUV(face, pt), kind: pt.segs.length ? "align" : "grid", label: pt.tips[0] || null, segs: pt.segs };
-}
-
-/** Rectangle corners (u, v) from its first corner and the opposite one. */
-function rectRing(a, b) {
-  return [[a[0], a[1]], [b[0], a[1]], [b[0], b[1]], [a[0], b[1]]];
-}
-
-function boardDrawPreview(r) {
-  const last = boardLast();
-  const cur = r ? r.uv : board.cursor;
-  let bad = false;
-  if (board.tool === "rect") {
-    if (last && cur) showSketchPath(rectRing(last, cur).map(sketchWorld), { closed: true });
-    else hideSketchPath();
-    return { bad };
-  }
-  const pts = board.path.slice();
-  if (cur && last) {
-    const closing = r && r.kind === "close";
-    bad = !closing && segmentHitsPath(board.path, last, cur);
-    if (closing) bad = segmentHitsPath(board.path, last, board.path[0], { closing: true });
-    pts.push(closing ? board.path[0] : cur);
-  }
-  if (pts.length >= 2) showSketchPath(pts.map(sketchWorld), { bad });
-  else hideSketchPath();
-  return { bad };
-}
-
-function boardHoverDraw(e) {
-  const r = resolveDraw(e);
-  if (!r) { hideTip(); return; }
-  board.cursor = r.uv;
-  const w = sketchWorld(r.uv);
-  if (r.feature) showSnapMarker(w.x, w.y, w.z, { feature: true }); else hideSnapMarker();
-  if (r.segs && r.segs.length) showAlignLines(r.segs); else hideAlignLines();
-  const { bad } = boardDrawPreview(r);
-  const last = boardLast();
-  const lines = [];
-  if (r.label) lines.push(r.label);
-  if (board.tool === "rect") {
-    if (last) lines.push(`${Math.round(Math.abs(r.uv[0] - last[0]))} × ${Math.round(Math.abs(r.uv[1] - last[1]))}`);
-    lines.push(last ? "Click the opposite corner · type 400,600 · Esc clears" : "Click the first corner");
-  } else if (last) {
-    const len = Math.hypot(r.uv[0] - last[0], r.uv[1] - last[1]);
-    lines.push(`L ${Math.round(len)} · ${screenAngle(last, r.uv)}°`);
-    if (bad) lines.push("Crosses the outline");
-    else lines.push(board.path.length >= 3 ? "Click the next point · C or the first point closes" : "Click the next point");
-  } else {
-    lines.push("Click the first point");
-  }
-  showTip(e.clientX, e.clientY, lines, bad ? "warn" : "");
-}
-
-function boardLockFace(e) {
-  const hit = pickFace(e.clientX, e.clientY);
-  if (!hit) return;
-  if (extrudeRoom(hit.face) < 1) {
-    log("board.blocked", { reason: "no room", face: hit.face.label });
-    return;
-  }
-  const pt = pointOnSketchFace(e, hit.face);
-  if (!pt) return;
-  board.face = {
-    axis: hit.face.axis, value: hit.face.value, dir: hit.face.dir, label: hit.face.label, source: hit.face.source || null,
-    ext: { x: [...hit.face.ext.x], y: [...hit.face.ext.y], z: [...hit.face.ext.z] },
-  };
-  board.step = "draw";
-  board.path = [];
-  board.anchor = null;
-  board.snaps = null;
-  hideFaceHint();
-  beginFaceView(board.face);
-  log("board.face", { axis: board.face.axis, value: board.face.value, dir: board.face.dir, label: board.face.label, source: board.face.source });
-  boardAddPoint(toUV(board.face, pt), "click", pt.feature ? "feature" : "grid");
-  paintDrawCard();
-  emitMode();
-}
-
-function boardClick(e) {
-  if (board.step === "pick") { boardLockFace(e); return; }
-  if (board.step !== "draw") return;
-  const r = resolveDraw(e);
-  if (!r) return;
-  if (board.tool === "line" && r.kind === "close") { boardClose("click"); return; }
-  boardAddPoint(r.uv, "click", r.kind);
-}
-
-/** One more point: a polyline vertex, or a rectangle corner (the second one closes it). */
-function boardAddPoint(uv, how, snap) {
-  if (board.tool === "rect") {
-    if (!board.anchor) {
-      board.anchor = uv;
-      board.snaps = null;
-      log("board.point", { tool: "rect", index: 0, u: uv[0], v: uv[1], snap, how });
-      paintDrawNote();
-      return true;
-    }
-    return boardFinishRect(uv, how);
-  }
-  const last = boardLast();
-  if (last && Math.hypot(uv[0] - last[0], uv[1] - last[1]) < 0.5) return false;
-  if (last && segmentHitsPath(board.path, last, uv)) {
-    log("board.blocked", { reason: "crosses itself", tool: "line", u: uv[0], v: uv[1] });
-    return false;
-  }
-  board.path.push(uv);
-  board.snaps = null;
-  log("board.point", { tool: "line", index: board.path.length - 1, u: uv[0], v: uv[1], snap, how });
-  boardDrawPreview(null);
-  paintDrawNote();
-  return true;
-}
-
-function boardFinishRect(corner, how) {
-  const ring = rectRing(board.anchor, corner);
-  const problem = ringProblem(ring, BOARD_MIN);
-  if (problem) {
-    log("board.blocked", { reason: `the rectangle ${problem}`, tool: "rect", anchor: board.anchor, corner });
-    return false;
-  }
-  log("board.corner", { how, anchor: board.anchor, corner, du: Math.abs(corner[0] - board.anchor[0]), dv: Math.abs(corner[1] - board.anchor[1]) });
-  boardToStock(ring);
-  return true;
-}
-
-function boardClose(how) {
-  if (board.tool !== "line") return false;
-  const pts = board.path;
-  if (pts.length < 3) { log("board.blocked", { reason: "needs at least 3 points", tool: "line", how }); return false; }
-  const last = pts[pts.length - 1];
-  const problem = segmentHitsPath(pts, last, pts[0], { closing: true }) ? "crosses itself" : ringProblem(pts, BOARD_MIN);
-  if (problem) {
-    log("board.blocked", { reason: `the outline ${problem}`, tool: "line", points: pts.length, how });
-    paintDrawNote(`The outline ${problem}`);
-    return false;
-  }
-  log("board.close", { how, points: pts.length });
-  boardToStock(pts.slice());
-  return true;
-}
-
-function boardToStock(ring) {
-  board.ring = ring;
-  board.step = "stock";
-  hideSketchPath();
-  hideAlignLines();
-  hideSnapMarker();
-  hideTip();
-  paintBoardCard();
-  boardSolidPreview();
-  emitMode();
-}
-
-function boardUndo() {
-  if (board.step !== "draw") return;
-  if (board.tool === "rect") {
-    if (!board.anchor) return;
-    board.anchor = null;
-  } else {
-    if (!board.path.length) return;
-    board.path.pop();
-  }
-  board.snaps = null;
-  log("board.undo", { tool: board.tool, left: board.tool === "rect" ? 0 : board.path.length });
-  boardDrawPreview(null);
-  paintDrawNote();
-}
-
-/** Enter / right-click while drawing: close the polyline, or take the cursor as the rectangle's corner. */
-function boardEnter(how) {
-  if (board.step !== "draw") return;
-  if (board.tool === "line") boardClose(how);
-  else if (board.anchor && board.cursor) boardAddPoint(board.cursor, how, "cursor");
-}
-
-function setBoardTool(tool) {
-  if (!board || board.step !== "draw" || board.tool === tool) return;
-  // The first point stays: it becomes the rectangle's first corner, or the polyline's start.
-  const first = board.tool === "rect" ? board.anchor : board.path[0] || null;
-  board.tool = tool;
-  boardTool = tool;
-  board.path = tool === "line" && first ? [first] : [];
-  board.anchor = tool === "rect" ? first : null;
-  board.snaps = null;
-  log("board.tool", { tool });
-  paintDrawCard();
-  boardDrawPreview(null);
-}
-
-function toggleBoardAid(key) {
-  boardAids[key] = !boardAids[key];
-  // Ortho and polar exclude each other, as in AutoCAD.
-  if (key === "ortho" && boardAids.ortho) boardAids.polar = false;
-  if (key === "polar" && boardAids.polar) boardAids.ortho = false;
-  log("board.aid", { key, on: boardAids[key], aids: { ...boardAids } });
-  if (board && board.step === "draw") paintDrawCard();
-}
-
-/** Keys shared by the canvas and the entry field. True when handled. */
-function boardKey(e) {
-  const aid = BOARD_AID_KEYS[e.key];
-  if (aid) { e.preventDefault(); toggleBoardAid(aid); return true; }
-  return false;
-}
-
-function applyBoardEntry(text) {
-  const entry = parseEntry(text);
-  const last = boardLast();
-  let uv = null;
-  if (entry && last) {
-    const axes = boardScreenAxes();
-    const cur = board.cursor;
-    const len = cur ? Math.hypot(cur[0] - last[0], cur[1] - last[1]) : 0;
-    const dir = len > 1e-6 ? [(cur[0] - last[0]) / len, (cur[1] - last[1]) / len] : null;
-    if (board.tool === "rect") {
-      if (entry.kind === "pair") uv = cornerFromPair(last, entry, { axes, cursor: cur });
-      else if (entry.kind === "rel" || entry.kind === "polar") uv = pointFromEntry(last, entry, { axes });
-    } else {
-      const e2 = entry.kind === "pair" ? { kind: "rel", dx: entry.a, dy: entry.b } : entry;
-      uv = pointFromEntry(last, e2, { dir, axes });
-    }
-  }
-  const ok = !!uv && boardAddPoint(uv, "typein", entry ? entry.kind : null);
-  log("board.typein", { text, kind: entry ? entry.kind : null, ok, tool: board.tool });
-  if (!ok) paintDrawNote(entry ? "That point does not fit" : "Type 600 · @100,-50 · 600<45 · 400,600");
-  return ok;
-}
-
-function cardButton(text, { active = false, title = "", onclick }) {
-  const b = document.createElement("button");
-  b.type = "button";
-  b.className = "tb seg" + (active ? " active" : "");
-  b.textContent = text;
-  if (title) b.title = title;
-  b.addEventListener("click", onclick);
-  return b;
-}
-
-/** Card while drawing: tool, aids, the entry field and a status line. */
-function paintDrawCard() {
-  const title = document.createElement("div");
-  title.className = "move-card-title";
-  title.textContent = `Board · ${board.face.label}`;
-  const tools = document.createElement("div");
-  tools.className = "move-kind";
-  tools.append(
-    cardButton("Polyline", { active: board.tool === "line", title: "Click point after point · C or the first point closes · U undoes one", onclick: () => setBoardTool("line") }),
-    cardButton("Rectangle", { active: board.tool === "rect", title: "Two opposite corners · or type 400,600", onclick: () => setBoardTool("rect") }),
-  );
-  const aids = document.createElement("div");
-  aids.className = "move-kind";
-  aids.append(
-    cardButton("Snap F3", { active: boardAids.osnap, title: "Object snap: endpoints, midpoints, crossings, perpendicular, the face's corners and corners in this plane", onclick: () => toggleBoardAid("osnap") }),
-    cardButton("Ortho F8", { active: boardAids.ortho, title: "Segments run along the face's two axes · hold Shift to flip for one point", onclick: () => toggleBoardAid("ortho") }),
-    cardButton("Polar F10", { active: boardAids.polar, title: "Segments snap to 45° steps", onclick: () => toggleBoardAid("polar") }),
-  );
-  const input = document.createElement("input");
-  input.type = "text";
-  input.spellcheck = false;
-  input.dataset.entry = "";
-  input.placeholder = board.tool === "rect" ? "400,600 · @400,600" : "600 · @100,-50 · 600<45";
-  input.addEventListener("keydown", (e) => {
-    e.stopPropagation();
-    if (boardKey(e)) return;
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (!input.value.trim()) { input.blur(); boardEnter("enter"); return; }
-      if (applyBoardEntry(input.value)) input.value = "";
-      if (board && board.step === "draw") input.focus();
-      return;
-    }
-    if (e.key === "Escape") { e.preventDefault(); input.value = ""; input.blur(); return; }
-    if (!input.value && (e.key === "c" || e.key === "C")) { e.preventDefault(); input.blur(); boardClose("key"); return; }
-    if (!input.value && (e.key === "u" || e.key === "U")) { e.preventDefault(); boardUndo(); }
-  });
-  const note = document.createElement("div");
-  note.className = "move-note";
-  boardCard._note = note;
-  boardCard._entry = input;
-  boardCard.replaceChildren(title, tools, aids, input, note);
-  boardCard.classList.remove("hidden");
-  paintDrawNote();
-}
-
-function paintDrawNote(message = null) {
-  const note = boardCard._note;
-  if (!note || !board || board.step !== "draw") return;
-  if (message) { note.textContent = message; return; }
-  if (board.tool === "rect") {
-    note.textContent = board.anchor ? "Opposite corner · Esc clears" : "First corner";
-  } else {
-    const n = board.path.length;
-    note.textContent = n >= 3
-      ? `${n} points · C / Enter / right-click closes · U undoes`
-      : n ? `${n} point${n > 1 ? "s" : ""} · U undoes · Esc clears` : "First point";
-  }
-}
-
-function paintBoardCard() {
-  const choices = boardChoices();
-  const sel = document.createElement("select");
-  for (const c of choices) {
-    const o = document.createElement("option");
-    o.value = c.id;
-    o.textContent = c.label;
-    if (c.id === board.choice.id) o.selected = true;
-    sel.append(o);
-  }
-  sel.addEventListener("change", () => {
-    const next = choices.find((c) => c.id === sel.value) || choices[0];
-    board.choice = { ...next, colorFace: next.single ? board.colorFace : "pull" };
-    paintColorRow();
-    boardSolidPreview();
-  });
-  const colorRow = document.createElement("div");
-  colorRow.className = "move-kind";
-  const note = document.createElement("div");
-  note.className = "move-note";
-  const ok = document.createElement("button");
-  ok.className = "tb primary";
-  ok.type = "button";
-  ok.textContent = "Create";
-  ok.addEventListener("click", () => finishBoard("ok"));
-  boardCard._colorRow = colorRow;
-  boardCard._note = note;
-  boardCard._ok = ok;
-  boardCard._entry = null;
-  const title = document.createElement("div");
-  title.className = "move-card-title";
-  title.textContent = "Board";
-  boardCard.replaceChildren(title, sel, colorRow, note, ok);
-  paintColorRow();
-  boardCard.classList.remove("hidden");
-}
-
-function paintColorRow() {
-  const row = boardCard._colorRow;
-  const note = boardCard._note;
-  if (!row || !board || board.step !== "stock") return;
-  const placed = boardPlaced();
-  const room = boardRoom(board.face, ...ringCorners());
-  const tight = !placed || board.choice.thickness > room + 0.5;
-  if (boardCard._ok) boardCard._ok.disabled = tight;
-  if (note) {
-    note.textContent = !placed ? ""
-      : tight
-        ? `${Math.round(placed.du)} × ${Math.round(placed.dv)} · ${board.choice.thickness} mm is thicker than the room (${Math.round(room)} mm)`
-        : `${Math.round(placed.du)} × ${Math.round(placed.dv)} · ${board.choice.thickness} mm · Enter creates`;
-  }
-  row.replaceChildren();
-  if (!board.choice.single) return;
-  for (const [id, label] of [["pull", "Outer face"], ["sketch", "Sketch face"]]) {
-    const b = document.createElement("button");
-    b.type = "button";
-    b.className = "tb seg" + (board.choice.colorFace === id ? " active" : "");
-    b.textContent = label;
-    b.addEventListener("click", () => {
-      board.colorFace = id;
-      board.choice = { ...board.choice, colorFace: id };
-      paintColorRow();
-      boardSolidPreview();
-    });
-    row.append(b);
-  }
-}
-
-function finishBoard(how) {
-  if (!board || board.step !== "stock") return;
-  const placed = boardPlaced();
-  if (!placed) return;
-  const room = boardRoom(board.face, ...ringCorners());
-  const tool = board.tool;
-  const points = board.ring.length;
-  if (board.choice.thickness > room + 0.5) {
-    log("board.blocked", { reason: "thicker than the room", thickness: board.choice.thickness, room, face: board.face.label });
-    return;
-  }
-  const choice = board.choice;
-  const face = board.face;
-  const colorFace = board.colorFace === "sketch" ? "sketch" : "pull";
-  board = null;
-  boardCard.classList.add("hidden");
-  boardClearPreview();
-  endFaceView();
-  canvas.style.cursor = "";
-  job.pushHistory();
-  job.getJob().sketchBoard = { stockId: choice.id, colorFace };
-  const cab = job.addCabinet("sketchBoard", placed.pose, {}, { history: false, params: placed.params });
-  log("board.finish", {
-    id: cab.id, how, tool, points, stockId: choice.id, colorFace: placed.params.colorFace,
-    plane: placed.params.plane, pull: placed.params.pull,
-    du: placed.du, dv: placed.dv, thickness: choice.thickness,
-    pose: placed.pose, face: { axis: face.axis, value: face.value, dir: face.dir, label: face.label },
-  });
-  emitMode();
-}
 
 // --- pointer -----------------------------------------------------------------------
 
@@ -4513,7 +3819,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
 
-  if (board) { boardClick(e); return; }
+  if (boardActive()) { boardPointerDown(e); return; }
 
   if (nose) {
     if (nose.step === "ready") noseBegin(e);
@@ -4633,11 +3939,7 @@ canvas.addEventListener("pointermove", (e) => {
 
   if (orient) return orientHover(e);
   if (cplane) return cplane.step === "pick" ? planeHoverPick(e) : updatePlane(e);
-  if (board) {
-    if (board.step === "pick") return boardHoverPick(e);
-    if (board.step === "draw") return boardHoverDraw(e);
-    return;
-  }
+  if (boardActive()) return boardPointerMove(e);
 
   if (nose) return nose.step === "ready" ? noseHover(e) : updateNose(e);
   if (bed) return updateBedBox(e);
@@ -5089,30 +4391,7 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { cancelPlane(); return; }
     return;
   }
-  if (board) {
-    if (boardKey(e)) return;
-    if (e.key === "Escape") { e.preventDefault(); boardBack(); return; }
-    if (e.key === "Enter") {
-      e.preventDefault();
-      if (board.step === "draw") boardEnter("enter");
-      else if (board.step === "stock") finishBoard("enter");
-      return;
-    }
-    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
-    if (board.step === "draw" && plain) {
-      if (e.key === "c" || e.key === "C") { e.preventDefault(); boardClose("key"); return; }
-      if (e.key === "u" || e.key === "U") { e.preventDefault(); boardUndo(); return; }
-      // A digit, sign or @ opens the entry field with that character.
-      if (/^[0-9.@<,+\-]$/.test(e.key) && boardCard._entry) {
-        e.preventDefault();
-        boardCard._entry.value = e.key;
-        boardCard._entry.focus();
-        return;
-      }
-    }
-    if ((e.key === "b" || e.key === "B") && plain) { cancelBoard("key"); return; }
-    return;
-  }
+  if (boardActive()) { boardKeydown(e); return; }
   if (nose && nose.step === "ready") {
     // Preset depth is already shown: Enter takes it, a digit opens the depth type-in.
     if (e.key === "Enter") { e.preventDefault(); finishNose("enter"); return; }

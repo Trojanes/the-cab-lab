@@ -345,20 +345,79 @@ button:disabled { cursor: default; opacity: 0.45; }
 
 /* ---------- floor plan (2D sheet over the 3D view) ---------- */
 
-#faceReset {
+/* Sketch mode (Board command): tools across the top, drawing aids along the bottom. */
+.sketch-bar {
   position: absolute;
-  top: 10px;
-  left: 50%;
-  transform: translateX(-50%);
+  left: 292px;
+  right: calc(var(--right-w) + 12px);
   z-index: 7;
-  height: 26px;
-  padding: 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 4px 8px;
+  background: var(--bg-panel-2);
   border: 1px solid var(--line-strong);
-  background: rgba(32, 35, 42, 0.92);
-  color: var(--text);
+  border-radius: var(--radius);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
   font-size: 11px;
 }
+#sketchBar { top: 8px; }
+#sketchAids { bottom: 8px; }
+#app:has(#rightpanel.wide) .sketch-bar { right: calc(var(--right-w-wide) + 12px); }
+.sketch-title { font-weight: 600; color: var(--text); white-space: nowrap; }
+.sketch-group { display: flex; align-items: center; gap: 2px; padding-left: 10px; border-left: 1px solid var(--line); }
+.sketch-group-label { color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; margin-right: 4px; }
+.sketch-bar .tb { height: 24px; }
+.sketch-bar .tb:disabled { color: var(--text-3); opacity: 0.55; }
+.sketch-bar .tb.icon { width: 28px; height: 26px; }
+/* Create | Modify */
+.sketch-divider { align-self: stretch; width: 1px; margin: 2px 2px; background: var(--line-strong); }
+.sketch-bar .sketch-group.sketch-modify { border-left: none; padding-left: 0; }
+.sketch-bar .tb.icon.active { background: var(--accent-soft); color: var(--text); }
+.sketch-bar .tb.icon:disabled { color: var(--text-3); opacity: 0.45; }
+/* Typed fields beside the cursor. A typed (held) field is outlined orange. */
+.sketch-dyn {
+  position: absolute;
+  z-index: 8;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 5px;
+  background: rgba(32, 35, 42, 0.95);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+.sketch-dyn-field {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius);
+}
+.sketch-dyn-field.locked { border-color: var(--warn); }
+.sketch-dyn-name { color: var(--text-3); }
+.sketch-dyn-unit { color: var(--text-3); }
+.sketch-dyn-field input {
+  width: 58px;
+  height: 20px;
+  padding: 0 4px;
+  background: var(--bg);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  color: var(--text);
+  font: inherit;
+  text-align: right;
+}
+.sketch-dyn-field input:focus { outline: none; border-color: var(--accent); }
+.sketch-dyn-hint { color: var(--text-3); margin-left: 2px; white-space: nowrap; }
+.sketch-status { color: var(--text-3); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sketch-status.warn { color: var(--warn); }
+#faceReset { height: 24px; padding: 0 10px; border: 1px solid var(--line-strong); color: var(--text); }
 #faceReset:hover { border-color: var(--accent); }
+#app.sketching .fp-btn { display: none; }
+#boardCard { top: 48px; }
 
 .fp-btn {
   position: absolute;

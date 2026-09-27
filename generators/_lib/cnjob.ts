@@ -306,8 +306,8 @@ function buildBoard(
       decorId: decorSlug(sheet.colorName),
     },
     geometry: {
-      quality: tessellated.value ? "tessellated" : "exact",
-      toleranceMm: tessellated.value ? 0.3 : 0.01,
+      quality: tessellated.value || board.tessellated ? "tessellated" : "exact",
+      toleranceMm: tessellated.value ? 0.3 : board.tessellated ? 0.05 : 0.01,
       outerProfile: { closed: true, points: outer },
       nestingPolygon: outer,
     },

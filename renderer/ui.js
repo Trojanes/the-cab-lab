@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
 import { syncWalls, statusOf } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, overlaps } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, boardUndoKey, overlaps } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -170,9 +170,9 @@ function refreshRail() {
     "resize.drag": "Resize — release to keep this size (one undo step)",
     "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
-    "board.pick": "Board — click the first point on a face · Esc cancels",
-    "board.draw": "Board — Polyline: click points, C or the first point closes, U undoes · Rectangle: two corners · type 600 · @100,-50 · 600<45 · 400,600 · F3 snap · F8 ortho · F10 polar · Enter / right-click finishes · Esc clears",
-    "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc redraws the corner",
+    "board.pick": "Board — click the face to sketch on · Esc cancels",
+    "board.sketch": "Sketch — pick a tool on the sketch bar, then click where it starts · Finish sketch turns the closed shapes into boards",
+    "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc back to the sketch",
     "fit": "Fit to cabinets — click an overhead and a base, in either order · Enter fits the wall · Esc cancels",
   };
   const lBox = getLoungeStyle() === "L" && ["armed", "face", "extrude"].includes(mode);
@@ -378,7 +378,7 @@ window.addEventListener("keydown", (e) => {
   else if (k === "n") { e.preventDefault(); doNew(); }
   else if (k === "o") { e.preventDefault(); doOpen(); }
   else if (k === "s") { e.preventDefault(); doSave(e.shiftKey); }
-  else if (k === "z" && !inField) { e.preventDefault(); job.undo(); }
+  else if (k === "z" && !inField) { e.preventDefault(); if (!boardUndoKey()) job.undo(); }
   else if (k === "y" && !inField) { e.preventDefault(); job.redo(); }
 });
 
