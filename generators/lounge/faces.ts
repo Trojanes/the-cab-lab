@@ -91,7 +91,7 @@ export function buildLoungeFaces(fb: {
     });
   }
 
-  if (B.has("back_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
+  if (fb.boards.some((b) => b.boardType === "rear_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
   return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
 }
 
@@ -109,27 +109,54 @@ function bandFrameEdges(boards: Board[], colour: string, doorColour: string) {
     for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), tape);
   };
   const by = (id: string) => boards.find((b) => b.id === id);
-  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "back_rail"]) band(by(id), "+Z");
+  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "i_front", "i_left_end", "i_right_end", "back_rail"]) band(by(id), "+Z");
   band(by("l_side"), "-Y");
   band(by("l_outer_side"), "-Y");
-  if (by("l_drawer_front")) {
-    const doorTape = { thickness: R.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
-    for (const id of ["l_drawer_front", "l_drawer_strip"]) {
+  for (const id of ["i_rail_back", "i_rail_front"]) band(by(id), "-Z");
+  // Parallel: aisle end, seat front and rear rail tops; the seat front's aisle end; the rear rail's
+  // underside unless it rests on the wheel-arch cover; the cover's front.
+  const cover = by("parallel_avoidance_top");
+  for (const side of ["left", "right"]) {
+    if (!by(`${side}_rear_rail`)) continue;
+    for (const id of [`${side}_front`, `${side}_side`, `${side}_rear_rail`]) band(by(id), "+Z");
+    band(by(`${side}_side`), "-Y");
+    if (!cover) band(by(`${side}_rear_rail`), "-Z");
+  }
+  if (by("left_rear_rail")) band(cover, "-Y");
+  // Middle cabinet: doors all round in the door colour, the carcass on every edge off the wall.
+  const doorTape = { thickness: R.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
+  for (const b of boards.filter((q) => q.id.startsWith("middle_cabinet_"))) {
+    const isDoor = b.boardType === "cabinet_door";
+    if (b.boardType === "cabinet_divider") { band(b, "-Y"); continue; }
+    for (const f of edgeFaces(b)) {
+      if (!isDoor && f.normal === "+Y") continue;
+      if (b.boardType === "cabinet_side" && (f.normal === "+Z" || f.normal === "-Z")) continue;
+      setEdgeBand(b, Number(f.id.slice(1)), isDoor ? doorTape : tape);
+    }
+  }
+  // Frame drawers (L wing end, parallel aisle ends): front and fixed strip all round in the door colour,
+  // and the panels framing the drawer on their room end; with the drawer out, the drawer rail's rear edge
+  // and the supports' front edges show.
+  const drawers: Record<string, { frame: string[]; supports: string[] }> = {
+    l: { frame: ["l_side", "l_outer_side"], supports: ["l_support_inner", "l_support_outer"] },
+    left: { frame: ["left_side"], supports: ["left_outer_support", "left_inner_support"] },
+    right: { frame: ["right_side"], supports: ["right_outer_support", "right_inner_support"] },
+  };
+  for (const [p, d] of Object.entries(drawers)) {
+    if (!by(`${p}_drawer_front`)) continue;
+    for (const id of [`${p}_drawer_front`, `${p}_drawer_strip`]) {
       const b = by(id)!;
       for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
     }
-    // The wing sides' room ends frame the drawer: door colour there.
-    for (const id of ["l_side", "l_outer_side"]) {
-      const b = by(id)!;
-      for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+    for (const id of d.frame) {
+      const b = by(id);
+      if (b) for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
     }
-    band(by("l_drawer_rail"), "+Y");
-    band(by("l_support_inner"), "-Y");
-    band(by("l_support_outer"), "-Y");
+    band(by(`${p}_drawer_rail`), "+Y");
+    for (const id of d.supports) band(by(id), "-Y");
   }
   for (const id of ["main_rail_back", "main_rail_front", "back_rail"]) band(by(id), "-Z");
-  for (const id of ["main_lid", "l_lid"]) {
-    const lid = by(id);
-    if (lid) for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
+  for (const lid of boards.filter((b) => b.boardType === "lid")) {
+    for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
   }
 }

@@ -257,6 +257,109 @@ export function arcCentres(item) {
   return out;
 }
 
+/** Area centroid of a closed item (arcs included through their chords), or null. */
+export function itemCentroid(item) {
+  if (!item.closed) return null;
+  const pts = itemPoints(item);
+  let a2 = 0;
+  let cu = 0;
+  let cv = 0;
+  for (let i = 0; i < pts.length; i += 1) {
+    const p = pts[i];
+    const q = pts[(i + 1) % pts.length];
+    const k = cross(p, q);
+    a2 += k;
+    cu += (p[0] + q[0]) * k;
+    cv += (p[1] + q[1]) * k;
+  }
+  if (Math.abs(a2) < EPS) return null;
+  return [cu / (3 * a2), cv / (3 * a2)];
+}
+
+/** Points of the arcs at 0°, 90°, 180° and 270° around their centres, where the arc passes. */
+export function itemQuadrants(item) {
+  const out = [];
+  for (const s of itemSegments(item)) {
+    const arc = arcOf(s.a, s.b, s.bulge);
+    if (!arc) continue;
+    for (let q = 0; q < 4; q += 1) {
+      const ang = (q * Math.PI) / 2;
+      const p = [arc.c[0] + arc.r * Math.cos(ang), arc.c[1] + arc.r * Math.sin(ang)];
+      if (fracOnArc(arc, p) <= 1 + 1e-9 && !out.some((o) => dist(o, p) < 1e-6)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/** Where a line from `from` touches each arc of the item (on the arc's span). */
+export function itemTangents(item, from) {
+  const out = [];
+  for (const s of itemSegments(item)) {
+    const arc = arcOf(s.a, s.b, s.bulge);
+    if (!arc) continue;
+    const d = dist(from, arc.c);
+    if (d <= arc.r + 1e-6) continue;
+    const base = Math.atan2(from[1] - arc.c[1], from[0] - arc.c[0]);
+    const half = Math.acos(arc.r / d);
+    for (const ang of [base + half, base - half]) {
+      const p = [arc.c[0] + arc.r * Math.cos(ang), arc.c[1] + arc.r * Math.sin(ang)];
+      if (fracOnArc(arc, p) <= 1 + 1e-9 && !out.some((o) => dist(o, p) < 1e-6)) out.push(p);
+    }
+  }
+  return out;
+}
+
+/**
+ * The cursor on the extension of a straight segment, past one of its ends:
+ * `{ p, from }` (from = the end it extends) with p on the infinite line, or null
+ * when the cursor is farther than `tol` from that line or over the segment itself.
+ */
+export function extensionPoint(items, cursor, tol) {
+  let best = null;
+  for (const item of items) {
+    for (const s of itemSegments(item)) {
+      if (arcOf(s.a, s.b, s.bulge)) continue;
+      const d = sub(s.b, s.a);
+      const l2 = dot(d, d);
+      if (l2 < EPS) continue;
+      const t = dot(sub(cursor, s.a), d) / l2;
+      if (t >= 0 && t <= 1) continue;
+      const p = lerp(s.a, s.b, t);
+      const off = dist(cursor, p);
+      if (off > tol) continue;
+      if (!best || off < best.off) best = { p, from: t < 0 ? s.a : s.b, off };
+    }
+  }
+  return best ? { p: best.p, from: best.from } : null;
+}
+
+/**
+ * The cursor pulled onto a direction parallel to a straight segment, through `from`:
+ * `{ p, dir }` when the rubber band is within `tolDeg` of one, else null.
+ */
+export function parallelPoint(items, from, cursor, tolDeg = 3) {
+  const v = sub(cursor, from);
+  const len = Math.hypot(v[0], v[1]);
+  if (len < 1) return null;
+  const tol = Math.sin((tolDeg * Math.PI) / 180);
+  let best = null;
+  for (const item of items) {
+    for (const s of itemSegments(item)) {
+      if (arcOf(s.a, s.b, s.bulge)) continue;
+      const dir = unit(sub(s.b, s.a));
+      if (Math.hypot(s.b[0] - s.a[0], s.b[1] - s.a[1]) < EPS) continue;
+      // Axis-aligned directions are Ortho's job.
+      if (Math.abs(dir[0]) < 1e-6 || Math.abs(dir[1]) < 1e-6) continue;
+      const sin = Math.abs(cross(dir, v)) / len;
+      if (sin > tol) continue;
+      if (!best || sin < best.sin) best = { sin, dir };
+    }
+  }
+  if (!best) return null;
+  const k = dot(v, best.dir);
+  return { p: addv(from, mul(best.dir, k)), dir: best.dir };
+}
+
 /** Why an item cannot stay in the sketch, or null. */
 export function itemProblem(item) {
   const pts = itemPoints(item);

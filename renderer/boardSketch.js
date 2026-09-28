@@ -42,7 +42,9 @@ import {
   itemSegments, itemPoints, itemProblem, segPointAt, segmentPoints, arcOf, arcCentres, allIntersections,
   rectItem, circleItem, arcItem, joinItems, nearestSegment, nearestVertex, trimSpan, trimAt, extendAt,
   filletCorner, chamferCorner, offsetItem, offsetSide, mirrorItem,
+  itemCentroid, itemQuadrants, itemTangents, extensionPoint, parallelPoint,
 } from "./sketchCurves.js";
+import { getSetting, setSetting } from "./settings.js";
 
 // 16 × 16 stroke icons for the sketch bar; the name shows on hover.
 const ICON = {
@@ -78,12 +80,49 @@ const MODIFY = [
 const TOOL_KEYS = Object.fromEntries([...CREATE, ...MODIFY].map((t) => [t.key.toLowerCase(), t.id]));
 const LABEL = Object.fromEntries([...CREATE, ...MODIFY].map((t) => [t.id, t.label]));
 const AIDS = [
-  { id: "osnap", label: "Snap", key: "F3", title: "Object snap: endpoints, midpoints, centres, crossings, perpendicular, the face's corners and corners in this plane" },
+  { id: "osnap", label: "Snap", key: "F3", title: "Object snap on / off — the arrow beside it chooses which snap points" },
   { id: "ortho", label: "Ortho", key: "F8", title: "Lines run along the face's two axes" },
   { id: "polar", label: "Polar", key: "F10", title: "Lines snap to 45° steps" },
 ];
 const AID_KEYS = { F3: "osnap", F8: "ortho", F10: "polar" };
-const SNAP_LABEL = { close: "Close", endpoint: "Endpoint", midpoint: "Midpoint", intersection: "Intersection", perpendicular: "Perpendicular", center: "Centre" };
+
+/**
+ * Object snap kinds, one tick each in the Snap list. F3 still turns all of them off and on.
+ * `on` is the default; the user's choice is kept in settings.json (`sketch.snaps`).
+ */
+const SNAP_KINDS = [
+  { id: "endpoint", label: "Endpoint", hint: "Ends of lines and arcs", on: true },
+  { id: "midpoint", label: "Midpoint", hint: "Middle of a line or arc", on: true },
+  { id: "center", label: "Centre", hint: "Centre of a circle or arc", on: true },
+  { id: "geocenter", label: "Shape centre", hint: "Area centre of a closed shape", on: false },
+  { id: "quadrant", label: "Quadrant", hint: "Circle and arc points at 0°, 90°, 180°, 270°", on: true },
+  { id: "intersection", label: "Intersection", hint: "Where two lines or arcs cross", on: true },
+  { id: "extension", label: "Extension", hint: "On a line continued past its end", on: true },
+  { id: "perpendicular", label: "Perpendicular", hint: "Foot of the square from the last point to a line", on: true },
+  { id: "tangent", label: "Tangent", hint: "Where a line from the last point touches a circle or arc", on: true },
+  { id: "nearest", label: "Nearest", hint: "Any point on a line or arc, nearest the cursor", on: false },
+  { id: "parallel", label: "Parallel", hint: "Draw parallel to a slanted line", on: false },
+  { id: "corner", label: "Corner", hint: "Corners of this face, the space, cabinets and partitions in this plane", on: true },
+];
+const SNAP_LABEL = { close: "Close", feature: "Corner", ...Object.fromEntries(SNAP_KINDS.map((k) => [k.id, k.label])) };
+
+let snapModes = null;
+function snapOn(kind) {
+  if (kind === "close") return true;
+  if (!snapModes) {
+    const saved = getSetting("sketch.snaps") || {};
+    snapModes = Object.fromEntries(SNAP_KINDS.map((k) => [k.id, typeof saved[k.id] === "boolean" ? saved[k.id] : k.on]));
+  }
+  return !!snapModes[kind];
+}
+function setSnapMode(kind, on) {
+  snapOn(kind);
+  snapModes[kind] = on;
+  log("board.snap", { kind, on, snaps: { ...snapModes } });
+  setSetting("sketch.snaps", snapModes);
+  paintSnapList();
+  if (sk && sk.step === "sketch" && sk.client) boardPointerMove({ clientX: sk.client.x, clientY: sk.client.y, shiftKey: !!sk.shift });
+}
 
 const aids = { osnap: true, ortho: false, polar: false };
 /** Sizes the modify tools remember for the session. */
@@ -153,13 +192,40 @@ bar.append(barTitle, createGroup, el("span", { class: "sketch-divider" }), modif
 
 const aidButtons = new Map();
 const aidGroup = el("div", { class: "sketch-group" });
+const snapList = el("div", { class: "snap-list hidden" });
+const snapListBtn = el("button", { class: "tb seg snap-list-btn", type: "button", title: "Choose which snap points are used", "aria-label": "Snap points", onclick: () => toggleSnapList() });
+snapListBtn.innerHTML = '<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 10 L8 6 L12 10"/></svg>';
 for (const a of AIDS) {
   const b = el("button", { class: "tb seg", type: "button", text: `${a.label} ${a.key}`, title: a.title, onclick: () => toggleAid(a.id) });
   aidButtons.set(a.id, b);
   aidGroup.append(b);
+  if (a.id === "osnap") aidGroup.append(snapListBtn);
 }
+
+const snapBoxes = new Map();
+snapList.append(el("div", { class: "snap-list-head" }, [
+  el("span", { text: "Snap points" }),
+  el("button", { class: "tb", type: "button", text: "All", onclick: () => SNAP_KINDS.forEach((k) => setSnapMode(k.id, true)) }),
+  el("button", { class: "tb", type: "button", text: "None", onclick: () => SNAP_KINDS.forEach((k) => setSnapMode(k.id, false)) }),
+]));
+for (const k of SNAP_KINDS) {
+  const box = el("input", { type: "checkbox", onchange: (e) => setSnapMode(k.id, e.target.checked) });
+  snapBoxes.set(k.id, box);
+  snapList.append(el("label", { class: "snap-list-row", title: k.hint }, [box, el("span", { text: k.label })]));
+}
+function paintSnapList() {
+  for (const [id, box] of snapBoxes) box.checked = snapOn(id);
+}
+function toggleSnapList(open = snapList.classList.contains("hidden")) {
+  snapList.classList.toggle("hidden", !open);
+  snapListBtn.classList.toggle("active", open);
+  if (open) paintSnapList();
+}
+window.addEventListener("pointerdown", (e) => {
+  if (!snapList.classList.contains("hidden") && !snapList.contains(e.target) && e.target !== snapListBtn && !snapListBtn.contains(e.target)) toggleSnapList(false);
+});
 const status = el("span", { class: "sketch-status" });
-aidsBar.append(aidGroup, status, el("span", { class: "spacer" }));
+aidsBar.append(aidGroup, status, el("span", { class: "spacer" }), snapList);
 const resetBtn = document.getElementById("faceReset");
 if (resetBtn) aidsBar.append(resetBtn);
 
@@ -191,6 +257,7 @@ function showBars() {
 function hideBars() {
   bar.classList.add("hidden");
   aidsBar.classList.add("hidden");
+  toggleSnapList(false);
   card.classList.add("hidden");
   document.getElementById("app")?.classList.remove("sketching");
   hideDyn();
@@ -524,6 +591,10 @@ function sketchSnaps() {
       }
     }
     for (const c of arcCentres(item)) out.push({ uv: c, kind: "center" });
+    for (const q of itemQuadrants(item)) out.push({ uv: q, kind: "quadrant" });
+    const g = itemCentroid(item);
+    if (g) out.push({ uv: g, kind: "geocenter" });
+    if (from) for (const t of itemTangents(item, from)) out.push({ uv: t, kind: "tangent" });
   }
   for (const p of allIntersections(sk.items)) out.push({ uv: p, kind: "intersection" });
   sk.snaps = out;
@@ -564,6 +635,7 @@ function resolve(e) {
     const radius = SNAP_RADIUS_PX * uiScale();
     let best = null;
     for (const c of sketchSnaps()) {
+      if (!snapOn(c.kind)) continue;
       const s = client(c.uv);
       if (s.behind) continue;
       const d = Math.hypot(s.x - e.clientX, s.y - e.clientY);
@@ -572,7 +644,7 @@ function resolve(e) {
       const rank = c.kind === "close" ? -1 : d;
       if (!best || rank < best.rank) best = { rank, uv: c.uv, kind: c.kind, label: SNAP_LABEL[c.kind] };
     }
-    if (!best || best.kind !== "close") {
+    if ((!best || best.kind !== "close") && snapOn("corner")) {
       const f = planeFeature(e, face);
       if (f) {
         const s = toClient(f.x, f.y, f.z);
@@ -581,6 +653,20 @@ function resolve(e) {
       }
     }
     if (best) return { uv: best.uv, kind: best.kind, label: best.label, feature: true };
+    // Line-based snaps: the cursor is on a line, or on one continued past its end.
+    const tol = apertureMm();
+    if (snapOn("extension")) {
+      const x = extensionPoint(sk.items, raw, tol * 0.6);
+      if (x) return { uv: x.p, kind: "extension", label: SNAP_LABEL.extension, feature: true, segs: [[world(x.from), world(x.p)]] };
+    }
+    if (snapOn("nearest")) {
+      const n = nearestSegment(sk.items, raw, tol);
+      if (n) return { uv: n.q, kind: "nearest", label: SNAP_LABEL.nearest, feature: true };
+    }
+    if (from && sk.tool === "line" && !aids.ortho && snapOn("parallel")) {
+      const par = parallelPoint(sk.items, from, raw);
+      if (par) return { uv: roundLength(from, par.p), kind: "parallel", label: SNAP_LABEL.parallel, segs: [[world(from), world(par.p)]] };
+    }
   }
   if (from && (sk.tool === "line" || sk.tool === "mirror" || sk.tool === "arc")) {
     if (aids.ortho) return { uv: roundLength(from, orthoPoint(from, raw)), kind: "ortho", label: "Ortho" };

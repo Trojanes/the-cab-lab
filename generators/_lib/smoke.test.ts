@@ -164,10 +164,10 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
     .filter((d) => d.isDirectory() && !d.name.startsWith("_") && existsSync(join(genDir, d.name, "presets.json")))
     .map((d) => d.name)
     .sort();
-  for (const id of ["overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge"]) {
+  for (const id of ["overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "bunkBed"]) {
     assert.ok(benchable.includes(id), `bench lists ${id}`);
   }
-  const bundles = ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "sketchBoard", "pins"];
+  const bundles = ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "bunkBed", "sketchBoard", "pins"];
   for (const name of bundles) {
     assert.ok(existsSync(join(root, "renderer", "gen", `${name}.js`)), `bundle ${name}.js`);
   }
@@ -187,7 +187,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   const { trimToFaces, wallBoxes } = await import("../../renderer/walls.js");
   const { readFileSync } = await import("node:fs");
 
-  for (const id of ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "generalTallCabinet", "loungeGenerator"]) {
+  for (const id of ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "generalTallCabinet", "loungeGenerator", "bunkBed"]) {
     const m = MODULES[id];
     assert.ok(m, `MODULES.${id}`);
     const { W, D, H } = m.defaultSize;

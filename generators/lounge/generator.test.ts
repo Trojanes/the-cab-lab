@@ -83,7 +83,7 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.ok(top.faces.find((f) => f.id === "B").features.some((x) => x.kind === "cutout"));
 }
 
-const i = generateLounge({ style: "I_SHAPE", mainWidth: 2000, mainDepth: 600, height: 420 });
+const i = generateLounge({ style: "I_SHAPE", construction: "classic", mainWidth: 2000, mainDepth: 600, height: 420 });
 assert.equal(i.boards.filter((x) => x.boardType !== "lid").length, 4);
 assert.deepEqual({ x0: i.boards.find((x) => x.id === "i_front")!.x0, y0: i.boards.find((x) => x.id === "i_front")!.y0, y1: i.boards.find((x) => x.id === "i_front")!.y1 }, { x0: 0, y0: 0, y1: 18 });
 assert.ok(i.joints.some((j) => j.id === "lg_i_front_to_top"));
@@ -98,7 +98,7 @@ assert.ok(u.joints.some((j) => j.id === "lg_back_front_to_top"));
 const leftTop = u.boards.find((x) => x.id === "left_top")!;
 assert.ok(!leftTop.faces.flatMap((f) => f.features).some((ft) => ft.for === "left_lid"), "U without lid does not point at missing lid");
 
-const par = generateLounge({ style: "PARALLEL", totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, height: 420, topLidEnabled: true });
+const par = generateLounge({ style: "PARALLEL", construction: "classic", totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, height: 420, topLidEnabled: true });
 assert.ok(par.joints.some((j) => j.id === "lg_left_front_to_top"));
 assert.ok(par.joints.some((j) => j.id === "lg_right_front_to_top"));
 assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_panel");
@@ -180,7 +180,7 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
 /* ---------- I / L / Parallel 轮拱在墙侧 y∈[D−AD, D] + Parallel 中柜 ---------- */
 {
   const iw = generateLounge({
-    style: "I_SHAPE", mainWidth: 2000, mainDepth: 600, height: 420,
+    style: "I_SHAPE", construction: "classic", mainWidth: 2000, mainDepth: 600, height: 420,
     wheelAvoidanceEnabled: true, avoidanceDepth: 300, avoidanceHeight: 250,
   });
   const top = iw.boards.find((x) => x.id === "i_avoidance_top")!;
@@ -205,7 +205,7 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.ok(lw.boards.some((x) => x.id === "main_avoidance_top"));
 
   const pw = generateLounge({
-    style: "PARALLEL", totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, height: 420,
+    style: "PARALLEL", construction: "classic", totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, height: 420,
     wheelAvoidanceEnabled: true, avoidanceDepth: 300, avoidanceHeight: 250,
     hasMiddleCabinet: true,
     middleCabinet: { width: 600, depth: 350, height: 500, startHeight: 300, doorPanelThickness: 15, doorClearance: 2 },
@@ -222,6 +222,97 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.equal(pw.hinges.length, 4);
   assert.equal(pw.locks.length, 2);
   assert.equal(pw.grooves.length, 2);
+  // Classic strip with the cover: down onto the cover's top (19'6 Rear Door), else 100 high.
+  assert.equal(pw.boards.find((x) => x.id === "left_support_strip")!.z0, 250);
+  assert.equal(par.boards.find((x) => x.id === "left_support_strip")!.z0, 302);
+}
+
+/* ---------- 框架式平行沙发（缺省）：19'6 Rear Door，两段 560 × 900，中柜 502 × 270 × 457 ---------- */
+{
+  const f = generateLounge({
+    style: "PARALLEL", height: 420, partitionPanelThickness: 18, totalWidth: 1880, singleLoungeWidth: 560, depth: 900,
+    wheelAvoidanceEnabled: true, avoidanceDepth: 380, avoidanceHeight: 270,
+    hasMiddleCabinet: true, middleCabinet: { width: 502, depth: 270, height: 457, startHeight: 319 },
+  });
+  const fb = (id: string) => { const x = f.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
+  const fp = (id: string) => { const x = fb(id); const q = (v: number) => Math.round(v * 100) / 100; return { x0: q(x.x0), x1: q(x.x1), y0: q(x.y0), y1: q(x.y1), z0: q(x.z0), z1: q(x.z1) }; };
+  assert.deepEqual(f.validation.errors, []);
+  assert.deepEqual(f.validation.warnings, []);
+  assert.equal(f.params.construction, "frame");
+  assert.equal(f.boards.length, 21);
+  // Left run, like the L wing: seat front facing the gap, aisle end, a support on each side, lid on them.
+  assert.deepEqual(fp("left_side"), { x0: 542, x1: 560, y0: 0, y1: 900, z0: 0, z1: 420 });
+  assert.deepEqual(fp("left_front"), { x0: 0, x1: 542, y0: 0, y1: 18, z0: 0, z1: 420 });
+  assert.deepEqual(fp("left_outer_support"), { x0: 0, x1: 18, y0: 18, y1: 881, z0: 0, z1: 402 });
+  assert.deepEqual(fp("left_inner_support"), { x0: 524, x1: 542, y0: 18, y1: 881, z0: 0, z1: 402 });
+  assert.deepEqual(fp("left_lid"), { x0: 2, x1: 540, y0: 20, y1: 879, z0: 402, z1: 420 });
+  // The rear rail always lies on the wall, down onto the cover, tongue 8.5 into a half slot on the seat front.
+  assert.deepEqual(fp("left_rear_rail"), { x0: 0, x1: 550.5, y0: 881, y1: 899, z0: 270, z1: 420 });
+  const slot = fb("left_side").faces!.find((q) => q.id === "B")!.features.find((x) => x.for === "left_rear_rail")!;
+  assert.deepEqual([slot.kind, slot.u0, slot.u1, slot.v0, slot.v1, slot.depth, slot.through], ["groove", 880.5, 899.5, 269.5, 420, 9, undefined]);
+  assert.equal(fb("left_side").milling, "B");
+  // Right run mirrors it about the middle; its slot is on the seat front's other face.
+  assert.deepEqual(fp("right_side"), { x0: 1320, x1: 1338, y0: 0, y1: 900, z0: 0, z1: 420 });
+  assert.deepEqual(fp("right_rear_rail"), { x0: 1329.5, x1: 1880, y0: 881, y1: 899, z0: 270, z1: 420 });
+  assert.ok(fb("right_side").faces!.find((q) => q.id === "A")!.features.some((x) => x.for === "right_rear_rail"));
+  const pts = (id: string) => (fb(id).profileVector as Array<Record<string, number>>).map((p) => `${p.y ?? p.x},${p.z}`);
+  assert.ok(pts("left_side").includes("520,270") && pts("left_side").includes("900,270"), "seat front cut round the wheel-arch cover");
+  assert.ok(pts("left_inner_support").includes("520,270") && pts("left_outer_support").includes("881,270"), "supports cut round the cover");
+  assert.deepEqual(fp("parallel_avoidance_top"), { x0: 0, x1: 1880, y0: 520, y1: 900, z0: 252, z1: 270 });
+  // Middle cabinet: centred, 16 stock, divider 15 carcass, lock 30.5 under the divider and 30 + 35 from the meeting edge.
+  assert.deepEqual(fp("middle_cabinet_bottom"), { x0: 689, x1: 1191, y0: 630, y1: 900, z0: 319, z1: 335 });
+  assert.deepEqual(fp("middle_cabinet_mid_divider"), { x0: 705, x1: 1175, y0: 646, y1: 900, z0: 540, z1: 555 });
+  assert.deepEqual(f.locks.map((l) => [l.panelId, l.centerX, l.centerZ]), [["middle_cabinet_left_door", 874, 509.5], ["middle_cabinet_right_door", 1006, 509.5]]);
+  const groove = f.grooves.find((g) => g.boardId === "middle_cabinet_left")!;
+  assert.deepEqual([groove.v0, groove.v1, groove.depth], [204.5, 220.5, 7.5]);
+  // Bands.
+  const bands = (id: string) => fb(id).faces!.filter((q) => q.id.startsWith("E") && q.finish?.edgeBand).map((q) => `${q.normal}${q.finish!.edgeBand!.colour === "White Stipple" ? "" : "*"}`).sort();
+  assert.deepEqual(bands("left_front"), ["+Z"]);
+  assert.deepEqual(bands("left_side"), ["+Z", "-Y"]);
+  assert.deepEqual(bands("left_rear_rail"), ["+Z"], "on the cover: its underside is hidden");
+  for (const id of ["left_outer_support", "left_inner_support"]) assert.deepEqual(bands(id), [], id);
+  assert.deepEqual(bands("left_lid").length, 4);
+  assert.deepEqual(bands("parallel_avoidance_top"), ["-Y"]);
+  assert.deepEqual(bands("middle_cabinet_left_door"), ["+X*", "+Z*", "-X*", "-Z*"]);
+  assert.deepEqual(bands("middle_cabinet_top"), ["+X", "-X", "-Y"]);
+  assert.deepEqual(bands("middle_cabinet_mid_divider"), ["-Y"]);
+  for (const id of ["lg_left_rear_rail_side", "lg_right_inner_support", "lg_right_lid_on_support"]) assert.ok(f.joints.some((j) => j.id === id), id);
+  // Without the cover the rear rail is 100 + T high and its underside shows.
+  const bare = generateLounge({ style: "PARALLEL", totalWidth: 1880, singleLoungeWidth: 560, depth: 900, height: 420 });
+  assert.equal(bare.boards.find((q) => q.id === "left_rear_rail")!.z0, 302);
+  assert.ok(bare.boards.find((q) => q.id === "left_rear_rail")!.faces!.some((q) => q.normal === "-Z" && q.finish?.edgeBand));
+  // Middle cabinet on by default when the gap takes 300: rule width 600, or the gap when narrower.
+  assert.deepEqual(bare.params.middleCabinet, { width: 600, depth: 350, height: 500, startHeight: 300 });
+  const narrow = generateLounge({ style: "PARALLEL", totalWidth: 1600, singleLoungeWidth: 560, depth: 900 });
+  assert.equal(narrow.params.middleCabinet!.width, 480);
+  assert.equal(generateLounge({ style: "PARALLEL", totalWidth: 1300, singleLoungeWidth: 560, depth: 900 }).params.middleCabinet, null);
+  assert.equal(generateLounge({ style: "PARALLEL", totalWidth: 1880, singleLoungeWidth: 560, depth: 900, hasMiddleCabinet: false }).params.middleCabinet, null);
+  assert.ok(generateLounge({ style: "PARALLEL", totalWidth: 1600, singleLoungeWidth: 560, depth: 900, middleCabinet: { width: 600 } })
+    .validation.errors.some((e) => e.includes("exceeds the middle gap")), "a cabinet in the seats is an error");
+  // Aisle drawers: the L wing drawer at both aisle ends.
+  const dr = generateLounge({
+    style: "PARALLEL", height: 420, partitionPanelThickness: 18, frontPanelThickness: 16, totalWidth: 1880, singleLoungeWidth: 560, depth: 900,
+    wheelAvoidanceEnabled: true, avoidanceDepth: 380, avoidanceHeight: 270, aisleAccess: "DRAWER",
+  });
+  const db = (id: string) => { const x = dr.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
+  assert.deepEqual(dr.validation.errors, []);
+  assert.equal(dr.params.aisleAccess, "DRAWER");
+  assert.ok(!dr.boards.some((q) => q.id === "left_front" || q.id === "right_front"), "the aisle ends give way to the drawers");
+  assert.deepEqual([db("left_drawer_strip").x0, db("left_drawer_strip").x1, db("left_drawer_strip").z0], [0, 542, 302]);
+  assert.deepEqual([db("left_drawer_front").x0, db("left_drawer_front").x1, db("left_drawer_front").z0, db("left_drawer_front").z1], [2, 540, 2, 300]);
+  assert.deepEqual([db("right_drawer_front").x0, db("right_drawer_front").x1], [1340, 1878]);
+  assert.deepEqual([db("left_drawer_rail").x0, db("left_drawer_rail").x1], [9.5, 532.5]);
+  assert.equal(db("left_inner_support").y0, 16);
+  assert.deepEqual([db("left_lid").y0, db("left_lid").y1], [18, 879]);
+  const pocketFace = (id: string) => db(id).faces!.find((q) => q.features.some((x) => x.for === `${id.split("_")[0]}_drawer_rail`))?.id;
+  assert.deepEqual(["left_outer_support", "left_inner_support", "right_outer_support", "right_inner_support"].map(pocketFace), ["A", "B", "B", "A"]);
+  assert.ok(dr.locks.some((l) => l.panelId === "left_drawer_front" && l.centerZ === 269.5));
+  const dband = (id: string) => db(id).faces!.filter((q) => q.id.startsWith("E") && q.finish?.edgeBand).map((q) => `${q.normal}:${q.finish!.edgeBand!.colour}`).sort();
+  assert.deepEqual(dband("left_side"), ["+Z:White Stipple", "-Y:Gloss White"], "the seat front's aisle end frames the drawer");
+  assert.equal(dband("left_drawer_front").length, 4);
+  // The cover must leave the rear rail at least 100 + T.
+  assert.ok(generateLounge({ style: "PARALLEL", totalWidth: 1880, singleLoungeWidth: 560, depth: 900, wheelAvoidanceEnabled: true, avoidanceDepth: 380, avoidanceHeight: 320 })
+    .validation.errors.some((e) => e.includes("wheel-arch height")));
 }
 
 /* ---------- 框架式 L（默认）：21 Bunk 新卡座，拐角段 960、盖缝 2 ---------- */
@@ -274,6 +365,38 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.deepEqual(left.footprint.l, { x0: 0, x1: 560, y0: 0, y1: 960 });
   assert.equal(left.boards.find((q) => q.id === "main_end")!.x0, 2069);
   assert.ok(generateLounge({ style: "L_SHAPE", mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 280 }).validation.errors.some((e) => e.includes("at least 300")));
+}
+
+/* ---------- 框架式 I（默认）：L 主段单独成段，前板盖两端，盖子超长分块 ---------- */
+{
+  const f = generateLounge({ style: "I_SHAPE", height: 420, partitionPanelThickness: 18, mainWidth: 2000, mainDepth: 600 });
+  const fb = (id: string) => { const x = f.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
+  const fp = (id: string) => { const x = fb(id); const q = (v: number) => Math.round(v * 100) / 100; return { x0: q(x.x0), x1: q(x.x1), y0: q(x.y0), y1: q(x.y1), z0: q(x.z0), z1: q(x.z1) }; };
+  assert.deepEqual(f.validation.errors, []);
+  assert.equal(f.params.construction, "frame");
+  assert.equal(f.boards.length, 11);
+  assert.ok(f.boards.every((x) => x.stock?.kind === "partition" && x.materialThickness === 18));
+  assert.deepEqual(fp("i_front"), { x0: 0, x1: 2000, y0: 0, y1: 18, z0: 0, z1: 420 });
+  assert.deepEqual(fp("i_left_end"), { x0: 0, x1: 18, y0: 18, y1: 600, z0: 0, z1: 420 });
+  assert.deepEqual(fp("i_right_end"), { x0: 1982, x1: 2000, y0: 18, y1: 600, z0: 0, z1: 420 });
+  assert.deepEqual(fp("back_rail"), { x0: 0, x1: 2000, y0: 581, y1: 599, z0: 302, z1: 420 });
+  assert.deepEqual(fp("i_rail_back"), { x0: 18, x1: 1982, y0: 562, y1: 580, z0: 302, z1: 402 });
+  // 2000 long: the lid area 1960 is past FRAME_LID_MAX_LENGTH 1600 → two lids 2 apart over a middle support.
+  assert.deepEqual(fp("i_mid_support_1"), { x0: 991, x1: 1009, y0: 18, y1: 581, z0: 0, z1: 402 });
+  assert.deepEqual(f.lids.map((l) => [l.id, l.x0, l.width, l.depth]), [["i_lid_1", 20, 979, 559], ["i_lid_2", 1001, 979, 559]]);
+  const pts = (id: string) => (fb(id).profileVector as Array<Record<string, number>>).map((p) => `${p.x ?? p.y},${p.z}`);
+  assert.ok(pts("i_rail_back").includes("990.5,322") && pts("i_rail_back").includes("1009.5,302"), "rail halving notch over the middle support");
+  assert.ok(pts("i_mid_support_1").includes("562,317") && pts("i_mid_support_1").includes("37,402"), "middle support slots for both rails");
+  const bands = (id: string) => fb(id).faces!.filter((q) => q.id.startsWith("E") && q.finish?.edgeBand).map((q) => q.normal).sort();
+  for (const id of ["i_front", "i_left_end", "i_right_end"]) assert.deepEqual(bands(id), ["+Z"], id);
+  for (const id of ["i_rail_back", "i_rail_front"]) assert.deepEqual(bands(id), ["-Z", "-Z"], id);
+  for (const id of ["i_lid_1", "i_lid_2"]) assert.equal(bands(id).length, 4, id);
+  for (const id of ["lg_i_rail_back_mid_1", "lg_i_lid_2_on_rail", "lg_i_front_to_left"]) assert.ok(f.joints.some((j) => j.id === id), id);
+  // Short run: one lid; the classic I is still there.
+  const short = generateLounge({ style: "I_SHAPE", mainWidth: 1400, mainDepth: 600, height: 420 });
+  assert.deepEqual(short.lids.map((l) => [l.id, l.width]), [["i_lid", 1360]]);
+  assert.ok(!short.boards.some((q) => q.id.includes("mid_support")));
+  assert.ok(generateLounge({ style: "I_SHAPE", construction: "classic", mainWidth: 2000, mainDepth: 600 }).boards.some((q) => q.id === "i_top"));
 }
 
 /* ---------- 框架 L 端抽屉：固定条 100 + 板厚，抽屉面四周 2 缝，横条舌头进托板 ---------- */

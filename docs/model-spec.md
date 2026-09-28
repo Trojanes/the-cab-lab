@@ -35,6 +35,12 @@ Answers: what is this, how big, where, how is it divided.
 
 - `job.cabinets[i] = { id, moduleId, params, pose, hidden? }`. Params **are** the
   envelope (`renderer/modules.js` maps W/D/H and divider handles onto them).
+  `overrides.boards[roleId]` holds per-board user edits: the Move nudge
+  (`x y z rotX rotY rotZ`) and `grooves` (Groove command: `{ id, face A|B,
+  kind groove|tgroove, u0 u1 v0 v1, depth, group? }` in face-local (u, v)),
+  merged after the generator by `generators/_lib/userGrooves.ts`, which then
+  re-runs the milling check. A groove that no longer fits its board is skipped
+  with a warning.
   `hidden` is the role ids the user has turned off in the 3D view. It is saved
   with the job; the boards are still generated and still count for fit and
   overlap. Omit the field when every board is shown.

@@ -72,6 +72,8 @@
 
 ### I_SHAPE（5–7 板）
 
+缺省是框架式 I（§10.2）；下表是 construction = "classic"（黄金 `golden-i`）。
+
 | id | 平面 | 几何 |
 |---|---|---|
 | i_front | XZ | 全宽 W；y ∈ [D−ppt, D]（房侧）；z 0..panelHeight |
@@ -104,9 +106,11 @@ gap = totalWidth − 2×singleLoungeWidth。左段 x∈[0, SW]，右段 x∈[tot
 | {left,right}_front | XZ | 宽 SW−ppt；**y ∈ [0, ppt]**（与 I/L 相反，重实现须统一） |
 | {left,right}_side | YZ | 全深 D；x 贴**中缝侧**端（左段 xEnd−ppt..xEnd；右段反之）——侧板面向 gap |
 | {left,right}_top | XY | SW×D + 检修口/盖板 |
-| {left,right}_support_strip | YZ | 顶部 100 高；y ∈ [ppt, D]；x 贴**外端墙侧** |
+| {left,right}_support_strip | YZ | 顶部 100 高；开轮拱避让时下到避让顶 AH（19'6 Rear Door）；y ∈ [ppt, D]；x 贴**外端墙侧** |
 
-中柜（hasMiddleCabinet，置于 gap）：cabinet_top / cabinet_bottom / cabinet_side×2 / cabinet_divider / cabinet_door（含铰链杯孔 + RAZOR_ROUNDED 圆角锁槽，⌀35 杯、22.5 距边、锁槽心距侧 30、铰链侧距 80）；startHeight 起算。
+上表是 construction = "classic"（黄金 `golden-parallel`）；缺省是框架式平行沙发，见 §10.3。
+
+中柜（hasMiddleCabinet，置于 gap 正中，靠墙）：cabinet_top / cabinet_bottom / cabinet_side×2（门板厚 dpt = MIDDLE_CABINET_DOOR_THICKNESS 16）/ cabinet_divider（柜体料 MIDDLE_CABINET_DIVIDER_THICKNESS 15，z = startHeight + (H − 15)/2；侧板槽高 15 + 1、深 7.5，舌头 7，长 = 隔板深 / 2，槽再长 5）/ cabinet_door（⌀35 杯深 12.5、22.5 距外边、铰链距上下 80；RAZOR_ROUNDED 锁槽 55 × 15.5，**中心在隔板底下 LOCK_DROP 30.5**，**离两扇门对缝 lockSideDistance 30 + MIDDLE_CABINET_LOCK_EXTRA 35 = 65**——插件规则；早期移植错放在门顶下、离对缝 30，2026-09-29 改正）。
 
 ### U_SHAPE — ⚠️ 已知缺口
 
@@ -166,7 +170,7 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 | main_end_support / main_l_support | YZ | T..2T / Lm−T..Lm | T+c..Dm−T | 0..H−T | 顶部两个缺口 d T+c..2T+2c、Dm−2T−c..Dm−T，z 缺口底..H−T |
 | main_rail_back / main_rail_front | XZ | T..Lm | T+2c..2T+2c / Dm−2T−c..Dm−T−c | 横条底..H−T | 两端底边 20 缺口 T..2T+s、Lm−T−s..Lm |
 | l_support_inner / l_support_outer | YZ | Lm+T..Lm+2T / L−2T..L−T | T+c..Dl−T | 0..H−T | 拐角段不设托条 |
-| main_lid | XY | T+g..Lm−g | T+c+g..Dm−T−g | H−T..H | ⌀50 正中 |
+| main_lid | XY | T+g..Lm−g | T+c+g..Dm−T−g | H−T..H | ⌀50 正中；超过 FRAME_LID_MAX_LENGTH 分块，见 §10.2 |
 | l_lid | XY | Lm+T+g..L−T−g | T+c+g..Dl−T−g | H−T..H | ⌀50 正中 |
 
 封边（EDGE_BAND_THICKNESS_MM 1，全部柜体色）：座面一圈的上边（main_front、l_front、main_end、l_side、l_outer_side、back_rail，墙角缺口处不封）；l_side、l_outer_side 朝房间的前边；两块盖子四边；储物格里看得见的边——main_rail_back / main_rail_front 下边、back_rail 缺口之间的下边。端头一律当作顶墙，不封；托板四边都顶着板或压在盖子下，不封。
@@ -174,6 +178,44 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 盖子的拉手孔是贯通圆孔（face A `hole` through），3D 按圆挖穿（renderer/boardGeom.js throughLoops）。
 
 黄金 `rogue-l`（2087 × 960 × 420，Dm 560，Wl 560，RIGHT）：14 块板，主段盖 1505 × 519，拐角段盖 520 × 919。靠墙面只有 back_rail，为以后的轮拱避让留位；框架式 L 暂不做轮拱（wheelAvoidanceEnabled 只给 warning）。
+
+### 10.2 框架式 I（I 形缺省；construction = "classic" 保留旧做法）
+
+就是框架 L 的主段单独成一段：L = mainWidth，D = mainDepth，y = D − d。前板满长盖住两块端板的前边；两头都当作顶墙。
+
+| 板 | x | d | 说明 |
+|---|---|---|---|
+| i_front | 0..L | D−T..D | 满高 |
+| i_left_end / i_right_end | 0..T / L−T..L | 0..D−T | 满高，墙角缺口同 main_end |
+| back_rail | 0..L | c..c+T | 两端底边 20 缺口（0..T+s、L−T−s..L） |
+| i_left_support / i_right_support | T..2T / L−2T..L−T | T+c..D−T | 同 main_end_support |
+| i_rail_back / i_rail_front | T..L−T | 同主段 | 两端 + 每块中间托板处底边 20 缺口 |
+| i_lid / i_lid_k | 见下 | T+c+g..D−T−g | ⌀50 正中 |
+
+盖子分块（I 和 L 主段共用 frameRun）：盖区 a = x0 + g 到 b = x1 − g；块数 k = ⌈(b − a) / FRAME_LID_MAX_LENGTH 1600⌉；每块长 (b − a − (k − 1)g) / k，块间 g。每条缝下一块中间托板 `<run>_mid_support_j`（T 厚，截面同端头托板，中心在缝中线，两块盖子各压 T/2 − g/2），和两根内托条十字半搭：托板从顶往下开槽到缺口底，托条在 cx − T/2 − s/2..cx + T/2 + s/2 从底往上开 20。k = 1 时盖子 id 不带序号（i_lid / main_lid）。封边同 §10：前板、两端上边，后横条上 / 下边，托条下边（缺口之间），盖子四边；托板不封。
+
+黄金 `frame-i`（2000 × 600 × 420）：11 块板，两块盖 979 × 559，中间托板 x 991..1009。1400 长一整块 1360 × 559。
+
+### 10.3 框架式平行沙发（PARALLEL 缺省；construction = "classic" 保留旧做法）
+
+19'6 Rear Door 的咖啡厅卡座：两段面对面，沿墙（y = D，车壁 / 外墙）排，每段从外侧端墙（x 0 / totalW）到朝中缝的座面板，从墙伸到过道（y 0）。每一段的做法同框架 L 的拐角段（两块托板托盖子，没有内托条）。**后横条永远贴墙放**；在中缝那一头插进座面板内侧的**半槽**（不打通，从中缝看不到），在外端顶端墙。右段沿中线镜像。d = 离墙深度（y = D − d）。
+
+| 板（左段；右段镜像） | x | d（离墙） | z | 说明 |
+|---|---|---|---|---|
+| left_side 座面板 | SW−T..SW | 0..D | 0..H | 开轮拱时墙端让出 d 0..AD、z 0..AH；内侧面（左段 B / 右段 A）开后横条半槽 |
+| left_front 过道端板 | 0..SW−T | D−T..D | 0..H | 夹在端墙和座面板之间 |
+| left_rear_rail 后横条 | 0..SW−T+tg | c..c+T | 横条底..H | 贴墙；开轮拱时横条底 = AH（落在避让盖板上），否则 H − T − FRAME_INNER_RAIL_HEIGHT；tg = T/2 − FRAME_HALF_SLOT_TONGUE_GAP 0.5 = 8.5 |
+| 半槽（座面板上） | — | c − s/2..c+T+s/2 | 横条底 − s/2..H（顶部开口） | 深 T/2 = 9，宽 T + FRAME_SLOT_CLEARANCE（19）——同厨房 V 板半槽规则 |
+| left_outer_support / left_inner_support | 0..T / SW−2T..SW−T | T+c..D−T | 0..H−T | 贴端墙 / 贴座面板；开轮拱时让出 d ..AD、z ..AH |
+| left_lid | g..SW−T−g | T+c+g..D−T−g | H−T..H | 搭在两块托板上，⌀50 拉手孔 |
+
+轮拱盖板 parallel_avoidance_top / _front 照旧横跨总宽。校验：轮拱深 AD 在 2T + c 到 D − 2T 之间，高 AH 在 T 到 H − T − 100 之间（后横条至少 100 + T 高），否则 error。中柜同 §5。封边：座面板、过道端板、后横条上边；座面板朝过道的前边；后横条下边（落在避让盖板上时不封）；盖子四边；避让盖板前边；托板不封；中柜门四边门板色，中柜柜体离墙的每条边（隔板只封前边）。
+
+过道端抽屉（aisleAccess = "DRAWER"，两段一起）：和 §10.1 L 端抽屉同一个 frameDrawer——`<side>_front` 不出，换成 `<side>_drawer_strip`（门板料 frontPanelThickness，x 0..SW−T，从顶往下 100 + T）、`<side>_drawer_front`（四周 2，锁孔上边离面顶 22.75）、`<side>_drawer_rail`（固定条背后 100 深，夹在两块托板之间，后 70 舌头 8.5 进托板朝抽屉那面的槽）；托板伸到固定条背面，盖子前边离固定条 2；座面板朝过道的前边改封门板色。开轮拱时轮拱深不能碰到抽屉横条的槽（error `Parallel drawer: …`）。
+
+中柜（框架平行沙发）：hasMiddleCabinet 没设时，两段之间 ≥ MIDDLE_CABINET_MIN_WIDTH 300 就自动放；middleCabinet.width 没设时取 MIDDLE_CABINET_WIDTH 600 和中间空隙里小的那个；比空隙宽是 error（会站进座位里）。实际尺寸在 `result.params.middleCabinet`（null = 没有）。
+
+黄金 `rear-door-parallel`（1880 × 900 × 420，SW 560，AD 380 / AH 270，中柜 502 × 270 × 457 离地 319）：21 块板，盖子 538 × 859。
 
 ### 10.1 L 端抽屉（lFrontAccess = "DRAWER"，只在框架式 L）
 

@@ -17,6 +17,7 @@ const ENTRIES = [
   { name: "bedroomEast", entry: path.join(MODULES_DIR, "bedroomEast", "generator.ts") },
   { name: "bedBox", entry: path.join(MODULES_DIR, "bedBox", "generator.ts") },
   { name: "bedSideTable", entry: path.join(MODULES_DIR, "bedSideTable", "generator.ts") },
+  { name: "bunkBed", entry: path.join(MODULES_DIR, "bunkBed", "generator.ts") },
   { name: "overheadCabinet", entry: path.join(MODULES_DIR, "overheadCabinet", "generator.ts") },
   { name: "kitchen", entry: path.join(MODULES_DIR, "kitchen", "generator.ts") },
   { name: "generalTall", entry: path.join(MODULES_DIR, "generalTall", "generator.ts") },
@@ -25,6 +26,7 @@ const ENTRIES = [
   // Shared helpers the bench needs in the browser (pins are read/written there).
   { name: "pins", entry: path.join(MODULES_DIR, "_lib", "pins.ts") },
   { name: "cnjob", entry: path.join(MODULES_DIR, "_lib", "cnjob.ts") },
+  { name: "userGrooves", entry: path.join(MODULES_DIR, "_lib", "userGrooves.ts") },
 ];
 
 async function buildGenerators(names = null) {

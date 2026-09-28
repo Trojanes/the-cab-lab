@@ -6,7 +6,7 @@ import { getSpaceKind } from "./spaces.js";
 import { openSpaceDialog } from "./spaceDialog.js";
 import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
 import { describeMaterials, thickness, partitionClearance } from "./materials.js";
-import { sideOfRotZ, sideLabel, overlaps } from "./interact.js";
+import { sideOfRotZ, sideLabel, overlaps, startGroove, removeGroove } from "./interact.js";
 import { wallLength, wallOrientation, wallBoards, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP, SHEET_SHORT_MM, SHEET_LONG_MM } from "./walls.js";
 import { envelopeFootprint, envelopeBox } from "./cabinets3d.js";
 import { keepCorner } from "./pose.js";
@@ -210,6 +210,19 @@ function boardSection() {
       rows.push(el("div", { class: "empty small", text: "This generator does not describe faces yet." }));
     }
   }
+  // Grooves drawn with the Groove command: kept on the cabinet, listed and removable here.
+  const cab = job.getJob().cabinets.find((c) => c.id === sub.cabId);
+  const mine = job.boardGrooves(cab, b.id).filter((g) => !f || g.face === f.id);
+  rows.push(el("div", { class: "sec-title", style: "margin-top:8px", text: `Your grooves (${mine.length})` }));
+  for (const g of mine) {
+    const w = Math.round((g.u1 - g.u0) * 10) / 10;
+    const h = Math.round((g.v1 - g.v0) * 10) / 10;
+    rows.push(el("div", { class: "groove-row" }, [
+      el("span", { text: `${g.id} · ${g.kind === "tgroove" ? `T groove ${g.group || ""}` : "groove"} · face ${g.face} · ${w} × ${h} · ${g.depth} deep` }),
+      el("button", { class: "tb", text: "×", title: "Remove this groove", onclick: () => removeGroove(sub.cabId, b.id, g.id) }),
+    ]));
+  }
+  rows.push(el("button", { class: "tb wide", text: "Add groove… (G)", onclick: () => startGroove() }));
   rows.push(el("div", { class: "empty small", text: "Generated from the cabinet's parameters — change a size or a zone and the board follows. Esc climbs back up." }));
   return el("div", { class: "panel-section sub-sel" }, [
     el("div", { class: "sec-head" }, [el("div", { class: "sec-title", text: f ? "Face" : "Board" }), back]),
@@ -1151,6 +1164,14 @@ function renderLounge(cab, mod, result, shared) {
   const env = mod.envelope(p);
   const style = p.style || "L_SHAPE";
   const frameL = style === "L_SHAPE" && p.construction !== "classic";
+  const frame = frameL || (style === "I_SHAPE" && p.construction !== "classic");
+  const frameP = style === "PARALLEL" && p.construction !== "classic";
+  // The middle cabinet as the generator built it (its width may come from the gap).
+  const mc = result?.params?.middleCabinet ?? null;
+  const mcField = (label, key, min) => numField(label, mc[key], (v) => {
+    job.setParams(cab.id, { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: Math.max(min, Math.round(v)) } });
+    log("lounge.run.midCab", { id: cab.id, key: `middleCabinet.${key}`, to: Math.round(v) });
+  }, { step: 10, min });
   const selectedRun = loungeSelected(cab.id);
   const runs = Object.keys(result?.footprint || {});
 
@@ -1284,10 +1305,25 @@ function renderLounge(cab, mod, result, shared) {
         [["NONE", "Seat front"], ["DRAWER", "Drawer"]].map(([v, text]) => el("option", { value: v, text, selected: v === (p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE") }))),
     ]) : null,
     numField("Seat height (mm)", p.height ?? env.H, (v) => setP("height", Math.max(mod.minSize.H, Math.round(v)), "size"), { step: 10, min: mod.minSize.H }),
-    // The frame L's whole top is the lid, and its wheel-arch cut-out is not built yet.
-    frameL ? null : check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
-    style === "PARALLEL" ? check("Middle cabinet", p.hasMiddleCabinet === true, (on) => setP("hasMiddleCabinet", on, "midCab"), "A low cabinet between the two runs, against the wall") : null,
-    style !== "U_SHAPE" && !frameL ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
+    // A frame lounge's whole top is the lid; only the frame parallel has the wheel-arch cover yet.
+    frame || frameP ? null : check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
+    frameP ? el("label", { class: "field wide-value", title: "Both runs' aisle ends: a plain end panel, or a drawer front with a fixed strip over it (no drawer box)" }, [
+      el("span", { text: "Aisle ends" }),
+      el("select", { onchange: (e) => { e.target.blur(); setP("aisleAccess", e.target.value, "access"); } },
+        [["NONE", "Seat front"], ["DRAWER", "Drawer"]].map(([v, text]) => el("option", { value: v, text, selected: v === (p.aisleAccess === "DRAWER" ? "DRAWER" : "NONE") }))),
+    ]) : null,
+    style === "PARALLEL" ? check("Middle cabinet", !!mc, (on) => setP("hasMiddleCabinet", on, "midCab"), "A low cabinet between the two runs, against the wall") : null,
+    ...(mc ? [
+      mcField("Cabinet width (mm)", "width", 100),
+      mcField("Cabinet depth (mm)", "depth", 100),
+      mcField("Cabinet height (mm)", "height", 100),
+      mcField("Cabinet from floor (mm)", "startHeight", 0),
+    ] : []),
+    style !== "U_SHAPE" && !frame ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
+    ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
+      numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+      numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+    ] : []),
   ].filter(Boolean));
 
   // Cabinet-level fields, folded.
@@ -1933,6 +1969,11 @@ function renderCabinet(cab) {
         numField("Mattress depth (mm)", rp.mattressDepth, () => {}, { readOnly: "Queen mattress width. Fixed (rules.json MATTRESS_DEPTH_MM)." }),
         numField("Boot / wardrobe depth (mm)", rp.bodyDepth, () => {}, { readOnly: "From the nose. The mattress continues past this into the room (rules.json BODY_DEPTH_MM)." }),
         numField("Boot top (mm)", rp.bootHeight, () => {}, { readOnly: "rules.json BOOT_HEIGHT_MM." }),
+        numField("Bed box from (mm)", rp.bedX0, () => {}, { readOnly: "Wardrobe + 65 (rules.json BED_SIDE_GAP_MM)." }),
+        el("label", { class: "field check", title: "LED channels on T3's top: a main channel wall to wall and two branches to the rear edge" }, [
+          el("input", { type: "checkbox", checked: p.ledGroove !== false, onchange: (e) => setKey("ledGroove", { ...p, ledGroove: e.target.checked }) }),
+          el("span", { text: "LED channels" }),
+        ]),
       ]),
       section("Overhead", [
         numField("Door underside (mm)", rp.ohcBottom ?? p.ohcBottom, (v) => setKey("ohcBottom", mod.setOhcBottom(p, v)), { step: 10, min: ob.min }),
@@ -1940,6 +1981,49 @@ function renderCabinet(cab) {
         countField,
         kv("Bays", bays.map((b) => Math.round(b.width)).join(" · ") || "—"),
         el("button", { class: "tb", text: "Average", title: "Make the bays equal again", onclick: () => setKey("ohcZones", mod.setOhcCount(p, bays.length === 2 ? 2 : 3)) }),
+      ]),
+      checks,
+      el("div", { class: "panel-foot" }, [remove]),
+    ].filter(Boolean));
+    fillDrawer(result, errors, warnings);
+    return;
+  }
+  if (mod.panel === "bunk") {
+    const lay = result?.layout || {};
+    const lim = mod.upperLimits(p);
+    const setKey = (key, value, how = "type") => {
+      const next = { ...p, [key]: value };
+      job.setParams(cab.id, next);
+      log("bunk.layout.set", { id: cab.id, key, from: p[key], to: value, how, changed: p[key] !== value });
+    };
+    const endSelect = el("label", { class: "field", title: "Seen from the room, facing the bunk" }, [
+      el("span", { text: "Ladder + end cubby" }),
+      el("select", { onchange: (e) => { const v = e.target.value; e.target.blur(); setKey("endSide", v, "select"); } }, [
+        el("option", { value: "RIGHT", text: "Right", selected: (p.endSide || "RIGHT") === "RIGHT" }),
+        el("option", { value: "LEFT", text: "Left", selected: p.endSide === "LEFT" }),
+      ]),
+    ]);
+    panel.replaceChildren(...[
+      el("div", { class: "panel-head" }, [
+        el("div", { class: "panel-title", text: "Bunk bed · across" }),
+        el("div", { class: "panel-sub", text: `${cab.id} · rear wall · wall to wall · ${result?.boards?.length || 0} boards` }),
+      ]),
+      board,
+      section("Size", [
+        numField("Length (mm)", env.W, () => {}, { readOnly: "Wall to wall along the rear wall. Redraw the bunk to change it." }),
+        numField("Depth (mm)", env.D, () => {}, { readOnly: "Rear wall to the room face of the front partition, partition included. Redraw the bunk to change it." }),
+        numField("Top (mm)", env.H, () => {}, { readOnly: "The ceiling minus the partition ceiling clearance from the setup (copied when the bunk was drawn)." }),
+        kv("Mattress width", `${lay.mattressWidth ?? "—"} mm · depth minus the partition`),
+        kv("Front partition", `${lay.partition?.thickness ?? "—"} thick · ${p.floorClearance ?? 0} above the floor · ${p.ceilingClearance ?? 0} under the ceiling (setup)${lay.partition?.cut != null ? ` · two sheets, cut at ${lay.partition.cut}` : ""}`),
+      ]),
+      section("Bunks", [
+        numField("Deck top (mm)", p.deckTop, (v) => setKey("deckTop", Math.round(v * 10) / 10), { step: 1 }),
+        numField("Upper base underside (mm)", p.upperZ, (v) => setKey("upperZ", Math.round(v * 10) / 10), { step: 1 }),
+        kv("Range", `${Math.round(lim.min)} – ${Math.round(lim.max)} · equal ${lim.equal}`),
+        el("button", { class: "tb", text: "Equal clear height", title: "Put the upper base where both bunks get the same clear height", onclick: () => setKey("upperZ", lim.equal, "equal") }),
+        kv("Clear height", `lower ${lay.lowerClear ?? "—"} · upper ${lay.upperClear ?? "—"}`),
+        kv("Tunnel boot", `${lay.bootTop ?? "—"} high`),
+        endSelect,
       ]),
       checks,
       el("div", { class: "panel-foot" }, [remove]),

@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
 import { syncWalls, statusOf } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, boardUndoKey, overlaps } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, boardUndoKey, overlaps } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -145,6 +145,7 @@ function refreshRail() {
     edge: "move to the left or the right — that vertical edge turns orange · click it · Esc redraws the main box",
     wide: "drag the side line to set the wing width · it snaps near the main depth, drag past for another width · Tab types L · click or Enter · Esc back to the edge",
     pull: "pull the wing out into the room · near the main depth it snaps · Tab types L · click or Enter creates · Esc back to the width",
+    seat: "move along the wall — both seats grow from the ends toward the middle, the same width · snaps near 560 · Tab types S · click or Enter creates · Esc redraws the box",
   };
   const HINTS = {
     armed: placing
@@ -170,17 +171,30 @@ function refreshRail() {
     "resize.drag": "Resize — release to keep this size (one undo step)",
     "plane.pick": "Plane — click a wall or a cabinet face to offset from · Esc cancels",
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
+    "groove.pick": "Groove — click the big face of any board · Esc ends",
+    "groove.draw": "Groove — Line: two ends of the centreline · Rectangle: two corners · T switches Groove / T groove · Esc steps back",
     "board.pick": "Board — click the face to sketch on · Esc cancels",
     "board.sketch": "Sketch — pick a tool on the sketch bar, then click where it starts · Finish sketch turns the closed shapes into boards",
     "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc back to the sketch",
     "fit": "Fit to cabinets — click an overhead and a base, in either order · Enter fits the wall · Esc cancels",
   };
-  const lBox = getLoungeStyle() === "L" && ["armed", "face", "extrude"].includes(mode);
-  $("#modeHint").textContent = loungeStep
-    ? `Lounge ${getLoungeStyle()} — ${LOUNGE_HINT[loungeStep] || ""}`
+  const style = getLoungeStyle();
+  const lBox = (style === "L" || style === "I" || style === "Parallel") && ["armed", "face", "extrude"].includes(mode);
+  const boxWhat = style === "L" ? "main box"
+    : style === "Parallel" ? "the whole lounge — two runs from the wall at its ends, the long side away from the wall is the aisle"
+    : "the run — its long side away from the wall is the front";
+  const BUNK_HINT = {
+    armed: "Bunk bed — click a floor corner at the rear wall · the length runs wall to wall · Esc to stop",
+    face: "Bunk bed · lower box — draw on the floor (depth), the rear wall (deck top) or the side wall (both) · the length is locked wall to wall · type the numbers · Esc cancels",
+    extrude: "Bunk bed · lower box — pull the last size · click or Enter · Enter without a pull takes depth 748 / deck top 418 · Esc cancels",
+    "bunk.upper": "Bunk bed · upper base — move up and down, the number is its underside · snaps where both bunks get the same clear height · type it · click or Enter creates · Esc back to the lower box",
+  };
+  const bunkStep = placing && MODULES[placing]?.placement === "bunk" ? BUNK_HINT[mode] : null;
+  $("#modeHint").textContent = bunkStep || (loungeStep
+    ? `Lounge ${style} — ${LOUNGE_HINT[loungeStep] || ""}`
     : lBox
-      ? `Lounge L · main box — ${mode === "armed" ? "click a corner to start · Esc to stop" : HINTS[mode]}`
-      : (HINTS[mode] || "");
+      ? `Lounge ${style} · ${boxWhat} — ${mode === "armed" ? "click a corner to start · Esc to stop" : HINTS[mode]}`
+      : (HINTS[mode] || ""));
 }
 
 // --- view buttons ---------------------------------------------------------------
@@ -273,6 +287,8 @@ function refreshStatus() {
   $('[data-action="plane"]').classList.toggle("active", getMode().startsWith("plane"));
   $('[data-action="board"]').disabled = !job.hasSpace();
   $('[data-action="board"]').classList.toggle("active", getMode().startsWith("board"));
+  $('[data-action="groove"]').disabled = !job.getJob().cabinets.length;
+  $('[data-action="groove"]').classList.toggle("active", getMode().startsWith("groove"));
   const pl = job.getSelectedPlane();
   if (pl) $("#stSelection").textContent = `Selection: ${pl.id} (Plane)`;
   const wall = job.getSelectedWall();
@@ -369,6 +385,7 @@ const ACTIONS = {
   plane: () => startPlane(),
   resize: () => startResize(),
   board: () => startBoard(),
+  groove: () => startGroove(),
 };
 $$("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());

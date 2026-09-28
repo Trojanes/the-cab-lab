@@ -201,11 +201,15 @@ desktop shortcut works without a build step; run `npm run build:generators` afte
   against the right wall, one wardrobe stands against the left wall. One click puts it in the nose: its depth is the
   queen mattress width, 1570, and cannot be changed. The boot (full width, top 418) and the wardrobe stand against the
   nose, 756 deep; the mattress runs from the nose 1570 into the room. The wardrobe takes what a 1880 queen mattress
-  leaves (395 on a 2275 van) and can only be made narrower, which lengthens the mattress; a van too narrow for 1880
+  and the 65 bed-side gap leave (330 on a 2275 van) and can only be made narrower, which lengthens the mattress; a van too narrow for 1880
   still builds, with a warning. The overhead spans from the wardrobe to the right wall above the body: door
   underside 1418 by default (drag the orange line or type it), up to the roof, two or three up-flap bays (three equal
-  by default, the bay lines drag). The roof comes from the space, like the north-south body. Still regions only —
-  boards come later. Numbers are in `generators/bedroomEast/rules.json`.
+  by default, the bay lines drag). The roof comes from the space, like the north-south body. The boards are built as
+  `Bedroom 1.smt`: boot, wardrobe (colour panel, wall strip, shelf, fixed panel, door), T1 / T2 / T3 wall to wall
+  with LED channels, the overhead (bottom panel, uprights, doors, a 115 filler at the wall), a bedside cabinet in front
+  of the wardrobe and the bed box with its 38.9° corner. The wardrobe defaults to 330 on a 2275 van; the bed box starts
+  65 past it. Numbers are in `generators/bedroomEast/rules.json`; `bedroom1.model.json` is the model's board list the
+  test checks against.
 - **Bedroom** is a rail group: hovering it opens a flyout with **North-south** (the nose slab below), **East-west** (above), **Bed Box** (below) and
   **Bed Side Table** (a mirrored pair, needs the body): one against each wall, in front of the body's room face. Width is the wardrobe width. Placement is two clicks: drag the height first (it snaps to the underside of the wardrobe fixed panel), then drag the depth into the room (default 145). No back. Two carcass sides, top / bottom / one middle shelf (the orange line is the middle shelf's centreline, dragged in Z). Each shelf's tongues go through the sides to their outer faces over the middle third of the depth; each side has a through slot per shelf, 5 mm longer than the tongue at each end and 1 mm taller than the shelf — a hole for the middle shelf, notches at the side's edge for the top and bottom shelves. A door-stock panel stands outside the bed-side carcass panel, under the wardrobe's colour panel. Each table has two zones, drawer or a door hinged at the wall or at the bed. The fronts cover the whole table with one side clearance above the floor, between them, under the top and at both side edges. Removing one removes both. Groups are declared in `MODULE_GROUPS` in `renderer/modules.js`.
 - **Bedroom › Bed Box** (one per vehicle, needs the Body first — the flyout item is disabled until it exists): the bed

@@ -61,8 +61,47 @@ export const LOUNGE_RELATIONSHIP_DECLARATIONS: RelationshipDeclaration[] = [
   P("lg_l_strip_on_rail", "l_drawer_strip", "l_drawer_rail"),
   P("lg_l_drawer_rail_inner", "l_drawer_rail", "l_support_inner"),
   P("lg_l_drawer_rail_outer", "l_drawer_rail", "l_support_outer"),
+  // Frame I: the L main run on its own, an end panel at each end.
+  P("lg_i_rear_rail_left", "back_rail", "i_left_end"),
+  P("lg_i_rear_rail_right", "back_rail", "i_right_end"),
+  P("lg_i_front_to_left", "i_front", "i_left_end"),
+  P("lg_i_front_to_right", "i_front", "i_right_end"),
+  P("lg_i_left_support", "i_left_support", "i_left_end"),
+  P("lg_i_right_support", "i_right_support", "i_right_end"),
+  P("lg_i_rail_back_left", "i_rail_back", "i_left_support"),
+  P("lg_i_rail_back_right", "i_rail_back", "i_right_support"),
+  P("lg_i_rail_front_left", "i_rail_front", "i_left_support"),
+  P("lg_i_rail_front_right", "i_rail_front", "i_right_support"),
+  P("lg_i_lid_on_rail", "i_lid", "i_rail_back"),
+  // Frame parallel: each run like the L wing, the rear rail on the wall in a half slot on the seat front.
+  ...(["left", "right"] as const).flatMap((s) => [
+    P(`lg_${s}_rear_rail_side`, `${s}_rear_rail`, `${s}_side`),
+    P(`lg_${s}_front_to_side`, `${s}_front`, `${s}_side`),
+    P(`lg_${s}_inner_support`, `${s}_inner_support`, `${s}_side`),
+    P(`lg_${s}_outer_support_front`, `${s}_outer_support`, `${s}_front`),
+    P(`lg_${s}_lid_on_support`, `${s}_lid`, `${s}_inner_support`),
+    P(`lg_${s}_strip_to_side`, `${s}_drawer_strip`, `${s}_side`),
+    P(`lg_${s}_strip_on_rail`, `${s}_drawer_strip`, `${s}_drawer_rail`),
+    P(`lg_${s}_drawer_rail_outer`, `${s}_drawer_rail`, `${s}_outer_support`),
+    P(`lg_${s}_drawer_rail_inner`, `${s}_drawer_rail`, `${s}_inner_support`),
+  ]),
 ];
 
+/** Frame runs split into several lids: each middle support crosses both rails, each lid rests on the rear rail. */
+function frameSplitDeclarations(ids: ReadonlySet<string>): RelationshipDeclaration[] {
+  const out: RelationshipDeclaration[] = [];
+  for (const id of ids) {
+    const mid = /^(main|i|left|right)_mid_support_(\d+)$/.exec(id);
+    if (mid) {
+      out.push(P(`lg_${mid[1]}_rail_back_mid_${mid[2]}`, `${mid[1]}_rail_back`, id));
+      out.push(P(`lg_${mid[1]}_rail_front_mid_${mid[2]}`, `${mid[1]}_rail_front`, id));
+    }
+    const lid = /^(main|i|left|right)_lid_(\d+)$/.exec(id);
+    if (lid) out.push(P(`lg_${id}_on_rail`, id, `${lid[1]}_rail_back`));
+  }
+  return out;
+}
+
 export function relationshipDeclarationsForBoards(ids: ReadonlySet<string>): RelationshipDeclaration[] {
-  return LOUNGE_RELATIONSHIP_DECLARATIONS.filter((d) => ids.has(d.panelAId) && ids.has(d.panelBId));
+  return [...LOUNGE_RELATIONSHIP_DECLARATIONS, ...frameSplitDeclarations(ids)].filter((d) => ids.has(d.panelAId) && ids.has(d.panelBId));
 }

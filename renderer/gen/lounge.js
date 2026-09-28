@@ -367,7 +367,7 @@ var rules_default = {
   MIDDLE_CABINET_DEPTH: { value: 350, doc: "Parallel \u4E2D\u67DC\u6DF1\u7F3A\u7701\u3002" },
   MIDDLE_CABINET_HEIGHT: { value: 500, doc: "Parallel \u4E2D\u67DC\u9AD8\u7F3A\u7701\u3002" },
   MIDDLE_CABINET_START_HEIGHT: { value: 300, doc: "Parallel \u4E2D\u67DC\u79BB\u5730\u8D77\u59CB\u9AD8\u3002" },
-  MIDDLE_CABINET_DOOR_THICKNESS: { value: 15, doc: "\u4E2D\u67DC\u95E8/\u67DC\u8EAB\u539A\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_DOOR_THICKNESS: { value: 16, doc: "\u4E2D\u67DC\u95E8/\u67DC\u8EAB\u539A\u7F3A\u7701\uFF08\u63D2\u4EF6\u7F3A\u7701 16\uFF0C19'6 Rear Door 16\uFF09\u3002" },
   MIDDLE_CABINET_DOOR_CLEARANCE: { value: 2, doc: "\u4E2D\u67DC\u95E8\u7F1D\u3002" },
   MIDDLE_CABINET_LOCK_SIDE: { value: 30, doc: "\u4E2D\u67DC\u9501\u5FC3\u8DDD\u95E8\u4FA7\u3002" },
   MIDDLE_CABINET_HINGE_SIDE: { value: 80, doc: "\u4E2D\u67DC\u94F0\u94FE\u4FA7\u8DDD\u3002" },
@@ -384,6 +384,11 @@ var rules_default = {
   FRAME_INNER_RAIL_HEIGHT: { value: 100, doc: "\u6846\u67B6\u5F0F L\uFF1A\u4E3B\u6BB5\u524D\u540E\u6258\u6761\u9AD8\uFF0C\u9876\u9762\u5728 H \u2212 \u677F\u539A\uFF1B\u8D34\u5899\u540E\u6A2A\u6761\u9AD8 = \u8FD9\u4E2A + \u677F\u539A\u3002" },
   FRAME_HALVING_NOTCH: { value: 20, doc: "\u6846\u67B6\u5F0F L\uFF1A\u6A2A\u6761 / \u6258\u6761\u4ECE\u5E95\u8FB9\u5F80\u4E0A\u5F00\u7684\u54AC\u5408\u7F3A\u53E3\u6DF1\u3002" },
   FRAME_HALVING_GAP: { value: 5, doc: "\u6846\u67B6\u5F0F L\uFF1A\u54AC\u5408\u5904\u6A2A\u6761\u7F3A\u53E3\u9876\u4E0E\u7AD6\u677F\u7F3A\u53E3\u5E95\u4E4B\u95F4\u7684\u95F4\u9699\uFF08\u7AD6\u677F\u7F3A\u53E3\u4ECE\u6A2A\u6761\u5E95 + 20 \u2212 5 \u5F00\u5230\u9876\uFF09\u3002" },
+  MIDDLE_CABINET_MIN_WIDTH: { value: 300, doc: "\u6846\u67B6\u5E73\u884C\u6C99\u53D1\uFF1A\u4E24\u6BB5\u4E4B\u95F4\u81F3\u5C11\u8FD9\u4E48\u5BBD\u624D\u81EA\u52A8\u653E\u4E2D\u67DC\uFF08hasMiddleCabinet \u6CA1\u8BBE\u65F6\uFF09\uFF1B\u5BBD\u5EA6\u6CA1\u8BBE\u65F6\u53D6 MIDDLE_CABINET_WIDTH \u548C\u4E2D\u95F4\u7A7A\u9699\u91CC\u5C0F\u7684\u90A3\u4E2A\u3002" },
+  MIDDLE_CABINET_DIVIDER_THICKNESS: { value: 15, doc: "\u5E73\u884C\u6C99\u53D1\u4E2D\u67DC\u4E2D\u95F4\u9694\u677F\uFF1A\u67DC\u4F53\u6599\u539A\uFF0819'6 Rear Door\uFF1A15\uFF0C\u67DC\u4F53 / \u95E8 16\uFF09\u3002\u69FD\u9AD8 = \u5B83 + 1\uFF0C\u69FD\u6DF1 = \u5B83 / 2\uFF0C\u820C\u5934 = \u5B83 / 2 \u2212 0.5\u3002" },
+  MIDDLE_CABINET_LOCK_EXTRA: { value: 35, doc: "\u4E2D\u67DC\u95E8\u9501\u4E2D\u5FC3\u79BB\u4E24\u6247\u95E8\u5BF9\u7F1D = lockSideDistance + 35\uFF08\u63D2\u4EF6\u89C4\u5219\uFF1B19'6 Rear Door 30 + 35 = 65\uFF09\u3002\u9501\u4E2D\u5FC3\u9AD8 = \u4E2D\u95F4\u9694\u677F\u5E95 \u2212 LOCK_DROP\u3002" },
+  FRAME_HALF_SLOT_TONGUE_GAP: { value: 0.5, doc: "\u6846\u67B6\u534A\u69FD\uFF08\u4E0D\u6253\u901A\uFF0C\u540C\u53A8\u623F V \u677F\u534A\u69FD\uFF09\uFF1A\u69FD\u6DF1 = \u88AB\u5F00\u69FD\u677F\u539A / 2\uFF0C\u69FD\u5BBD = \u63D2\u5165\u677F\u539A + FRAME_SLOT_CLEARANCE\uFF08\u6BCF\u8FB9 0.5\uFF09\uFF0C\u63D2\u5165\u677F\u820C\u5934 = \u69FD\u6DF1 \u2212 0.5\u3002\u5E73\u884C\u6C99\u53D1\u540E\u6A2A\u6761\u63D2\u5EA7\u9762\u677F\u5185\u4FA7\u5C31\u662F\u8FD9\u79CD\uFF0C\u4ECE\u4E2D\u7F1D\u770B\u4E0D\u5230\u3002" },
+  FRAME_LID_MAX_LENGTH: { value: 1600, doc: "\u6846\u67B6\u5361\u5EA7\uFF1A\u4E00\u6BB5\uFF08I \u6574\u6761 / L \u4E3B\u6BB5\uFF09\u76D6\u5B50\u6CBF\u5899\u7684\u6700\u957F\u957F\u5EA6\uFF1B\u8D85\u8FC7\u5C31\u5206\u6210\u51E0\u5757\u7B49\u957F\u7684\u76D6\u5B50\uFF0C\u76F8\u9694 FRAME_LID_GAP\uFF0C\u6BCF\u6761\u7F1D\u4E0B\u4E00\u5757\u4E2D\u95F4\u6258\u677F\uFF08\u548C\u4E24\u6839\u5185\u6258\u6761\u5341\u5B57\u534A\u642D\uFF09\u300221 Bunk \u4E3B\u6BB5 1505 \u4E00\u6574\u5757\u3002" },
   FRAME_DRAWER_STRIP_REVEAL: { value: 100, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\uFF1A\u56FA\u5B9A\u6761\u5728\u76D6\u5B50\u5E95\u4E0B\u9732\u51FA\u7684\u9AD8\u5EA6\u300221 Bunk classic \u5361\u5EA7\u662F 100 \u9AD8\u7684\u56FA\u5B9A\u6761\u4E0A\u538B 18 \u9876\u677F\uFF1B\u6846\u67B6\u6CA1\u6709\u9876\u677F\uFF0C\u6240\u4EE5\u56FA\u5B9A\u6761\u9AD8 = 100 + \u677F\u539A\u3002" },
   FRAME_DRAWER_FRONT_THICKNESS: { value: 16, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\u9762\u548C\u56FA\u5B9A\u6761\u7684\u95E8\u677F\u6599\u539A\uFF08\u6CA1\u6709 frontPanelThickness \u53C2\u6570\u65F6\uFF09\u3002" },
   FRAME_DRAWER_GAP: { value: 2, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\u9762\u56DB\u5468\u7559\u7F1D\uFF1A\u79BB\u4E24\u4FA7\u677F\u677F\u9762\u3001\u79BB\u56FA\u5B9A\u6761\u3001\u79BB\u5730\u3002" },
@@ -515,10 +520,47 @@ var LOUNGE_RELATIONSHIP_DECLARATIONS = [
   P("lg_l_strip_to_outer", "l_drawer_strip", "l_outer_side"),
   P("lg_l_strip_on_rail", "l_drawer_strip", "l_drawer_rail"),
   P("lg_l_drawer_rail_inner", "l_drawer_rail", "l_support_inner"),
-  P("lg_l_drawer_rail_outer", "l_drawer_rail", "l_support_outer")
+  P("lg_l_drawer_rail_outer", "l_drawer_rail", "l_support_outer"),
+  // Frame I: the L main run on its own, an end panel at each end.
+  P("lg_i_rear_rail_left", "back_rail", "i_left_end"),
+  P("lg_i_rear_rail_right", "back_rail", "i_right_end"),
+  P("lg_i_front_to_left", "i_front", "i_left_end"),
+  P("lg_i_front_to_right", "i_front", "i_right_end"),
+  P("lg_i_left_support", "i_left_support", "i_left_end"),
+  P("lg_i_right_support", "i_right_support", "i_right_end"),
+  P("lg_i_rail_back_left", "i_rail_back", "i_left_support"),
+  P("lg_i_rail_back_right", "i_rail_back", "i_right_support"),
+  P("lg_i_rail_front_left", "i_rail_front", "i_left_support"),
+  P("lg_i_rail_front_right", "i_rail_front", "i_right_support"),
+  P("lg_i_lid_on_rail", "i_lid", "i_rail_back"),
+  // Frame parallel: each run like the L wing, the rear rail on the wall in a half slot on the seat front.
+  ...["left", "right"].flatMap((s) => [
+    P(`lg_${s}_rear_rail_side`, `${s}_rear_rail`, `${s}_side`),
+    P(`lg_${s}_front_to_side`, `${s}_front`, `${s}_side`),
+    P(`lg_${s}_inner_support`, `${s}_inner_support`, `${s}_side`),
+    P(`lg_${s}_outer_support_front`, `${s}_outer_support`, `${s}_front`),
+    P(`lg_${s}_lid_on_support`, `${s}_lid`, `${s}_inner_support`),
+    P(`lg_${s}_strip_to_side`, `${s}_drawer_strip`, `${s}_side`),
+    P(`lg_${s}_strip_on_rail`, `${s}_drawer_strip`, `${s}_drawer_rail`),
+    P(`lg_${s}_drawer_rail_outer`, `${s}_drawer_rail`, `${s}_outer_support`),
+    P(`lg_${s}_drawer_rail_inner`, `${s}_drawer_rail`, `${s}_inner_support`)
+  ])
 ];
+function frameSplitDeclarations(ids) {
+  const out = [];
+  for (const id of ids) {
+    const mid = /^(main|i|left|right)_mid_support_(\d+)$/.exec(id);
+    if (mid) {
+      out.push(P(`lg_${mid[1]}_rail_back_mid_${mid[2]}`, `${mid[1]}_rail_back`, id));
+      out.push(P(`lg_${mid[1]}_rail_front_mid_${mid[2]}`, `${mid[1]}_rail_front`, id));
+    }
+    const lid = /^(main|i|left|right)_lid_(\d+)$/.exec(id);
+    if (lid) out.push(P(`lg_${id}_on_rail`, id, `${lid[1]}_rail_back`));
+  }
+  return out;
+}
 function relationshipDeclarationsForBoards(ids) {
-  return LOUNGE_RELATIONSHIP_DECLARATIONS.filter((d) => ids.has(d.panelAId) && ids.has(d.panelBId));
+  return [...LOUNGE_RELATIONSHIP_DECLARATIONS, ...frameSplitDeclarations(ids)].filter((d) => ids.has(d.panelAId) && ids.has(d.panelBId));
 }
 
 // generators/lounge/faces.ts
@@ -620,7 +662,7 @@ function buildLoungeFaces(fb) {
       source: "lounge"
     });
   }
-  if (B.has("back_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
+  if (fb.boards.some((b) => b.boardType === "rear_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
   return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
 }
 function bandFrameEdges(boards, colour, doorColour) {
@@ -630,27 +672,52 @@ function bandFrameEdges(boards, colour, doorColour) {
     for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), tape);
   };
   const by = (id) => boards.find((b) => b.id === id);
-  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "back_rail"]) band(by(id), "+Z");
+  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "i_front", "i_left_end", "i_right_end", "back_rail"]) band(by(id), "+Z");
   band(by("l_side"), "-Y");
   band(by("l_outer_side"), "-Y");
-  if (by("l_drawer_front")) {
-    const doorTape = { thickness: RULES.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
-    for (const id of ["l_drawer_front", "l_drawer_strip"]) {
+  for (const id of ["i_rail_back", "i_rail_front"]) band(by(id), "-Z");
+  const cover = by("parallel_avoidance_top");
+  for (const side of ["left", "right"]) {
+    if (!by(`${side}_rear_rail`)) continue;
+    for (const id of [`${side}_front`, `${side}_side`, `${side}_rear_rail`]) band(by(id), "+Z");
+    band(by(`${side}_side`), "-Y");
+    if (!cover) band(by(`${side}_rear_rail`), "-Z");
+  }
+  if (by("left_rear_rail")) band(cover, "-Y");
+  const doorTape = { thickness: RULES.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
+  for (const b of boards.filter((q) => q.id.startsWith("middle_cabinet_"))) {
+    const isDoor = b.boardType === "cabinet_door";
+    if (b.boardType === "cabinet_divider") {
+      band(b, "-Y");
+      continue;
+    }
+    for (const f of edgeFaces(b)) {
+      if (!isDoor && f.normal === "+Y") continue;
+      if (b.boardType === "cabinet_side" && (f.normal === "+Z" || f.normal === "-Z")) continue;
+      setEdgeBand(b, Number(f.id.slice(1)), isDoor ? doorTape : tape);
+    }
+  }
+  const drawers = {
+    l: { frame: ["l_side", "l_outer_side"], supports: ["l_support_inner", "l_support_outer"] },
+    left: { frame: ["left_side"], supports: ["left_outer_support", "left_inner_support"] },
+    right: { frame: ["right_side"], supports: ["right_outer_support", "right_inner_support"] }
+  };
+  for (const [p, d] of Object.entries(drawers)) {
+    if (!by(`${p}_drawer_front`)) continue;
+    for (const id of [`${p}_drawer_front`, `${p}_drawer_strip`]) {
       const b = by(id);
       for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
     }
-    for (const id of ["l_side", "l_outer_side"]) {
+    for (const id of d.frame) {
       const b = by(id);
-      for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+      if (b) for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
     }
-    band(by("l_drawer_rail"), "+Y");
-    band(by("l_support_inner"), "-Y");
-    band(by("l_support_outer"), "-Y");
+    band(by(`${p}_drawer_rail`), "+Y");
+    for (const id of d.supports) band(by(id), "-Y");
   }
   for (const id of ["main_rail_back", "main_rail_front", "back_rail"]) band(by(id), "-Z");
-  for (const id of ["main_lid", "l_lid"]) {
-    const lid = by(id);
-    if (lid) for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
+  for (const lid of boards.filter((b) => b.boardType === "lid")) {
+    for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
   }
 }
 
@@ -1303,7 +1370,7 @@ function addParallelRun(prefix, label2, xStart, xEnd, D, H, ppt, Hprime, lidOn, 
     H
   ));
   openingAndLid(prefix, xStart, 0, SW, D, H - ppt, H, ppt, lidOn, boards, openings, lids);
-  const stripH = RULES.TOP_SUPPORT_STRIP_HEIGHT.value;
+  const stripZ0 = wheel && cut ? wheel.AH : r22(Hprime - RULES.TOP_SUPPORT_STRIP_HEIGHT.value);
   boards.push(mkBoard(
     `${prefix}_support_strip`,
     `${label2} Support Strip`,
@@ -1315,13 +1382,14 @@ function addParallelRun(prefix, label2, xStart, xEnd, D, H, ppt, Hprime, lidOn, 
     r22(stripX0 + ppt),
     ppt,
     D,
-    r22(Hprime - stripH),
+    stripZ0,
     Hprime
   ));
 }
-function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings) {
+function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, fit) {
   const mc = raw.middleCabinet ?? {};
-  const CW = asNum2(mc.width, RULES.MIDDLE_CABINET_WIDTH.value);
+  const gap0 = totalW - asNum2(raw.singleLoungeWidth, 1500) * 2;
+  const CW = asNum2(mc.width, Math.min(RULES.MIDDLE_CABINET_WIDTH.value, Math.max(0, gap0)));
   const CD = asNum2(mc.depth, RULES.MIDDLE_CABINET_DEPTH.value);
   const CH = asNum2(mc.height, RULES.MIDDLE_CABINET_HEIGHT.value);
   const CSH = asNum2(mc.startHeight, RULES.MIDDLE_CABINET_START_HEIGHT.value);
@@ -1337,16 +1405,17 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
   if (raw.wheelAvoidanceEnabled && !(CSH > asNum2(raw.avoidanceHeight, RULES.DEFAULT_AVOIDANCE_HEIGHT.value))) {
     warnings.push("Middle cabinet start height must be greater than avoidance height.");
   }
-  if (CW > Math.max(0, gap)) warnings.push("Middle cabinet width exceeds the middle gap.");
+  if (CW > Math.max(0, gap)) fit.push(`Middle cabinet width ${CW} exceeds the middle gap ${Math.max(0, gap)}.`);
   if (CD > D) warnings.push("Middle cabinet depth exceeds lounge depth.");
   if (!(CW > 3 * dc)) warnings.push("Middle cabinet width must exceed 3 x door clearance.");
   if (!(CH > 2 * dc)) warnings.push("Middle cabinet height must exceed 2 x door clearance.");
   if (!(hingeSide * 2 < CH - 2 * dc)) warnings.push("Hinge side distance is too large for the door height.");
+  const dvt = Math.max(1, asNum2(mc.dividerThickness, RULES.MIDDLE_CABINET_DIVIDER_THICKNESS.value));
   const x0 = r22((totalW - CW) / 2);
   const y0 = r22(D - CD);
   const dividerDepth = Math.max(0, CD - dpt);
   const tongueWidth = dividerDepth / 2;
-  const tongueDepth = dpt / 2 - 0.5;
+  const tongueDepth = dvt / 2 - 0.5;
   const dividerBodyWidth = Math.max(0, CW - 2 * dpt);
   const doorSlotWidth = Math.max(0, (CW - 3 * dc) / 2);
   const doorWidth = Math.max(0, doorSlotWidth - dpt);
@@ -1409,7 +1478,7 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
     r22(CSH + dpt + sideH)
   ));
   const grooveU0 = Math.max(0, CD - tongueWidth - 5);
-  const grooveV0 = (CH - dpt) / 2 - dpt - 0.5;
+  const grooveV0 = (CH - dvt) / 2 - dpt - 0.5;
   grooves.push({
     id: "middle_cabinet_left_groove",
     boardId: "middle_cabinet_left",
@@ -1417,8 +1486,8 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
     u0: grooveU0,
     u1: CD,
     v0: grooveV0,
-    v1: grooveV0 + dpt + 1,
-    depth: dpt / 2
+    v1: grooveV0 + dvt + 1,
+    depth: dvt / 2
   });
   grooves.push({
     id: "middle_cabinet_right_groove",
@@ -1427,15 +1496,15 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
     u0: grooveU0,
     u1: CD,
     v0: grooveV0,
-    v1: grooveV0 + dpt + 1,
-    depth: dpt / 2
+    v1: grooveV0 + dvt + 1,
+    depth: dvt / 2
   });
-  const dividerZ0 = CSH + (CH - dpt) / 2;
+  const dividerZ0 = CSH + (CH - dvt) / 2;
   boards.push(mkBoard(
     "middle_cabinet_mid_divider",
     "Middle Cabinet Mid Horizontal Divider",
     "cabinet_divider",
-    dpt,
+    dvt,
     "XY",
     "Z",
     r22(x0 + dpt),
@@ -1443,7 +1512,7 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
     r22(y0 + dpt),
     D,
     dividerZ0,
-    r22(dividerZ0 + dpt),
+    r22(dividerZ0 + dvt),
     [
       { x: 0, y: 0 },
       { x: dividerBodyWidth, y: 0 },
@@ -1456,7 +1525,8 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
       { x: 0, y: 0 }
     ]
   ));
-  const lockCenterZ = CSH + dc + dpt + (CH - dc - 2 * dpt - RULES.LOCK_DROP.value);
+  const lockCenterZ = r22(dividerZ0 - RULES.LOCK_DROP.value);
+  const lockFromMeeting = lockSide + RULES.MIDDLE_CABINET_LOCK_EXTRA.value;
   const addDoor = (id, doorX0, isLeft) => {
     boards.push(mkBoard(
       id,
@@ -1477,7 +1547,7 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
     hinges.push({ id: `${id}_hinge_bottom`, panelId: id, centerX: hingeX, centerZ: z0 + hingeSide, diameter: cupD, depth: cupDepth });
     hinges.push({ id: `${id}_hinge_top`, panelId: id, centerX: hingeX, centerZ: z0 + doorHeight - hingeSide, diameter: cupD, depth: cupDepth });
     if (lockStyle !== "NONE") {
-      const lockX = isLeft ? doorX0 + doorWidth - lockSide : doorX0 + lockSide;
+      const lockX = isLeft ? doorX0 + doorWidth - lockFromMeeting : doorX0 + lockFromMeeting;
       locks.push({
         id: `${id}_lock`,
         panelId: id,
@@ -1491,58 +1561,240 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
   };
   addDoor("middle_cabinet_left_door", x0 + dc + dpt, true);
   addDoor("middle_cabinet_right_door", x0 + dc + doorSlotWidth + dc, false);
+  return { width: CW, depth: CD, height: CH, startHeight: CSH };
 }
-function addFrameL(L, Dm, Dl, Wl, H, T, right, ft, boards, lids, locks, grooves, errors) {
-  const c = RULES.FRAME_WALL_GAP.value;
-  const s = RULES.FRAME_SLOT_CLEARANCE.value;
-  const g = RULES.FRAME_LID_GAP.value;
-  const hr = RULES.FRAME_INNER_RAIL_HEIGHT.value;
-  const nd = RULES.FRAME_HALVING_NOTCH.value;
-  const hg = RULES.FRAME_HALVING_GAP.value;
-  const P2 = param({ L, Wl, H, T });
-  const Lm = dim("lounge.frame.mainLength", { L: P2.L, Wl: P2.Wl }, (t) => r22(t.L - t.Wl), { formula: "L - Wl" });
+function frameHeights(H, T) {
+  const P2 = param({ H, T });
   const railZ0 = dim("lounge.frame.railBottom", { H: P2.H, T: P2.T, hr: RULES.FRAME_INNER_RAIL_HEIGHT }, (t) => r22(t.H - t.T - t.hr), { formula: "H - T - FRAME_INNER_RAIL_HEIGHT" });
   const slotZ = dim("lounge.frame.slotBottom", { z: ref("lounge.frame.railBottom"), nd: RULES.FRAME_HALVING_NOTCH, hg: RULES.FRAME_HALVING_GAP }, (t) => r22(t.z + t.nd - t.hg), { formula: "railBottom + FRAME_HALVING_NOTCH - FRAME_HALVING_GAP" });
   const seat = dim("lounge.frame.lidSeat", { H: P2.H, T: P2.T }, (t) => r22(t.H - t.T), { formula: "H - T" });
-  const slot = r22(T + s);
-  if (Wl < RULES.L_MIN_WING_WIDTH.value) errors.push(`L: the wing is only ${Wl} wide \u2014 at least ${RULES.L_MIN_WING_WIDTH.value}.`);
-  if (!(Lm > 3 * T + 2 * s)) errors.push(`L: the main run is only ${Lm} long.`);
-  if (!(Dm > 4 * T + 3 * s + 2 * g)) errors.push(`L: the main depth ${Dm} does not fit the rear rail, both inner rails and the front.`);
-  if (!(Dl > Dm)) errors.push(`L: the wing (${Dl}) must reach past the main front (${Dm}).`);
-  if (!(railZ0 > 0 && slotZ < seat)) errors.push(`L: height ${H} is too low for the rails (${hr} + ${T}).`);
-  const gd = RULES.FRAME_DRAWER_GAP.value;
-  let stripZ0 = 0, frontTop = 0;
-  if (ft != null) {
-    const stripH = dim("lounge.frame.drawer.stripHeight", { rev: RULES.FRAME_DRAWER_STRIP_REVEAL, T: P2.T }, (t) => r22(t.rev + t.T), { formula: "FRAME_DRAWER_STRIP_REVEAL + T" });
-    stripZ0 = dim("lounge.frame.drawer.stripBottom", { H: P2.H, s: ref("lounge.frame.drawer.stripHeight") }, (t) => r22(t.H - t.s), { formula: "H - stripHeight" });
-    frontTop = dim("lounge.frame.drawer.frontTop", { z: ref("lounge.frame.drawer.stripBottom"), g: RULES.FRAME_DRAWER_GAP }, (t) => r22(t.z - t.g), { formula: "stripBottom - FRAME_DRAWER_GAP" });
-    const room = r22(frontTop - gd);
-    if (!(room > RULES.LOCK_DROP.value + RULES.LOCK_HEIGHT.value / 2)) {
-      errors.push(`L drawer: height ${H} leaves only ${room} for the drawer front under the ${stripH} strip.`);
-    }
-  }
-  if (errors.length) return;
-  const back = Dl;
+  return { railZ0, slotZ, seat, n: r22(railZ0 + RULES.FRAME_HALVING_NOTCH.value) };
+}
+function frameKit(L, back, H, T, right, boards, lids) {
   const X = (a, b) => right ? [r22(a), r22(b)] : [r22(L - b), r22(L - a)];
   const px2 = (x) => r22(right ? x : L - x);
   const Y = (d0, d1) => [r22(back - d1), r22(back - d0)];
   const yz = (pts) => [...pts, pts[0]].map(([d, z]) => ({ y: r22(back - d), z: r22(z) }));
   const xz = (pts) => [...pts, pts[0]].map(([x, z]) => ({ x: px2(x), z: r22(z) }));
+  const xy = (pts) => [...pts, pts[0]].map(([x, d]) => ({ x: px2(x), y: r22(back - d) }));
   const push = (id, name, type, plane, axis, x, y, z, pv, th = T) => {
     const [x0, x1] = X(x[0], x[1]);
     const board = mkBoard(id, name, type, th, plane, axis, x0, x1, y[0], y[1], z[0], z[1], pv);
     boards.push(board);
     return board;
   };
-  const atWall = r22(c + T);
-  const wallPanel = (dEnd) => [[0, 0], [dEnd, 0], [dEnd, H], [atWall, H], [atWall, slotZ], [0, slotZ]];
-  push("main_end", "Main End", "side", "YZ", "X", [0, T], Y(0, Dm - T), [0, H], yz(wallPanel(Dm - T)));
+  const lid = (id, name, x, d) => {
+    const b = push(id, name, "lid", "XY", "Z", x, Y(d[0], d[1]), [r22(H - T), H]);
+    b.profileVector = [
+      { x: b.x0, y: b.y0 },
+      { x: b.x1, y: b.y0 },
+      { x: b.x1, y: b.y1 },
+      { x: b.x0, y: b.y1 },
+      { x: b.x0, y: b.y0 }
+    ];
+    b.profileHoles = [circleHole((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, RULES.FRAME_FINGER_HOLE_DIAMETER.value)];
+    lids.push({ id, x0: b.x0, y0: b.y0, width: r22(b.x1 - b.x0), depth: r22(b.y1 - b.y0), holeDiameter: RULES.FRAME_FINGER_HOLE_DIAMETER.value });
+  };
+  const wallPanel = (dEnd, slotZ) => {
+    const atWall = r22(RULES.FRAME_WALL_GAP.value + T);
+    return [[0, 0], [dEnd, 0], [dEnd, H], [atWall, H], [atWall, slotZ], [0, slotZ]];
+  };
+  return { H, X, px: px2, Y, yz, xz, xy, push, lid, wallPanel };
+}
+function frameRun(kit, ids, x0, x1, Dm, T, h) {
+  const c = RULES.FRAME_WALL_GAP.value, s = RULES.FRAME_SLOT_CLEARANCE.value, g = RULES.FRAME_LID_GAP.value;
+  const { railZ0, slotZ, seat, n } = h;
+  const railBackD = [T + 2 * c, 2 * T + 2 * c];
+  const railFrontD = [Dm - 2 * T - c, Dm - T - c];
+  const support = [
+    [T + c, 0],
+    [Dm - T, 0],
+    [Dm - T, slotZ],
+    [railFrontD[0], slotZ],
+    [railFrontD[0], seat],
+    [railBackD[1], seat],
+    [railBackD[1], slotZ],
+    [T + c, slotZ]
+  ];
+  const sd = kit.Y(T + c, Dm - T);
+  const pushSupport = (id, name, x) => {
+    kit.push(id, name, "lid_support", "YZ", "X", x, sd, [0, seat], kit.yz(support));
+  };
+  pushSupport(ids.supportL[0], ids.supportL[1], [x0, x0 + T]);
+  pushSupport(ids.supportR[0], ids.supportR[1], [x1 - T, x1]);
+  const a = x0 + g, b = x1 - g;
+  const count = Math.max(1, Math.ceil((b - a) / RULES.FRAME_LID_MAX_LENGTH.value - 1e-9));
+  const lidLen = (b - a - (count - 1) * g) / count;
+  const mids = [];
+  for (let j = 1; j < count; j++) mids.push(r22(a + j * (lidLen + g) - g / 2));
+  mids.forEach((cx, j) => pushSupport(`${ids.prefix}_mid_support_${j + 1}`, `${ids.label} Middle Support ${j + 1}`, [cx - T / 2, cx + T / 2]));
+  const rail = [[x0, n], [x0 + T + s, n], [x0 + T + s, railZ0]];
+  for (const cx of mids) rail.push([cx - T / 2 - s / 2, railZ0], [cx - T / 2 - s / 2, n], [cx + T / 2 + s / 2, n], [cx + T / 2 + s / 2, railZ0]);
+  rail.push([x1 - T - s, railZ0], [x1 - T - s, n], [x1, n], [x1, seat], [x0, seat]);
+  kit.push(`${ids.prefix}_rail_back`, `${ids.label} Rear Inner Rail`, "lid_rail", "XZ", "Y", [x0, x1], kit.Y(railBackD[0], railBackD[1]), [railZ0, seat], kit.xz(rail));
+  kit.push(`${ids.prefix}_rail_front`, `${ids.label} Front Inner Rail`, "lid_rail", "XZ", "Y", [x0, x1], kit.Y(railFrontD[0], railFrontD[1]), [railZ0, seat], kit.xz(rail));
+  const ld = [T + c + g, Dm - T - g];
+  if (count === 1) kit.lid(`${ids.prefix}_lid`, `${ids.label} Lid`, [a, b], ld);
+  else for (let j = 0; j < count; j++) {
+    const l0 = a + j * (lidLen + g);
+    kit.lid(`${ids.prefix}_lid_${j + 1}`, `${ids.label} Lid ${j + 1}`, [l0, l0 + lidLen], ld);
+  }
+}
+function addFrameI(L, D, H, T, boards, lids, errors) {
+  const s = RULES.FRAME_SLOT_CLEARANCE.value, g = RULES.FRAME_LID_GAP.value, c = RULES.FRAME_WALL_GAP.value;
+  const h = frameHeights(H, T);
+  if (!(L > 4 * T + 2 * s + 2 * g)) errors.push(`I: the run is only ${L} long.`);
+  if (!(D > 4 * T + 3 * s + 2 * g)) errors.push(`I: the depth ${D} does not fit the rear rail, both inner rails and the front.`);
+  if (!(h.railZ0 > 0 && h.slotZ < h.seat)) errors.push(`I: height ${H} is too low for the rails (${RULES.FRAME_INNER_RAIL_HEIGHT.value} + ${T}).`);
+  if (errors.length) return;
+  const kit = frameKit(L, D, H, T, true, boards, lids);
+  const slot = r22(T + s);
+  kit.push("i_front", "Front", "seat_front", "XZ", "Y", [0, L], kit.Y(D - T, D), [0, H]);
+  kit.push("i_left_end", "Left End", "side", "YZ", "X", [0, T], kit.Y(0, D - T), [0, H], kit.yz(kit.wallPanel(D - T, h.slotZ)));
+  kit.push("i_right_end", "Right End", "side", "YZ", "X", [L - T, L], kit.Y(0, D - T), [0, H], kit.yz(kit.wallPanel(D - T, h.slotZ)));
+  kit.push("back_rail", "Rear Rail", "rear_rail", "XZ", "Y", [0, L], kit.Y(c, c + T), [h.railZ0, H], kit.xz([
+    [0, H],
+    [0, h.n],
+    [slot, h.n],
+    [slot, h.railZ0],
+    [L - slot, h.railZ0],
+    [L - slot, h.n],
+    [L, h.n],
+    [L, H]
+  ]));
+  frameRun(kit, { prefix: "i", label: "I", supportL: ["i_left_support", "Left End Support"], supportR: ["i_right_support", "Right End Support"] }, T, L - T, D, T, h);
+}
+function addFrameParallel(totalW, SW, D, H, T, wheel, ft, boards, lids, locks, grooves, errors) {
+  const s = RULES.FRAME_SLOT_CLEARANCE.value, g = RULES.FRAME_LID_GAP.value, c = RULES.FRAME_WALL_GAP.value;
+  const h = frameHeights(H, T);
+  const rearZ0 = wheel ? wheel.AH : h.railZ0;
+  if (!(totalW >= 2 * SW)) errors.push(`Parallel: the total width ${totalW} is less than two runs of ${SW}.`);
+  if (!(SW > 3 * T + 2 * g)) errors.push(`Parallel: the run width ${SW} does not fit both supports and the seat front.`);
+  if (!(D > 3 * T + c + 2 * g)) errors.push(`Parallel: the run is only ${D} deep.`);
+  if (!(h.railZ0 > 0)) errors.push(`Parallel: height ${H} is too low for the rear rail (${RULES.FRAME_INNER_RAIL_HEIGHT.value} + ${T}).`);
+  if (wheel) {
+    if (!(wheel.AD > 2 * T + c && wheel.AD < D - 2 * T)) errors.push(`Parallel: the wheel-arch depth ${wheel.AD} must lie between the rear rail and the aisle end (${2 * T + c} to ${D - 2 * T}).`);
+    if (!(wheel.AH > T && wheel.AH <= h.railZ0)) errors.push(`Parallel: the wheel-arch height ${wheel.AH} leaves the rear rail under ${RULES.FRAME_INNER_RAIL_HEIGHT.value} + ${T} (${T} to ${h.railZ0}).`);
+  }
+  const dz = ft != null ? frameDrawerHeights(H, T, "Parallel", errors) : null;
+  if (ft != null && wheel && !(wheel.AD < D - ft - RULES.FRAME_DRAWER_RAIL_DEPTH.value - RULES.FRAME_DRAWER_POCKET_OVERRUN.value)) {
+    errors.push(`Parallel drawer: the wheel-arch depth ${wheel.AD} reaches the drawer rail.`);
+  }
+  if (errors.length) return;
+  const seat = h.seat;
+  const tg = r22(T / 2 - RULES.FRAME_HALF_SLOT_TONGUE_GAP.value);
+  const endT = ft ?? T;
+  for (const side of ["left", "right"]) {
+    const label2 = side === "left" ? "Left" : "Right";
+    const kit = frameKit(totalW, D, H, T, side === "left", boards, lids);
+    const { Y } = kit;
+    const seatFront = wheel ? kit.yz([[0, wheel.AH], [wheel.AD, wheel.AH], [wheel.AD, 0], [D, 0], [D, H], [0, H]]) : void 0;
+    const sf = kit.push(`${side}_side`, `${label2} Seat Front`, "seat_front", "YZ", "X", [SW - T, SW], Y(0, D), [0, H], seatFront);
+    if (ft == null) kit.push(`${side}_front`, `${label2} Aisle End`, "seat_front", "XZ", "Y", [0, SW - T], Y(D - T, D), [0, H]);
+    kit.push(`${side}_rear_rail`, `${label2} Rear Rail`, "rear_rail", "XZ", "Y", [0, SW - T + tg], Y(c, c + T), [rearZ0, H]);
+    const [py0, py1] = Y(c - s / 2, c + T + s / 2);
+    grooves.push({
+      id: `${side}_side_rear_rail_slot`,
+      boardId: sf.id,
+      face: side === "left" ? "B" : "A",
+      u0: r22(py0 - sf.y0),
+      u1: r22(py1 - sf.y0),
+      v0: r22(rearZ0 - s / 2 - sf.z0),
+      v1: r22(H - sf.z0),
+      depth: r22(T / 2),
+      for: `${side}_rear_rail`
+    });
+    const support = wheel ? kit.yz([[T + c, wheel.AH], [wheel.AD, wheel.AH], [wheel.AD, 0], [D - endT, 0], [D - endT, seat], [T + c, seat]]) : void 0;
+    const outer = kit.push(`${side}_outer_support`, `${label2} Outer Support`, "lid_support", "YZ", "X", [0, T], Y(T + c, D - endT), [0, seat], support);
+    const inner = kit.push(`${side}_inner_support`, `${label2} Inner Support`, "lid_support", "YZ", "X", [SW - 2 * T, SW - T], Y(T + c, D - endT), [0, seat], support);
+    if (ft != null && dz) frameDrawer(kit, side, label2, [0, SW - T], [outer, inner], [T, SW - 2 * T], D, T, ft, dz, locks, grooves);
+    kit.lid(`${side}_lid`, `${label2} Lid`, [g, SW - T - g], [T + c + g, D - endT - g]);
+  }
+}
+function frameDrawerHeights(H, T, label2, errors) {
+  const P2 = param({ H, T });
+  const gd = RULES.FRAME_DRAWER_GAP.value;
+  const stripH = dim("lounge.frame.drawer.stripHeight", { rev: RULES.FRAME_DRAWER_STRIP_REVEAL, T: P2.T }, (t) => r22(t.rev + t.T), { formula: "FRAME_DRAWER_STRIP_REVEAL + T" });
+  const stripZ0 = dim("lounge.frame.drawer.stripBottom", { H: P2.H, s: ref("lounge.frame.drawer.stripHeight") }, (t) => r22(t.H - t.s), { formula: "H - stripHeight" });
+  const frontTop = dim("lounge.frame.drawer.frontTop", { z: ref("lounge.frame.drawer.stripBottom"), g: RULES.FRAME_DRAWER_GAP }, (t) => r22(t.z - t.g), { formula: "stripBottom - FRAME_DRAWER_GAP" });
+  const room = r22(frontTop - gd);
+  if (!(room > RULES.LOCK_DROP.value + RULES.LOCK_HEIGHT.value / 2)) {
+    errors.push(`${label2} drawer: height ${H} leaves only ${room} for the drawer front under the ${stripH} strip.`);
+  }
+  return { stripZ0, frontTop };
+}
+function frameDrawer(kit, prefix, label2, span, supports, rail, Dl, T, ft, z, locks, grooves) {
+  const { Y, push, px: px2, xy } = kit;
+  const gd = RULES.FRAME_DRAWER_GAP.value, s = RULES.FRAME_SLOT_CLEARANCE.value;
+  const { stripZ0, frontTop } = z;
+  push(`${prefix}_drawer_strip`, `${label2} Drawer Fixed Strip`, "fixed_front", "XZ", "Y", span, Y(Dl - ft, Dl), [stripZ0, kit.H], void 0, ft);
+  push(`${prefix}_drawer_front`, `${label2} Drawer Front`, "drawer_front", "XZ", "Y", [span[0] + gd, span[1] - gd], Y(Dl - ft, Dl), [gd, frontTop], void 0, ft);
+  locks.push({
+    id: `${prefix}_drawer_front_lock`,
+    panelId: `${prefix}_drawer_front`,
+    centerX: px2((span[0] + span[1]) / 2),
+    centerZ: r22(frontTop - RULES.LOCK_DROP.value),
+    width: RULES.LOCK_WIDTH.value,
+    height: RULES.LOCK_HEIGHT.value,
+    radius: RULES.LOCK_HEIGHT.value / 2
+  });
+  const tg = r22(T / 2 - RULES.FRAME_DRAWER_TONGUE_GAP.value);
+  const [xl, xr] = rail;
+  const d1 = Dl - ft, d0 = d1 - RULES.FRAME_DRAWER_RAIL_DEPTH.value, dt = d1 - RULES.FRAME_DRAWER_RAIL_PLAIN_FRONT.value;
+  push(`${prefix}_drawer_rail`, `${label2} Drawer Rail`, "drawer_rail", "XY", "Z", [xl - tg, xr + tg], Y(d0, d1), [stripZ0, stripZ0 + T], xy([
+    [xl - tg, d0],
+    [xr + tg, d0],
+    [xr + tg, dt],
+    [xr, dt],
+    [xr, d1],
+    [xl, d1],
+    [xl, dt],
+    [xl - tg, dt]
+  ]));
+  const ov = RULES.FRAME_DRAWER_POCKET_OVERRUN.value;
+  const [py0, py1] = Y(d0 - ov, dt + ov);
+  const mid = px2((xl + xr) / 2);
+  for (const sup of supports) {
+    grooves.push({
+      id: `${sup.id}_drawer_rail_pocket`,
+      boardId: sup.id,
+      face: (sup.x0 + sup.x1) / 2 < mid ? "A" : "B",
+      u0: r22(py0 - sup.y0),
+      u1: r22(py1 - sup.y0),
+      v0: r22(stripZ0 - s / 2 - sup.z0),
+      v1: r22(stripZ0 + T + s / 2 - sup.z0),
+      depth: r22(T / 2),
+      for: `${prefix}_drawer_rail`
+    });
+  }
+}
+function addFrameL(L, Dm, Dl, Wl, H, T, right, ft, boards, lids, locks, grooves, errors) {
+  const c = RULES.FRAME_WALL_GAP.value;
+  const s = RULES.FRAME_SLOT_CLEARANCE.value;
+  const g = RULES.FRAME_LID_GAP.value;
+  const hr = RULES.FRAME_INNER_RAIL_HEIGHT.value;
+  const P2 = param({ L, Wl, H, T });
+  const Lm = dim("lounge.frame.mainLength", { L: P2.L, Wl: P2.Wl }, (t) => r22(t.L - t.Wl), { formula: "L - Wl" });
+  const h = frameHeights(H, T);
+  const { railZ0, slotZ, seat } = h;
+  const slot = r22(T + s);
+  if (Wl < RULES.L_MIN_WING_WIDTH.value) errors.push(`L: the wing is only ${Wl} wide \u2014 at least ${RULES.L_MIN_WING_WIDTH.value}.`);
+  if (!(Lm > 3 * T + 2 * s)) errors.push(`L: the main run is only ${Lm} long.`);
+  if (!(Dm > 4 * T + 3 * s + 2 * g)) errors.push(`L: the main depth ${Dm} does not fit the rear rail, both inner rails and the front.`);
+  if (!(Dl > Dm)) errors.push(`L: the wing (${Dl}) must reach past the main front (${Dm}).`);
+  if (!(railZ0 > 0 && slotZ < seat)) errors.push(`L: height ${H} is too low for the rails (${hr} + ${T}).`);
+  const dz = ft != null ? frameDrawerHeights(H, T, "L", errors) : null;
+  if (errors.length) return;
+  const back = Dl;
+  const kit = frameKit(L, back, H, T, right, boards, lids);
+  const { Y, push } = kit;
+  push("main_end", "Main End", "side", "YZ", "X", [0, T], Y(0, Dm - T), [0, H], kit.yz(kit.wallPanel(Dm - T, slotZ)));
   push("main_front", "Main Front", "seat_front", "XZ", "Y", [0, Lm], Y(Dm - T, Dm), [0, H]);
-  push("l_side", "L Side (junction)", "side", "YZ", "X", [Lm, Lm + T], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
-  push("l_outer_side", "L Outer Side", "side", "YZ", "X", [L - T, L], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
+  push("l_side", "L Side (junction)", "side", "YZ", "X", [Lm, Lm + T], Y(0, Dl), [0, H], kit.yz(kit.wallPanel(Dl, slotZ)));
+  push("l_outer_side", "L Outer Side", "side", "YZ", "X", [L - T, L], Y(0, Dl), [0, H], kit.yz(kit.wallPanel(Dl, slotZ)));
   if (ft == null) push("l_front", "L Front", "seat_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - T, Dl), [0, H]);
-  const n = railZ0 + nd;
-  push("back_rail", "Rear Rail", "rear_rail", "XZ", "Y", [0, L], Y(c, c + T), [railZ0, H], xz([
+  const n = h.n;
+  push("back_rail", "Rear Rail", "rear_rail", "XZ", "Y", [0, L], Y(c, c + T), [railZ0, H], kit.xz([
     [0, H],
     [0, n],
     [slot, n],
@@ -1556,91 +1808,14 @@ function addFrameL(L, Dm, Dl, Wl, H, T, right, ft, boards, lids, locks, grooves,
     [L, n],
     [L, H]
   ]));
-  const railBackD = [T + 2 * c, 2 * T + 2 * c];
-  const railFrontD = [Dm - 2 * T - c, Dm - T - c];
-  const support = [
-    [T + c, 0],
-    [Dm - T, 0],
-    [Dm - T, slotZ],
-    [railFrontD[0], slotZ],
-    [railFrontD[0], seat],
-    [railBackD[1], seat],
-    [railBackD[1], slotZ],
-    [T + c, slotZ]
-  ];
-  push("main_end_support", "Main End Support", "lid_support", "YZ", "X", [T, 2 * T], Y(T + c, Dm - T), [0, seat], yz(support));
-  push("main_l_support", "Main Junction Support", "lid_support", "YZ", "X", [Lm - T, Lm], Y(T + c, Dm - T), [0, seat], yz(support));
-  const rail = [
-    [T, n],
-    [2 * T + s, n],
-    [2 * T + s, railZ0],
-    [Lm - T - s, railZ0],
-    [Lm - T - s, n],
-    [Lm, n],
-    [Lm, seat],
-    [T, seat]
-  ];
-  push("main_rail_back", "Main Rear Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railBackD[0], railBackD[1]), [railZ0, seat], xz(rail));
-  push("main_rail_front", "Main Front Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railFrontD[0], railFrontD[1]), [railZ0, seat], xz(rail));
+  frameRun(kit, { prefix: "main", label: "Main", supportL: ["main_end_support", "Main End Support"], supportR: ["main_l_support", "Main Junction Support"] }, T, Lm, Dm, T, h);
   const wingFront = ft == null ? T : ft;
   const supIn = push("l_support_inner", "L Inner Support", "lid_support", "YZ", "X", [Lm + T, Lm + 2 * T], Y(T + c, Dl - wingFront), [0, seat]);
   const supOut = push("l_support_outer", "L Outer Support", "lid_support", "YZ", "X", [L - 2 * T, L - T], Y(T + c, Dl - wingFront), [0, seat]);
-  if (ft != null) {
-    push("l_drawer_strip", "L Drawer Fixed Strip", "fixed_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - ft, Dl), [stripZ0, H], void 0, ft);
-    push("l_drawer_front", "L Drawer Front", "drawer_front", "XZ", "Y", [Lm + T + gd, L - T - gd], Y(Dl - ft, Dl), [gd, frontTop], void 0, ft);
-    locks.push({
-      id: "l_drawer_front_lock",
-      panelId: "l_drawer_front",
-      centerX: px2((Lm + L) / 2),
-      centerZ: r22(frontTop - RULES.LOCK_DROP.value),
-      width: RULES.LOCK_WIDTH.value,
-      height: RULES.LOCK_HEIGHT.value,
-      radius: RULES.LOCK_HEIGHT.value / 2
-    });
-    const tg = r22(T / 2 - RULES.FRAME_DRAWER_TONGUE_GAP.value);
-    const xl = Lm + 2 * T, xr = L - 2 * T;
-    const d1 = Dl - ft, d0 = d1 - RULES.FRAME_DRAWER_RAIL_DEPTH.value, dt = d1 - RULES.FRAME_DRAWER_RAIL_PLAIN_FRONT.value;
-    const xy = (pts) => [...pts, pts[0]].map(([x, d]) => ({ x: px2(x), y: r22(back - d) }));
-    push("l_drawer_rail", "L Drawer Rail", "drawer_rail", "XY", "Z", [xl - tg, xr + tg], Y(d0, d1), [stripZ0, stripZ0 + T], xy([
-      [xl - tg, d0],
-      [xr + tg, d0],
-      [xr + tg, dt],
-      [xr, dt],
-      [xr, d1],
-      [xl, d1],
-      [xl, dt],
-      [xl - tg, dt]
-    ]));
-    const ov = RULES.FRAME_DRAWER_POCKET_OVERRUN.value;
-    const [py0, py1] = Y(d0 - ov, dt + ov);
-    for (const [sup, faceDrawerSide] of [[supIn, right ? "A" : "B"], [supOut, right ? "B" : "A"]]) {
-      grooves.push({
-        id: `${sup.id}_drawer_rail_pocket`,
-        boardId: sup.id,
-        face: faceDrawerSide,
-        u0: r22(py0 - sup.y0),
-        u1: r22(py1 - sup.y0),
-        v0: r22(stripZ0 - s / 2 - sup.z0),
-        v1: r22(stripZ0 + T + s / 2 - sup.z0),
-        depth: r22(T / 2),
-        for: "l_drawer_rail"
-      });
-    }
+  if (ft != null && dz) {
+    frameDrawer(kit, "l", "L", [Lm + T, L - T], [supIn, supOut], [Lm + 2 * T, L - 2 * T], Dl, T, ft, dz, locks, grooves);
   }
-  const lid = (id, name, x, d) => {
-    const b = push(id, name, "lid", "XY", "Z", x, Y(d[0], d[1]), [seat, H]);
-    b.profileVector = [
-      { x: b.x0, y: b.y0 },
-      { x: b.x1, y: b.y0 },
-      { x: b.x1, y: b.y1 },
-      { x: b.x0, y: b.y1 },
-      { x: b.x0, y: b.y0 }
-    ];
-    b.profileHoles = [circleHole((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, RULES.FRAME_FINGER_HOLE_DIAMETER.value)];
-    lids.push({ id, x0: b.x0, y0: b.y0, width: r22(b.x1 - b.x0), depth: r22(b.y1 - b.y0), holeDiameter: RULES.FRAME_FINGER_HOLE_DIAMETER.value });
-  };
-  lid("main_lid", "Main Lid", [T + g, Lm - g], [T + c + g, Dm - T - g]);
-  lid("l_lid", "L Lid", [Lm + T + g, L - T - g], [T + c + g, Dl - wingFront - g]);
+  kit.lid("l_lid", "L Lid", [Lm + T + g, L - T - g], [T + c + g, Dl - wingFront - g]);
 }
 function generateLounge(raw) {
   beginProvenance();
@@ -1665,6 +1840,9 @@ function generateLounge(raw) {
   const wheel = wheelOn ? { AD, AH } : void 0;
   if (H <= ppt) warnings.push("Height should be greater than panel thickness.");
   const frameL = style === "L_SHAPE" && raw.construction !== "classic";
+  const frameI = style === "I_SHAPE" && raw.construction !== "classic";
+  const frameP = style === "PARALLEL" && raw.construction !== "classic";
+  let middleCabinet = null;
   const lDrawer = frameL && raw.lFrontAccess === "DRAWER";
   if (raw.lFrontAccess && raw.lFrontAccess !== "NONE" && !lDrawer) {
     warnings.push(`lFrontAccess ${raw.lFrontAccess} is only built as a drawer on the frame L; ignored.`);
@@ -1672,13 +1850,18 @@ function generateLounge(raw) {
   if (style === "I_SHAPE") {
     const W = asNum2(raw.mainWidth, 2e3);
     const D = asNum2(raw.mainDepth, 600);
-    if (!(W > 2 * ppt && D > 2 * ppt && H > ppt)) warnings.push("I-shape sizes should exceed two panel thicknesses.");
-    if (wheelOn) {
-      if (!(AD < D)) warnings.push("Avoidance Depth must be less than Depth.");
-      if (!(AH < H - ppt)) warnings.push("Avoidance Height must be less than Height - PPT.");
-    }
     footprint.i = { x0: 0, x1: W, y0: 0, y1: D };
-    addIRun("i_", 0, W, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
+    if (frameI) {
+      if (wheelOn) warnings.push("I frame: wheel arch avoidance is not in the frame lounge yet; ignored.");
+      addFrameI(W, D, H, ppt, boards, lids, errors);
+    } else {
+      if (!(W > 2 * ppt && D > 2 * ppt && H > ppt)) warnings.push("I-shape sizes should exceed two panel thicknesses.");
+      if (wheelOn) {
+        if (!(AD < D)) warnings.push("Avoidance Depth must be less than Depth.");
+        if (!(AH < H - ppt)) warnings.push("Avoidance Height must be less than Height - PPT.");
+      }
+      addIRun("i_", 0, W, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
+    }
   } else if (style === "U_SHAPE") {
     const W = asNum2(raw.mainWidth, 2e3);
     const D = asNum2(raw.mainDepth, 1600);
@@ -1719,10 +1902,17 @@ function generateLounge(raw) {
     }
     footprint.left = { x0: 0, x1: SW, y0: 0, y1: D };
     footprint.right = { x0: r22(totalW - SW), x1: totalW, y0: 0, y1: D };
-    addParallelRun("left", "Left", 0, SW, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
-    addParallelRun("right", "Right", r22(totalW - SW), totalW, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
-    if (wheelOn) addAvoidanceCovers("parallel_", 0, totalW, D, AD, AH, ppt, boards);
-    if (raw.hasMiddleCabinet) addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings);
+    if (frameP) {
+      const ftP = raw.aisleAccess === "DRAWER" ? Math.max(1, asNum2(raw.frontPanelThickness, RULES.FRAME_DRAWER_FRONT_THICKNESS.value)) : null;
+      addFrameParallel(totalW, SW, D, H, ppt, wheel ?? null, ftP, boards, lids, locks, grooves, errors);
+      if (wheelOn && !errors.length) addAvoidanceCovers("parallel_", 0, totalW, D, AD, AH, ppt, boards);
+    } else {
+      addParallelRun("left", "Left", 0, SW, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
+      addParallelRun("right", "Right", r22(totalW - SW), totalW, D, H, ppt, Hprime, lidOn, boards, openings, lids, wheel);
+      if (wheelOn) addAvoidanceCovers("parallel_", 0, totalW, D, AD, AH, ppt, boards);
+    }
+    const mcOn = frameP ? raw.hasMiddleCabinet ?? totalW - 2 * SW >= RULES.MIDDLE_CABINET_MIN_WIDTH.value : raw.hasMiddleCabinet === true;
+    if (mcOn && !errors.length) middleCabinet = addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, frameP ? errors : warnings);
   } else {
     const mainW = asNum2(raw.mainWidth, 2e3);
     const mainD = asNum2(raw.mainDepth, 600);
@@ -1813,7 +2003,11 @@ function generateLounge(raw) {
       partitionPanelThickness: ppt,
       panelHeight: Hprime,
       ...style === "L_SHAPE" ? { construction: frameL ? "frame" : "classic" } : {},
-      ...frameL ? { lFrontAccess: lDrawer ? "DRAWER" : "NONE" } : {}
+      ...style === "I_SHAPE" ? { construction: frameI ? "frame" : "classic" } : {},
+      ...style === "PARALLEL" ? { construction: frameP ? "frame" : "classic" } : {},
+      ...frameL ? { lFrontAccess: lDrawer ? "DRAWER" : "NONE" } : {},
+      ...frameP ? { aisleAccess: raw.aisleAccess === "DRAWER" ? "DRAWER" : "NONE" } : {},
+      ...style === "PARALLEL" ? { middleCabinet } : {}
     },
     boards,
     milling,

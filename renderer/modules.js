@@ -7,6 +7,7 @@ import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayo
 import { generateBedroomEast, eastWardrobeMax, eastEqualBays, eastSetBayBoundary, eastOhcBottomLimits, RULES as EAST_RULES } from "./gen/bedroomEast.js";
 import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
+import { generateBunkBed, bunkUpperLimits, bunkMinSize, RULES as BUNK_RULES } from "./gen/bunkBed.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { generateKitchenCabinet, generateKitchenSvgPreview } from "./gen/kitchen.js";
 import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
@@ -482,6 +483,83 @@ const bedBox = {
     return { params: nextParams, pose: same ? pose : next };
   },
 
+  dividers() { return []; },
+  setDivider(params) { return params; },
+  zoneTypes: [],
+};
+
+/**
+ * Bunk bed across the van: two bunks stacked against the rear wall, wall to
+ * wall, as boards: front partition (one per sheet), tunnel boot back and inner
+ * sides, lower deck, upper base, two end panels at the cubby, the boot door and
+ * its sill. Placement "bunk" (interact.js): a rear floor
+ * corner → the lower box on the floor, the rear wall or a side wall (its
+ * length locked wall to wall) → the upper base underside. W = length along the
+ * rear wall, D = rear wall → room face of the front partition (partition
+ * included), H = floor → ceiling minus the clearance. The fronts face the
+ * room (rotZ 0 against the back wall), so local X runs left → right seen from
+ * the room and `endSide` (ladder + end cubby) is in those terms.
+ */
+const bunkBed = {
+  id: "bunkBed",
+  label: "Bunk bed",
+  sub: "across the rear",
+  placement: "bunk",
+  noOrient: "a bunk bed runs wall to wall with its back on the rear wall",
+  volumeOnly: true,
+  panel: "bunk",
+  handles: [],
+  resizeFaces: [],
+  defaultSize: { W: 2275, D: BUNK_RULES.DEPTH_DEFAULT_MM.value, H: 1961 },
+  minSize: bunkMinSize(),
+
+  defaults(W, D, H, materials) {
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
+    const height = round1(H);
+    const deckTop = BUNK_RULES.DECK_TOP_DEFAULT_MM.value;
+    return {
+      length: round1(W),
+      depth: round1(D),
+      height,
+      deckTop,
+      upperZ: bunkUpperLimits({ deckTop, height }).equal,
+      endSide: "RIGHT",
+      // Front partition: the job's partition stock (thickness and gaps), like the partition walls.
+      partitionThickness: thickness(stock, "partition"),
+      floorClearance: stock.partition.floorClearance,
+      ceilingClearance: stock.partition.ceilingClearance,
+      carcassThickness: thickness(stock, "carcass"), // tunnel boot back and inner sides
+      doorThickness: thickness(stock, "door"), // end panels and the boot door
+      ...color,
+      frontPanelThickness: 0, // the front partition is inside the depth
+    };
+  },
+  generate(params) {
+    return generateBunkBed(params);
+  },
+  envelope(params) {
+    return { W: params.length, D: params.depth, H: params.height };
+  },
+  setEnvelope(params, { W, D, H }) {
+    const next = { ...params };
+    if (W != null) next.length = round1(W);
+    if (D != null) next.depth = round1(D);
+    if (H != null) next.height = round1(H);
+    return next;
+  },
+  upperLimits(params) {
+    return bunkUpperLimits({ deckTop: params.deckTop ?? BUNK_RULES.DECK_TOP_DEFAULT_MM.value, height: params.height });
+  },
+  /** The box, plus the boot door standing proud of the partition into the room. */
+  footprintBoxes(params, result) {
+    const door = result?.layout?.bootDoor;
+    if (!door || result.validation?.errors?.length) return [];
+    return [
+      { id: "bunk", x0: 0, x1: params.length, y0: 0, y1: params.depth, z0: 0, z1: params.height },
+      { id: "bootDoor", ...door },
+    ];
+  },
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],
@@ -1224,7 +1302,8 @@ const bedroomEast = {
   defaultSize: { W: 2275, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: 1797 },
   minSize: { W: EAST_RULES.WARDROBE_MIN_MM.value + 1, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: 600 },
   defaults(W, D, H, materials) {
-    const { stock } = materialsOf(materials);
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
     const width = round1(W);
     const depth = EAST_RULES.MATTRESS_DEPTH_MM.value;
     return {
@@ -1234,7 +1313,17 @@ const bedroomEast = {
       roofProfile: [[0, round1(H)], [depth, round1(H)]],
       wardrobeWidth: eastWardrobeMax(width),
       ohcBottom: EAST_RULES.OHC_BOTTOM_DEFAULT_MM.value,
+      fixedPanelTop: EAST_RULES.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value,
+      ledGroove: true,
       panelThickness: thickness(stock, "carcass"),
+      doorPanelThickness: thickness(stock, "door"),
+      carcassColor: color.carcassColor,
+      carcassColorName: color.carcassColorName,
+      doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
     };
   },
   ohcBottomLimits(params) { return eastOhcBottomLimits(params); },
@@ -1366,6 +1455,7 @@ export const MODULES = {
   generalTallCabinet,
   loungeGenerator,
   bedSideTable,
+  bunkBed,
   sketchBoard,
 };
 
@@ -1411,10 +1501,19 @@ export const MODULE_GROUPS = [
   {
     id: "lounge",
     label: "Lounge",
-    sub: "I / L",
+    sub: "I / L / Parallel",
     items: [
       { moduleId: "loungeGenerator", lounge: "I", label: "I", sub: "one run" },
       { moduleId: "loungeGenerator", lounge: "L", label: "L", sub: "main box, then the wing" },
+      { moduleId: "loungeGenerator", lounge: "Parallel", label: "Parallel", sub: "two runs face to face" },
+    ],
+  },
+  {
+    id: "bunk",
+    label: "Bunk bed",
+    sub: "across the rear",
+    items: [
+      { moduleId: "bunkBed", label: "Across", sub: "rear wall · wall to wall · two bunks" },
     ],
   },
 ];

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import {
   arcItem, arcOf, chamferCorner, circleItem, extendAt, filletCorner, itemPoints, itemProblem, joinItems,
   mirrorItem, offsetItem, offsetSide, rectItem, segIntersections, trimAt, nearestSegment,
+  itemCentroid, itemQuadrants, itemTangents, extensionPoint, parallelPoint,
 } from "./sketchCurves.js";
 import { signedArea } from "./sketch2d.js";
 
@@ -125,4 +126,37 @@ const area = (item) => Math.abs(signedArea(itemPoints(item)));
   assert.ok(xs.every((x) => close(Math.hypot(x.p[0], x.p[1]), 100)));
 }
 
-console.log("sketchCurves: arcs, fillet, chamfer, offset, mirror, trim, extend, join");
+/* ---- snap points: geometric centre, quadrants, tangents, extension, parallel ---- */
+{
+  assert.ok(closeP(itemCentroid(rectItem([0, 0], [400, 300])), [200, 150]), "rectangle centre");
+  assert.ok(closeP(itemCentroid(circleItem([50, -20], 100)), [50, -20], 0.05), "circle centre");
+  assert.equal(itemCentroid({ closed: false, pts: [[0, 0], [10, 0]], b: [0] }), null);
+
+  const qs = itemQuadrants(circleItem([0, 0], 100));
+  assert.equal(qs.length, 4);
+  for (const p of [[100, 0], [0, 100], [-100, 0], [0, -100]]) assert.ok(qs.some((q) => closeP(q, p)), `quadrant ${p}`);
+  const upper = itemQuadrants({ closed: false, pts: [[100, 0], [-100, 0]], b: [1] });
+  assert.ok(upper.some((q) => closeP(q, [0, 100])) && !upper.some((q) => closeP(q, [0, -100])), "a half arc keeps only its own quadrants");
+
+  const ts = itemTangents(circleItem([0, 0], 100), [200, 0]);
+  assert.equal(ts.length, 2);
+  for (const t of ts) {
+    assert.ok(close(Math.hypot(t[0], t[1]), 100), "on the circle");
+    assert.ok(close((t[0] - 200) * t[0] + t[1] * t[1], 0, 1e-6), "radius ⟂ the line from the point");
+  }
+  assert.equal(itemTangents(circleItem([0, 0], 100), [10, 0]).length, 0, "no tangent from inside");
+
+  const line = [{ closed: false, pts: [[0, 0], [100, 0]], b: [0] }];
+  const ext = extensionPoint(line, [160, 3], 5);
+  assert.ok(ext && closeP(ext.p, [160, 0]) && closeP(ext.from, [100, 0]), "past the right end");
+  assert.equal(extensionPoint(line, [50, 3], 5), null, "over the segment is not an extension");
+  assert.equal(extensionPoint(line, [160, 30], 5), null, "too far off the line");
+
+  const slant = [{ closed: false, pts: [[0, 0], [100, 100]], b: [0] }];
+  const par = parallelPoint(slant, [500, 0], [600, 102]);
+  assert.ok(par && close(par.p[0] - 500, par.p[1]), "pulled onto 45°");
+  assert.equal(parallelPoint(slant, [500, 0], [600, 150]), null, "outside the angle tolerance");
+  assert.equal(parallelPoint(line, [500, 0], [600, 1]), null, "axis directions are left to Ortho");
+}
+
+console.log("sketchCurves: arcs, fillet, chamfer, offset, mirror, trim, extend, join, snap points");

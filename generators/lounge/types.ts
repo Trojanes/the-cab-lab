@@ -27,8 +27,9 @@ export interface LoungeParams {
   lDepth?: number;
   lPosition?: LPosition;
   /**
-   * L only. "frame" (default): outer panels full height, the whole top of each run is a lid sitting
-   * flush between them on an inner frame, one rear rail along the wall (21 Bunk new lounge).
+   * L and I. "frame" (default): outer panels full height, the whole top of each run is a lid sitting
+   * flush between them on an inner frame, one rear rail along the wall (21 Bunk new lounge); a run
+   * longer than FRAME_LID_MAX_LENGTH gets several lids over middle supports.
    * "classic": the older top panel with a rebated lid in its middle.
    */
   construction?: "frame" | "classic";
@@ -38,7 +39,9 @@ export interface LoungeParams {
    * fixed strip over it and a drawer rail behind the strip (no drawer box). "FLAP" is not built yet.
    */
   lFrontAccess?: "NONE" | "DRAWER" | "FLAP";
-  /** Door stock of the frame L drawer front and its fixed strip. */
+  /** Frame parallel: both runs' aisle ends as drawers (same build as the L wing drawer). */
+  aisleAccess?: "NONE" | "DRAWER";
+  /** Door stock of the frame drawer fronts and their fixed strips. */
   frontPanelThickness?: number;
   totalWidth?: number;
   singleLoungeWidth?: number;
@@ -52,6 +55,8 @@ export interface LoungeParams {
     height?: number;
     startHeight?: number;
     doorPanelThickness?: number;
+    /** Carcass stock of the mid divider (default MIDDLE_CABINET_DIVIDER_THICKNESS). */
+    dividerThickness?: number;
     doorClearance?: number;
     doorLockStyle?: "RAZOR_ROUNDED" | "NONE";
     lockSideDistance?: number;
@@ -127,6 +132,9 @@ export interface LoungeResult {
     panelHeight: number;
     construction?: "frame" | "classic";
     lFrontAccess?: "NONE" | "DRAWER";
+    aisleAccess?: "NONE" | "DRAWER";
+    /** PARALLEL: the middle cabinet as built (null = none). */
+    middleCabinet?: { width: number; depth: number; height: number; startHeight: number } | null;
   };
   boards: ModelBoard[];
   openings: LoungeOpening[];

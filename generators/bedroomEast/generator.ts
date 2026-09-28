@@ -1,20 +1,24 @@
 /**
- * East-west bedroom: layout regions only, no boards yet.
+ * East-west bedroom, built as Bedroom 1.
  *
  * The mattress lies across the van against the right wall; one wardrobe
- * stands against the left wall. Boot and wardrobe sit against the nose,
- * BODY_DEPTH deep; the mattress runs from the nose MATTRESS_DEPTH into the
- * room. The wardrobe takes what the queen mattress length leaves; it can be
- * made narrower, which lengthens the mattress. The overhead spans from the
- * wardrobe's inner face to the right wall above the body, from its door
- * underside to the roof, in two or three up-flap bays.
+ * stands against the left wall with a bedside cabinet in front of it. Boot,
+ * wardrobe, top rails and overhead sit against the nose, BODY_DEPTH deep; the
+ * bed box runs from the body MATTRESS_DEPTH − BODY_DEPTH into the room, with
+ * its room-side left corner cut off. The bed box starts BED_SIDE_GAP past the
+ * wardrobe; the mattress is the rest of the width. The overhead spans from the
+ * wardrobe's inner face to the right wall, two or three up-flap bays and a
+ * filler panel at the wall. Boards: boards.ts.
  *
  * Local frame (nose placement, pose rotZ 180): X left → right seen from the
  * room, Y from the room face (0) toward the nose (depth), Z up. The roof
  * profile comes from the space in the same local Y.
  */
 import { beginProvenance, dim, endProvenance, param, ref } from "../_lib/dim.ts";
+import { applyDoorSides, carcassColourOf, doorColourOf } from "../_lib/finish.ts";
+import { applyMilling } from "../_lib/milling.ts";
 import { roofAt } from "../bedroom/generator.ts";
+import { buildEastBoards } from "./boards.ts";
 import { RULES as R } from "./rules.ts";
 
 export { RULES } from "./rules.ts";
@@ -36,16 +40,25 @@ export interface EastParams {
   wardrobeWidth?: number;
   ohcBottom?: number;
   ohcZones?: EastBay[];
+  fixedPanelTop?: number;
+  /** LED channels on T3's top (default on). */
+  ledGroove?: boolean;
   panelThickness?: number;
+  doorPanelThickness?: number;
+  carcassColor?: string;
+  carcassColorName?: string;
+  doorColor?: string;
+  doorColorName?: string;
+  doorSides?: string;
 }
 
 type P = { y: number; z: number };
 
 const bodyY0 = () => R.MATTRESS_DEPTH_MM.value - R.BODY_DEPTH_MM.value;
 
-/** Widest wardrobe that still leaves a queen-length mattress; never under the minimum. */
+/** Widest wardrobe that still leaves a queen-length mattress past the bed-side gap; never under the minimum. */
 export function eastWardrobeMax(width: number): number {
-  return round1(Math.max(R.WARDROBE_MIN_MM.value, width - R.MATTRESS_QUEEN_LENGTH_MM.value));
+  return round1(Math.max(R.WARDROBE_MIN_MM.value, width - R.MATTRESS_QUEEN_LENGTH_MM.value - R.BED_SIDE_GAP_MM.value));
 }
 
 function wardrobeOf(raw: EastParams): number {
@@ -158,7 +171,8 @@ export function generateBedroomEast(raw: EastParams) {
   const y0 = dim("body.y0", { D: R.MATTRESS_DEPTH_MM, body: R.BODY_DEPTH_MM }, (t) => t.D - t.body);
   const bootTop = dim("boot.z1", { boot: R.BOOT_HEIGHT_MM }, (t) => t.boot);
   const wardX1 = dim("wardrobe.x1", { wardrobeWidth: Pm.wardrobeWidth }, (t) => t.wardrobeWidth);
-  const mattressLen = dim("mattress.length", { W: Pm.W, x0: ref("wardrobe.x1") }, (t) => t.W - t.x0);
+  const bedX0 = dim("bed.x0", { x: ref("wardrobe.x1"), gap: R.BED_SIDE_GAP_MM }, (t) => t.x + t.gap);
+  const mattressLen = dim("mattress.length", { W: Pm.W, x0: ref("bed.x0") }, (t) => t.W - t.x0);
   dim("mattress.y1", { D: R.MATTRESS_DEPTH_MM }, (t) => t.D);
   const ohcZ0 = dim("ohc.z0", { ohcBottom: Pm.ohcBottom }, (t) => t.ohcBottom);
   const opening = dim("ohc.width", { W: Pm.W, x0: ref("wardrobe.x1") }, (t) => t.W - t.x0);
@@ -177,18 +191,36 @@ export function generateBedroomEast(raw: EastParams) {
     if (b.width < R.OHC_ZONE_MIN_MM.value - 0.05) errors.push(`overhead bay ${b.width} is narrower than ${R.OHC_ZONE_MIN_MM.value} mm`);
   }
 
-  const zones = [];
+  const cpt = round1(raw.panelThickness ?? 15);
+  const dpt = round1(raw.doorPanelThickness ?? 16);
+  const fixedPanelTop = round1(raw.fixedPanelTop ?? R.WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM.value);
+  const floorTop = round1(bootTop + R.WARDROBE_FLOOR_RAISE_MM.value);
+  const carcassColor = carcassColourOf(raw);
+  const doorColor = doorColourOf(raw);
+
+  const zones: Array<Record<string, unknown>> = [];
+  let boards: ReturnType<typeof buildEastBoards>["boards"] = [];
+  let milling = { issues: [] as unknown[] };
+  let top = null as null | { t3Top: number; seat: number; uprightBack: number; doors: Array<{ x0: number; x1: number }> };
   if (!errors.length) {
-    zones.push({ id: "boot", label: "Boot", kind: "solid" as const, x0: 0, x1: W, y0, y1: D, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(y0, D, 0, bootTop) });
-    zones.push({ id: "mattress", label: "Mattress", kind: "solid" as const, x0: wardX1, x1: W, y0: 0, y1: y0, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(0, y0, 0, bootTop) });
-    const region = (id: string, label: string, kind: "solid" | "void", x0: number, x1: number, z0: number, zTop = Infinity) => {
+    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, led: raw.ledGroove !== false });
+    boards = built.boards;
+    top = built.info;
+    warnings.push(...built.warnings);
+    const bsY0 = round1(y0 - R.BEDSIDE_DEPTH_MM.value);
+    zones.push({ id: "boot", label: "Boot", kind: "solid", x0: 0, x1: W, y0, y1: D, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(y0, D, 0, bootTop), boards: built.regions.boot });
+    zones.push({ id: "bedbox", label: "Bed box", kind: "solid", x0: bedX0, x1: W, y0: 0, y1: y0, z0: 0, z1: bootTop, roofTop: false, outlineYZ: box(0, y0, 0, bootTop), boards: built.regions.bedbox });
+    zones.push({ id: "bedside", label: "Bedside cabinet", kind: "solid", x0: 0, x1: wardX1, y0: bsY0, y1: y0, z0: 0, z1: floorTop, roofTop: false, outlineYZ: box(bsY0, y0, 0, floorTop), boards: built.regions.bedside });
+    const region = (id: string, label: string, kind: "solid" | "void", x0: number, x1: number, z0: number, zTop = Infinity, ids?: string[]) => {
       const outline = sectionFrom(profile, H, y0, D, z0, zTop);
       if (!outline) { errors.push(`${label} has no room under the roof`); return; }
-      zones.push({ id, label, kind, x0, x1, y0, y1: round1(Math.max(...outline.map((p) => p.y))), z0, z1: round1(Math.max(...outline.map((p) => p.z))), roofTop: zTop === Infinity, outlineYZ: outline });
+      zones.push({ id, label, kind, x0, x1, y0, y1: round1(Math.max(...outline.map((p) => p.y))), z0, z1: round1(Math.max(...outline.map((p) => p.z))), roofTop: zTop === Infinity, outlineYZ: outline, ...(ids ? { boards: ids } : {}) });
     };
-    region("wardrobe", "Wardrobe", "solid", 0, wardX1, bootTop);
+    region("wardrobe", "Wardrobe", "solid", 0, wardX1, bootTop, Infinity, built.regions.wardrobe);
     region("opening", "Opening", "void", wardX1, W, bootTop, ohcZ0);
-    region("ohc", "Overhead", "solid", wardX1, W, ohcZ0);
+    region("ohc", "Overhead", "solid", wardX1, W, ohcZ0, Infinity, built.regions.ohc);
+    applyDoorSides(boards, raw);
+    milling = applyMilling(boards);
   }
   let x = wardX1;
   const bayInfo = bays.map((b) => {
@@ -199,11 +231,13 @@ export function generateBedroomEast(raw: EastParams) {
   const provenance = endProvenance();
 
   return {
-    params: { width: W, depth: D, height: H, wardrobeWidth: wardrobe, bootHeight: bootTop, bodyDepth: R.BODY_DEPTH_MM.value, mattressDepth: D, mattressLength: round1(mattressLen), ohcBottom: ohcZ0, ohcZones: bays, roofProfile: profile },
+    params: { width: W, depth: D, height: H, wardrobeWidth: wardrobe, bedX0, bootHeight: bootTop, bodyDepth: R.BODY_DEPTH_MM.value, mattressDepth: D, mattressLength: round1(mattressLen), ohcBottom: ohcZ0, ohcZones: bays, fixedPanelTop, roofProfile: profile, panelThickness: cpt, doorPanelThickness: dpt },
     zones: errors.length ? [] : zones,
-    boards: [],
-    layout: { ohc: { bottom: ohcZ0, width: round1(opening), height: ohcH, zones: bayInfo } },
+    boards: errors.length ? [] : boards,
+    joints: [],
+    layout: { ohc: { bottom: ohcZ0, width: round1(opening), height: ohcH, zones: bayInfo }, top },
+    milling,
     validation: { errors, warnings },
-    debug: { provenance },
+    debug: { boardFrame: "final", provenance },
   };
 }

@@ -6,6 +6,7 @@ import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
 import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
 import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
+import { applyUserGrooves } from "./gen/userGrooves.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
@@ -123,7 +124,7 @@ export function resultFor(id) {
   if (!results.has(id)) {
     const cab = job.cabinets.find((c) => c.id === id);
     if (!cab) return null;
-    const result = getModule(cab.moduleId).generate(cab.params);
+    const result = applyUserGrooves(getModule(cab.moduleId).generate(cab.params), cab.overrides);
     results.set(id, result);
     if (result?.validation?.errors?.length) log("generator.errors", { id, moduleId: cab.moduleId, errors: result.validation.errors, params: cab.params });
   }
@@ -497,6 +498,38 @@ export function setParams(id, params, { history = true } = {}) {
       if (next !== twin.params) updateCabinet(twin.id, (c) => { c.params = next; });
     }
   }
+}
+
+/** Grooves the user drew on one board (Groove command): `cabinet.overrides.boards[roleId].grooves`. */
+export function boardGrooves(cab, boardId) {
+  return cab?.overrides?.boards?.[boardId]?.grooves || [];
+}
+
+/**
+ * Replace one board's user grooves (one undo step). The board's Move nudge next to them is kept.
+ * The cached result is rebuilt: grooves are merged in resultFor, after the generator.
+ */
+export function setBoardGrooves(id, boardId, grooves) {
+  const cab = job.cabinets.find((c) => c.id === id);
+  if (!cab) return false;
+  const before = JSON.stringify(boardGrooves(cab, boardId));
+  if (before === JSON.stringify(grooves || [])) return false;
+  pushHistory();
+  const boards = { ...(cab.overrides?.boards || {}) };
+  const entry = { ...(boards[boardId] || {}) };
+  if (grooves && grooves.length) entry.grooves = grooves.map((g) => ({ ...g }));
+  else delete entry.grooves;
+  if (Object.keys(entry).length) boards[boardId] = entry;
+  else delete boards[boardId];
+  const rest = { ...(cab.overrides || {}) };
+  delete rest.boards;
+  if (Object.keys(boards).length) cab.overrides = { ...rest, boards };
+  else if (Object.keys(rest).length) cab.overrides = rest;
+  else delete cab.overrides;
+  invalidate(id);
+  dirty = true;
+  emit("job");
+  return true;
 }
 
 /** Board role ids the user has hidden in the 3D view. Unknown ids (a board that no longer exists) are dropped. */

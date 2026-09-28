@@ -1268,10 +1268,11 @@ const loungeLines = [0x4f86e0, 0xf0a050].map((hex) => {
   scene.add(line);
   return line;
 });
-/** `boxes` are world AABBs {x0,y0,x1,y1,z0,z1}. `segments` is up to two edges [{a,b}]. */
+/** `boxes` are world AABBs {x0,y0,x1,y1,z0,z1} (null leaves that slot's colour unused). `segments` is up to two edges [{a,b}]. */
 export function showLoungeGhost(boxes, segments = null) {
   hideLoungeGhost();
   (boxes || []).slice(0, loungeSlots.length).forEach((b, i) => {
+    if (!b) return;
     const slot = loungeSlots[i];
     const W = Math.max(b.x1 - b.x0, 1);
     const D = Math.max(b.y1 - b.y0, 1);
