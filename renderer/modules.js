@@ -9,7 +9,7 @@ import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_R
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { generateKitchenCabinet, generateKitchenSvgPreview } from "./gen/kitchen.js";
-import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview } from "./gen/generalTall.js";
+import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
 import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
@@ -916,19 +916,25 @@ const kitchenCabinet = {
   ],
 };
 
+/** The tall generator's door thickness: frontPanelThickness > frontFaceAllowance > doorPanelThickness > 16. */
+function tallDoorThickness(p) {
+  return p.frontPanelThickness ?? p.frontFaceAllowance ?? p.doorPanelThickness ?? 16;
+}
+
 const generalTallCabinet = {
   id: "generalTallCabinet",
   label: "Tall",
   sub: "general tall",
   panel: "tall", // wide right-hand editor: front elevation + zone card
-  defaultSize: { W: 600, D: 584, H: 2000 },
+  defaultSize: { W: 600, D: 568, H: 2000 }, // carcass 568 + 16 doors = cabinetDepth 584
   minSize: { W: 400, D: 350, H: 800 },
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
     const color = cabinetColor(finish);
     const base = {
       cabinetWidth: W,
-      cabinetDepth: D,
+      // The box's D stops at the carcass front (like every module); cabinetDepth also holds the doors.
+      cabinetDepth: round1(D + thickness(stock, "door")),
       cabinetHeight: H,
       panelThickness: thickness(stock, "carcass"),
       frontPanelThickness: thickness(stock, "door"),
@@ -966,13 +972,32 @@ const generalTallCabinet = {
     return generateGeneralTall(params);
   },
 
+  /** Named cabinets from generators/generalTall/presets.json (`ui: true`); every board is pinned there. */
+  presets: GT_UI_PRESETS,
+  /** The preset's params in full; the cabinet keeps its colours (job catalogue) and grain choice. */
+  applyPreset(params, presetId) {
+    const preset = GT_UI_PRESETS.find((pr) => pr.id === presetId);
+    if (!preset) return params;
+    const keep = {};
+    for (const k of ["doorSeries", "doorSides", "doorColor", "doorColorName", "colorSlot", "grain"]) {
+      if (params[k] !== undefined) keep[k] = params[k];
+    }
+    return { ...structuredClone(preset.params), ...keep };
+  },
+  /** Id of the preset these params still equal (colours aside), or null once anything was edited. */
+  presetOf(params) {
+    const hit = GT_UI_PRESETS.find((pr) => Object.keys(pr.params).every((k) => JSON.stringify(params[k]) === JSON.stringify(pr.params[k])));
+    return hit ? hit.id : null;
+  },
+
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
   frontView(result, { selectedZoneId = null, gaps = "clear" } = {}) {
     return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true, gaps });
   },
 
+  /** D = carcass front to back (the box stops at the carcass front; doors hang in front of it). */
   envelope(params) {
-    return { W: params.cabinetWidth, D: params.cabinetDepth, H: params.cabinetHeight };
+    return { W: params.cabinetWidth, D: round1(params.cabinetDepth - tallDoorThickness(params)), H: params.cabinetHeight };
   },
   /**
    * Repair stored params on load: the zone stack must sum to cabinetHeight,
@@ -985,7 +1010,7 @@ const generalTallCabinet = {
   setEnvelope(params, { W, D, H }) {
     const next = { ...params };
     if (W != null) next.cabinetWidth = round1(W);
-    if (D != null) next.cabinetDepth = round1(D);
+    if (D != null) next.cabinetDepth = round1(D + tallDoorThickness(params));
     if (H != null) return fitTallCabinetHeight(next, round1(H));
     return next;
   },
@@ -1064,10 +1089,12 @@ const loungeGenerator = {
   defaultSize: { W: 2000, D: 800, H: 420 },
   minSize: { W: 800, D: 400, H: 300 },
   defaults(W, D, H, materials) {
-    const color = cabinetColor(materialsOf(materials).finish);
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
     return {
       style: "L_SHAPE",
       height: H,
+      frontPanelThickness: thickness(stock, "door"),
       doorSeries: color.doorSeries,
       doorSides: color.doorSides,
       doorColor: color.doorColor,

@@ -1,6 +1,6 @@
 // Pose math against Three.js Euler XYZ, and against the old yaw-only centre formula.
 import * as THREE from "three";
-import { rotationMatrix, rotatePoseAbout, translatePose, translateBoardOverride, worldOf, eulerFromMatrix, boardFaceLocal, worldPlane, alignTranslation, boardCornerLocals } from "./pose.js";
+import { rotationMatrix, rotatePoseAbout, translatePose, translateBoardOverride, worldOf, eulerFromMatrix, boardFaceLocal, worldPlane, alignTranslation, boardCornerLocals, localOf, cornerOf, keepCorner } from "./pose.js";
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -93,5 +93,17 @@ const corners = boardCornerLocals(board, null);
 assert(corners.length === 8, `box has 8 corners, got ${corners.length}`);
 const hi = corners.find((p) => Math.abs(p[0] - 16) < 1e-6 && Math.abs(p[1] - 500) < 1e-6 && Math.abs(p[2] - 700) < 1e-6);
 assert(hi, "missing outer top corner");
+
+// Drawn-from corner: a size change keeps that world point and the facing.
+{
+  const pose = { x: 1500, y: 584, z: 0, rotZ: 180 };
+  const box0 = { x0: 0, x1: 500, y0: -16, y1: 584, z0: 0, z1: 1800 };
+  const box1 = { x0: 0, x1: 593, y0: -16, y1: 624, z0: 0, z1: 1965 };
+  const corner = cornerOf(box0, localOf(pose, [1000, 0, 0]));
+  if (corner.x !== 1 || corner.y !== 1 || corner.z !== -1) throw new Error(`corner ${JSON.stringify(corner)}`);
+  const next = keepCorner(pose, box0, box1, corner);
+  const p = worldOf(next, [box1.x1, box1.y1, box1.z0]);
+  if (Math.hypot(p[0] - 1000, p[1] - 0, p[2] - 0) > 1e-6 || next.rotZ !== 180) throw new Error(`keepCorner ${JSON.stringify(next)}`);
+}
 
 console.log("pose ok");

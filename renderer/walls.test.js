@@ -1,7 +1,7 @@
 // Partition walls cut into 1200 × 2400 boards.
 globalThis.window = globalThis.window || { cablab: null, addEventListener() {} };
 const { resolveSpace } = await import("./spaces.js");
-const { wallBoards, fitsSheet, normalizeWall, placeSplit, fitOutline, wallSolid, wallAnchors, bindCabinets } = await import("./walls.js");
+const { wallBoards, fitsSheet, normalizeWall, placeSplit, fitOutline, wallSolid, wallAnchors, bindCabinets, settleClearanceZ } = await import("./walls.js");
 
 function assert(cond, msg) {
   if (!cond) throw new Error(msg);
@@ -217,6 +217,31 @@ assert(!fitsSheet(1201, 2000), "both sides over 1200 do not fit");
   bindCabinets(() => []);
   const missing = wallSolid(w, space(2400), stock);
   assert(missing.fitWarnings.some((m) => m.includes("missing")), missing.fitWarnings.join("; "));
+}
+
+{
+  const kept = normalizeWall({ id: "wall-9", axis: "y", at: 1, u0: 0, u1: 100, side: 1, hidden: true });
+  assert(kept.hidden === true, "hidden survives load");
+  const shown = normalizeWall({ id: "wall-9", axis: "y", at: 1, u0: 0, u1: 100, side: 1 });
+  assert(shown.hidden !== true, "a shown wall omits hidden");
+}
+
+const jobMod = await import("./job.js");
+jobMod.resetJob();
+const added = jobMod.addWall({ axis: "y", at: 1000, u0: 0, u1: 500, side: 1 });
+assert(added && added.hidden !== true, "a new wall is shown");
+assert(jobMod.toggleWallVisible(added.id) === true, "V hides the wall");
+assert(jobMod.getWall(added.id).hidden === true, "hidden is stored");
+assert(jobMod.toggleSelectionVisible() === true, "V shows it again");
+assert(jobMod.getWall(added.id).hidden !== true, "hidden is cleared");
+
+{
+  const room = space(1965);
+  const cl = { floor: 2, ceiling: 2 };
+  assert(settleClearanceZ(2, 100, 200, room, cl) === 0, "the board bottom is the floor point");
+  assert(settleClearanceZ(1963, 100, 200, room, cl) === 1965, "the board top is the ceiling point");
+  assert(settleClearanceZ(1863, 100, 200, room, cl) === 1863, "a door head stays put");
+  assert(settleClearanceZ(102, 100, 200, room, cl) === 102, "a shower sill stays put");
 }
 
 console.log("walls ok");

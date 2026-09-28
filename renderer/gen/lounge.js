@@ -329,6 +329,75 @@ function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
   };
 }
 
+// generators/_lib/edgeBand.ts
+function outlineOf(b) {
+  return localOutline(b) ?? rectOutline(b);
+}
+function setEdgeBand(b, i, band) {
+  if (!Number.isInteger(i) || i < 0) throw new Error(`${b.id}: edge ${i} is not an outline index`);
+  const n = outlineOf(b).length;
+  if (i >= n) throw new Error(`${b.id}: edge ${i} is past the outline (${n} edges)`);
+  const face = faceOf(b, `E${i}`);
+  if (!band) {
+    if (!face.finish?.edgeBand) return;
+    delete face.finish.edgeBand;
+    if (face.finish.colour == null) delete face.finish;
+    return;
+  }
+  if (!Number.isFinite(band.thickness) || band.thickness <= 0) {
+    throw new Error(`${b.id}.E${i}: edge band thickness must be millimetres above 0`);
+  }
+  const stored = { thickness: band.thickness };
+  if (band.colour) stored.colour = band.colour;
+  face.finish = { ...face.finish, edgeBand: stored };
+}
+
+// generators/lounge/rules.json
+var rules_default = {
+  DEFAULT_HEIGHT: { value: 420, doc: "\u4F11\u95F2\u67DC\u603B\u9AD8\u7F3A\u7701\u3002" },
+  DEFAULT_PPT: { value: 18, doc: "\u7EDF\u4E00\u677F\u539A\u7F3A\u7701\u3002" },
+  OPENING_RADIUS: { value: 50, doc: "\u9876\u677F\u6B63\u4E2D\u5F00\u53E3\u7684\u5706\u89D2\u3002\u5F00\u53E3\u662F\u6BB5\u9762\u7684\u4E00\u534A\uFF0C\u4E0A\u534A\u5C42\u518D\u6536\u8FDB\u534A\u4E2A\u677F\u539A\u3002" },
+  LID_CLEARANCE_EACH_SIDE: { value: 1.5, doc: "\u76D6\u677F\u56DB\u5468\u5355\u8FB9\u7F29\u91CF\u3002" },
+  FINGER_HOLE_DIAMETER: { value: 40, doc: "\u76D6\u677F\u6307\u5B54\u5F84\uFF08\u8D2F\u901A\uFF09\u3002" },
+  L_LEG_WIDTH: { value: 100, doc: "\u65E7 L \u5F62\u817F\u5BBD\u3002\u76F4\u6BB5\u4FA7\u677F\u73B0\u5728\u662F\u901A\u9AD8\u6574\u677F\uFF0C\u4E0D\u518D\u7528\u8FD9\u4E2A\u503C\u3002" },
+  TOP_SUPPORT_STRIP_HEIGHT: { value: 100, doc: "\u9876\u90E8\u652F\u6491\u6761\u9AD8\u3002" },
+  DEFAULT_AVOIDANCE_DEPTH: { value: 300, doc: "\u8F6E\u62F1\u907F\u8BA9\u6DF1\u7F3A\u7701\u3002" },
+  DEFAULT_AVOIDANCE_HEIGHT: { value: 250, doc: "\u8F6E\u62F1\u907F\u8BA9\u9AD8\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_WIDTH: { value: 600, doc: "Parallel \u4E2D\u67DC\u5BBD\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_DEPTH: { value: 350, doc: "Parallel \u4E2D\u67DC\u6DF1\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_HEIGHT: { value: 500, doc: "Parallel \u4E2D\u67DC\u9AD8\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_START_HEIGHT: { value: 300, doc: "Parallel \u4E2D\u67DC\u79BB\u5730\u8D77\u59CB\u9AD8\u3002" },
+  MIDDLE_CABINET_DOOR_THICKNESS: { value: 15, doc: "\u4E2D\u67DC\u95E8/\u67DC\u8EAB\u539A\u7F3A\u7701\u3002" },
+  MIDDLE_CABINET_DOOR_CLEARANCE: { value: 2, doc: "\u4E2D\u67DC\u95E8\u7F1D\u3002" },
+  MIDDLE_CABINET_LOCK_SIDE: { value: 30, doc: "\u4E2D\u67DC\u9501\u5FC3\u8DDD\u95E8\u4FA7\u3002" },
+  MIDDLE_CABINET_HINGE_SIDE: { value: 80, doc: "\u4E2D\u67DC\u94F0\u94FE\u4FA7\u8DDD\u3002" },
+  MIDDLE_CABINET_HINGE_FROM_EDGE: { value: 22.5, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u5FC3\u8DDD\u95E8\u8FB9\u3002" },
+  MIDDLE_CABINET_HINGE_DIAMETER: { value: 35, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u5F84\u3002" },
+  MIDDLE_CABINET_HINGE_DEPTH: { value: 12.5, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u6DF1\u3002" },
+  LOCK_WIDTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u5BBD\u3002" },
+  LOCK_HEIGHT: { value: 15.5, doc: "\u9501\u69FD\u9AD8\u3002" },
+  LOCK_DROP: { value: 30.5, doc: "\u9501\u5FC3\u4F4E\u4E8E\u4E0A\u5206\u9694\u5B89\u88C5\u9762\u3002" },
+  FRAME_LID_GAP: { value: 2, doc: "\u6846\u67B6\u5F0F L\uFF1A\u76D6\u5B50\u56DB\u5468\u6BCF\u8FB9\u7559\u7F1D\uFF08\u76D6\u5B50\u5D4C\u5728\u5916\u677F\u4E4B\u95F4\uFF0C\u9876\u9762\u4E0E\u5916\u677F\u9F50\u5E73\uFF09\u3002" },
+  FRAME_FINGER_HOLE_DIAMETER: { value: 50, doc: "\u6846\u67B6\u5F0F L\uFF1A\u76D6\u5B50\u6B63\u4E2D\u7684\u62C9\u624B\u5B54\u5F84\uFF08\u8D2F\u901A\uFF09\u3002" },
+  FRAME_WALL_GAP: { value: 1, doc: "\u6846\u67B6\u5F0F L\uFF1A\u8D34\u5899\u540E\u6A2A\u6761\u79BB\u5899\uFF1B\u5185\u90E8\u6258\u6761\u79BB\u540E\u6A2A\u6761 / \u524D\u677F\u4E5F\u662F\u8FD9\u4E48\u591A\u3002" },
+  FRAME_SLOT_CLEARANCE: { value: 1, doc: "\u6846\u67B6\u5F0F L\uFF1A\u54AC\u5408\u7F3A\u53E3\u6BD4\u677F\u539A\u5BBD\u8FD9\u4E48\u591A\uFF08\u7F3A\u53E3\u5BBD = \u677F\u539A + 1\uFF09\u3002" },
+  FRAME_INNER_RAIL_HEIGHT: { value: 100, doc: "\u6846\u67B6\u5F0F L\uFF1A\u4E3B\u6BB5\u524D\u540E\u6258\u6761\u9AD8\uFF0C\u9876\u9762\u5728 H \u2212 \u677F\u539A\uFF1B\u8D34\u5899\u540E\u6A2A\u6761\u9AD8 = \u8FD9\u4E2A + \u677F\u539A\u3002" },
+  FRAME_HALVING_NOTCH: { value: 20, doc: "\u6846\u67B6\u5F0F L\uFF1A\u6A2A\u6761 / \u6258\u6761\u4ECE\u5E95\u8FB9\u5F80\u4E0A\u5F00\u7684\u54AC\u5408\u7F3A\u53E3\u6DF1\u3002" },
+  FRAME_HALVING_GAP: { value: 5, doc: "\u6846\u67B6\u5F0F L\uFF1A\u54AC\u5408\u5904\u6A2A\u6761\u7F3A\u53E3\u9876\u4E0E\u7AD6\u677F\u7F3A\u53E3\u5E95\u4E4B\u95F4\u7684\u95F4\u9699\uFF08\u7AD6\u677F\u7F3A\u53E3\u4ECE\u6A2A\u6761\u5E95 + 20 \u2212 5 \u5F00\u5230\u9876\uFF09\u3002" },
+  FRAME_DRAWER_STRIP_REVEAL: { value: 100, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\uFF1A\u56FA\u5B9A\u6761\u5728\u76D6\u5B50\u5E95\u4E0B\u9732\u51FA\u7684\u9AD8\u5EA6\u300221 Bunk classic \u5361\u5EA7\u662F 100 \u9AD8\u7684\u56FA\u5B9A\u6761\u4E0A\u538B 18 \u9876\u677F\uFF1B\u6846\u67B6\u6CA1\u6709\u9876\u677F\uFF0C\u6240\u4EE5\u56FA\u5B9A\u6761\u9AD8 = 100 + \u677F\u539A\u3002" },
+  FRAME_DRAWER_FRONT_THICKNESS: { value: 16, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\u9762\u548C\u56FA\u5B9A\u6761\u7684\u95E8\u677F\u6599\u539A\uFF08\u6CA1\u6709 frontPanelThickness \u53C2\u6570\u65F6\uFF09\u3002" },
+  FRAME_DRAWER_GAP: { value: 2, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\u9762\u56DB\u5468\u7559\u7F1D\uFF1A\u79BB\u4E24\u4FA7\u677F\u677F\u9762\u3001\u79BB\u56FA\u5B9A\u6761\u3001\u79BB\u5730\u3002" },
+  FRAME_DRAWER_RAIL_DEPTH: { value: 100, doc: "\u6846\u67B6 L \u7AEF\u62BD\u5C49\u9876\u6A2A\u6761\uFF08\u56FA\u5B9A\u6761\u540E\u9762\uFF09\u4ECE\u56FA\u5B9A\u6761\u80CC\u9762\u5F80\u5899\u7684\u6DF1\u5EA6\u3002" },
+  FRAME_DRAWER_RAIL_PLAIN_FRONT: { value: 30, doc: "\u62BD\u5C49\u9876\u6A2A\u6761\u9760\u56FA\u5B9A\u6761\u90A3\u5934\u4E0D\u5E26\u820C\u5934\u7684\u957F\u5EA6\uFF1B\u820C\u5934\u5728\u540E\u9762\u7684 RAIL_DEPTH - 30\u3002" },
+  FRAME_DRAWER_TONGUE_GAP: { value: 0.5, doc: "\u62BD\u5C49\u9876\u6A2A\u6761\u820C\u5934 = \u6258\u677F\u69FD\u6DF1 - 0.5\uFF08\u69FD\u6DF1\u4E3A\u6258\u677F\u534A\u539A\uFF09\u3002" },
+  FRAME_DRAWER_POCKET_OVERRUN: { value: 5, doc: "\u6258\u677F\u4E0A\u7684\u6A2A\u6761\u69FD\u6BD4\u820C\u5934\u6BCF\u5934\u957F 5\uFF1B\u69FD\u9AD8 = \u677F\u539A + FRAME_SLOT_CLEARANCE\u3002" },
+  L_MIN_WING_WIDTH: { value: 300, doc: "\u6846\u67B6\u5F0F L\uFF1A\u62D0\u89D2\u6BB5\u6CBF\u5899\u5BBD\u5EA6\u4E0B\u9650\u3002" },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "\u6846\u67B6\u5F0F L \u5C01\u8FB9\u5E26\u539A\uFF0C\u5168\u90E8\u67DC\u4F53\u8272\uFF1A\u5EA7\u9762\u4E00\u5708\u7684\u4E0A\u8FB9\uFF08\u524D\u677F\u3001\u4FA7\u677F\u3001\u540E\u6A2A\u6761\uFF09\u3001\u62D0\u89D2\u6BB5\u4E24\u5757\u4FA7\u677F\u671D\u623F\u95F4\u7684\u524D\u8FB9\u3001\u76D6\u5B50\u56DB\u8FB9\u3001\u50A8\u7269\u683C\u91CC\u770B\u5F97\u89C1\u7684\u6258\u6761\u548C\u540E\u6A2A\u6761\u4E0B\u8FB9\u3002\u7AEF\u5934\u4E00\u5F8B\u5F53\u4F5C\u9876\u5899\uFF0C\u4E0D\u5C01\u3002" }
+};
+
+// generators/lounge/rules.ts
+var RULES = defineRules("lounge", rules_default);
+
 // generators/_lib/resolveJoints.ts
 var EPS2 = 0.6;
 function overlap(a0, a1, b0, b1) {
@@ -423,7 +492,30 @@ var LOUNGE_RELATIONSHIP_DECLARATIONS = [
   P("lg_right_left_to_top", "right_left_side", "right_top"),
   P("lg_right_right_to_top", "right_right_side", "right_top"),
   P("lg_right_side_to_top", "right_side", "right_top"),
-  P("lg_right_strip_to_top", "right_support_strip", "right_top")
+  P("lg_right_strip_to_top", "right_support_strip", "right_top"),
+  // Frame L: rails drop into slots, supports sit against the panels, lids rest on the frame.
+  P("lg_rear_rail_main_end", "back_rail", "main_end"),
+  P("lg_rear_rail_l_side", "back_rail", "l_side"),
+  P("lg_rear_rail_l_outer", "back_rail", "l_outer_side"),
+  P("lg_main_front_to_end", "main_front", "main_end"),
+  P("lg_main_front_to_l_side", "main_front", "l_side"),
+  P("lg_l_front_to_outer", "l_front", "l_outer_side"),
+  P("lg_main_end_support", "main_end_support", "main_end"),
+  P("lg_main_l_support", "main_l_support", "l_side"),
+  P("lg_rail_back_end", "main_rail_back", "main_end_support"),
+  P("lg_rail_back_l", "main_rail_back", "main_l_support"),
+  P("lg_rail_front_end", "main_rail_front", "main_end_support"),
+  P("lg_rail_front_l", "main_rail_front", "main_l_support"),
+  P("lg_l_support_inner", "l_support_inner", "l_side"),
+  P("lg_l_support_outer", "l_support_outer", "l_outer_side"),
+  P("lg_main_lid_on_rail", "main_lid", "main_rail_back"),
+  P("lg_l_lid_on_support", "l_lid", "l_support_inner"),
+  // Frame L wing drawer: the strip stands between the sides on the rail, the rail tongues into the supports.
+  P("lg_l_strip_to_side", "l_drawer_strip", "l_side"),
+  P("lg_l_strip_to_outer", "l_drawer_strip", "l_outer_side"),
+  P("lg_l_strip_on_rail", "l_drawer_strip", "l_drawer_rail"),
+  P("lg_l_drawer_rail_inner", "l_drawer_rail", "l_support_inner"),
+  P("lg_l_drawer_rail_outer", "l_drawer_rail", "l_support_outer")
 ];
 function relationshipDeclarationsForBoards(ids) {
   return LOUNGE_RELATIONSHIP_DECLARATIONS.filter((d) => ids.has(d.panelAId) && ids.has(d.panelBId));
@@ -524,42 +616,43 @@ function buildLoungeFaces(fb) {
       v0: g.v0,
       v1: g.v1,
       depth: g.depth,
-      for: "middle_cabinet_mid_divider",
+      for: g.for ?? "middle_cabinet_mid_divider",
       source: "lounge"
     });
   }
+  if (B.has("back_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
   return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
 }
-
-// generators/lounge/rules.json
-var rules_default = {
-  DEFAULT_HEIGHT: { value: 420, doc: "\u4F11\u95F2\u67DC\u603B\u9AD8\u7F3A\u7701\u3002" },
-  DEFAULT_PPT: { value: 18, doc: "\u7EDF\u4E00\u677F\u539A\u7F3A\u7701\u3002" },
-  OPENING_RADIUS: { value: 50, doc: "\u9876\u677F\u6B63\u4E2D\u5F00\u53E3\u7684\u5706\u89D2\u3002\u5F00\u53E3\u662F\u6BB5\u9762\u7684\u4E00\u534A\uFF0C\u4E0A\u534A\u5C42\u518D\u6536\u8FDB\u534A\u4E2A\u677F\u539A\u3002" },
-  LID_CLEARANCE_EACH_SIDE: { value: 1.5, doc: "\u76D6\u677F\u56DB\u5468\u5355\u8FB9\u7F29\u91CF\u3002" },
-  FINGER_HOLE_DIAMETER: { value: 40, doc: "\u76D6\u677F\u6307\u5B54\u5F84\uFF08\u8D2F\u901A\uFF09\u3002" },
-  L_LEG_WIDTH: { value: 100, doc: "\u65E7 L \u5F62\u817F\u5BBD\u3002\u76F4\u6BB5\u4FA7\u677F\u73B0\u5728\u662F\u901A\u9AD8\u6574\u677F\uFF0C\u4E0D\u518D\u7528\u8FD9\u4E2A\u503C\u3002" },
-  TOP_SUPPORT_STRIP_HEIGHT: { value: 100, doc: "\u9876\u90E8\u652F\u6491\u6761\u9AD8\u3002" },
-  DEFAULT_AVOIDANCE_DEPTH: { value: 300, doc: "\u8F6E\u62F1\u907F\u8BA9\u6DF1\u7F3A\u7701\u3002" },
-  DEFAULT_AVOIDANCE_HEIGHT: { value: 250, doc: "\u8F6E\u62F1\u907F\u8BA9\u9AD8\u7F3A\u7701\u3002" },
-  MIDDLE_CABINET_WIDTH: { value: 600, doc: "Parallel \u4E2D\u67DC\u5BBD\u7F3A\u7701\u3002" },
-  MIDDLE_CABINET_DEPTH: { value: 350, doc: "Parallel \u4E2D\u67DC\u6DF1\u7F3A\u7701\u3002" },
-  MIDDLE_CABINET_HEIGHT: { value: 500, doc: "Parallel \u4E2D\u67DC\u9AD8\u7F3A\u7701\u3002" },
-  MIDDLE_CABINET_START_HEIGHT: { value: 300, doc: "Parallel \u4E2D\u67DC\u79BB\u5730\u8D77\u59CB\u9AD8\u3002" },
-  MIDDLE_CABINET_DOOR_THICKNESS: { value: 15, doc: "\u4E2D\u67DC\u95E8/\u67DC\u8EAB\u539A\u7F3A\u7701\u3002" },
-  MIDDLE_CABINET_DOOR_CLEARANCE: { value: 2, doc: "\u4E2D\u67DC\u95E8\u7F1D\u3002" },
-  MIDDLE_CABINET_LOCK_SIDE: { value: 30, doc: "\u4E2D\u67DC\u9501\u5FC3\u8DDD\u95E8\u4FA7\u3002" },
-  MIDDLE_CABINET_HINGE_SIDE: { value: 80, doc: "\u4E2D\u67DC\u94F0\u94FE\u4FA7\u8DDD\u3002" },
-  MIDDLE_CABINET_HINGE_FROM_EDGE: { value: 22.5, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u5FC3\u8DDD\u95E8\u8FB9\u3002" },
-  MIDDLE_CABINET_HINGE_DIAMETER: { value: 35, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u5F84\u3002" },
-  MIDDLE_CABINET_HINGE_DEPTH: { value: 12.5, doc: "\u4E2D\u67DC\u94F0\u94FE\u676F\u6DF1\u3002" },
-  LOCK_WIDTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u5BBD\u3002" },
-  LOCK_HEIGHT: { value: 15.5, doc: "\u9501\u69FD\u9AD8\u3002" },
-  LOCK_DROP: { value: 30.5, doc: "\u9501\u5FC3\u4F4E\u4E8E\u4E0A\u5206\u9694\u5B89\u88C5\u9762\u3002" }
-};
-
-// generators/lounge/rules.ts
-var RULES = defineRules("lounge", rules_default);
+function bandFrameEdges(boards, colour, doorColour) {
+  const tape = { thickness: RULES.EDGE_BAND_THICKNESS_MM.value, colour };
+  const band = (b, normal) => {
+    if (!b) return;
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), tape);
+  };
+  const by = (id) => boards.find((b) => b.id === id);
+  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "back_rail"]) band(by(id), "+Z");
+  band(by("l_side"), "-Y");
+  band(by("l_outer_side"), "-Y");
+  if (by("l_drawer_front")) {
+    const doorTape = { thickness: RULES.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
+    for (const id of ["l_drawer_front", "l_drawer_strip"]) {
+      const b = by(id);
+      for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+    }
+    for (const id of ["l_side", "l_outer_side"]) {
+      const b = by(id);
+      for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+    }
+    band(by("l_drawer_rail"), "+Y");
+    band(by("l_support_inner"), "-Y");
+    band(by("l_support_outer"), "-Y");
+  }
+  for (const id of ["main_rail_back", "main_rail_front", "back_rail"]) band(by(id), "-Z");
+  for (const id of ["main_lid", "l_lid"]) {
+    const lid = by(id);
+    if (lid) for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
+  }
+}
 
 // generators/lounge/place.ts
 var r2 = (v) => Math.round(v * 1e3) / 1e3;
@@ -978,12 +1071,13 @@ var asNum2 = (v, fb) => {
   return Number.isFinite(n) ? n : fb;
 };
 var r22 = (v) => Math.round(v * 1e3) / 1e3;
+var FRONT_TYPES = /* @__PURE__ */ new Set(["front", "cabinet_door", "drawer_front", "fixed_front"]);
 function mkBoard(id, name, boardType, thickness, plane, axis, x0, x1, y0, y1, z0, z1, profileVector) {
   const box = recordBoardBox(id, r22(x0), r22(x1), r22(y0), r22(y1), r22(z0), r22(z1));
   return {
     id,
     name,
-    category: boardType === "front" || boardType === "cabinet_door" ? "front_panel" : boardType,
+    category: FRONT_TYPES.has(boardType) ? "front_panel" : boardType,
     boardType,
     materialThickness: thickness,
     profilePlane: plane,
@@ -1398,6 +1492,156 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
   addDoor("middle_cabinet_left_door", x0 + dc + dpt, true);
   addDoor("middle_cabinet_right_door", x0 + dc + doorSlotWidth + dc, false);
 }
+function addFrameL(L, Dm, Dl, Wl, H, T, right, ft, boards, lids, locks, grooves, errors) {
+  const c = RULES.FRAME_WALL_GAP.value;
+  const s = RULES.FRAME_SLOT_CLEARANCE.value;
+  const g = RULES.FRAME_LID_GAP.value;
+  const hr = RULES.FRAME_INNER_RAIL_HEIGHT.value;
+  const nd = RULES.FRAME_HALVING_NOTCH.value;
+  const hg = RULES.FRAME_HALVING_GAP.value;
+  const P2 = param({ L, Wl, H, T });
+  const Lm = dim("lounge.frame.mainLength", { L: P2.L, Wl: P2.Wl }, (t) => r22(t.L - t.Wl), { formula: "L - Wl" });
+  const railZ0 = dim("lounge.frame.railBottom", { H: P2.H, T: P2.T, hr: RULES.FRAME_INNER_RAIL_HEIGHT }, (t) => r22(t.H - t.T - t.hr), { formula: "H - T - FRAME_INNER_RAIL_HEIGHT" });
+  const slotZ = dim("lounge.frame.slotBottom", { z: ref("lounge.frame.railBottom"), nd: RULES.FRAME_HALVING_NOTCH, hg: RULES.FRAME_HALVING_GAP }, (t) => r22(t.z + t.nd - t.hg), { formula: "railBottom + FRAME_HALVING_NOTCH - FRAME_HALVING_GAP" });
+  const seat = dim("lounge.frame.lidSeat", { H: P2.H, T: P2.T }, (t) => r22(t.H - t.T), { formula: "H - T" });
+  const slot = r22(T + s);
+  if (Wl < RULES.L_MIN_WING_WIDTH.value) errors.push(`L: the wing is only ${Wl} wide \u2014 at least ${RULES.L_MIN_WING_WIDTH.value}.`);
+  if (!(Lm > 3 * T + 2 * s)) errors.push(`L: the main run is only ${Lm} long.`);
+  if (!(Dm > 4 * T + 3 * s + 2 * g)) errors.push(`L: the main depth ${Dm} does not fit the rear rail, both inner rails and the front.`);
+  if (!(Dl > Dm)) errors.push(`L: the wing (${Dl}) must reach past the main front (${Dm}).`);
+  if (!(railZ0 > 0 && slotZ < seat)) errors.push(`L: height ${H} is too low for the rails (${hr} + ${T}).`);
+  const gd = RULES.FRAME_DRAWER_GAP.value;
+  let stripZ0 = 0, frontTop = 0;
+  if (ft != null) {
+    const stripH = dim("lounge.frame.drawer.stripHeight", { rev: RULES.FRAME_DRAWER_STRIP_REVEAL, T: P2.T }, (t) => r22(t.rev + t.T), { formula: "FRAME_DRAWER_STRIP_REVEAL + T" });
+    stripZ0 = dim("lounge.frame.drawer.stripBottom", { H: P2.H, s: ref("lounge.frame.drawer.stripHeight") }, (t) => r22(t.H - t.s), { formula: "H - stripHeight" });
+    frontTop = dim("lounge.frame.drawer.frontTop", { z: ref("lounge.frame.drawer.stripBottom"), g: RULES.FRAME_DRAWER_GAP }, (t) => r22(t.z - t.g), { formula: "stripBottom - FRAME_DRAWER_GAP" });
+    const room = r22(frontTop - gd);
+    if (!(room > RULES.LOCK_DROP.value + RULES.LOCK_HEIGHT.value / 2)) {
+      errors.push(`L drawer: height ${H} leaves only ${room} for the drawer front under the ${stripH} strip.`);
+    }
+  }
+  if (errors.length) return;
+  const back = Dl;
+  const X = (a, b) => right ? [r22(a), r22(b)] : [r22(L - b), r22(L - a)];
+  const px2 = (x) => r22(right ? x : L - x);
+  const Y = (d0, d1) => [r22(back - d1), r22(back - d0)];
+  const yz = (pts) => [...pts, pts[0]].map(([d, z]) => ({ y: r22(back - d), z: r22(z) }));
+  const xz = (pts) => [...pts, pts[0]].map(([x, z]) => ({ x: px2(x), z: r22(z) }));
+  const push = (id, name, type, plane, axis, x, y, z, pv, th = T) => {
+    const [x0, x1] = X(x[0], x[1]);
+    const board = mkBoard(id, name, type, th, plane, axis, x0, x1, y[0], y[1], z[0], z[1], pv);
+    boards.push(board);
+    return board;
+  };
+  const atWall = r22(c + T);
+  const wallPanel = (dEnd) => [[0, 0], [dEnd, 0], [dEnd, H], [atWall, H], [atWall, slotZ], [0, slotZ]];
+  push("main_end", "Main End", "side", "YZ", "X", [0, T], Y(0, Dm - T), [0, H], yz(wallPanel(Dm - T)));
+  push("main_front", "Main Front", "seat_front", "XZ", "Y", [0, Lm], Y(Dm - T, Dm), [0, H]);
+  push("l_side", "L Side (junction)", "side", "YZ", "X", [Lm, Lm + T], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
+  push("l_outer_side", "L Outer Side", "side", "YZ", "X", [L - T, L], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
+  if (ft == null) push("l_front", "L Front", "seat_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - T, Dl), [0, H]);
+  const n = railZ0 + nd;
+  push("back_rail", "Rear Rail", "rear_rail", "XZ", "Y", [0, L], Y(c, c + T), [railZ0, H], xz([
+    [0, H],
+    [0, n],
+    [slot, n],
+    [slot, railZ0],
+    [Lm - s / 2, railZ0],
+    [Lm - s / 2, n],
+    [Lm + T + s / 2, n],
+    [Lm + T + s / 2, railZ0],
+    [L - slot, railZ0],
+    [L - slot, n],
+    [L, n],
+    [L, H]
+  ]));
+  const railBackD = [T + 2 * c, 2 * T + 2 * c];
+  const railFrontD = [Dm - 2 * T - c, Dm - T - c];
+  const support = [
+    [T + c, 0],
+    [Dm - T, 0],
+    [Dm - T, slotZ],
+    [railFrontD[0], slotZ],
+    [railFrontD[0], seat],
+    [railBackD[1], seat],
+    [railBackD[1], slotZ],
+    [T + c, slotZ]
+  ];
+  push("main_end_support", "Main End Support", "lid_support", "YZ", "X", [T, 2 * T], Y(T + c, Dm - T), [0, seat], yz(support));
+  push("main_l_support", "Main Junction Support", "lid_support", "YZ", "X", [Lm - T, Lm], Y(T + c, Dm - T), [0, seat], yz(support));
+  const rail = [
+    [T, n],
+    [2 * T + s, n],
+    [2 * T + s, railZ0],
+    [Lm - T - s, railZ0],
+    [Lm - T - s, n],
+    [Lm, n],
+    [Lm, seat],
+    [T, seat]
+  ];
+  push("main_rail_back", "Main Rear Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railBackD[0], railBackD[1]), [railZ0, seat], xz(rail));
+  push("main_rail_front", "Main Front Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railFrontD[0], railFrontD[1]), [railZ0, seat], xz(rail));
+  const wingFront = ft == null ? T : ft;
+  const supIn = push("l_support_inner", "L Inner Support", "lid_support", "YZ", "X", [Lm + T, Lm + 2 * T], Y(T + c, Dl - wingFront), [0, seat]);
+  const supOut = push("l_support_outer", "L Outer Support", "lid_support", "YZ", "X", [L - 2 * T, L - T], Y(T + c, Dl - wingFront), [0, seat]);
+  if (ft != null) {
+    push("l_drawer_strip", "L Drawer Fixed Strip", "fixed_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - ft, Dl), [stripZ0, H], void 0, ft);
+    push("l_drawer_front", "L Drawer Front", "drawer_front", "XZ", "Y", [Lm + T + gd, L - T - gd], Y(Dl - ft, Dl), [gd, frontTop], void 0, ft);
+    locks.push({
+      id: "l_drawer_front_lock",
+      panelId: "l_drawer_front",
+      centerX: px2((Lm + L) / 2),
+      centerZ: r22(frontTop - RULES.LOCK_DROP.value),
+      width: RULES.LOCK_WIDTH.value,
+      height: RULES.LOCK_HEIGHT.value,
+      radius: RULES.LOCK_HEIGHT.value / 2
+    });
+    const tg = r22(T / 2 - RULES.FRAME_DRAWER_TONGUE_GAP.value);
+    const xl = Lm + 2 * T, xr = L - 2 * T;
+    const d1 = Dl - ft, d0 = d1 - RULES.FRAME_DRAWER_RAIL_DEPTH.value, dt = d1 - RULES.FRAME_DRAWER_RAIL_PLAIN_FRONT.value;
+    const xy = (pts) => [...pts, pts[0]].map(([x, d]) => ({ x: px2(x), y: r22(back - d) }));
+    push("l_drawer_rail", "L Drawer Rail", "drawer_rail", "XY", "Z", [xl - tg, xr + tg], Y(d0, d1), [stripZ0, stripZ0 + T], xy([
+      [xl - tg, d0],
+      [xr + tg, d0],
+      [xr + tg, dt],
+      [xr, dt],
+      [xr, d1],
+      [xl, d1],
+      [xl, dt],
+      [xl - tg, dt]
+    ]));
+    const ov = RULES.FRAME_DRAWER_POCKET_OVERRUN.value;
+    const [py0, py1] = Y(d0 - ov, dt + ov);
+    for (const [sup, faceDrawerSide] of [[supIn, right ? "A" : "B"], [supOut, right ? "B" : "A"]]) {
+      grooves.push({
+        id: `${sup.id}_drawer_rail_pocket`,
+        boardId: sup.id,
+        face: faceDrawerSide,
+        u0: r22(py0 - sup.y0),
+        u1: r22(py1 - sup.y0),
+        v0: r22(stripZ0 - s / 2 - sup.z0),
+        v1: r22(stripZ0 + T + s / 2 - sup.z0),
+        depth: r22(T / 2),
+        for: "l_drawer_rail"
+      });
+    }
+  }
+  const lid = (id, name, x, d) => {
+    const b = push(id, name, "lid", "XY", "Z", x, Y(d[0], d[1]), [seat, H]);
+    b.profileVector = [
+      { x: b.x0, y: b.y0 },
+      { x: b.x1, y: b.y0 },
+      { x: b.x1, y: b.y1 },
+      { x: b.x0, y: b.y1 },
+      { x: b.x0, y: b.y0 }
+    ];
+    b.profileHoles = [circleHole((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, RULES.FRAME_FINGER_HOLE_DIAMETER.value)];
+    lids.push({ id, x0: b.x0, y0: b.y0, width: r22(b.x1 - b.x0), depth: r22(b.y1 - b.y0), holeDiameter: RULES.FRAME_FINGER_HOLE_DIAMETER.value });
+  };
+  lid("main_lid", "Main Lid", [T + g, Lm - g], [T + c + g, Dm - T - g]);
+  lid("l_lid", "L Lid", [Lm + T + g, L - T - g], [T + c + g, Dl - wingFront - g]);
+}
 function generateLounge(raw) {
   beginProvenance();
   const warnings = [];
@@ -1420,7 +1664,11 @@ function generateLounge(raw) {
   const wheelOn = raw.wheelAvoidanceEnabled === true;
   const wheel = wheelOn ? { AD, AH } : void 0;
   if (H <= ppt) warnings.push("Height should be greater than panel thickness.");
-  if (raw.lFrontAccess && raw.lFrontAccess !== "NONE") warnings.push("lFrontAccess is a placeholder and does not change geometry.");
+  const frameL = style === "L_SHAPE" && raw.construction !== "classic";
+  const lDrawer = frameL && raw.lFrontAccess === "DRAWER";
+  if (raw.lFrontAccess && raw.lFrontAccess !== "NONE" && !lDrawer) {
+    warnings.push(`lFrontAccess ${raw.lFrontAccess} is only built as a drawer on the frame L; ignored.`);
+  }
   if (style === "I_SHAPE") {
     const W = asNum2(raw.mainWidth, 2e3);
     const D = asNum2(raw.mainDepth, 600);
@@ -1481,68 +1729,77 @@ function generateLounge(raw) {
     const ret = asNum2(raw.lWidth, 1600);
     const thick = asNum2(raw.lDepth, 600);
     const right = (raw.lPosition ?? "RIGHT") !== "LEFT";
-    if (!(ret > mainD)) warnings.push("L: the return should extend past the middle front.");
-    if (!(thick < mainW)) warnings.push("L: return thickness should be less than the back length.");
-    if (wheelOn) {
-      if (!(AD < Math.min(mainD, ret - ppt))) warnings.push("Avoidance Depth must be less than the middle depth and the return.");
-      if (!(AH < H - ppt)) warnings.push("Avoidance Height must be less than Height - PPT.");
-    }
-    const back = dim("lounge.back", { ret }, (t) => t.ret);
-    const mainY0 = dim("lounge.mainFront", { back: ref("lounge.back"), mainD }, (t) => t.back - t.mainD);
-    const mainX0 = right ? 0 : thick;
-    const mainX1 = right ? r22(mainW - thick) : mainW;
-    const lX0 = right ? mainX1 : 0;
-    const lX1 = right ? mainW : thick;
-    footprint.main = { x0: mainX0, x1: mainX1, y0: mainY0, y1: back };
-    footprint.l = { x0: lX0, x1: lX1, y0: 0, y1: back };
-    addRun(
-      { key: "main", front: "main_front", left: "main_left_side", right: "main_right_side", top: "main_top" },
-      { front: "Main Front", left: "Main Left Side", right: "Main Right Side", top: "Main Top" },
-      mainX0,
-      mainX1,
-      mainY0,
-      back,
-      H,
-      ppt,
-      Hprime,
-      lidOn,
-      boards,
-      openings,
-      lids,
-      right ? { omitRight: true } : { omitLeft: true }
-    );
-    const innerOnLeft = right;
-    const lCut = wheel ? wallCutoutProfile(ppt, back, Hprime, AD, AH) : void 0;
-    addRun(
-      {
-        key: "l",
-        front: "l_front",
-        top: "l_top",
-        left: innerOnLeft ? "l_side" : "l_outer_side",
-        right: innerOnLeft ? "l_outer_side" : "l_side"
-      },
-      {
-        front: "L Front",
-        top: "L Top",
-        left: innerOnLeft ? "L Side" : "L Outer Side",
-        right: innerOnLeft ? "L Outer Side" : "L Side"
-      },
-      lX0,
-      lX1,
-      0,
-      back,
-      H,
-      ppt,
-      Hprime,
-      lidOn,
-      boards,
-      openings,
-      lids,
-      { left: innerOnLeft ? lCut : void 0, right: innerOnLeft ? void 0 : lCut }
-    );
-    if (lCut) {
-      addAvoidanceCovers("l_", lX0, lX1, back, AD, AH, ppt, boards);
-      addAvoidanceCovers("main_", mainX0, mainX1, back, AD, AH, ppt, boards);
+    if (frameL) {
+      if (wheelOn) warnings.push("L frame: wheel arch avoidance is not in the frame lounge yet; ignored.");
+      const ft = lDrawer ? Math.max(1, asNum2(raw.frontPanelThickness, RULES.FRAME_DRAWER_FRONT_THICKNESS.value)) : null;
+      const back = r22(ret);
+      footprint.main = right ? { x0: 0, x1: r22(mainW - thick), y0: r22(back - mainD), y1: back } : { x0: thick, x1: mainW, y0: r22(back - mainD), y1: back };
+      footprint.l = right ? { x0: r22(mainW - thick), x1: mainW, y0: 0, y1: back } : { x0: 0, x1: thick, y0: 0, y1: back };
+      addFrameL(mainW, mainD, ret, thick, H, ppt, right, ft, boards, lids, locks, grooves, errors);
+    } else {
+      if (!(ret > mainD)) warnings.push("L: the return should extend past the middle front.");
+      if (!(thick < mainW)) warnings.push("L: return thickness should be less than the back length.");
+      if (wheelOn) {
+        if (!(AD < Math.min(mainD, ret - ppt))) warnings.push("Avoidance Depth must be less than the middle depth and the return.");
+        if (!(AH < H - ppt)) warnings.push("Avoidance Height must be less than Height - PPT.");
+      }
+      const back = dim("lounge.back", { ret }, (t) => t.ret);
+      const mainY0 = dim("lounge.mainFront", { back: ref("lounge.back"), mainD }, (t) => t.back - t.mainD);
+      const mainX0 = right ? 0 : thick;
+      const mainX1 = right ? r22(mainW - thick) : mainW;
+      const lX0 = right ? mainX1 : 0;
+      const lX1 = right ? mainW : thick;
+      footprint.main = { x0: mainX0, x1: mainX1, y0: mainY0, y1: back };
+      footprint.l = { x0: lX0, x1: lX1, y0: 0, y1: back };
+      addRun(
+        { key: "main", front: "main_front", left: "main_left_side", right: "main_right_side", top: "main_top" },
+        { front: "Main Front", left: "Main Left Side", right: "Main Right Side", top: "Main Top" },
+        mainX0,
+        mainX1,
+        mainY0,
+        back,
+        H,
+        ppt,
+        Hprime,
+        lidOn,
+        boards,
+        openings,
+        lids,
+        right ? { omitRight: true } : { omitLeft: true }
+      );
+      const innerOnLeft = right;
+      const lCut = wheel ? wallCutoutProfile(ppt, back, Hprime, AD, AH) : void 0;
+      addRun(
+        {
+          key: "l",
+          front: "l_front",
+          top: "l_top",
+          left: innerOnLeft ? "l_side" : "l_outer_side",
+          right: innerOnLeft ? "l_outer_side" : "l_side"
+        },
+        {
+          front: "L Front",
+          top: "L Top",
+          left: innerOnLeft ? "L Side" : "L Outer Side",
+          right: innerOnLeft ? "L Outer Side" : "L Side"
+        },
+        lX0,
+        lX1,
+        0,
+        back,
+        H,
+        ppt,
+        Hprime,
+        lidOn,
+        boards,
+        openings,
+        lids,
+        { left: innerOnLeft ? lCut : void 0, right: innerOnLeft ? void 0 : lCut }
+      );
+      if (lCut) {
+        addAvoidanceCovers("l_", lX0, lX1, back, AD, AH, ppt, boards);
+        addAvoidanceCovers("main_", mainX0, mainX1, back, AD, AH, ppt, boards);
+      }
     }
   }
   attachFaces(boards);
@@ -1550,7 +1807,14 @@ function generateLounge(raw) {
   applyDoorSides(boards, raw);
   const milling = applyMilling(boards);
   return {
-    params: { style, height: H, partitionPanelThickness: ppt, panelHeight: Hprime },
+    params: {
+      style,
+      height: H,
+      partitionPanelThickness: ppt,
+      panelHeight: Hprime,
+      ...style === "L_SHAPE" ? { construction: frameL ? "frame" : "classic" } : {},
+      ...frameL ? { lFrontAccess: lDrawer ? "DRAWER" : "NONE" } : {}
+    },
     boards,
     milling,
     openings,

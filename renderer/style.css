@@ -374,6 +374,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 .sketch-divider { align-self: stretch; width: 1px; margin: 2px 2px; background: var(--line-strong); }
 .sketch-bar .sketch-group.sketch-modify { border-left: none; padding-left: 0; }
 .sketch-bar .tb.icon.active { background: var(--accent-soft); color: var(--text); }
+.sketch-bar .tb.icon.sketch-guide.active { color: #3ddc84; background: rgba(61, 220, 132, 0.16); }
 .sketch-bar .tb.icon:disabled { color: var(--text-3); opacity: 0.45; }
 /* Typed fields beside the cursor. A typed (held) field is outlined orange. */
 .sketch-dyn {

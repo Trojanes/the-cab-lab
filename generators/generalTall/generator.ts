@@ -18,6 +18,7 @@ import type {
 import { RULES as R } from "./rules.ts";
 
 export { generateGTSvgPreview } from "./svgPreview.ts";
+export { GT_UI_PRESETS } from "./uiPresets.ts";
 
 const asNum = (v: unknown, fb: number) => {
   const n = Number(v);
@@ -261,7 +262,9 @@ export function fitTallCabinetHeight(input: GTParams, cabinetHeight: number): GT
   const scratch: string[] = [];
   const stacked = computeStack(normalize({ ...input, cabinetHeight: H, zones: trial }, scratch), scratch, scratch);
   const room = r2(H - stacked.calculatedHeight);
-  const height = Math.max(SLACK_ZONE_MIN, room);
+  // A slack zone already under the minimum (a drawer under a fridge) may keep its size; it only may not shrink further.
+  const floor = Math.min(SLACK_ZONE_MIN, asNum(zones[index].height, SLACK_ZONE_MIN));
+  const height = Math.max(floor, room);
   const nextZones = zones.map((zone, i) => (i === index ? { ...zone, height } : zone));
   const fitted = height === room ? H : r2(stacked.calculatedHeight + height);
   return { ...input, cabinetHeight: fitted, zones: nextZones };
@@ -514,14 +517,25 @@ function stampTallBoards(s: S, boards: Board[]) {
       put("y1", sideY1);
       put("z0", ex({ z: b.z0 }, (t) => t.z, "fridgeZ0"));
       put("z1", ex({ z: b.z1 }, (t) => t.z, "fridgeZ1"));
+      if (Number.isFinite(valueOf("tall.th1.z0"))) {
+        put("y0", link("tall.stileY0"));
+        put("y1", link("tall.v12Rear"));
+        put("z1", link("tall.th1.z0"));
+      }
     }
     if (/^(T[1-5]|B[1-3]|TH1|BH1)$/.test(id) || id.startsWith("Zi_")) { put("x0", dx); put("x1", xEnd); }
     if (id === "T1" || id === "T2") { put("z0", t1z0); put("z1", ch); }
     if (id === "T1" || id === "B1") { put("y0", link("tall.railY0")); put("y1", link("tall.t1Rear")); }
     if (id === "T2" || id === "B2") { put("y0", link("tall.t1Rear")); put("y1", link("tall.railRear")); }
     if (id === "B1" || id === "B2") { put("z0", zero); put("z1", link("tall.botFront")); }
-    if (id === "T3") { put("y0", zero); put("y1", insY); put("z0", t3z0); put("z1", t1z0); }
-    if (id === "B3") { put("y0", zero); put("y1", insY); put("z0", link("tall.botFront")); put("z1", link("tall.botRailH")); }
+    if (id === "T3") {
+      put("y0", zero); put("y1", insY); put("z0", t3z0); put("z1", t1z0);
+      put("z0", ex({ CH: ref("tall.CH"), h: ref("tall.topFront"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CH - t.h - t.CPT) * 1000) / 1000, "CH - frontRail - CPT"));
+    }
+    if (id === "B3") {
+      put("y0", zero); put("y1", insY); put("z0", link("tall.botFront")); put("z1", link("tall.botRailH"));
+      put("z1", ex({ h: ref("tall.botFront"), CPT: ref("tall.CPT") }, (t) => Math.round((t.h + t.CPT) * 1000) / 1000, "frontRail + CPT"));
+    }
     if (id === "T5") { put("y0", link("tall.t5Front")); put("y1", link("tall.t5Rear")); put("z0", t5z0); put("z1", ch); }
     if (id === "T4") { put("y0", t4y0); put("y1", link("tall.t5Front")); put("z0", t4z0); put("z1", t4z1); }
     if (id.startsWith("Zi_")) { put("y0", zero); put("y1", md); put("z0", ex({ z: b.z0 }, (t) => t.z, "boundaryZ0")); put("z1", ex({ z: b.z1 }, (t) => t.z, "boundaryZ1")); }
@@ -564,6 +578,16 @@ function stampTallBoards(s: S, boards: Board[]) {
     if (/_top$/.test(id) && id.startsWith("H")) { put("z0", hTop0); put("z1", ch); }
     if (/_bottom$/.test(id) && id.startsWith("H")) { put("z0", zero); put("z1", hHi); }
     if (id.startsWith("FP_") || id.endsWith("FixedFrontPanel")) { put("y0", negF); put("y1", zero); }
+    if (id === "TopStyle2FixedFrontPanel" && Number.isFinite(valueOf("tall.th1.z0"))) {
+      put("x0", xL1);
+      put("x1", xR0);
+      if (Number.isFinite(valueOf("V5.x1"))) { put("x0", link("V5.x1")); put("x1", link("V5.x0")); }
+      put("y0", zero);
+      put("y1", link("tall.FPT"));
+      put("z0", t1z0);
+      put("z1", link("tall.th1.z0"));
+    }
+    if (id === "TH1" && Number.isFinite(valueOf("tall.th1.z0"))) put("z0", link("tall.th1.z0"));
     if (id.startsWith("SidePanel_")) { put("y0", negF); put("y1", md); put("z0", zero); put("z1", ch); }
     if (id.startsWith("SidePanel_L")) { put("x0", zero); put("x1", link("tall.leftT")); }
     if (id.startsWith("SidePanel_R")) { put("x1", link("tall.CW")); put("x0", ex({ CW: ref("tall.CW"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.R) * 1000) / 1000, "CW - right")); }
@@ -671,12 +695,21 @@ export function generateGeneralTall(input: GTParams): GTResult {
     }
   }
 
+  // A drawer right under the fridge: the drawer zone carries the fridge floor (side and rear H,
+  // a front rail under the floor) and the Zi under the drawer is cut back to FRIDGE_BASE_ZI_DEPTH.
+  const fridgeIdx = fridgeZoneItem ? zoneItems.indexOf(fridgeZoneItem) : -1;
+  const baseDrawer = fridgeIdx > 0 && zoneItems[fridgeIdx - 1].zone.type === "drawer" ? zoneItems[fridgeIdx - 1] : null;
+  const fridgeFloor = baseDrawer
+    ? boundaries.find((b) => b.id === `boundary-${fridgeZoneItem!.zone.id}` && b.boundaryType === "full_zi")
+    : undefined;
+  const drawerBase = fridgeFloor ? boundaries.find((b) => b.id === `boundary-${baseDrawer!.zone.id}` && b.boundaryType === "full_zi") : undefined;
+
   /* ---- V1/V2 Zi 槽（full + half 边界都给前立梃） ---- */
   const v12Slots = boundaries
     .filter((b) => b.boundaryType === "full_zi" || b.boundaryType === "half_zi")
     .map((b) => ({ z0: r2(b.centerZ - (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
   const v34Slots = boundaries
-    .filter((b) => b.boundaryType === "full_zi")
+    .filter((b) => b.boundaryType === "full_zi" && b !== drawerBase)
     .map((b) => ({ z0: r2(b.centerZ - (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + R.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
   for (const b of boundaries) {
     if (b.boundaryType !== "full_zi" && b.boundaryType !== "half_zi") continue;
@@ -716,6 +749,13 @@ export function generateGeneralTall(input: GTParams): GTResult {
   boards.push(mkBoard("V4", "Rear Stile Right", "vertical_structure", "V4", CPT, "carcass",
     "YZ", "X", vRightX0, vRightX1, v34Y0, r2(v34Y0 + v34Rear), 0, CH, v34Profile(s, v34Slots, warnings, "V4")));
 
+  // A fridge right under a Style 2 top: the fixed panel fills the fridge opening under TH1, so V5
+  // is a front stile (V1 / V2 depth) that runs up to TH1 and carries the panel's edge.
+  const topFridge = !!fridgeZoneItem && s.topSys.style === "style_2" && zoneItems[zoneItems.length - 1] === fridgeZoneItem;
+  const th1Z0 = s.topSys.style === "style_2"
+    ? dim("tall.th1.z0", { CH: ref("tall.CH"), t: R.STYLE_2_FRONT_SYSTEM_THICKNESS, inset: R.STYLE_2_FRONT_SYSTEM_Z_INSET },
+      (t) => Math.round((t.CH - t.t - t.inset) * 1000) / 1000, { formula: "CH - TH1 thickness - inset" })
+    : NaN;
   if (fridgeZoneItem) {
     const v5OnLeft = s.exteriorSide !== "left";
     let v5x0: number, v5x1: number;
@@ -726,15 +766,16 @@ export function generateGeneralTall(input: GTParams): GTResult {
       v5x1 = r2(s.CW - s.rightT - CPT);
       v5x0 = r2(v5x1 - CPT);
     }
+    const v5Z0 = ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0");
+    const v5Front = topFridge ? link("tall.stileY0") : link("tall.FPT");
+    const v5Rear = topFridge
+      ? link("tall.v12Rear")
+      : ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth");
+    const v5Z1 = topFridge ? link("tall.th1.z0") : ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1");
     boards.push(mkBoard("V5", "V5", "vertical_structure", "V5", CPT, "carcass",
-      "YZ", "X", v5x0, v5x1, sideY0, sideY1, fridgeZoneItem.z0, fridgeZoneItem.z1,
-      yzTrace("V5", [
-        [link("tall.FPT"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
-        [ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
-        [ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1000) / 1000, "FPT + midDepth"), ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1")],
-        [link("tall.FPT"), ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1")],
-        [link("tall.FPT"), ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0")],
-      ])));
+      "YZ", "X", v5x0, v5x1, topFridge ? v12Y0 : sideY0, topFridge ? v12Y1 : sideY1,
+      fridgeZoneItem.z0, topFridge ? th1Z0 : fridgeZoneItem.z1,
+      yzTrace("V5", [[v5Front, v5Z0], [v5Rear, v5Z0], [v5Rear, v5Z1], [v5Front, v5Z1], [v5Front, v5Z0]])));
     warnings.push(
       `Fridge zone ${fridgeZoneItem.zone.id}: V5 on ${v5OnLeft ? "left" : "right"} (exteriorSide=${s.exteriorSide}).`,
     );
@@ -763,7 +804,6 @@ export function generateGeneralTall(input: GTParams): GTResult {
     const t1H = R.STYLE_1_FIRST_RAIL_THICKNESS.value;
     const t2H = R.STYLE_1_SECOND_RAIL_THICKNESS.value;
     if (s.topSys.style === "style_1") {
-      const topBand0 = r2(CH - s.topSys.railH);
       const topRail0 = r2(CH - s.topSys.frontRail);
       boards.push(mkBoard("T1", "Top Front Rail", "top_system", "T1", t1H, "door",
         "XZ", "Y", dx, r2(dx + mw), railY0, t1Rear, topRail0, CH, undefined));
@@ -774,20 +814,26 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same("T2.y0", "tall.t1Rear");
       same("T2.y1", "tall.railRear");
       boards.push(mkBoard("T3", "Top Insert Board", "top_system", "T3", CPT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, insDepth, topBand0, topRail0, insertProfile("T3")));
+        "XY", "Z", dx, r2(dx + mw), 0, insDepth, r2(topRail0 - CPT), topRail0, insertProfile("T3")));
     } else if (s.topSys.style === "style_2") {
       const sysH = s.topSys.frontRail;
       const th = R.STYLE_2_FRONT_SYSTEM_THICKNESS.value;
       const dep = R.STYLE_2_FRONT_SYSTEM_DEPTH.value;
       const inset = R.STYLE_2_FRONT_SYSTEM_Z_INSET.value;
       boards.push(mkBoard("TH1", "Top Style 2 Front System Panel", "top_system", "TH1", th, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, dep, r2(CH - 16), r2(CH - inset), undefined));
-      boards.push(mkBoard("TopStyle2FixedFrontPanel", "Top Style 2 Fixed Front Panel", "top_system", "style2_fixed_front_panel", FPT, "door",
-        "XZ", "Y", r2(dx + s.sideClearance), r2(dx + mw - s.sideClearance), -FPT, 0, r2(CH - sysH), CH, undefined));
+        "XY", "Z", dx, r2(dx + mw), 0, dep, th1Z0, r2(CH - inset), undefined));
+      if (topFridge) {
+        const v5 = boards.find((b) => b.id === "V5")!;
+        const v5Left = v5.x0 < dx + mw / 2;
+        boards.push(mkBoard("TopStyle2FixedFrontPanel", "Top Style 2 Fixed Front Panel", "top_system", "style2_fixed_front_panel", FPT, "door",
+          "XZ", "Y", v5Left ? v5.x1 : vLeftX1, v5Left ? vRightX0 : v5.x0, 0, FPT, r2(CH - sysH), th1Z0, undefined));
+      } else {
+        boards.push(mkBoard("TopStyle2FixedFrontPanel", "Top Style 2 Fixed Front Panel", "top_system", "style2_fixed_front_panel", FPT, "door",
+          "XZ", "Y", r2(dx + s.sideClearance), r2(dx + mw - s.sideClearance), -FPT, 0, r2(CH - sysH), CH, undefined));
+      }
     }
     if (s.botSys.style === "style_1") {
       const botRail1 = r2(s.botSys.frontRail);
-      const botBand1 = r2(s.botSys.railH);
       boards.push(mkBoard("B1", "Bottom Front Rail", "bottom_system", "B1", t1H, "door",
         "XZ", "Y", dx, r2(dx + mw), railY0, t1Rear, 0, botRail1, undefined));
       boards.push(mkBoard("B2", "Bottom Second Rail", "bottom_system", "B2", t2H, "carcass",
@@ -797,7 +843,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same("B2.y0", "tall.t1Rear");
       same("B2.y1", "tall.railRear");
       boards.push(mkBoard("B3", "Bottom Insert Board", "bottom_system", "B3", CPT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, insDepth, botRail1, botBand1, insertProfile("B3")));
+        "XY", "Z", dx, r2(dx + mw), 0, insDepth, botRail1, r2(botRail1 + CPT), insertProfile("B3")));
     } else if (s.botSys.style === "style_2") {
       const sysH = s.botSys.frontRail;
       const th = R.STYLE_2_FRONT_SYSTEM_THICKNESS.value;
@@ -840,6 +886,10 @@ export function generateGeneralTall(input: GTParams): GTResult {
     if (type === "half_zi") {
       y1 = md; // bbox 用 midDepth（轮廓仅前 150，坑②：profile/bbox 双参考）
       prof = halfZiProfile(`Zi_${b.id}`);
+    } else if (b === drawerBase) {
+      type = "shortened_zi";
+      y1 = r2(Math.min(md, R.FRIDGE_BASE_ZI_DEPTH.value));
+      prof = fullZiProfile(`Zi_${b.id}`, y1);
     } else if (hitsAvoid) {
       type = "shortened_zi";
       y1 = avoidShortY;
@@ -873,8 +923,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
     ? boundaries.find((b) => b.id === `boundary-${vdZone.zone.id}` && (b.boundaryType === "full_zi" || b.boundaryType === "shortened_zi"))
     : undefined;
   if (vdShelf) {
-    const above0 = r2(vdShelf.z1 - 1);
-    dim("tall.hMid.z0", { z: vdShelf.z1 }, (t) => Math.round((t.z - 1) * 1000) / 1000, { formula: "divider top - 1" });
+    const above0 = r2(vdShelf.z1);
+    dim("tall.hMid.z0", { z: vdShelf.z1 }, (t) => t.z, { formula: "divider top" });
     dim("tall.hMid.z1", { z0: ref("tall.hMid.z0"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z0 + t.h) * 1000) / 1000, { formula: "z0 + H height" });
     for (const h of hMid) {
       h.z0 = above0; h.z1 = r2(above0 + Hspan);
@@ -892,12 +942,13 @@ export function generateGeneralTall(input: GTParams): GTResult {
     const H = R.H_SUPPORT_HEIGHT.value;
     for (const h of hMid) {
       if (!(h.z0 < zi.z1 && h.z1 > zi.z0)) continue;
+      // Sit on the Zi / hang under it: touching, never inside it.
       if (h.name === "H34_mid") {
-        const nz0 = r2(zi.z1 - 1), nz1 = r2(zi.z1 - 1 + H);
+        const nz0 = r2(zi.z1), nz1 = r2(zi.z1 + H);
         if (nz1 > CH) { hZiConflicts.push(`${h.name} movement above Zi would exceed cabinet bounds; movement skipped.`); continue; }
         h.z0 = nz0; h.z1 = nz1;
       } else {
-        const nz1 = r2(zi.z0 - 1), nz0 = r2(zi.z0 - 1 - H);
+        const nz1 = r2(zi.z0), nz0 = r2(zi.z0 - H);
         if (nz0 < 0) { hZiConflicts.push(`${h.name} movement below Zi would exceed cabinet bounds; movement skipped.`); continue; }
         h.z0 = nz0; h.z1 = nz1;
       }
@@ -931,7 +982,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
       let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
       let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
       const v5 = boards.find((board) => board.id === "V5");
-      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - R.H34_DEPTH.value) {
         if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
         else x1 = r2(Math.min(x1, v5.x0));
       }
@@ -972,7 +1023,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
         let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
         let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
         const v5 = boards.find((board) => board.id === "V5");
-        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - R.H34_DEPTH.value) {
           if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
           else x1 = r2(Math.min(x1, v5.x0));
         }
@@ -981,6 +1032,35 @@ export function generateGeneralTall(input: GTParams): GTResult {
           r2(md - R.H34_DEPTH.value), md, h.z0, h.z1, undefined));
       }
     }
+  }
+
+  /* ---- 冰箱底座：冰箱正下方是抽屉时，由抽屉区的左右 H、后 H34 和前撑条托住冰箱底板 ---- */
+  if (baseDrawer && fridgeFloor) {
+    const z0 = dim("tall.fridgeBase.z0", { z: baseDrawer.z0 }, (t) => t.z, { formula: "drawer zone bottom" });
+    const zTop = evalExpr(link(`tall.slot.${fridgeFloor.id}.z0`));
+    const floor = dim("tall.fridgeFloor.z0", { z: fridgeFloor.z0 }, (t) => t.z, { formula: "fridge floor underside" });
+    const h34z0 = dim("tall.fridgeBase.h34z0", { z: ref("tall.fridgeFloor.z0"), h: R.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z - t.h) * 1000) / 1000, { formula: "fridge floor - H height" });
+    const railZ0 = dim("tall.fridgeBase.railZ0", { z: ref("tall.fridgeFloor.z0"), CPT: ref("tall.CPT") }, (t) => Math.round((t.z - t.CPT) * 1000) / 1000, { formula: "fridge floor - CPT" });
+    const railY1 = dim("tall.fridgeBase.railY1", { d: R.FRIDGE_BASE_RAIL_DEPTH }, (t) => t.d, { formula: "FRIDGE_BASE_RAIL_DEPTH" });
+    boards.push(mkBoard("H13_fridgeBase", "H13 fridge base", "h_support", "H13_fridgeBase", s.hT, "carcass",
+      "YZ", "X", dx, r2(dx + R.H_SUPPORT_THICKNESS.value), hY0, hY1, z0, zTop, undefined));
+    boards.push(mkBoard("H24_fridgeBase", "H24 fridge base", "h_support", "H24_fridgeBase", s.hT, "carcass",
+      "YZ", "X", r2(dx + mw - R.H_SUPPORT_THICKNESS.value), r2(dx + mw), hY0, hY1, z0, zTop, undefined));
+    boards.push(mkBoard("H34_fridgeBase", "H34 fridge base", "h_support", "H34_fridgeBase", s.hT, "carcass",
+      "XZ", "Y", r2(dx + R.H_SUPPORT_THICKNESS.value), r2(dx + mw - R.H_SUPPORT_THICKNESS.value), r2(md - R.H34_DEPTH.value), md, h34z0, floor, undefined));
+    boards.push(mkBoard("FridgeBaseRail", "Fridge Base Front Rail", "h_support", "fridge_base_rail", CPT, "carcass",
+      "XY", "Z", vLeftX1, vRightX0, 0, railY1, railZ0, floor, undefined));
+    for (const id of ["H13_fridgeBase", "H24_fridgeBase"]) {
+      same(`${id}.y0`, "tall.hY0");
+      same(`${id}.y1`, "tall.hY1");
+      same(`${id}.z0`, "tall.fridgeBase.z0");
+      same(`${id}.z1`, `tall.slot.${fridgeFloor.id}.z0`);
+    }
+    same("H34_fridgeBase.z0", "tall.fridgeBase.h34z0");
+    same("H34_fridgeBase.z1", "tall.fridgeFloor.z0");
+    same("FridgeBaseRail.z0", "tall.fridgeBase.railZ0");
+    same("FridgeBaseRail.z1", "tall.fridgeFloor.z0");
+    same("FridgeBaseRail.y1", "tall.fridgeBase.railY1");
   }
 
   /* ---- blank_panel 区 H12 支撑 ---- */
@@ -1147,6 +1227,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
       } else {
         z1 = r2(zi.z1 - s.fc / 2);
       }
+      if (zi === baseDrawer && fridgeFloor) z1 = r2(fridgeFloor.z0 - R.FRIDGE_BASE_DRAWER_FRONT_GAP.value);
       const x0 = r2(s.leftT + s.fc), x1 = r2(s.CW - s.rightT - s.fc);
       if (zt === "double_door") {
         const mid = r2((x0 + x1) / 2);
@@ -1165,7 +1246,16 @@ export function generateGeneralTall(input: GTParams): GTResult {
     const cupDepth = asNum(hs.cupDepth, R.HINGE_CUP_DEPTH.value);
     const fromEdge = asNum(hs.cupCenterFromEdge, R.HINGE_CUP_FROM_EDGE.value);
     const zt = fp.zone.zone.type;
-    if (zt !== "drawer") {
+    if (zt === "top_flap" || zt === "bottom_flap") {
+      // Flaps hinge on their top / bottom edge: two cups along it, FLAP_HINGE_FROM_SIDE in from each side.
+      const custom = hs.sideDistance && hs.sideDistance !== "auto" && Number.isFinite(Number(hs.sideDistance));
+      const fromSide = custom ? Number(hs.sideDistance) : R.FLAP_HINGE_FROM_SIDE.value;
+      const cz = zt === "bottom_flap" ? r2(fp.z0 + fromEdge) : r2(fp.z1 - fromEdge);
+      const depth = asNum(hs.cupDepth, R.FLAP_HINGE_CUP_DEPTH.value);
+      [r2(fp.x0 + fromSide), r2(fp.x1 - fromSide)].forEach((cx, i) => {
+        hinges.push({ id: `${fp.id}_hinge_${i + 1}`, panelId: fp.id, centerX: cx, centerZ: cz, diameter: cupD, depth });
+      });
+    } else if (zt !== "drawer") {
       const h = r2(fp.z1 - fp.z0);
       let sd: number;
       if (hs.sideDistance && hs.sideDistance !== "auto" && Number.isFinite(Number(hs.sideDistance))) {
@@ -1191,8 +1281,24 @@ export function generateGeneralTall(input: GTParams): GTResult {
       let mountingFace: "top" | "bottom" | "side" = "bottom";
       let mountingBoardId: string | undefined;
       const lp = zt2.lockPosition;
-      if (lp === "top") { cz = r2(fp.z1 - R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value); mountingFace = "top"; }
-      else if (lp === "bottom") { cz = r2(fp.z0 + R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value); mountingFace = "bottom"; }
+      // Top / bottom locks are measured from the board the bolt catches: the Zi above / below the zone
+      // (the front rail under the fridge floor for a drawer right under the fridge); else the front's own edge.
+      const zIdx = zoneItems.indexOf(fp.zone);
+      const nextZone = zoneItems[zIdx + 1];
+      const zoneAbove = nextZone ? boundaries.find((b) => b.id === `boundary-${nextZone.zone.id}` && b.boundaryType !== "none") : undefined;
+      const zoneBelow = boundaries.find((b) => b.id === `boundary-${fp.zone.zone.id}` && b.boundaryType !== "none");
+      if (lp === "top") {
+        const underRail = fp.zone === baseDrawer && fridgeFloor;
+        const mount = underRail ? r2(fridgeFloor!.z0 - CPT) : zoneAbove ? zoneAbove.z0 : fp.z1;
+        cz = r2(mount - R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
+        mountingFace = "top";
+        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : undefined;
+      } else if (lp === "bottom") {
+        const mount = zoneBelow ? zoneBelow.z1 : fp.z0;
+        cz = r2(mount + R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
+        mountingFace = "bottom";
+        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : undefined;
+      }
       else if (lp === "side") {
         mountingFace = "side";
         mountingBoardId = `VD_${fp.zone.zone.id}`;
@@ -1259,7 +1365,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
   /* ---- 组装 ---- */
   stampTallBoards(s, boards);
   attachFaces(boards);
-  const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
+  const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input), ledGroove: input.ledGroove === true,
+    fridgeZ: fridgeZoneItem ? [fridgeZoneItem.z0, fridgeZoneItem.z1] : null });
   // Fronts (doors, fixed fronts, T1 / B1) horizontal; colour side panels vertical.
   const grain = applyGrain(
     boards,

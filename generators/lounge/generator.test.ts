@@ -23,6 +23,7 @@ function place(id: string) {
 
 const r = generateLounge({
   style: "L_SHAPE",
+  construction: "classic",
   height: 420,
   partitionPanelThickness: 18,
   mainWidth: 2000,
@@ -196,7 +197,7 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.ok(prof.some((p) => p.y === 582 && p.z === 250), "I side cutout top at wall");
 
   const lw = generateLounge({
-    style: "L_SHAPE", height: 420, mainWidth: 2000, mainDepth: 600, lWidth: 1600, lDepth: 800,
+    style: "L_SHAPE", construction: "classic", height: 420, mainWidth: 2000, mainDepth: 600, lWidth: 1600, lDepth: 800,
     wheelAvoidanceEnabled: true, avoidanceDepth: 300, avoidanceHeight: 250,
   });
   const lTop = lw.boards.find((x) => x.id === "l_avoidance_top")!;
@@ -221,6 +222,101 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.equal(pw.hinges.length, 4);
   assert.equal(pw.locks.length, 2);
   assert.equal(pw.grooves.length, 2);
+}
+
+/* ---------- 框架式 L（默认）：21 Bunk 新卡座，拐角段 960、盖缝 2 ---------- */
+{
+  const f = generateLounge({ style: "L_SHAPE", height: 420, partitionPanelThickness: 18, mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 560, lPosition: "RIGHT" });
+  const fb = (id: string) => { const x = f.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
+  const fp = (id: string) => { const x = fb(id); const q = (v: number) => Math.round(v * 100) / 100; return { x0: q(x.x0), x1: q(x.x1), y0: q(x.y0), y1: q(x.y1), z0: q(x.z0), z1: q(x.z1) }; };
+  assert.deepEqual(f.validation.errors, []);
+  assert.equal(f.params.construction, "frame");
+  assert.equal(f.boards.length, 14);
+  assert.ok(f.boards.every((x) => x.stock?.kind === "partition" && x.materialThickness === 18), "all 18 mm partition stock");
+  assert.deepEqual(f.openings, []);
+  assert.deepEqual(f.footprint.main, { x0: 0, x1: 1527, y0: 400, y1: 960 });
+  assert.deepEqual(f.footprint.l, { x0: 1527, x1: 2087, y0: 0, y1: 960 });
+  // Outer shell, full height.
+  assert.deepEqual(fp("main_front"), { x0: 0, x1: 1527, y0: 400, y1: 418, z0: 0, z1: 420 });
+  assert.deepEqual(fp("main_end"), { x0: 0, x1: 18, y0: 418, y1: 960, z0: 0, z1: 420 });
+  assert.deepEqual(fp("l_side"), { x0: 1527, x1: 1545, y0: 0, y1: 960, z0: 0, z1: 420 });
+  assert.deepEqual(fp("l_outer_side"), { x0: 2069, x1: 2087, y0: 0, y1: 960, z0: 0, z1: 420 });
+  assert.deepEqual(fp("l_front"), { x0: 1545, x1: 2069, y0: 0, y1: 18, z0: 0, z1: 420 });
+  // Rear rail 1 off the wall, 118 high; main inner frame; wing supports.
+  assert.deepEqual(fp("back_rail"), { x0: 0, x1: 2087, y0: 941, y1: 959, z0: 302, z1: 420 });
+  assert.deepEqual(fp("main_end_support"), { x0: 18, x1: 36, y0: 418, y1: 941, z0: 0, z1: 402 });
+  assert.deepEqual(fp("main_rail_back"), { x0: 18, x1: 1527, y0: 922, y1: 940, z0: 302, z1: 402 });
+  assert.deepEqual(fp("main_rail_front"), { x0: 18, x1: 1527, y0: 419, y1: 437, z0: 302, z1: 402 });
+  assert.deepEqual(fp("l_support_inner"), { x0: 1545, x1: 1563, y0: 18, y1: 941, z0: 0, z1: 402 });
+  assert.deepEqual(fp("l_support_outer"), { x0: 2051, x1: 2069, y0: 18, y1: 941, z0: 0, z1: 402 });
+  // Lids: the whole top, 2 clear all round, flush at 420, Ø50 finger hole in the middle.
+  assert.deepEqual(fp("main_lid"), { x0: 20, x1: 1525, y0: 420, y1: 939, z0: 402, z1: 420 });
+  assert.deepEqual(fp("l_lid"), { x0: 1547, x1: 2067, y0: 20, y1: 939, z0: 402, z1: 420 });
+  assert.deepEqual(f.lids.map((l) => [l.id, l.width, l.depth, l.holeDiameter]), [["main_lid", 1505, 519, 50], ["l_lid", 520, 919, 50]]);
+  // Halving slots: rail notches 20 up from its bottom, panel slots from 317 to the top, 19 wide.
+  const pts = (id: string) => (fb(id).profileVector as Array<Record<string, number>>).map((p) => `${p.y ?? p.x},${p.z}`);
+  assert.ok(pts("main_end").includes("941,317") && pts("main_end").includes("941,420"), "main_end slot at the wall");
+  assert.ok(pts("back_rail").includes("19,322") && pts("back_rail").includes("1526.5,302") && pts("back_rail").includes("1545.5,322"), "rear rail notches");
+  assert.ok(pts("main_end_support").includes("922,317") && pts("main_end_support").includes("437,402"), "support slots for both rails");
+  // Edge bands, carcass colour: seat ring tops, the wing sides' room ends, lids all round, rail edges facing into the storage.
+  const bands = (id: string) => fb(id).faces!.filter((q) => q.id.startsWith("E") && q.finish?.edgeBand).map((q) => q.normal).sort();
+  for (const id of ["main_front", "l_front", "main_end"]) assert.deepEqual(bands(id), ["+Z"], id);
+  for (const id of ["l_side", "l_outer_side"]) assert.deepEqual(bands(id), ["+Z", "-Y"], id);
+  assert.deepEqual(bands("back_rail"), ["+Z", "-Z", "-Z"]);
+  for (const id of ["main_rail_back", "main_rail_front"]) assert.deepEqual(bands(id), ["-Z"], id);
+  for (const id of ["main_lid", "l_lid"]) assert.equal(bands(id).length, 4, id);
+  for (const id of ["main_end_support", "main_l_support", "l_support_inner", "l_support_outer"]) assert.deepEqual(bands(id), [], id);
+  assert.ok(f.boards.every((q) => (q.faces ?? []).every((e) => !e.finish?.edgeBand || e.finish.edgeBand.colour === "White Stipple")));
+  assert.ok(f.joints.some((j) => j.id === "lg_rear_rail_l_side"));
+  assert.ok(f.joints.some((j) => j.id === "lg_main_lid_on_rail"));
+  // Mirrored, and the wing minimum.
+  const left = generateLounge({ style: "L_SHAPE", mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 560, lPosition: "LEFT" });
+  assert.deepEqual(left.footprint.l, { x0: 0, x1: 560, y0: 0, y1: 960 });
+  assert.equal(left.boards.find((q) => q.id === "main_end")!.x0, 2069);
+  assert.ok(generateLounge({ style: "L_SHAPE", mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 280 }).validation.errors.some((e) => e.includes("at least 300")));
+}
+
+/* ---------- 框架 L 端抽屉：固定条 100 + 板厚，抽屉面四周 2 缝，横条舌头进托板 ---------- */
+{
+  const f = generateLounge({ style: "L_SHAPE", height: 420, partitionPanelThickness: 18, frontPanelThickness: 16, mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 560, lPosition: "RIGHT", lFrontAccess: "DRAWER" });
+  const fb = (id: string) => { const x = f.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
+  const fp = (id: string) => { const x = fb(id); const q = (v: number) => Math.round(v * 100) / 100; return { x0: q(x.x0), x1: q(x.x1), y0: q(x.y0), y1: q(x.y1), z0: q(x.z0), z1: q(x.z1) }; };
+  assert.deepEqual(f.validation.errors, []);
+  assert.deepEqual(f.validation.warnings, []);
+  assert.equal(f.params.lFrontAccess, "DRAWER");
+  assert.ok(!f.boards.some((q) => q.id === "l_front"), "the seat front gives way to the drawer");
+  assert.equal(f.boards.length, 16);
+  assert.deepEqual(fp("l_drawer_strip"), { x0: 1545, x1: 2069, y0: 0, y1: 16, z0: 302, z1: 420 });
+  assert.deepEqual(fp("l_drawer_front"), { x0: 1547, x1: 2067, y0: 0, y1: 16, z0: 2, z1: 300 });
+  for (const id of ["l_drawer_strip", "l_drawer_front"]) assert.equal(fb(id).stock?.kind, "door", id);
+  assert.deepEqual(fp("l_drawer_rail"), { x0: 1554.5, x1: 2059.5, y0: 16, y1: 116, z0: 302, z1: 320 });
+  assert.deepEqual(fp("l_support_inner"), { x0: 1545, x1: 1563, y0: 16, y1: 941, z0: 0, z1: 402 });
+  assert.deepEqual(fp("l_lid"), { x0: 1547, x1: 2067, y0: 18, y1: 939, z0: 402, z1: 420 });
+  // Lock 55 × 15.5, top edge 22.75 under the drawer front's top, centred.
+  const lock = f.locks.find((l) => l.id === "l_drawer_front_lock")!;
+  assert.deepEqual([lock.centerX, lock.centerZ + lock.height / 2, lock.width, lock.height], [1807, 300 - 22.75, 55, 15.5]);
+  // Rail tongues 8.5 over its rear 70; pockets 9 deep, 5 longer each end, 1 taller, on the drawer side of each support.
+  const rail = (fb("l_drawer_rail").profileVector as Array<{ x: number; y: number }>).map((p) => `${p.x},${p.y}`);
+  assert.ok(rail.includes("1554.5,116") && rail.includes("1554.5,46") && rail.includes("1563,46") && rail.includes("1563,16"), "rail tongue");
+  const pocket = (id: string) => fb(id).faces!.flatMap((q) => q.features.filter((x) => x.for === "l_drawer_rail").map((x) => [q.id, x.u0, x.u1, x.v0, x.v1, x.depth]));
+  assert.deepEqual(pocket("l_support_inner"), [["A", 25, 105, 301.5, 320.5, 9]]);
+  assert.deepEqual(pocket("l_support_outer"), [["B", 25, 105, 301.5, 320.5, 9]]);
+  // Bands: door colour all round the front and strip; rail rear edge and support fronts in the carcass colour.
+  const bands = (id: string) => fb(id).faces!.filter((q) => q.id.startsWith("E") && q.finish?.edgeBand).map((q) => `${q.normal}:${q.finish!.edgeBand!.colour}`).sort();
+  for (const id of ["l_drawer_strip", "l_drawer_front"]) assert.deepEqual(bands(id), ["+X:Gloss White", "+Z:Gloss White", "-X:Gloss White", "-Z:Gloss White"], id);
+  assert.deepEqual(bands("l_drawer_rail"), ["+Y:White Stipple"]);
+  for (const id of ["l_side", "l_outer_side"]) assert.deepEqual(bands(id), ["+Z:White Stipple", "-Y:Gloss White"], id);
+  for (const id of ["l_support_inner", "l_support_outer"]) assert.deepEqual(bands(id), ["-Y:White Stipple"], id);
+  for (const id of ["lg_l_strip_on_rail", "lg_l_drawer_rail_inner", "lg_l_drawer_rail_outer"]) assert.ok(f.joints.some((j) => j.id === id), id);
+  // Mirrored: pockets swap faces.
+  const left = generateLounge({ style: "L_SHAPE", mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 560, lPosition: "LEFT", lFrontAccess: "DRAWER" });
+  assert.deepEqual(left.validation.errors, []);
+  assert.equal(left.boards.find((q) => q.id === "l_drawer_front")!.x0, 20);
+  assert.ok(left.boards.find((q) => q.id === "l_support_inner")!.faces!.find((q) => q.id === "B")!.features.some((x) => x.for === "l_drawer_rail"));
+  // Too low for a drawer front under the strip; classic ignores it with a warning.
+  assert.ok(generateLounge({ style: "L_SHAPE", height: 160, mainWidth: 2087, mainDepth: 560, lWidth: 960, lDepth: 560, lFrontAccess: "DRAWER" }).validation.errors.some((e) => e.startsWith("L drawer:") || e.includes("too low")));
+  const classic = generateLounge({ style: "L_SHAPE", construction: "classic", lFrontAccess: "DRAWER" });
+  assert.ok(classic.validation.warnings.some((w) => w.includes("only built as a drawer on the frame L")));
 }
 
 {

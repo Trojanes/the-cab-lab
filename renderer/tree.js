@@ -216,7 +216,22 @@ export function render() {
     for (const cab of j.cabinets) rows.push(...cabinetRows(cab, selectedId, sub));
     for (const w of job.getWalls()) {
       const doors = (w.openings || []).length;
-      rows.push(row({ depth: 1, kind: "wall", label: "Partition", sub: `${w.id}${doors ? ` · ${doors} door${doors > 1 ? "s" : ""}` : ""}`, selected: selectedId === w.id, onpick: () => job.select(w.id) }));
+      const shown = !w.hidden;
+      rows.push(row({
+        depth: 1, kind: "wall", label: "Partition",
+        sub: `${w.id}${doors ? ` · ${doors} door${doors > 1 ? "s" : ""}` : ""}`,
+        selected: selectedId === w.id,
+        hidden: !shown,
+        eye: eyeButton(shown, () => job.toggleWallVisible(w.id)),
+        onpick: () => job.select(w.id),
+        oncontextmenu: (e) => {
+          e.preventDefault();
+          showContextMenu(e.clientX, e.clientY, [
+            { title: w.id },
+            { label: shown ? "Hide" : "Show", run: () => job.toggleWallVisible(w.id) },
+          ]);
+        },
+      }));
     }
     for (const p of job.getPlanes()) {
       rows.push(row({ depth: 1, kind: "plane", label: "Plane", sub: `${p.id} · ${p.axis.toUpperCase()} = ${Math.round(p.value)}`, selected: selectedId === p.id, onpick: () => job.select(p.id) }));

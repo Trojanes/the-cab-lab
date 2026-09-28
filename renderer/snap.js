@@ -3,13 +3,13 @@
 // floor and the roof (world space, coincident points merged).
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
-import { activeCamera, canvas, closestTOnLine, rayFromClient } from "./space.js";
+import { activeCamera, canvasClientRect, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
 import { cabinetFootprints, envelopeFootprint } from "./cabinets3d.js";
 import { partitionClearance } from "./materials.js";
 import { localAxes } from "./pose.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
-import { wallSolid, wallParts, wallBoxes } from "./walls.js";
+import { wallSolid, wallParts, wallBoxes, settleClearanceZ } from "./walls.js";
 
 export const SNAP_RADIUS_PX = 14;
 
@@ -19,7 +19,7 @@ onChange(() => { points = null; planes = null; });
 
 /** Pixel thresholds scale a little with the viewport so a 4K window feels like a laptop. */
 export function uiScale() {
-  const h = canvas.getBoundingClientRect().height || 760;
+  const h = canvasClientRect().height || 760;
   return Math.min(1.5, Math.max(0.8, h / 760));
 }
 
@@ -49,6 +49,14 @@ function build() {
     for (const d of dirs) {
       if (!p.dirs.some((e) => Math.abs(e[0] - d[0]) < 1e-6 && Math.abs(e[1] - d[1]) < 1e-6 && Math.abs(e[2] - d[2]) < 1e-6)) p.dirs.push(d);
     }
+    return p;
+  };
+  // A click on the board's short corner (clearance off the floor or the roof)
+  // resolves to that floor / roof point. It is not stored as its own point.
+  const grab = (p, x, y, z) => {
+    if (!p || Math.abs(p.z - z) < 0.5) return;
+    if (!p.grab) p.grab = [];
+    if (!p.grab.some((g) => Math.abs(g.x - x) < 1e-6 && Math.abs(g.y - y) < 1e-6 && Math.abs(g.z - z) < 1e-6)) p.grab.push({ x, y, z });
   };
 
   const sp = getSpace();
@@ -99,25 +107,32 @@ function build() {
     }
   }
   // Partition corners where the board, extended, meets the floor and the roof.
-  // The board itself stops short (floor / ceiling clearance); those intersections
-  // are still feature points, so a rectangle can start on the floor.
+  // The board itself stops short (floor / ceiling clearance). Those short
+  // corners are not points of their own: a click there is the floor or the roof,
+  // so a ceiling-hung box can start there and be pulled down.
   const partClear = partitionClearance(getStock());
+  const lifted = (x, y, z) => settleClearanceZ(z, x, y, sp, partClear);
   for (const w of getWalls()) {
     const s = wallSolid(w, sp, getStock());
     for (const x of [s.x0, s.x1]) for (const y of [s.y0, s.y1]) {
-      add(x, y, 0, w.id, AXIS_DIRS);
+      const floorPt = add(x, y, 0, w.id, AXIS_DIRS);
+      if (s.z0 > 0.5) grab(floorPt, x, y, s.z0);
       const boardTop = s.topZ(s.along === "x" ? x : y);
       const roofZ = boardTop + partClear.ceiling;
-      if (Number.isFinite(roofZ)) add(x, y, roofZ, w.id, AXIS_DIRS);
+      if (Number.isFinite(roofZ)) {
+        const roofPt = add(x, y, roofZ, w.id, AXIS_DIRS);
+        if (partClear.ceiling > 0.5 && Number.isFinite(boardTop)) grab(roofPt, x, y, boardTop);
+      }
     }
     for (const o of s.openings) {
       for (const u of [o.u0, o.u1]) for (const v of (s.along === "x" ? [s.y0, s.y1] : [s.x0, s.x1])) for (const z of [o.zBottom, o.zTop]) {
-        if (s.along === "x") add(u, v, z, w.id, AXIS_DIRS); else add(v, u, z, w.id, AXIS_DIRS);
+        if (s.along === "x") add(u, v, lifted(u, v, z), w.id, AXIS_DIRS);
+        else add(v, u, lifted(v, u, z), w.id, AXIS_DIRS);
       }
     }
     // Sliding doors: the corners of the leaf and the pelmet (boards beside the wall).
     for (const p of wallParts(s, sp, getStock(), wallBoxes(getWalls().filter((o) => o.id !== w.id), sp, getStock()))) {
-      for (const x of [p.x0, p.x1]) for (const y of [p.y0, p.y1]) for (const z of [p.z0, p.z1]) add(x, y, z, w.id, AXIS_DIRS);
+      for (const x of [p.x0, p.x1]) for (const y of [p.y0, p.y1]) for (const z of [p.z0, p.z1]) add(x, y, lifted(x, y, z), w.id, AXIS_DIRS);
     }
   }
   return Array.from(map.values());
@@ -192,7 +207,6 @@ function buildPlanes() {
     face("x", s.x1, +1, w.id, `${w.id} +X face`, ext);
     face("y", s.y0, -1, w.id, `${w.id} −Y face`, ext);
     face("y", s.y1, +1, w.id, `${w.id} +Y face`, ext);
-    if (w.axis === "y") face("z", s.zTopMin, +1, w.id, `${w.id} top`, ext);
   }
   return out;
 }
@@ -438,7 +452,7 @@ export function describePoint(p, exclude = null) {
 const v = new THREE.Vector3();
 export function toClient(x, y, z) {
   v.set(x, y, z).project(activeCamera());
-  const r = canvas.getBoundingClientRect();
+  const r = canvasClientRect();
   return { x: r.left + ((v.x + 1) / 2) * r.width, y: r.top + ((1 - v.y) / 2) * r.height, behind: v.z > 1 };
 }
 
@@ -496,12 +510,15 @@ export function nearestSnap(clientX, clientY, { exclude = null, maxPx = SNAP_RAD
   for (const p of snapPoints()) {
     if (exclude && p.sources.every((s) => s === exclude)) continue;
     if (filter && !filter(p)) continue;
-    const c = toClient(p.x, p.y, p.z);
-    if (c.behind) continue;
-    const d = Math.hypot(c.x - clientX, c.y - clientY);
-    if (d < bestD) {
-      bestD = d;
-      best = p;
+    const spots = p.grab ? [p, ...p.grab] : [p];
+    for (const h of spots) {
+      const c = toClient(h.x, h.y, h.z);
+      if (c.behind) continue;
+      const d = Math.hypot(c.x - clientX, c.y - clientY);
+      if (d < bestD) {
+        bestD = d;
+        best = p;
+      }
     }
   }
   return best;

@@ -9,7 +9,7 @@
 // boards are rebuilt from it. Door holes stay CNC cutouts.
 //
 // Record in job.walls (axis-aligned, floor to roof):
-//   { id, axis, at, u0, u1, side }
+//   { id, axis, at, u0, u1, side, hidden? }
 //   axis   the wall's normal: "y" for a wall parallel to the back wall (it runs
 //          along X), "x" for one running along Y
 //   at     the reference face — the face the offset was measured to when the
@@ -103,6 +103,7 @@ export function normalizeWall(raw) {
   if (u1 - u0 < 1) return null;
   const openings = (Array.isArray(raw.openings) ? raw.openings : []).map(normalizeOpening).filter(Boolean);
   const wall = { id: String(raw.id || ""), axis: raw.axis, at, u0, u1, side: Number(raw.side) < 0 ? -1 : 1, openings };
+  if (raw.hidden === true) wall.hidden = true;
   const splitAt = raw.split && Number(raw.split.at);
   if (raw.split && (raw.split.axis === "u" || raw.split.axis === "z") && Number.isFinite(splitAt)) {
     wall.split = { axis: raw.split.axis, at: Math.round(splitAt * 10) / 10 };
@@ -120,6 +121,23 @@ export function normalizeWall(raw) {
 
 export function wallLength(wall) {
   return wall.u1 - wall.u0;
+}
+
+/**
+ * Height used for a snap on a partition. The board stops short of the floor and
+ * the roof by the clearance; that short corner is not a second point. A point
+ * on the board's bottom becomes the floor, a point on the board's top becomes
+ * the roof. Anything else is unchanged.
+ */
+export function settleClearanceZ(z, x, y, resolved, clearance) {
+  const floorC = clearance && clearance.floor > 0.5 ? clearance.floor : 0;
+  const ceilC = clearance && clearance.ceiling > 0.5 ? clearance.ceiling : 0;
+  if (floorC && Math.abs(z - floorC) <= 0.5) return 0;
+  if (resolved && ceilC) {
+    const roof = clearHeightAt(resolved, x, y);
+    if (Number.isFinite(roof) && Math.abs(z - (roof - ceilC)) <= 0.5) return roof;
+  }
+  return z;
 }
 
 /** Absolute span of an opening along the wall: { u0, u1 } (from the end it was measured from). */

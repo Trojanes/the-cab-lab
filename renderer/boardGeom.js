@@ -106,25 +106,148 @@ function insideOutline(poly, U, V, u, v) {
   return inside;
 }
 
+function planeOf(b) {
+  return AXES_OF[b.profilePlane] || AXES_OF.XY;
+}
+
+function toUv(b, points) {
+  const [U, V] = planeOf(b);
+  return points.map((p) => [p[U], p[V]]);
+}
+
+function fromUv(b, uv) {
+  return uv.map(([u, v]) => (b.profilePlane === "XY" ? { x: u, y: v } : b.profilePlane === "XZ" ? { x: u, z: v } : { y: u, z: v }));
+}
+
+function polyArea(poly) {
+  let s = 0;
+  for (let i = 0; i < poly.length; i += 1) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    s += a[0] * c[1] - c[0] * a[1];
+  }
+  return s / 2;
+}
+
+function dedupePoly(poly) {
+  const out = [];
+  for (const p of poly) {
+    const prev = out[out.length - 1];
+    if (prev && Math.abs(prev[0] - p[0]) < 1e-4 && Math.abs(prev[1] - p[1]) < 1e-4) continue;
+    out.push(p);
+  }
+  if (out.length > 2) {
+    const a = out[0], c = out[out.length - 1];
+    if (Math.abs(a[0] - c[0]) < 1e-4 && Math.abs(a[1] - c[1]) < 1e-4) out.pop();
+  }
+  return out;
+}
+
+function clipPoly(poly, inside, cross) {
+  if (!poly || poly.length < 3) return [];
+  const out = [];
+  for (let i = 0; i < poly.length; i += 1) {
+    const a = poly[i], c = poly[(i + 1) % poly.length];
+    const ain = inside(a), cin = inside(c);
+    if (ain && cin) out.push(c);
+    else if (ain && !cin) out.push(cross(a, c));
+    else if (!ain && cin) { out.push(cross(a, c)); out.push(c); }
+  }
+  return dedupePoly(out);
+}
+
+function clipVertical(poly, x, keepLeft) {
+  const inside = (p) => (keepLeft ? p[0] <= x + 1e-6 : p[0] >= x - 1e-6);
+  const cross = (a, c) => {
+    const dx = c[0] - a[0];
+    const t = Math.abs(dx) < 1e-9 ? 0 : (x - a[0]) / dx;
+    const u = Math.min(1, Math.max(0, t));
+    return [a[0] + (c[0] - a[0]) * u, a[1] + (c[1] - a[1]) * u];
+  };
+  return clipPoly(poly, inside, cross);
+}
+
+function clipHorizontal(poly, y, keepBelow) {
+  const inside = (p) => (keepBelow ? p[1] <= y + 1e-6 : p[1] >= y - 1e-6);
+  const cross = (a, c) => {
+    const dy = c[1] - a[1];
+    const t = Math.abs(dy) < 1e-9 ? 0 : (y - a[1]) / dy;
+    const u = Math.min(1, Math.max(0, t));
+    return [a[0] + (c[0] - a[0]) * u, a[1] + (c[1] - a[1]) * u];
+  };
+  return clipPoly(poly, inside, cross);
+}
+
+/** Polygon minus an axis-aligned rectangle. Pieces may share the cut edge. */
+function subtractRect(poly, r) {
+  const left = clipVertical(poly, r.u0, true);
+  const right = clipVertical(poly, r.u1, false);
+  const mid = clipVertical(clipVertical(poly, r.u0, false), r.u1, true);
+  const below = clipHorizontal(mid, r.v0, true);
+  const above = clipHorizontal(mid, r.v1, false);
+  return [left, right, below, above].filter((p) => p.length >= 3 && Math.abs(polyArea(p)) > 0.5);
+}
+
+function pointInPoly(poly, u, v) {
+  let inside = false;
+  for (let i = 0, j = poly.length - 1; i < poly.length; j = i, i += 1) {
+    const ui = poly[i][0], vi = poly[i][1], uj = poly[j][0], vj = poly[j][1];
+    if ((vi > v) !== (vj > v) && u < ((uj - ui) * (v - vi)) / ((vj - vi) || 1e-9) + ui) inside = !inside;
+  }
+  return inside;
+}
+
+/**
+ * LED channels that run out to a board edge. The rectangle is extended past
+ * that edge so the pocket is a notch, not a closed hole with a skin at the end.
+ */
+function ledBreakouts(b, faceId) {
+  const face = (b.faces || []).find((f) => f.id === faceId);
+  if (!face) return [];
+  const [U, V] = planeOf(b);
+  const U0 = b[`${U}0`], U1 = b[`${U}1`], V0 = b[`${V}0`], V1 = b[`${V}1`];
+  const past = 2;
+  const rects = [];
+  for (const ft of face.features || []) {
+    if (ft.for !== "led" || (ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
+    if (!Number.isFinite(ft.u0) || !Number.isFinite(ft.v0) || !(ft.depth > 0.2)) continue;
+    let u0 = U0 + Math.min(ft.u0, ft.u1);
+    let u1 = U0 + Math.max(ft.u0, ft.u1);
+    let v0 = V0 + Math.min(ft.v0, ft.v1);
+    let v1 = V0 + Math.max(ft.v0, ft.v1);
+    const touchU0 = u0 <= U0 + 0.3, touchU1 = u1 >= U1 - 0.3, touchV0 = v0 <= V0 + 0.3, touchV1 = v1 >= V1 - 0.3;
+    if (!touchU0 && !touchU1 && !touchV0 && !touchV1) continue;
+    if (touchU0) u0 = U0 - past;
+    if (touchU1) u1 = U1 + past;
+    if (touchV0) v0 = V0 - past;
+    if (touchV1) v1 = V1 + past;
+    rects.push({ u0, u1, v0, v1, depth: ft.depth });
+  }
+  return rects;
+}
+
 /**
  * Grooves / T-grooves on one big face, as closed loops in the cabinet frame.
  * `outline` (when the board has one) drops any loop that would leave the board —
  * a pocket cannot open into a notch; the groove marks still show it.
+ * An LED channel that runs out to an edge is not here: `ledBreakouts` cuts it
+ * out of the outline so the end is open.
  */
 function grooveLoops(b, faceId, outline = null) {
   const face = (b.faces || []).find((f) => f.id === faceId);
   if (!face) return [];
-  const [U, V] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const [U, V] = planeOf(b);
   const U0 = b[`${U}0`], U1 = b[`${U}1`], V0 = b[`${V}0`], V1 = b[`${V}1`];
   const loops = [];
   for (const ft of face.features || []) {
     if ((ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
     if (!Number.isFinite(ft.u0) || !Number.isFinite(ft.v0) || !(ft.depth > 0.2)) continue;
-    let u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
-    let u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
-    let v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);
-    let v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
-    // A hole that touches the board edge is not a hole. Pull it just inside.
+    let u0 = U0 + Math.min(ft.u0, ft.u1);
+    let u1 = U0 + Math.max(ft.u0, ft.u1);
+    let v0 = V0 + Math.min(ft.v0, ft.v1);
+    let v1 = V0 + Math.max(ft.v0, ft.v1);
+    const touches = u0 <= U0 + 0.3 || u1 >= U1 - 0.3 || v0 <= V0 + 0.3 || v1 >= V1 - 0.3;
+    if (ft.for === "led" && touches) continue;
+    // A closed hole that touches the board edge is not a hole. Pull it just inside.
     const land = 0.4;
     if (u0 <= U0 + 0.3) u0 = U0 + land;
     if (u1 >= U1 - 0.3) u1 = U1 - land;
@@ -141,7 +264,22 @@ function grooveLoops(b, faceId, outline = null) {
     loops.push({ depth: ft.depth, u0, u1, v0, v1 });
   }
   const p = (u, v) => (b.profilePlane === "XY" ? { x: u, y: v } : b.profilePlane === "XZ" ? { x: u, z: v } : { y: u, z: v });
-  return mergeTGrooves(loops).map((g) => ({ depth: g.depth, loop: g.pts.map(([u, v]) => p(u, v)) }));
+  const out = mergeTGrooves(loops).map((g) => ({ depth: g.depth, loop: g.pts.map(([u, v]) => p(u, v)) }));
+  // Blind round holes (hinge cups): a polygon pocket. A cup that would break the board edge is skipped.
+  for (const ft of face.features || []) {
+    if (ft.kind !== "hole" || ft.through || !Array.isArray(ft.center) || !(ft.depth > 0.2) || !(ft.diameter > 0.8)) continue;
+    const r = ft.diameter / 2;
+    const cu = U0 + ft.center[0], cv = V0 + ft.center[1];
+    if (cu - r < U0 + 0.4 || cu + r > U1 - 0.4 || cv - r < V0 + 0.4 || cv + r > V1 - 0.4) continue;
+    const n = 32;
+    const ring = [];
+    for (let i = 0; i < n; i += 1) {
+      const a = (2 * Math.PI * i) / n;
+      ring.push(p(cu + r * Math.cos(a), cv + r * Math.sin(a)));
+    }
+    out.push({ depth: ft.depth, loop: ring });
+  }
+  return out;
 }
 
 /**
@@ -200,36 +338,87 @@ function boxOutline(b) {
 }
 
 function extrudeSlab(b, outline, holes, t0, t1) {
+  if (!(t1 - t0 > 0.05)) return null;
   if (b.profilePlane === "XY") return prismXY(outline, t0, t1, holes);
   if (b.profilePlane === "XZ") return prismXZ(outline, t0, t1, holes);
   return prismYZ(outline, t0, t1, holes);
 }
 
+function loopCenterUv(b, loop) {
+  const [U, V] = planeOf(b);
+  let u = 0, v = 0;
+  for (const p of loop) { u += p[U]; v += p[V]; }
+  return [u / loop.length, v / loop.length];
+}
+
+/** Extrude each uv piece. A hole is used only on the piece that contains its centre. */
+function extrudePieces(b, pieces, holes, t0, t1) {
+  const geos = [];
+  for (const piece of pieces) {
+    if (piece.length < 3 || Math.abs(polyArea(piece)) < 0.5) continue;
+    const mine = (holes || []).filter((h) => {
+      const [u, v] = loopCenterUv(b, h);
+      return pointInPoly(piece, u, v);
+    });
+    const geo = extrudeSlab(b, fromUv(b, piece), mine, t0, t1);
+    if (geo) geos.push(geo);
+  }
+  return geos;
+}
+
+function mergeSlabs(geos) {
+  const list = geos.filter(Boolean);
+  if (!list.length) return null;
+  if (list.length === 1) return list[0];
+  const merged = mergeGeometries(list.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+  if (!merged) return null;
+  merged.computeVertexNormals();
+  return merged;
+}
+
+function grooveDepth(loops, rects, limit) {
+  const depths = [...loops.map((g) => g.depth), ...rects.map((r) => r.depth)];
+  if (!depths.length) return 0;
+  return Math.min(Math.max(...depths), limit);
+}
+
 /**
  * A board with grooves: the uncut core, plus a cap on each machined face whose
- * thickness is the groove depth and whose holes are the grooves. Looking at
- * that face, the core shows through — the pocket floor. Works on a plain box
- * and on an outlined board (a T3 with its LED channels) alike.
+ * thickness is the groove depth and whose holes are the grooves. An LED channel
+ * that meets a board edge is cut out of the cap, so that end is open. Looking
+ * at that face, the core shows through — the pocket floor.
  */
 function pocketGeometry(b) {
   const shaped = boardOutline(b);
+  const base = toUv(b, shaped || boxOutline(b));
+  if (base.length < 3) return null;
+  const openA = ledBreakouts(b, "A");
+  const openB = ledBreakouts(b, "B");
   const onA = grooveLoops(b, "A", shaped);
   const onB = grooveLoops(b, "B", shaped);
-  if (!onA.length && !onB.length) return null;
-  const [, , T] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  if (!openA.length && !openB.length && !onA.length && !onB.length) return null;
+  const [, , T] = planeOf(b);
   const t0 = b[`${T}0`], t1 = b[`${T}1`];
   const thick = t1 - t0;
-  const depthA = onA.length ? Math.min(Math.max(...onA.map((g) => g.depth)), thick - 0.6) : 0;
-  const depthB = onB.length ? Math.min(Math.max(...onB.map((g) => g.depth)), thick - depthA - 0.6) : 0;
+  const depthA = grooveDepth(onA, openA, thick - 0.6);
+  const depthB = grooveDepth(onB, openB, thick - depthA - 0.6);
   if (!(depthA > 0.2) && !(depthB > 0.2)) return null;
-  const outline = shaped || boxOutline(b);
+  const through = throughLoops(b);
   const geos = [];
-  const mid0 = t0 + depthB;
-  const mid1 = t1 - depthA;
-  if (mid1 - mid0 > 0.2) geos.push(extrudeSlab(b, outline, [], mid0, mid1));
-  if (depthA > 0.2) geos.push(extrudeSlab(b, outline, onA.map((g) => g.loop), mid1, t1));
-  if (depthB > 0.2) geos.push(extrudeSlab(b, outline, onB.map((g) => g.loop), t0, t0 + depthB));
-  const merged = mergeGeometries(geos.map((g) => (g.index ? g.toNonIndexed() : g)), false);
+  const mid0 = t0 + (depthB > 0.2 ? depthB : 0);
+  const mid1 = t1 - (depthA > 0.2 ? depthA : 0);
+  if (mid1 - mid0 > 0.2) geos.push(...extrudePieces(b, [base], through, mid0, mid1));
+  if (depthA > 0.2) {
+    let pieces = [base];
+    for (const r of openA) pieces = pieces.flatMap((p) => subtractRect(p, r));
+    geos.push(...extrudePieces(b, pieces, [...onA.map((g) => g.loop), ...through], mid1, t1));
+  }
+  if (depthB > 0.2) {
+    let pieces = [base];
+    for (const r of openB) pieces = pieces.flatMap((p) => subtractRect(p, r));
+    geos.push(...extrudePieces(b, pieces, [...onB.map((g) => g.loop), ...through], t0, t0 + depthB));
+  }
+  const merged = mergeSlabs(geos.map((g) => (g.index ? g.toNonIndexed() : g)));
   if (!merged) return null;
   const welded = mergeVertices(merged, 0.05);
   welded.computeVertexNormals();
@@ -248,6 +437,19 @@ function throughLoops(b) {
   for (const face of b.faces || []) {
     if (face.id !== "A" && face.id !== "B") continue;
     for (const ft of face.features || []) {
+      // A round through hole (a lid's finger hole, a screw hole): a polygon; small ones stay coarse.
+      if (ft.kind === "hole" && ft.through && Array.isArray(ft.center) && ft.diameter > 0.8) {
+        const r = ft.diameter / 2;
+        const cu = b[`${U}0`] + ft.center[0], cv = b[`${V}0`] + ft.center[1];
+        const n = ft.diameter < 10 ? 8 : 32;
+        const ring = [];
+        for (let i = 0; i < n; i += 1) {
+          const a = (2 * Math.PI * i) / n;
+          ring.push(p(cu + r * Math.cos(a), cv + r * Math.sin(a)));
+        }
+        loops.push(ring);
+        continue;
+      }
       if (ft.kind !== "cutout" || !ft.through || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
       if (Array.isArray(ft.loop) && ft.loop.length >= 3) {
         loops.push(ft.loop.map(([u, v]) => p(b[`${U}0`] + u, b[`${V}0`] + v)));
@@ -311,27 +513,22 @@ export function boardGeometry(b) {
 
 /**
  * Highlight sheet for one face of a board (cabinet frame), `thick` mm proud of
- * the face so it reads over the board. A / B: the board's outline (or box) as a
- * thin slab on that side; E<i>: a quad along the outline edge through the
- * thickness. Display only — nothing here changes the board.
+ * the face so it reads over the board. A / B follows the outline, or the box
+ * when the board has none, and is open where that face has a groove or the
+ * board has a through cutout. An LED channel that meets an edge is open there.
+ * E<i>: a quad along the outline edge through the thickness. Display only.
  */
 export function faceSheetGeometry(b, face, thick = 1.5) {
-  const [U, V, T] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const [U, V, T] = planeOf(b);
   const t0 = b[`${T}0`], t1 = b[`${T}1`];
   if (face.id === "A" || face.id === "B") {
     const lo = face.id === "A" ? t1 : t0 - thick;
     const hi = lo + thick;
-    const outline = boardOutline(b);
-    if (outline) {
-      if (b.profilePlane === "YZ") return prismYZ(outline, lo, hi);
-      if (b.profilePlane === "XY") return prismXY(outline, lo, hi);
-      return prismXZ(outline, lo, hi);
-    }
-    const r = { x: [b.x0, b.x1], y: [b.y0, b.y1], z: [b.z0, b.z1] };
-    r[T] = [lo, hi];
-    const geo = new THREE.BoxGeometry(r.x[1] - r.x[0], r.y[1] - r.y[0], r.z[1] - r.z[0]);
-    geo.translate((r.x[0] + r.x[1]) / 2, (r.y[0] + r.y[1]) / 2, (r.z[0] + r.z[1]) / 2);
-    return geo;
+    const base = toUv(b, boardOutline(b) || boxOutline(b));
+    let pieces = [base];
+    for (const r of ledBreakouts(b, face.id)) pieces = pieces.flatMap((p) => subtractRect(p, r));
+    const holes = [...throughLoops(b), ...grooveLoops(b, face.id).map((g) => g.loop)];
+    return mergeSlabs(extrudePieces(b, pieces, holes, lo, hi));
   }
   if (!face.edge) return null;
   // Edge face: board-local (u, v) → cabinet frame, a quad spanning the thickness (a touch over),
@@ -378,10 +575,52 @@ function outlineSolid(b) {
   return prismXZ(outline, b.y0, b.y1);
 }
 
+/** The rim of each through opening: both faces, and the corners through the thickness. */
+function holeRimPositions(b) {
+  const [, , T] = AXES_OF[b.profilePlane] || AXES_OF.XY;
+  const t0 = b[`${T}0`];
+  const t1 = b[`${T}1`];
+  const pos = [];
+  const put = (p, t) => {
+    const q = { x: p.x || 0, y: p.y || 0, z: p.z || 0 };
+    q[T] = t;
+    pos.push(q.x, q.y, q.z);
+  };
+  for (const loop of throughLoops(b)) {
+    if (loop.length < 3) continue;
+    for (let i = 0; i < loop.length; i += 1) {
+      const a = loop[i];
+      const c = loop[(i + 1) % loop.length];
+      put(a, t0); put(c, t0);
+      put(a, t1); put(c, t1);
+      put(a, t0); put(a, t1);
+    }
+  }
+  return pos;
+}
+
 export function boardEdges(b, mat) {
   const solid = outlineSolid(b);
-  if (!solid) return boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
-  return new THREE.LineSegments(new THREE.EdgesGeometry(solid), mat);
+  const lines = solid
+    ? new THREE.LineSegments(new THREE.EdgesGeometry(solid), mat)
+    : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
+  const extra = holeRimPositions(b);
+  if (!extra.length) return lines;
+  const base = lines.geometry.getAttribute("position");
+  const arr = new Float32Array(base.count * 3 + extra.length);
+  arr.set(base.array);
+  const shift = lines.position;
+  for (let i = 0; i < extra.length; i += 3) {
+    arr[base.count * 3 + i] = extra[i] - shift.x;
+    arr[base.count * 3 + i + 1] = extra[i + 1] - shift.y;
+    arr[base.count * 3 + i + 2] = extra[i + 2] - shift.z;
+  }
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+  const merged = new THREE.LineSegments(geo, lines.material);
+  merged.position.copy(lines.position);
+  lines.geometry.dispose();
+  return merged;
 }
 
 export function boxEdges(x0, x1, y0, y1, z0, z1, mat) {

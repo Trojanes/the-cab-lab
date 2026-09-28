@@ -8,7 +8,8 @@ import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
 import { describeMaterials, thickness, partitionClearance } from "./materials.js";
 import { sideOfRotZ, sideLabel, overlaps } from "./interact.js";
 import { wallLength, wallOrientation, wallBoards, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP, SHEET_SHORT_MM, SHEET_LONG_MM } from "./walls.js";
-import { envelopeFootprint } from "./cabinets3d.js";
+import { envelopeFootprint, envelopeBox } from "./cabinets3d.js";
+import { keepCorner } from "./pose.js";
 import { statusOf } from "./walls3d.js";
 import { openFloorPlan } from "./floorplan.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "./boardModel.js";
@@ -590,6 +591,31 @@ function renderTall(cab, mod, result, shared) {
     }))),
   ])));
 
+  // Preset: a named cabinet from the generator's presets.json; applying it replaces every param but the colours.
+  const presetNow = mod.presetOf(p);
+  const tallPreset = (mod.presets || []).length ? section("Preset", [el("label", { class: "field wide-value" }, [
+    el("span", { text: "Cabinet" }),
+    el("select", {
+      onchange: (e) => {
+        const id = e.target.value;
+        e.target.blur();
+        if (!id) return;
+        // The new size grows from the corner the box was drawn from (else the back-left floor corner); the fronts keep facing the same way.
+        const next = mod.applyPreset(p, id);
+        const corner = cab.placeCorner || { x: -1, y: 1, z: -1 };
+        const fromPose = { ...cab.pose };
+        const pose = keepCorner(cab.pose, envelopeBox(cab, result), envelopeBox({ ...cab, params: next }, null), corner);
+        job.setParams(cab.id, next);
+        job.setPose(cab.id, pose, { history: false });
+        const now = job.getSelected();
+        log("tall.preset", { id: cab.id, preset: id, from: env, to: now ? mod.envelope(now.params) : null, corner, stored: !!cab.placeCorner, fromPose, toPose: pose });
+      },
+    }, [
+      el("option", { value: "", text: "Custom", selected: !presetNow }),
+      ...mod.presets.map((pr) => el("option", { value: pr.id, text: pr.label, selected: pr.id === presetNow })),
+    ]),
+  ])]) : null;
+
   // A drag in progress: redraw the SVG in place and keep the container (and its pointer capture) alive.
   if (tallDrag && tallDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
     tallDrag.refresh();
@@ -817,6 +843,7 @@ function renderTall(cab, mod, result, shared) {
       el("div", { class: "zs-hint", text: "Click a zone to select it · drag an orange line (height) or the dashed one (divider) · Shift = 1 mm" }),
     ]),
     zoneCard,
+    tallPreset,
     tallSides,
     fold,
     shared.grain,
@@ -1123,6 +1150,7 @@ function renderLounge(cab, mod, result, shared) {
   const p = cab.params;
   const env = mod.envelope(p);
   const style = p.style || "L_SHAPE";
+  const frameL = style === "L_SHAPE" && p.construction !== "classic";
   const selectedRun = loungeSelected(cab.id);
   const runs = Object.keys(result?.footprint || {});
 
@@ -1250,10 +1278,16 @@ function renderLounge(cab, mod, result, shared) {
       el("select", { onchange: (e) => { e.target.blur(); setP("lPosition", e.target.value, "side"); } },
         ["RIGHT", "LEFT"].map((s) => el("option", { value: s, text: s === "RIGHT" ? "Right" : "Left", selected: s === (p.lPosition ?? "RIGHT") }))),
     ]) : null,
+    frameL ? el("label", { class: "field wide-value", title: "The wing's room end: a plain seat front, or a drawer front with a fixed strip over it (no drawer box)" }, [
+      el("span", { text: "Wing end" }),
+      el("select", { onchange: (e) => { e.target.blur(); setP("lFrontAccess", e.target.value, "access"); } },
+        [["NONE", "Seat front"], ["DRAWER", "Drawer"]].map(([v, text]) => el("option", { value: v, text, selected: v === (p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE") }))),
+    ]) : null,
     numField("Seat height (mm)", p.height ?? env.H, (v) => setP("height", Math.max(mod.minSize.H, Math.round(v)), "size"), { step: 10, min: mod.minSize.H }),
-    check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
+    // The frame L's whole top is the lid, and its wheel-arch cut-out is not built yet.
+    frameL ? null : check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
     style === "PARALLEL" ? check("Middle cabinet", p.hasMiddleCabinet === true, (on) => setP("hasMiddleCabinet", on, "midCab"), "A low cabinet between the two runs, against the wall") : null,
-    style !== "U_SHAPE" ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
+    style !== "U_SHAPE" && !frameL ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
   ].filter(Boolean));
 
   // Cabinet-level fields, folded.
@@ -2151,7 +2185,7 @@ function renderWall(w) {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Partition wall" }),
-      el("div", { class: "panel-sub", text: `${w.id} · ${wallOrientation(w)}` }),
+      el("div", { class: "panel-sub", text: `${w.id} · ${wallOrientation(w)}${w.hidden ? " · hidden" : ""}` }),
     ]),
     section("Geometry", [
       el("div", { class: "kv" }, [el("span", { text: "Length" }), el("b", { text: `${Math.round(wallLength(w))} mm` })]),

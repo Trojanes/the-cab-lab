@@ -410,8 +410,21 @@ export const raycaster = new THREE.Raycaster();
 raycaster.params.Line.threshold = 12;
 const ndc = new THREE.Vector2();
 
+// One layout read per frame. Snap, the cursor tip and the ray all ask for this
+// on the same pointer move; reading it again forces a reflow.
+let canvasRect = null;
+let canvasRectAt = -Infinity;
+export function canvasClientRect() {
+  const now = performance.now();
+  if (!canvasRect || now - canvasRectAt > 32) {
+    canvasRect = canvas.getBoundingClientRect();
+    canvasRectAt = now;
+  }
+  return canvasRect;
+}
+
 export function rayFromClient(clientX, clientY) {
-  const r = canvas.getBoundingClientRect();
+  const r = canvasClientRect();
   ndc.set(((clientX - r.left) / r.width) * 2 - 1, -((clientY - r.top) / r.height) * 2 + 1);
   raycaster.setFromCamera(ndc, activeCamera());
   return raycaster.ray;
@@ -563,6 +576,7 @@ export function closestTOnLine(clientX, clientY, origin, dir) {
 // --- loop -----------------------------------------------------------------
 
 function resize() {
+  canvasRect = null;
   const w = mount.clientWidth || window.innerWidth;
   const h = mount.clientHeight || window.innerHeight;
   camera.aspect = w / Math.max(h, 1);

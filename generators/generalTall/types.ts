@@ -83,6 +83,8 @@ export interface GTParams {
   doorSides?: "single" | "double";
   /** Wood grain per group; missing = module default (fronts horizontal, side panels vertical). */
   grain?: GrainParams;
+  /** LED T-groove on T3's top face and B3's underside (style_1 end systems). Default off. */
+  ledGroove?: boolean;
   leftSidePanelAdaptAvoidance?: boolean;
   rightSidePanelAdaptAvoidance?: boolean;
   exteriorSide?: "left" | "right" | "none";

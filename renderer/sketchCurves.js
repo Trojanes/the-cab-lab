@@ -340,7 +340,11 @@ export function trimAt(items, index, k, f) {
   } else {
     pieces = [[...segs.slice(0, k), ...(left ? [left] : [])], [...(right ? [right] : []), ...segs.slice(k + 1)]].filter((c) => c.length);
   }
-  const made = pieces.map((c) => fromSegments(c, false)).filter((it) => it.pts.length >= 2);
+  const made = pieces.map((c) => {
+    const it = fromSegments(c, false);
+    if (item.construction) it.construction = true;
+    return it;
+  }).filter((it) => it.pts.length >= 2);
   return [...items.slice(0, index), ...made, ...items.slice(index + 1)];
 }
 

@@ -3,7 +3,9 @@
  * 坐标：柜体最终位置。立梃前端 y=FPT，后缘可探出侧板；门左右让 fc。
  */
 import assert from "node:assert/strict";
-import { fitTallCabinetHeight, generateGeneralTall } from "./generator.ts";
+import { fitTallCabinetHeight, generateGeneralTall, GT_UI_PRESETS } from "./generator.ts";
+import { checkPins, countPins, type PresetsFile } from "../_lib/pins.ts";
+import presetsRaw from "./presets.json" with { type: "json" };
 import type { GTParams } from "./types.ts";
 
 function b(r: ReturnType<typeof generateGeneralTall>, id: string) {
@@ -79,15 +81,15 @@ const UI: GTParams = {
   assert.deepEqual(place(r, "B1"), { x0: 0, x1: 600, y0: 39, y1: 55, z0: 0, z1: 53 });
   assert.deepEqual(place(r, "B3"), { x0: 0, x1: 600, y0: 0, y1: 150, z0: 53, z1: 69 });
 
-  // H 支撑：mid 锚定 VD 区下沿隔板上沿 [998,1098]；uiDefault midDepth=568 → y[150,418]
+  // H 支撑：mid 锚定 VD 区下沿隔板上沿 [999,1099]；uiDefault midDepth=568 → y[150,418]
   assert.deepEqual(place(r, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
-  // H mid 锚定 VD 区下沿隔板上沿：三件共面 [998,1098]（boundary-zone-3 z1=999 −1）
-  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
-  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 998, z1: 1098 });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
+  // H mid 锚定 VD 区下沿隔板上沿：三件共面 [999,1099]（boundary-zone-3 z1=999，贴在隔板上）
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
 
   // VD（§8.7）：core 心 300（mw=600）→ x[292.5,307.5]；底舌 991.5
   assert.deepEqual(place(r, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1944 });
@@ -299,9 +301,9 @@ const UI: GTParams = {
   // 堆叠：bottom 0-69、side 69-999、full_zi 999-1014、drawer 1014-1514、open 1514-2114、top……
   // §8.8 给 full_zi z[1000,1015]（CH300 假设？）——按实现数值断言移动量：
   const zi = r.stack.find((i) => i.id === "boundary-drawer")!;
-  // H13/H24_mid 移 below：[zi.z0−101, zi.z0−1]；H34_mid 移 above：[zi.z1−1, +99]
-  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 434, z0: r2(zi.z0 - 101), z1: r2(zi.z0 - 1) });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 649, y0: 569, y1: 584, z0: r2(zi.z1 - 1), z1: r2(zi.z1 + 99) });
+  // H13/H24_mid 贴在隔板下：[zi.z0−100, zi.z0]；H34_mid 坐在隔板上：[zi.z1, zi.z1+100]（贴合，不进隔板）
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 434, z0: r2(zi.z0 - 100), z1: r2(zi.z0) });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 649, y0: 569, y1: 584, z0: r2(zi.z1), z1: r2(zi.z1 + 100) });
   assert.ok(r.validation.warnings.some((w) => w.includes("Stage 2 movement evaluated")));
 }
 
@@ -446,6 +448,53 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.ok(hasPoint(v1m, 105, 0), "mixed style_2 bottom notch");
 }
 
+/* ================= 冰箱紧贴 style_2 顶：固定板嵌在冰箱开口里、TH1 之下（21 Bunk 冰箱柜） ================= */
+{
+  const bunk = (extra: Partial<GTParams> = {}) => generateGeneralTall({
+    cabinetHeight: 1965, cabinetWidth: 593, cabinetDepth: 640,
+    panelThickness: 15, frontPanelThickness: 16, sideClearance: 3,
+    leftSidePanelThickness: 16, leftSidePanelFinish: "colour", exteriorSide: "left",
+    topSystem: { style: "style_2", height: 101 },
+    bottomSystem: { style: "style_1", frontRailHeight: 55 },
+    frontHardware: { frontClearance: 3 },
+    zones: [
+      { id: "zone-1", type: "bottom_flap", height: 172 },
+      { id: "zone-2", type: "drawer", height: 247 },
+      { id: "zone-3", type: "fridge", height: 1344, applianceWidthMm: 532, applianceHeightMm: 1344 },
+    ],
+    ...extra,
+  });
+  const r = bunk();
+  assert.deepEqual(r.validation.errors, []);
+  assert.deepEqual(place(r, "TopStyle2FixedFrontPanel"), { x0: 31, x1: 563, y0: 0, y1: 16, z0: 1864, z1: 1949 });
+  assert.deepEqual(place(r, "V5"), { x0: 563, x1: 578, y0: 0, y1: 150, z0: 520, z1: 1949 });
+  assert.deepEqual(place(r, "TH1"), { x0: 16, x1: 593, y0: 0, y1: 100, z0: 1949, z1: 1964 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 31, x1: 578, y0: 609, y1: 624, z0: 932.5, z1: 1032.5 });
+  const E = r.debug.provenance.entries;
+  assert.equal(E["TopStyle2FixedFrontPanel.x1"]?.formula, "= V5.x0");
+  assert.equal(E["TopStyle2FixedFrontPanel.z1"]?.formula, "= tall.th1.z0");
+  assert.equal(E["V5.z1"]?.formula, "= tall.th1.z0");
+  const touches = (a: string, b: string) => r.joints.some((j) => [j.a.board, j.b.board].sort().join("|") === [a, b].sort().join("|"));
+  assert.ok(touches("TH1", "TopStyle2FixedFrontPanel"));
+  assert.ok(touches("V1", "TopStyle2FixedFrontPanel"));
+  assert.ok(touches("V5", "TopStyle2FixedFrontPanel"));
+  assert.ok(touches("V5", "TH1"));
+
+  const mirrored = bunk({ exteriorSide: "right", leftSidePanelThickness: 0, rightSidePanelThickness: 16, rightSidePanelFinish: "colour" });
+  assert.deepEqual(place(mirrored, "V5"), { x0: 15, x1: 30, y0: 0, y1: 150, z0: 520, z1: 1949 });
+  assert.deepEqual(place(mirrored, "TopStyle2FixedFrontPanel"), { x0: 30, x1: 562, y0: 0, y1: 16, z0: 1864, z1: 1949 });
+
+  // Something between the fridge and the top: the ordinary Style 2 front stays in the door plane.
+  const drawerOnTop = bunk({
+    zones: [
+      { id: "zone-1", type: "bottom_flap", height: 172 },
+      { id: "zone-2", type: "fridge", height: 1344, applianceWidthMm: 532, applianceHeightMm: 1344 },
+      { id: "zone-3", type: "drawer", height: 247 },
+    ],
+  });
+  assert.deepEqual(place(drawerOnTop, "TopStyle2FixedFrontPanel"), { x0: 19, x1: 590, y0: -16, y1: 0, z0: 1864, z1: 1965 });
+}
+
 /* ================= 柜高差额进 zone-3，H 撑按新柜高重算 ================= */
 {
   const tall = fitTallCabinetHeight(UI, 2200);
@@ -461,17 +510,23 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 2100, z1: 2200 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
-  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
-  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 998, z1: 1098 });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
+  assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
+
+  // H bridges in an ordinary tall: top ones banded underneath, bottom ones on top, mid ones on the free side of the Zi.
+  const hb = (id: string) => b(r, id).faces!.filter((f) => f.finish?.edgeBand).map((f) => f.normal);
+  assert.deepEqual(hb("H13_top"), ["-Z"]);
+  assert.deepEqual(hb("H34_bottom"), ["+Z"]);
+  assert.deepEqual(hb("H34_mid"), ["+Z"]);
 
   const shorter = fitTallCabinetHeight(UI, 1800);
   assert.equal(shorter.zones?.find((z) => z.id === "zone-3")?.height, 745);
   const rs = generateGeneralTall(shorter);
   assert.deepEqual(place(rs, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1744 });
   assert.deepEqual(place(rs, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1700, z1: 1800 });
-  assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 998, z1: 1098 });
-  assert.deepEqual(place(rs, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 998, z1: 1098 });
+  assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
+  assert.deepEqual(place(rs, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
 
   const crushed = fitTallCabinetHeight(UI, 1000);
   assert.equal(crushed.zones?.find((z) => z.id === "zone-3")?.height, 300);
@@ -518,6 +573,65 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   const v5 = fridge.boards.find((b) => b.id === "V5")!;
   assert.ok((v5.profileVector?.length ?? 0) > 0);
   assert.ok(fridge.debug.provenance.entries["V5.pv[0].y"]);
+}
+
+/* ================= presets.json：每个预设的钉值；ui 预设原样进面板，载入修补不改它 ================= */
+{
+  for (const preset of (presetsRaw as PresetsFile).presets) {
+    const r = generateGeneralTall(preset.params as GTParams);
+    assert.deepEqual(r.validation.errors, [], preset.id);
+    assert.ok(countPins(preset.pins) > 0, preset.id);
+    const bad = checkPins(r as never, preset.pins);
+    assert.deepEqual(bad, [], `${preset.id}: ${bad.slice(0, 5).map((m) => `${m.path} expected ${m.expected} got ${m.actual}`).join("; ")}`);
+  }
+  const dometic = GT_UI_PRESETS.find((p) => p.id === "rogue-dometic");
+  assert.ok(dometic, "Rogue Dometic offered in the panel");
+  assert.deepEqual(fitTallCabinetHeight(dometic!.params, 1965), dometic!.params, "file-open repair keeps the 247 drawer under the fridge");
+  const d = generateGeneralTall(dometic!.params);
+  assert.equal(d.boards.length, 29);
+  assert.deepEqual(place(d, "Zi_boundary-zone-2"), { x0: 16, x1: 593, y0: 0, y1: 224, z0: 243, z1: 258 });
+  assert.deepEqual(place(d, "H13_fridgeBase"), { x0: 16, x1: 31, y0: 150, y1: 474, z0: 258, z1: 504.5 });
+  assert.deepEqual(place(d, "H34_fridgeBase"), { x0: 31, x1: 578, y0: 609, y1: 624, z0: 405, z1: 505 });
+  assert.deepEqual(place(d, "FridgeBaseRail"), { x0: 31, x1: 578, y0: 0, y1: 100, z0: 490, z1: 505 });
+  assert.deepEqual(place(d, "FP_zone-2"), { x0: 19, x1: 590, y0: -16, y1: 0, z0: 252, z1: 496.5 });
+  assert.deepEqual(place(d, "B3"), { x0: 16, x1: 593, y0: 0, y1: 150, z0: 55, z1: 70 });
+  assert.ok(!(b(d, "V3").profileVector as { y: number; z: number }[]).some((p) => Math.abs(p.z - 242.5) < 0.01), "no V3 slot for the cut-back Zi");
+  const flap = b(d, "FP_zone-1").faces!.flatMap((f) => f.features);
+  assert.deepEqual(flap.filter((f) => f.for === "hinge").map((f) => f.center), [[100, 22.5], [471, 22.5]]);
+  assert.ok(flap.every((f) => f.for !== "hinge" || f.depth === 12));
+  const lockZ = (id: string) => { const fp = b(d, id); const l = fp.faces!.flatMap((f) => f.features).find((f) => f.for === "lock")!; return fp.z0 + (l.v0! + l.v1!) / 2; };
+  assert.equal(lockZ("FP_zone-1"), 212.5); // Zi above at 243 − 30.5
+  assert.equal(lockZ("FP_zone-2"), 459.5); // front rail underside 490 − 30.5
+  const led = b(d, "B3").faces!.find((f) => f.id === "B")!.features.filter((f) => f.for === "led");
+  assert.equal(led.length, 3);
+
+  // Edge bands: door colour on door stock and on carcass edges that show flush with the fronts.
+  const door = "Metallic White";
+  const dc = generateGeneralTall({ ...dometic!.params, doorColorName: door });
+  const bands = (id: string) => b(dc, id).faces!.filter((f) => f.id.startsWith("E") && f.finish?.edgeBand)
+    .map((f) => `${f.normal} ${f.finish!.edgeBand!.colour}`).sort();
+  for (const id of ["V5", "TH1", "SidePanel_L", "Zi_boundary-zone-3", "FridgeBaseRail"]) assert.deepEqual(bands(id), [`-Y ${door}`], id);
+  // Front stiles: door colour in front, carcass colour on the rear edge; rear stiles: carcass colour on the front edge.
+  for (const id of ["V1", "V2"]) assert.deepEqual([...new Set(bands(id))], ["+Y White Stipple", `-Y ${door}`], id);
+  for (const id of ["V3", "V4"]) assert.deepEqual([...new Set(bands(id))], ["-Y White Stipple"], id);
+  assert.deepEqual(bands("TopStyle2FixedFrontPanel"), [`-Z ${door}`], "infill: only the bottom edge shows");
+  assert.deepEqual(bands("B1"), [`+Z ${door}`]);
+  assert.equal(bands("FP_zone-1").length, 4);
+  assert.ok(bands("FP_zone-2").every((s) => s.endsWith(door)));
+  assert.deepEqual(bands("B3"), ["+Y White Stipple", "-Y White Stipple"]);
+  for (const id of ["H13_fridgeBase", "H24_fridgeBase", "B2"]) assert.deepEqual(bands(id), [], id);
+  // H bridges: the long edge that looks into an open zone; none inside or over the fridge cavity.
+  for (const id of ["H13_bottom", "H24_bottom", "H34_bottom"]) assert.deepEqual(bands(id), ["+Z White Stipple"], id);
+  assert.deepEqual(bands("H34_fridgeBase"), ["-Z White Stipple"]);
+  for (const id of ["H13_top", "H24_top", "H13_mid", "H24_mid", "H34_mid"]) assert.deepEqual(bands(id), [], id);
+  // An ordinary Style 2 front covers TH1: TH1 stays bare, the front is banded all round.
+  const overlay = generateGeneralTall({ ...dometic!.params, doorColorName: door, zones: [
+    { id: "zone-1", type: "bottom_flap", height: 172 },
+    { id: "zone-2", type: "fridge", height: 1344, applianceWidthMm: 532, applianceHeightMm: 1344 },
+    { id: "zone-3", type: "drawer", height: 247 },
+  ] });
+  assert.deepEqual(b(overlay, "TH1").faces!.filter((f) => f.finish?.edgeBand), []);
+  assert.equal(b(overlay, "TopStyle2FixedFrontPanel").faces!.filter((f) => f.finish?.edgeBand).length, 4);
 }
 
 console.log("generalTall: all golden tests passed");

@@ -101,15 +101,8 @@ for (const [i, band] of [[4, { thickness: 1 }], [-1, { thickness: 1 }], [1.5, { 
   assert.deepEqual(cnjobEdgeBands(door), []);
 }
 
-/* Tall, small, bedroom, bed side: no bands stored, so they export unbanded. */
+/* Small, bedroom, bed side: no bands stored, so they export unbanded. */
 {
-  const tall = generateGeneralTall({
-    cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,
-    panelThickness: 15, frontPanelThickness: 16,
-    topSystem: { style: "style_1", frontRailHeight: 40 },
-    bottomSystem: { style: "style_1", frontRailHeight: 53 },
-    zones: [{ id: "zone-1", type: "side_door", height: 1400 }],
-  } as never);
   const small = generateSmallCabinet({
     cabinetWidth: 600, cabinetDepth: 560, cabinetHeight: 800,
     panelThickness: 16, frontPanelThickness: 18, frontClearance: 2.5,
@@ -121,7 +114,7 @@ for (const [i, band] of [[4, { thickness: 1 }], [-1, { thickness: 1 }], [1.5, { 
     bootHeight: 398, wardrobeWidth: 330, ohcBottom: 1418,
   });
   const bedside = generateBedSideTable({ width: 330, depth: 200, height: 595, side: "left", shelfCenter: 395, clearance: 2.5 });
-  for (const result of [tall, small, bedroom, bedside]) {
+  for (const result of [small, bedroom, bedside]) {
     assert.equal(result.validation.errors.length, 0, result.validation.errors.join("; "));
     for (const b of result.boards) {
       assert.deepEqual(snapshotEdgeBands(b), [], b.id);
@@ -130,7 +123,19 @@ for (const [i, band] of [[4, { thickness: 1 }], [-1, { thickness: 1 }], [1.5, { 
   }
 }
 
-/* Kitchen already stores bands. Export still sends none. */
+/* Kitchen and tall already store bands. Export still sends none. */
+{
+  const tall = generateGeneralTall({
+    cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,
+    panelThickness: 15, frontPanelThickness: 16,
+    topSystem: { style: "style_1", frontRailHeight: 40 },
+    bottomSystem: { style: "style_1", frontRailHeight: 53 },
+    zones: [{ id: "zone-1", type: "side_door", height: 1400 }],
+  } as never);
+  assert.equal(tall.validation.errors.length, 0, tall.validation.errors.join("; "));
+  assert.ok(tall.boards.some((b) => snapshotEdgeBands(b).length > 0), "tall stores some bands");
+  assert.ok(tall.boards.every((b) => cnjobEdgeBands(b).length === 0));
+}
 {
   const kitchen = generateKitchenCabinet({
     globalSettings: { length: 887, depth: 270, height: 880 },

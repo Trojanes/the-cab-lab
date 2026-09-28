@@ -234,9 +234,13 @@ $$("#drawer .dtab").forEach((tab) => {
 
 // --- status bar -------------------------------------------------------------------
 const stCursor = $("#stCursor");
+let cursorReadout = "";
 canvas.addEventListener("pointermove", (e) => {
   const p = floorPointAt(e.clientX, e.clientY);
-  stCursor.textContent = p ? `X ${Math.round(p.x)}  Y ${Math.round(p.y)}` : "X — Y —";
+  const text = p ? `X ${Math.round(p.x)}  Y ${Math.round(p.y)}` : "X — Y —";
+  if (text === cursorReadout) return;
+  cursorReadout = text;
+  stCursor.textContent = text;
 });
 canvas.addEventListener("pointerleave", () => { stCursor.textContent = "X — Y —"; });
 

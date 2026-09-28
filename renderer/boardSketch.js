@@ -27,7 +27,7 @@ import {
 import {
   showSnapMarker, hideSnapMarker, showAlignLines, hideAlignLines, showFaceHint, hideFaceHint, hideInference,
   showSketchPath, hideSketchPath, showSketchSolid, hideSketchSolid, showSketchProfiles, hideSketchProfiles,
-  showSketchPick, hideSketchPick,
+  showSketchGuides, hideSketchGuides, showSketchPick, hideSketchPick,
 } from "./cabinets3d.js";
 import { showTip, hideTip } from "./hud.js";
 import { clearHeightAt, minClearHeight } from "./spaces.js";
@@ -56,6 +56,8 @@ const ICON = {
   mirror: '<path d="M8 1.5 V14.5" stroke-dasharray="1.5 1.5"/><path d="M6 4.5 L2 11.5 H6 Z"/><path d="M10 4.5 L14 11.5 H10 Z"/>',
   trim: '<path d="M2 8 H14"/><path d="M8 2 V6"/><path d="M8 10 V14" stroke-dasharray="1.5 1.5"/>',
   extend: '<path d="M13.5 2 V14"/><path d="M2.5 8 H8.5"/><path d="M8.5 8 H13" stroke-dasharray="1.5 1.5"/><path d="M11 6 L13 8 L11 10"/>',
+  guide: '<path d="M2.5 13 H13.5" stroke-dasharray="2.2 1.5"/><path d="M2.5 3 V13" stroke-dasharray="2.2 1.5"/><circle cx="2.5" cy="13" r="1.15" fill="currentColor"/>',
+  select: '<path d="M3.2 2.2 L3.2 12.2 L6 9.6 L8.4 13.4 L9.8 12.6 L7.3 8.7 L11.4 8.4 Z"/>',
 };
 const iconSvg = (id) => `<svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${ICON[id]}</svg>`;
 
@@ -77,7 +79,7 @@ const TOOL_KEYS = Object.fromEntries([...CREATE, ...MODIFY].map((t) => [t.key.to
 const LABEL = Object.fromEntries([...CREATE, ...MODIFY].map((t) => [t.id, t.label]));
 const AIDS = [
   { id: "osnap", label: "Snap", key: "F3", title: "Object snap: endpoints, midpoints, centres, crossings, perpendicular, the face's corners and corners in this plane" },
-  { id: "ortho", label: "Ortho", key: "F8", title: "Lines run along the face's two axes · hold Shift to flip it for one point" },
+  { id: "ortho", label: "Ortho", key: "F8", title: "Lines run along the face's two axes" },
   { id: "polar", label: "Polar", key: "F10", title: "Lines snap to 45° steps" },
 ];
 const AID_KEYS = { F3: "osnap", F8: "ortho", F10: "polar" };
@@ -133,11 +135,21 @@ function iconButton(t) {
   toolButtons.set(t.id, b);
   return b;
 }
-const createGroup = el("div", { class: "sketch-group" }, CREATE.map(iconButton));
+const selectBtn = el("button", {
+  class: "tb icon", type: "button", title: "Select — click a line or shape, drag to move, Delete removes it",
+  "aria-label": "Select", onclick: () => setTool(null),
+});
+selectBtn.innerHTML = iconSvg("select");
+const createGroup = el("div", { class: "sketch-group" }, [selectBtn, ...CREATE.map(iconButton)]);
 const modifyGroup = el("div", { class: "sketch-group sketch-modify" }, MODIFY.map(iconButton));
+const guideBtn = el("button", {
+  class: "tb icon sketch-guide", type: "button", title: "Construction — hold Shift while drawing. Green dashed. Snaps to it, not part of the board.",
+  "aria-label": "Construction", onclick: () => toggleGuide(),
+});
+guideBtn.innerHTML = iconSvg("guide");
 const finishBtn = el("button", { class: "tb primary", type: "button", text: "Finish sketch", title: "Turn the closed shapes into boards", onclick: () => finishSketch("button") });
 const cancelBtn = el("button", { class: "tb", type: "button", text: "Cancel", title: "Leave the sketch; nothing is made", onclick: () => cancelBoard("button") });
-bar.append(barTitle, createGroup, el("span", { class: "sketch-divider" }), modifyGroup, el("span", { class: "spacer" }), finishBtn, cancelBtn);
+bar.append(barTitle, createGroup, el("span", { class: "sketch-divider" }), modifyGroup, el("span", { class: "spacer" }), guideBtn, finishBtn, cancelBtn);
 
 const aidButtons = new Map();
 const aidGroup = el("div", { class: "sketch-group" });
@@ -174,6 +186,7 @@ function showBars() {
   document.getElementById("app")?.classList.add("sketching");
   paintBar();
   paintAids();
+  paintGuide();
 }
 function hideBars() {
   bar.classList.add("hidden");
@@ -185,11 +198,36 @@ function hideBars() {
 function paintBar() {
   if (!sk || !sk.face) return;
   barTitle.textContent = `Sketch · ${sk.face.label}`;
+  selectBtn.classList.toggle("active", !sk.tool);
   for (const [id, b] of toolButtons) b.classList.toggle("active", sk.tool === id);
 }
 function paintAids() {
   for (const [id, b] of aidButtons) b.classList.toggle("active", !!aids[id]);
   paintStatus();
+}
+
+/** Latched from the icon. Shift held while drawing does the same for that one shape. */
+let guideLatch = false;
+const CREATE_IDS = new Set(CREATE.map((t) => t.id));
+function constructionOn() {
+  return guideLatch || !!(sk && sk.shift);
+}
+function drawingGuide() {
+  return !!sk && constructionOn() && CREATE_IDS.has(sk.tool);
+}
+function paintGuide() {
+  guideBtn.classList.toggle("active", constructionOn());
+}
+function toggleGuide() {
+  guideLatch = !guideLatch;
+  log("board.guide", { on: guideLatch });
+  paintGuide();
+  if (sk && sk.step === "sketch" && sk.client) {
+    boardPointerMove({ clientX: sk.client.x, clientY: sk.client.y, shiftKey: !!sk.shift });
+  }
+}
+function markGuide(item) {
+  return drawingGuide() ? { ...item, construction: true } : item;
 }
 
 let statusNote = null;
@@ -198,13 +236,19 @@ function paintStatus(message = null) {
   if (!sk || sk.step !== "sketch") return;
   if (message) { status.textContent = message; status.classList.add("warn"); return; }
   status.classList.remove("warn");
-  const closed = sk.items.filter((it) => it.closed).length;
-  const open = sk.items.length - closed;
-  const count = [closed ? `${closed} shape${closed > 1 ? "s" : ""}` : "", open ? `${open} open line${open > 1 ? "s" : ""}` : ""].filter(Boolean).join(" · ");
+  const real = sk.items.filter((it) => !it.construction);
+  const guides = sk.items.length - real.length;
+  const closed = real.filter((it) => it.closed).length;
+  const open = real.length - closed;
+  const count = [
+    closed ? `${closed} shape${closed > 1 ? "s" : ""}` : "",
+    open ? `${open} open line${open > 1 ? "s" : ""}` : "",
+    guides ? `${guides} guide${guides > 1 ? "s" : ""}` : "",
+  ].filter(Boolean).join(" · ");
   const tail = count ? ` · ${count}` : "";
   const n = sk.path.length;
   const text = {
-    null: "Pick a tool on the sketch bar",
+    null: sk.sel != null ? "Drag to move · Delete removes it" : "Click a line or shape",
     line: n >= 3 ? `${n} points · the first point or C closes · Enter ends an open line · U undoes`
       : n ? `${n} point${n > 1 ? "s" : ""} · Enter ends an open line · U undoes · Esc drops it` : "First point",
     rect: sk.anchor ? "Opposite corner" : "First corner",
@@ -231,6 +275,7 @@ export function startBoard() {
   const choice = remembered(mem, choices());
   if (!choice) { log("board.blocked", { reason: "no stock" }); return; }
   ctx.stopOthers();
+  guideLatch = false;
   sk = {
     step: "pick", face: null, tool: null, items: [], history: [], path: [], anchor: null, pick: null,
     cursor: null, raw: null, client: null, snaps: null, plan: null,
@@ -262,14 +307,16 @@ function clearPreview() {
   hideSketchPick();
   hideSketchSolid();
   hideSketchProfiles();
+  hideSketchGuides();
   hideTip();
 }
 
 function enterSketch(face) {
-  Object.assign(sk, { face, step: "sketch", tool: null, items: [], history: [], path: [], anchor: null, pick: null, snaps: null });
+  Object.assign(sk, { face, step: "sketch", tool: null, items: [], history: [], path: [], anchor: null, pick: null, snaps: null, sel: null, drag: null });
   hideFaceHint();
   hideTip();
   beginFaceView(face);
+  canvas.style.cursor = "default";
   showBars();
   log("board.face", { axis: face.axis, value: face.value, dir: face.dir, label: face.label, source: face.source });
   ctx.emitMode();
@@ -296,6 +343,14 @@ function back() {
       return;
     }
     if (sk.tool) { setTool(null); return; }
+    if (sk.sel != null) {
+      sk.sel = null;
+      sk.drag = null;
+      hideSketchPick();
+      log("board.select", { index: null });
+      paintStatus();
+      return;
+    }
     if (sk.items.length) { paintStatus("Finish sketch or Cancel on the sketch bar"); return; }
     sk.step = "pick";
     sk.face = null;
@@ -326,9 +381,12 @@ function setTool(id) {
   if (sk.tool === id) return;
   clearDrawing();
   hideDyn();
+  sk.sel = null;
+  sk.drag = null;
+  hideSketchPick();
   sk.tool = id;
-  canvas.style.cursor = "crosshair";
-  log("board.tool", { tool: id });
+  canvas.style.cursor = id ? "crosshair" : "default";
+  log("board.tool", { tool: id || "select" });
   paintBar();
   paintStatus();
   if (id && sizeFields().length) openSizes();
@@ -341,17 +399,63 @@ function toggleAid(key) {
   if (key === "polar" && aids.polar) aids.ortho = false;
   log("board.aid", { key, on: aids[key], aids: { ...aids } });
   paintAids();
+  // The rubber band follows the new mode at once, without waiting for the next mouse move.
+  if (sk && sk.step === "sketch" && sk.client) {
+    boardPointerMove({ clientX: sk.client.x, clientY: sk.client.y, shiftKey: !!sk.shift });
+  }
 }
+
+// One press, one toggle. The main process also delivers F3 / F8 / F10, because
+// Windows takes those keys before the page sees keydown; ignore the second copy.
+let aidAt = 0;
+function pressAid(name) {
+  const aid = AID_KEYS[name];
+  if (!aid || !sk) return;
+  const now = performance.now();
+  if (now - aidAt < 80) return;
+  aidAt = now;
+  toggleAid(aid);
+}
+window.addEventListener("keydown", (e) => {
+  if (e.repeat || e.ctrlKey || e.metaKey || e.altKey) return;
+  const name = AID_KEYS[e.code] ? e.code : e.key;
+  if (!AID_KEYS[name]) return;
+  e.preventDefault();
+  e.stopPropagation();
+  pressAid(name);
+}, true);
+window.cablab?.onSketchAid?.(pressAid);
+
+function shiftGuide(down) {
+  if (!sk || sk.step !== "sketch" || !!sk.shift === down) return;
+  sk.shift = down;
+  paintGuide();
+  if (sk.client) boardPointerMove({ clientX: sk.client.x, clientY: sk.client.y, shiftKey: down });
+}
+window.addEventListener("keydown", (e) => { if (e.key === "Shift" && !e.repeat) shiftGuide(true); }, true);
+window.addEventListener("keyup", (e) => { if (e.key === "Shift") shiftGuide(false); }, true);
+window.addEventListener("pointerup", () => { if (sk && sk.drag) boardPointerUp(); });
 
 /** One step of the sketch's own undo: the items before a change. */
 function commit(items, kind, extra = {}) {
   sk.history.push(sk.items);
   if (sk.history.length > 100) sk.history.shift();
-  sk.items = joinItems(items);
+  const real = [];
+  const cons = [];
+  for (const it of items) (it.construction ? cons : real).push(it);
+  // Guides join only with guides, so a dashed line never becomes part of a board.
+  sk.items = [...joinItems(real), ...joinItems(cons).map((it) => ({ ...it, construction: true }))];
   sk.snaps = null;
   drawItems();
-  log(`board.${kind}`, { tool: sk.tool, items: sk.items.length, closed: sk.items.filter((it) => it.closed).length, ...extra });
+  showSelection();
+  log(`board.${kind}`, {
+    tool: sk.tool, items: sk.items.length,
+    closed: sk.items.filter((it) => it.closed && !it.construction).length,
+    construction: sk.items.filter((it) => it.construction).length,
+    ...extra,
+  });
   paintStatus();
+  paintGuide();
 }
 
 // --- geometry on the face ----------------------------------------------------------------
@@ -479,7 +583,7 @@ function resolve(e) {
     if (best) return { uv: best.uv, kind: best.kind, label: best.label, feature: true };
   }
   if (from && (sk.tool === "line" || sk.tool === "mirror" || sk.tool === "arc")) {
-    if (aids.ortho !== e.shiftKey) return { uv: roundLength(from, orthoPoint(from, raw)), kind: "ortho", label: "Ortho" };
+    if (aids.ortho) return { uv: roundLength(from, orthoPoint(from, raw)), kind: "ortho", label: "Ortho" };
     if (aids.polar) {
       const p = polarPoint(from, raw);
       if (p) return { uv: roundLength(from, p), kind: "polar", label: "Polar" };
@@ -515,8 +619,15 @@ const itemWorld = (item) => itemPoints(item).map(world);
 
 // --- preview ------------------------------------------------------------------------------
 
-function drawItems() {
-  showSketchProfiles(sk.items.map((it) => ({ pts: itemWorld(it), closed: it.closed })));
+function drawItems(items = sk.items) {
+  const real = [];
+  const guides = [];
+  for (const it of items) {
+    const rec = { pts: itemWorld(it), closed: it.closed };
+    (it.construction ? guides : real).push(rec);
+  }
+  showSketchProfiles(real);
+  showSketchGuides(guides);
 }
 
 /** The shape being drawn with the cursor as its next point. True when it would cross itself. */
@@ -525,16 +636,17 @@ function drawPath(r) {
   const cur = r ? r.uv : sk.cursor;
   const tool = sk.tool;
   if (!cur || !from) { hideSketchPath(); return false; }
-  if (tool === "rect") { showSketchPath(itemWorld(rectItem(from, cur)), { closed: true }); return false; }
+  const guide = drawingGuide();
+  if (tool === "rect") { showSketchPath(itemWorld(rectItem(from, cur)), { closed: true, construction: guide }); return false; }
   if (tool === "circle") {
     const rr = Math.hypot(cur[0] - from[0], cur[1] - from[1]);
-    if (rr > 0.5) showSketchPath(itemWorld(circleItem(from, rr)), { closed: true }); else hideSketchPath();
+    if (rr > 0.5) showSketchPath(itemWorld(circleItem(from, rr)), { closed: true, construction: guide }); else hideSketchPath();
     return false;
   }
   if (tool === "arc") {
-    if (sk.path.length === 1) { showSketchPath([world(sk.path[0]), world(cur)]); return false; }
+    if (sk.path.length === 1) { showSketchPath([world(sk.path[0]), world(cur)], { construction: guide }); return false; }
     const a = arcItem(sk.path[0], cur, sk.path[1]);
-    if (a) showSketchPath(itemWorld(a)); else showSketchPath([world(sk.path[0]), world(sk.path[1])], { bad: true });
+    if (a) showSketchPath(itemWorld(a), { construction: guide }); else showSketchPath([world(sk.path[0]), world(sk.path[1])], { bad: true });
     return !a;
   }
   if (tool === "mirror") {
@@ -542,8 +654,8 @@ function drawPath(r) {
     return false;
   }
   const closing = r && r.kind === "close";
-  const bad = closing ? segmentHitsPath(sk.path, from, sk.path[0], { closing: true }) : segmentHitsPath(sk.path, from, cur);
-  showSketchPath([...sk.path, closing ? sk.path[0] : cur].map(world), { bad });
+  const bad = !guide && (closing ? segmentHitsPath(sk.path, from, sk.path[0], { closing: true }) : segmentHitsPath(sk.path, from, cur));
+  showSketchPath([...sk.path, closing ? sk.path[0] : cur].map(world), { bad, closed: closing, construction: guide });
   return bad;
 }
 
@@ -582,7 +694,10 @@ function modifyAt(p) {
     return {
       show: itemPoints(res.item), closed: res.item.closed,
       tip: tool === "fillet" ? `Fillet R${params.fillet.r}` : `Chamfer ${params.chamfer.d1} × ${params.chamfer.d2}`,
-      apply: () => commit(items.map((it, i) => (i === v.index ? res.item : it)), tool, { vertex: v.vi }),
+      apply: () => {
+        if (item.construction) res.item.construction = true;
+        commit(items.map((it, i) => (i === v.index ? res.item : it)), tool, { vertex: v.vi });
+      },
     };
   }
   if (tool === "trim") {
@@ -618,6 +733,32 @@ function modifyAt(p) {
   return null;
 }
 
+function cloneItem(it) {
+  return { ...it, pts: it.pts.map((p) => [p[0], p[1]]), b: (it.b || []).slice() };
+}
+function translateItem(it, du, dv) {
+  return { ...it, pts: it.pts.map(([u, v]) => [u + du, v + dv]), b: (it.b || []).slice() };
+}
+function itemLabel(it) {
+  if (it.construction) return it.closed ? "Guide" : "Guide line";
+  return it.closed ? "Shape" : "Line";
+}
+function showSelection(items = sk.items) {
+  const it = sk.sel != null ? items[sk.sel] : null;
+  if (!it) { hideSketchPick(); return; }
+  showSketchPick(itemWorld(it), { closed: it.closed });
+}
+function deleteSelection() {
+  if (sk.sel == null || !sk.items[sk.sel]) return;
+  const index = sk.sel;
+  const removed = sk.items[index];
+  sk.sel = null;
+  sk.drag = null;
+  commit(sk.items.filter((_, i) => i !== index), "delete", {
+    index, closed: !!removed.closed, construction: !!removed.construction,
+  });
+}
+
 function pickItem(index) {
   sk.pick = { index };
   sk.snaps = null;
@@ -630,6 +771,69 @@ function offsetPreview(p) {
   const item = sk.items[sk.pick.index];
   const side = offsetSide(item, p);
   return offsetItem(item, params.offset.d * side);
+}
+
+function hoverSelect(e) {
+  hideSketchPath();
+  hideSnapMarker();
+  hideAlignLines();
+  const p = planeUV(e);
+  if (!p) return;
+  sk.raw = p;
+  if (sk.drag) {
+    const r = resolve(e);
+    const uv = r ? r.uv : p;
+    sk.drag.cur = uv;
+    const du = uv[0] - sk.drag.u;
+    const dv = uv[1] - sk.drag.v;
+    if (!sk.drag.moved && Math.hypot(du, dv) < 0.5) return;
+    sk.drag.moved = true;
+    const items = sk.items.map((it, i) => (i === sk.drag.index ? translateItem(sk.drag.item, du, dv) : it));
+    drawItems(items);
+    showSelection(items);
+    canvas.style.cursor = "move";
+    showTip(e.clientX, e.clientY, [`Move ${Math.round(du)}, ${Math.round(dv)}`]);
+    return;
+  }
+  const hit = nearestSegment(sk.items, p, apertureMm());
+  canvas.style.cursor = hit ? "move" : "default";
+  showSelection();
+  if (hit) showTip(e.clientX, e.clientY, [itemLabel(sk.items[hit.index]), "Drag to move · Delete removes it"]);
+  else hideTip();
+}
+
+function selectDown(e) {
+  const r = resolve(e);
+  const p = r ? r.uv : planeUV(e);
+  if (!p) return;
+  const hit = nearestSegment(sk.items, p, apertureMm());
+  if (!hit) {
+    if (sk.sel != null) log("board.select", { index: null });
+    sk.sel = null;
+    sk.drag = null;
+    hideSketchPick();
+    paintStatus();
+    hideTip();
+    return;
+  }
+  sk.sel = hit.index;
+  sk.drag = { index: hit.index, u: p[0], v: p[1], cur: [p[0], p[1]], item: cloneItem(sk.items[hit.index]), moved: false };
+  log("board.select", { index: hit.index, closed: !!sk.items[hit.index].closed, construction: !!sk.items[hit.index].construction });
+  showSelection();
+  paintStatus();
+}
+
+export function boardPointerUp() {
+  if (!sk || !sk.drag) return;
+  const d = sk.drag;
+  sk.drag = null;
+  canvas.style.cursor = "default";
+  if (!d.moved) return;
+  const du = d.cur[0] - d.u;
+  const dv = d.cur[1] - d.v;
+  const items = sk.items.map((it, i) => (i === d.index ? translateItem(d.item, du, dv) : it));
+  sk.sel = d.index;
+  commit(items, "move", { index: d.index, du: Math.round(du * 10) / 10, dv: Math.round(dv * 10) / 10 });
 }
 
 // --- pointer ------------------------------------------------------------------------------
@@ -646,8 +850,9 @@ export function boardPointerMove(e) {
   }
   if (sk.step !== "sketch") return;
   sk.client = { x: e.clientX, y: e.clientY };
+  sk.shift = !!e.shiftKey;
   if (dyn.open) placeDyn();
-  if (!sk.tool) { hideSnapMarker(); hideAlignLines(); hideTip(); return; }
+  if (!sk.tool) { hoverSelect(e); return; }
   if (MODIFY_IDS.has(sk.tool) && !(sk.tool === "mirror" && sk.pick)) { hoverModify(e); return; }
   let r = resolve(e);
   if (!r) { hideTip(); return; }
@@ -675,6 +880,7 @@ export function boardPointerMove(e) {
   if (from && sk.tool === "rect") lines.push(`${Math.round(Math.abs(r.uv[0] - from[0]))} × ${Math.round(Math.abs(r.uv[1] - from[1]))}`);
   if (from && sk.tool === "circle") lines.push(`R ${Math.round(Math.hypot(r.uv[0] - from[0], r.uv[1] - from[1]))}`);
   if (from && sk.tool === "line") lines.push(`L ${Math.round(Math.hypot(r.uv[0] - from[0], r.uv[1] - from[1]))} · ${screenAngle(from, r.uv)}°`);
+  if (drawingGuide()) lines.push("Construction");
   if (bad) lines.push(sk.tool === "arc" ? "The three points are in line" : "Crosses the line");
   if (from && !dyn.open && POINT_TOOLS.has(sk.tool)) lines.push("Tab types the next point");
   if (lines.length) showTip(e.clientX, e.clientY, lines, bad ? "warn" : ""); else hideTip();
@@ -722,7 +928,8 @@ export function boardPointerDown(e) {
     return;
   }
   if (sk.step !== "sketch") return;
-  if (!sk.tool) { paintStatus("Pick a tool on the sketch bar first"); log("board.blocked", { reason: "no tool" }); return; }
+  sk.shift = !!e.shiftKey;
+  if (!sk.tool) { selectDown(e); return; }
   if (MODIFY_IDS.has(sk.tool) && !(sk.tool === "mirror" && sk.pick)) { clickModify(e); return; }
   const r = resolve(e);
   if (!r) return;
@@ -742,6 +949,7 @@ function clickModify(e) {
     const res = offsetPreview(p);
     if (res.error) { paintStatus(res.error); log("board.blocked", { reason: res.error, tool: "offset" }); return; }
     const index = sk.pick.index;
+    if (constructionOn() || sk.items[index].construction) res.item.construction = true;
     sk.pick = null;
     commit([...sk.items, res.item], "offset", { from: index, d: params.offset.d });
     hideSketchPick();
@@ -773,7 +981,7 @@ function addPoint(uv, how, snap) {
       return true;
     }
     const a = sk.anchor;
-    const item = tool === "rect" ? rectItem(a, uv) : circleItem(a, Math.hypot(uv[0] - a[0], uv[1] - a[1]));
+    const item = markGuide(tool === "rect" ? rectItem(a, uv) : circleItem(a, Math.hypot(uv[0] - a[0], uv[1] - a[1])));
     const small = tool === "rect" ? Math.min(Math.abs(uv[0] - a[0]), Math.abs(uv[1] - a[1])) < 1 : Math.hypot(uv[0] - a[0], uv[1] - a[1]) < 0.5;
     if (small) { paintStatus(tool === "rect" ? "The rectangle has no size" : "The circle has no size"); return false; }
     log("board.point", { tool, index: 1, u: uv[0], v: uv[1], snap, how });
@@ -793,6 +1001,7 @@ function addPoint(uv, how, snap) {
     }
     if (Math.hypot(uv[0] - sk.pick.p1[0], uv[1] - sk.pick.p1[1]) < 0.5) return false;
     const m = mirrorItem(sk.items[sk.pick.index], sk.pick.p1, uv);
+    if (constructionOn() || sk.items[sk.pick.index].construction) m.construction = true;
     const from = sk.pick.index;
     sk.pick = null;
     hideSketchPath();
@@ -814,12 +1023,12 @@ function addPoint(uv, how, snap) {
     if (!a) { paintStatus("The three points are in line"); return false; }
     sk.path = [];
     hideSketchPath();
-    commit([...sk.items, a], "shape", { how });
+    commit([...sk.items, markGuide(a)], "shape", { how });
     return true;
   }
   const from = last();
   if (from && Math.hypot(uv[0] - from[0], uv[1] - from[1]) < 0.5) return false;
-  if (from && segmentHitsPath(sk.path, from, uv)) {
+  if (from && !drawingGuide() && segmentHitsPath(sk.path, from, uv)) {
     log("board.blocked", { reason: "crosses itself", tool: "line", u: uv[0], v: uv[1] });
     paintStatus("That line crosses the one you are drawing");
     return false;
@@ -836,14 +1045,17 @@ function closeLine(how) {
   if (sk.tool !== "line") return false;
   const pts = sk.path;
   if (pts.length < 3) { paintStatus("A shape needs at least 3 points"); log("board.blocked", { reason: "needs at least 3 points", how }); return false; }
-  if (segmentHitsPath(pts, pts[pts.length - 1], pts[0], { closing: true })) {
+  const guide = drawingGuide();
+  if (!guide && segmentHitsPath(pts, pts[pts.length - 1], pts[0], { closing: true })) {
     paintStatus("Closing it would cross the line");
     log("board.blocked", { reason: "the outline crosses itself", how, points: pts.length });
     return false;
   }
-  const item = { closed: true, pts: pts.slice(), b: pts.map(() => 0) };
-  const problem = itemProblem(item);
-  if (problem) { paintStatus(`The shape ${problem}`); return false; }
+  const item = { closed: true, pts: pts.slice(), b: pts.map(() => 0), ...(guide ? { construction: true } : {}) };
+  if (!guide) {
+    const problem = itemProblem(item);
+    if (problem) { paintStatus(`The shape ${problem}`); return false; }
+  }
   sk.path = [];
   hideSketchPath();
   closeDyn();
@@ -860,7 +1072,7 @@ function enter(how) {
     sk.path = [];
     hideSketchPath();
     closeDyn();
-    commit([...sk.items, { closed: false, pts, b: pts.slice(1).map(() => 0) }], "line", { how, points: pts.length });
+    commit([...sk.items, markGuide({ closed: false, pts, b: pts.slice(1).map(() => 0) })], "line", { how, points: pts.length });
     return;
   }
   if ((tool === "rect" || tool === "circle") && sk.anchor && sk.cursor) addPoint(sk.cursor, how, "cursor");
@@ -888,6 +1100,8 @@ function undo(how) {
     sk.snaps = null;
     drawItems();
     log("board.undo", { how, change: true, items: sk.items.length });
+    if (sk.sel != null && !sk.items[sk.sel]) sk.sel = null;
+    showSelection();
   }
   if (!last() && dyn.kind === "point") closeDyn();
   paintStatus();
@@ -898,8 +1112,6 @@ function undo(how) {
 /** Canvas keys while the command is on (focus is not in a field). */
 export function boardKeydown(e) {
   if (!sk) return;
-  const aid = AID_KEYS[e.key];
-  if (aid) { e.preventDefault(); toggleAid(aid); return; }
   if (e.key === "Escape") { e.preventDefault(); back(); return; }
   const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
   if (sk.step === "stock") {
@@ -907,6 +1119,7 @@ export function boardKeydown(e) {
     return;
   }
   if (sk.step === "sketch" && plain) {
+    if ((e.key === "Delete" || e.key === "Backspace") && !sk.tool) { e.preventDefault(); deleteSelection(); return; }
     if (e.key === "Enter") { e.preventDefault(); enter("enter"); return; }
     const k = e.key.toLowerCase();
     // C closes a line being drawn (AutoCAD); otherwise it is the Circle tool.
@@ -1042,12 +1255,18 @@ function closeDyn() {
   if (sk && sk.step === "sketch" && sizeFields().length) openSizes();
 }
 
+let viewportRect = null;
+let viewportRectAt = -Infinity;
 function placeDyn() {
   const c = sk.client || (last() && client(last()));
   if (!c) return;
-  const r = viewport.getBoundingClientRect();
-  dynBox.style.left = `${c.x - r.left + 18}px`;
-  dynBox.style.top = `${c.y - r.top - 46}px`;
+  const now = performance.now();
+  if (!viewportRect || now - viewportRectAt > 32) {
+    viewportRect = viewport.getBoundingClientRect();
+    viewportRectAt = now;
+  }
+  dynBox.style.left = `${c.x - viewportRect.left + 18}px`;
+  dynBox.style.top = `${c.y - viewportRect.top - 46}px`;
 }
 
 /** Field names; live values for the untyped point fields; the box beside the cursor. */
@@ -1081,7 +1300,8 @@ function paintDyn(relabel = false) {
       }
     }
   });
-  dynHint.textContent = !size && sk.tool === "line" ? (lineMode === "polar" ? "wheel → dx dy" : "wheel → L ∠") : "";
+  const hint = !size && sk.tool === "line" ? (lineMode === "polar" ? "wheel → dx dy" : "wheel → L ∠") : "";
+  if (dynHint.textContent !== hint) dynHint.textContent = hint;
   placeDyn();
 }
 
@@ -1138,8 +1358,6 @@ for (const [i, slot] of dynSlots.entries()) {
   slot.input.addEventListener("keydown", (e) => {
     e.stopPropagation();
     if (!sk) return;
-    const aid = AID_KEYS[e.key];
-    if (aid) { e.preventDefault(); toggleAid(aid); return; }
     const count = (dyn.kind === "size" ? sizeFields() : pointFields()).length;
     if (e.key === "Tab") {
       e.preventDefault();
@@ -1184,7 +1402,7 @@ window.addEventListener("wheel", (e) => {
  * `{ closed, rings, boards: [{ outer, holes }] }`, or `{ problem }`.
  */
 function planBoards() {
-  const closed = sk.items.filter((it) => it.closed);
+  const closed = sk.items.filter((it) => it.closed && !it.construction);
   if (!closed.length) return { problem: "Draw a closed shape first" };
   const rings = closed.map(itemPoints);
   for (let i = 0; i < rings.length; i += 1) {
@@ -1198,7 +1416,8 @@ function planBoards() {
   for (const b of boards) {
     if (!sketchBoardFromUV(sk.face, closed[b.outer], sk.choice)) return { problem: `A board must be at least ${BOARD_MIN} × ${BOARD_MIN}` };
   }
-  return { plan: { closed, rings, boards, open: sk.items.length - closed.length } };
+  const open = sk.items.filter((it) => !it.closed && !it.construction).length;
+  return { plan: { closed, rings, boards, open } };
 }
 
 function finishSketch(how) {

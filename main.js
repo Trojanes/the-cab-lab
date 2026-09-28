@@ -345,10 +345,18 @@ function createWindow() {
   win.webContents.on("did-fail-load", (_event, code, desc) => {
     console.error("did-fail-load", code, desc);
   });
-  win.webContents.on("before-input-event", (_event, input) => {
+  win.webContents.on("before-input-event", (event, input) => {
     if (input.type === "keyDown" && input.key === "F12") {
       win.webContents.toggleDevTools();
+      return;
     }
+    // F8 (and F3 / F10) never reach the page on Windows: the menu bar takes the
+    // function key before keydown. Deliver it here, and don't also let it through.
+    const aid = input.key === "F3" || input.key === "F8" || input.key === "F10"
+      || input.code === "F3" || input.code === "F8" || input.code === "F10";
+    if (input.type !== "keyDown" || !aid || input.isAutoRepeat || input.control || input.meta || input.alt) return;
+    event.preventDefault();
+    win.webContents.send("sketch:aid", input.code || input.key);
   });
 
   win.loadFile(path.join(__dirname, "renderer", "index.html"));

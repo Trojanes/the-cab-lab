@@ -101,21 +101,22 @@
 |---|---|---|---|---|
 | vertical_structure | V1/V2 前立梃 | CPT | YZ/X | 全高 z[0,CH]；**bbox y∈[FPT, CD]**；V1 x[0,CPT]，V2 x = rspT>0 ? [CW−rspT, CW−rspT+CPT] : [CW−CPT, CW]（无右板时吃满右缘）；局部轮廓见 §4.1 |
 | vertical_structure | V3/V4 后立梃 | CPT | YZ/X | z[0,CH]；**bbox 深恒 150**：y∈[FPT+max(0, midDepth−150), CD]；x 同 V1/V2 的 X slab；轮廓见 §4.1 |
-| vertical_structure | V5 冰箱条 | CPT | YZ/X | 仅冰箱区；对侧放置（exteriorSide≠"left"→左）：左 x[leftT+CPT, leftT+2·CPT]，右 x[CW−rspT−2·CPT, CW−rspT−CPT]；**z = 冰箱腔 stacking z0..z1**；y bbox [FPT, CD]；profile = 局部矩形；仅首个冰箱腔 |
+| vertical_structure | V5 冰箱条 | CPT | YZ/X | 仅冰箱区；对侧放置（exteriorSide≠"left"→左）：左 x[leftT+CPT, leftT+2·CPT]，右 x[CW−rspT−2·CPT, CW−rspT−CPT]；**z = 冰箱腔 stacking z0..z1**；y bbox [FPT, CD]；profile = 局部矩形；仅首个冰箱腔。**冰箱紧贴 style_2 顶**（最上一个功能区是冰箱）：做成前立梃 y[0,150]（同 V1/V2），z 冰箱腔 z0 → TH1 底面 |
 | side_panel | SidePanel_L/R | 输入(15/16) | YZ/X | x 左 [0,leftT] / 右 [CW−rspT, CW]；**y∈[−FPT, CD−FPT]**（前包边、后缘短 FPT）；z[0,CH]；adapt 时后下角避让缺口 (CD−avoidDepth, avoidHeight) |
 | avoidance_support | avoidance_horizontal | 15 | XY/Z | x[leftT, leftT+midWidth]；y[CD−avoidDepth, CD]；z[avoidH−15, avoidH] |
 | avoidance_support | Avoidance_Vertical | 15 | XZ/Y | x 同上；y[CD−avoidDepth, CD−avoidDepth+15]；z[0, avoidH−15] |
 | top_system (style_1) | T1 前轨 | 16 | XZ/Y | x core[0,midWidth]；y[0,16]；z[CH−railH, CH] |
 | top_system (style_1) | T2 二轨 | 15 | XZ/Y | y[16,31]；z 同 T1 |
-| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−railH−16, CH−railH]；轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
-| bottom_system (style_1) | B1/B2/B3 | 16/15/CPT | XZ/Y·XY/Z | B1 y[0,16] z[0,railH]；B2 y[16,31]；B3 y[0,150] z[railH, railH+16]，轮廓同 T3 |
-| top_system (style_2) | TH1 固定前脸 | 15 | XY/Z | y[0,100]；z[CH−sysH+1, CH−1]（实测 [2084,2099]，15 厚留 1 mm 缝） |
+| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−frontRail−CPT, CH−frontRail]（挂在 T1/T2 下；V1/V2 插口仍高 16）；ledGroove：顶面 A 开 LED T 形槽（主槽宽 14.5 深 6.5、前留边 18，两支槽中心距两端 80、通到后缘）； 轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
+| bottom_system (style_1) | B1/B2/B3 | 16/15/CPT | XZ/Y·XY/Z | B1 y[0,16] z[0,railH]；B2 y[16,31]；B3 y[0,150] z[frontRail, frontRail+CPT]（坐在 B1/B2 上），轮廓同 T3；ledGroove：底面 B 开同样的 LED 槽（照亮踢脚空间） |
+| top_system (style_2) | TH1 固定前脸 | 15 | XY/Z | y[0,100]；z[CH−16, CH−1]（= CH − 厚 − inset，实测 [2084,2099]，15 厚留 1 mm 缝） |
+| top_system (style_2) | TopStyle2FixedFrontPanel 固定板 | FPT（门板料） | XZ/Y | 一般：门面上的盖板 x[leftT+sideClearance, leftT+midWidth−sideClearance]，y[−FPT,0]，z[CH−sysH, CH]。**冰箱紧贴顶**：嵌板，填冰箱开口——x 在 V1（或 V2）内侧面与 V5 之间（= 冰箱宽），y[0,FPT]（前脸与柜身前缘齐平），z[CH−sysH, TH1 底面]；TH1 前边外露（21 Bunk 冰箱柜：532 × 85 × 16） |
 | top_system (style_2) | T4 顶盖 | 15 | XY/Z | y[midDepth−100, midDepth]；z[CH−sysH+1, CH−1]（[484,584]×[2084,2099]） |
 | top_system (style_2) | T5 后条 | 15 | XZ/Y | y[midDepth, midDepth+15]；z[CH−sysH, CH]（[584,599]×[2000,2100]） |
 | bottom_system (style_2) | BH1 固定前脸 | 15 | XY/Z | y[0,100]；z[1,16]（留 1 mm 缝） |
 | boundary_panel | Zi（boundary-{上}-{下}） | ziT | XY/Z | x core[0,midWidth]；z = 堆叠边界段；full_zi y[0,midDepth] 前后 105 缺口（宽 CPT）、half_zi y[0,150] 前 45 缺口、shortened_zi y[0, CD−avoidDepth]（避让缩深，仅 generator 层产生） |
 | h_support | H13_left / H24_right | 15 | YZ/X | 竖桥贴 V1/V2 内侧：H13 x core[0,15]、H24 x core[midWidth−15, midWidth]；y[150, midDepth−150]；z：top [CH−100,CH]、bottom [0,100]、mid [居中区段]（见 §8.5） |
-| h_support | H34 后横桥 | 15 | XZ/Y | x core[15, midWidth−15]；**y[midDepth−15, midDepth]**；z 同 H13/H24 系列 |
+| h_support | H34 后横桥 | 15 | XZ/Y | x core[15, midWidth−15]；**y[midDepth−15, midDepth]**；z 同 H13/H24 系列；只有 V5 伸到柜后时才停在 V5 侧面 |
 | h_support | H13/H24/H34_fridge | 15 | 同上 | raised 模式：z 起于冰箱底之上（H13_fridge/H24_fridge/H34_fridge 三件），且 H*_bottom 省略 |
 | blank_panel_support | H12（H12_blank…） | 15 | — | blank_panel 区支撑：区高 ≥300 → 顶/底两条各高 100；<300 → 单块整高；深 15 |
 | vertical_divider | VD_{zoneId} | dividerT | YZ/X | y[0, midDepth]（实测 [0,584]）；z = 所属 double_door 区段；x = 心线 ±dividerT/2（**core 坐标后再平移**；默认心 midWidth/2） |
@@ -136,11 +137,12 @@
 - 叶解析：side_door 族 → 单叶；double_door → 双叶 `_L/_R`（中缝各让 fc/2）；drawer → 单叶（无铰链）；top_flap / bottom_flap → 单叶；open_space / open_appliance / fridge / blank_panel → **无面板**（冰箱腔保持开放）。
 - z 边缘按邻居类型决策：邻区有面板 → 缝 fc/2；邻区开放（open 族）→ 延伸盖边；顶/底贴系统边界 → 贴齐或留缝。
 - 铰链杯（⌀35 深 12.5 距边 22.5）：侧门杯心贴铰链侧，Z = [z1−sd, z0+sd]（useThreeHinges 加中点）；sd = clamp[75,100]（公式 §3）；sideDistance 可显式给数。
+- 翻门（top_flap / bottom_flap）铰链杯沿铰链边（上翻门贴上边、下翻门贴下边，杯心距该边 22.5），两个，杯心距左右门边 FLAP_HINGE_FROM_SIDE 100（sideDistance 可覆盖），深 FLAP_HINGE_CUP_DEPTH 12（同吊柜上翻门）。
 - 锁槽（55×15.5 r7.75，razor_long_rounded_1）：面到心 30.5。五种 lockPosition：
   - shelf_top：mountingFace top，centerZ = shelf.z1 + 30.5；
   - shelf_bottom：face bottom，centerZ = shelf.z0 − 30.5；
   - side：orientation vertical，mountingBoardId = VD，centerZ = zone.z0 + lockHeight（超面板 → 夹取 + warning "outside panel Z"）；
-  - top / bottom：贴上/下边界安装面 ∓30.5。
+  - top / bottom：安装面 = 锁舌碰到的那块板——区上方 Zi 的下表面 / 区下方 Zi 的上表面（冰箱正下方的抽屉：冰箱底板下前撑条 FridgeBaseRail 的下表面）；没有这块板时退回面板自身上/下边；centerZ = 安装面 ∓30.5。
   - shelf_* 无层板 → fallback（mountingFace bottom、fallbackApplied=true，warning "no horizontal shelf board found"）。双门锁用各叶自身段（DS_…_L/_R）。
 
 ### 4.3 Zi 边界板轮廓（profileVector，XY 平面、core 坐标；notch 宽 = CPT）
@@ -247,8 +249,13 @@
 |---|---|
 | 高度 | 冰箱区高度 = applianceHeightMm（覆盖 zone.height，warning 记录同步） |
 | 前脸 | 冰箱腔**不生成 front panel**（保持开放） |
+| 封边 | 只封外圈直边（缺口、榫头、贴墙贴顶、压在别的板上的不封），带厚 EDGE_BAND_THICKNESS_MM 1。门板色：FP_* 四边、盖板式固定板四边、冰箱嵌板只封下边、SidePanel 前边、V1/V2/V5 前边、T1 下边、B1 上边、TH1 前边（仅冰箱嵌板时露出）、冰箱底座时冰箱底板 Zi 和 FridgeBaseRail 的前边（抽屉面板停在其下 8.5，一直露着）。柜体色：T3/B3 前后边、full_zi 前边、half/shortened_zi 前后边、DS/VD 前边、T4 前边、T5 下边、avoidance_horizontal 前边、H 横桥朝空格子的那条长边（两头顶在立梃上；贴地、贴柜顶、贴别的板 1 mm 以内、朝冰箱腔的不封：H*_top 封下边、H*_bottom 封上边、中撑封离开 Zi 的那一边、H34_fridgeBase 封下边）。不封：T2、B2、BH1、H13/H24_fridgeBase、Avoidance_Vertical、V3、V4。导出 .cnjob 暂不带封边（先手动确认，再把同一套逻辑套进生成器） |
+| 载入修补 | fitTallCabinetHeight 让 zone-3（或最后一个非冰箱区）吃差额，最低 300；已经低于 300 且刚好合上的区（冰箱下的 247 抽屉）保持原高，只是不能再缩 |
 | 宽度同步 | syncCabinetWidthFromFridge：CW = applianceWidthMm + 45；exteriorSide=left/right 时强制该侧 16 侧板 → CW = 550+45+16 = 611（warning 含 611）；none → 595、不强制侧板 |
 | V5 | 对侧立梃（§4 表）；z 贴冰箱腔 z0/z1（±0.5 断言）；仅首个冰箱腔 |
+| 冰箱紧贴 style_2 顶 | 固定板改为冰箱开口里的嵌板（V1/V2 内侧 ↔ V5，y[0,FPT]，冰箱腔顶 → TH1 底）；V5 改为 150 深前立梃并做到 TH1 底；中间隔着别的区时仍用门面盖板 |
+| 冰箱正下方是抽屉（冰箱底座） | 抽屉下面那块 Zi 缩到 FRIDGE_BASE_ZI_DEPTH 224（只有前缺口，V3/V4 不开槽）；抽屉区左右 H13/H24_fridgeBase（y hY0..hY1，抽屉区底 → 冰箱底板槽底）、后 H34_fridgeBase（冰箱底板下 H 高 100）、前撑条 FridgeBaseRail（V1 内侧 ↔ V2 内侧，y[0, FRIDGE_BASE_RAIL_DEPTH 100]，厚 CPT，贴冰箱底板下）；抽屉面板上沿 = 冰箱底板下表面 − FRIDGE_BASE_DRAWER_FRONT_GAP 8.5 |
+| 预设 | presets.json `rogue-dometic`（ui: true）：21 Bunk Dometic 冰箱柜 593×640×1965，下翻门 172 + 抽屉 247 + 冰箱 1344，style_2 顶 101，左 16 彩色侧板，ledGroove；29 块板全部钉值，高柜面板「Preset」下拉可选 |
 | 避让模式 | gap = 冰箱底 z − avoidH（底部空隙）；gap <105 → **raised**：avoidance_horizontal 顶面贴冰箱底、生成 H13/H24/H34_fridge 三件（z ≥ 冰箱底）、**省略 H*_bottom**、warning；gap ≥105 → **normal**：保持输入避让高（horizontal z1=avoidH）、仍生成 H*_bottom、无 _fridge 板 |
 | 骨架保留 | 冰箱栈仍生成 T1/T2/T3/B1/B2/B3/V1/V2（结构与普通区一致） |
 | 声明 | §6 冰箱四条按现存板件过滤（left 外饰 → gt_sidepanel_l_v1 + gt_v5_v2；none → gt_v5_v1） |
@@ -337,7 +344,7 @@ avoidance_horizontal [16,584, 384,584, 385,400]（XY/Z）；Avoidance_Vertical [
 
 ### 8.8 H mid 与 Zi 冲突移动（baseParams：side 930 + drawer 500 + open 600）
 
-**VD 区锚定（优先于本节冲突移动）**：存在 double_door+verticalDivider 区且其下沿为 full_zi/shortened_zi 时，三件中撑不取柜高正中，而是锚在该隔板上沿共面成环——z = [zi.z1−1, zi.z1+99]（uiDefault：boundary-zone-3 z1=999 → [998,1098]，双门区内）。柜高差额全进该区时隔板不动，中撑随隔板不动。无此隔板才走下面的居中+冲突移动。
+**VD 区锚定（优先于本节冲突移动）**：存在 double_door+verticalDivider 区且其下沿为 full_zi/shortened_zi 时，三件中撑不取柜高正中，而是锚在该隔板上沿共面成环——z = [zi.z1, zi.z1+100]，坐在隔板上、不进隔板（uiDefault：boundary-zone-3 z1=999 → [999,1099]，双门区内）。柜高差额全进该区时隔板不动，中撑随隔板不动。无此隔板才走下面的居中+冲突移动。
 
 full_zi z[1000,1015] 与 H mid [1000,1100] 冲突（overlap [1000,1014]）：H13_mid/H24_mid 移至 **[899,999]**（below，newZ0=899=zi.z0−101）；H34_mid 移至 **[1014,1114]**（above）；warnings "Stage 2 movement evaluated"。shortened_zi 同规则。half_zi 仅检测不移动（"half Zi movement rule deferred"，板保持 [1000,1100]）。越界跳过：below newZ0=−1 → 不动；above newZ1=301>CH300 → 不动（H34_mid 保持 [114,214]）。
 
@@ -359,7 +366,7 @@ full_zi z[1000,1015] 与 H mid [1000,1100] 冲突（overlap [1000,1014]）：H13
 ### 8.11 推导链示例（0.01 mm 对拍口径）
 
 - H 系 z：top [CH−100, CH]、bottom [0,100]、mid [CH/2−50, CH/2+50]（2100 → [1000,1100]）。
-- H mid 冲突移动：H13/H24_mid 新 z1 = zi.z0−1 = 999、z0 = 999−100 = 899；H34_mid 新 z0 = zi.z1−1 = 1014、z1 = 1014+100 = 1114（zi z[1000,1015]）。
+- H mid 冲突移动：H13/H24_mid 贴在隔板下，新 z1 = zi.z0 = 1000、z0 = 900；H34_mid 坐在隔板上，新 z0 = zi.z1 = 1015、z1 = 1115（zi z[1000,1015]）。原来的 −1 会让 H34_mid 进隔板 1 mm，已改为贴合（同 Fusion）。
 - V34 顶 L 缺口 ← CH：z = CH−105 = 1895 / CH−16 = 1984，y = 29 / 134。
 - T3 ← railH：z1 = CH−railH = 2060、z0 = z1−16 = 2044；V1/V2 顶部插口同段；底部插口 z = [railH, railH+16] = [53,69]。
 - VD ← midWidth：core 心 668/2 = 334 → 板 x = 334+16（leftT）±7.5 = [342.5,357.5]；zi_groove x = 334±8 = [326,342]（core，坑⑤）。

@@ -66,12 +66,13 @@ function boardGeo(wall, board) {
 }
 
 function buildGroup(wall) {
+  const g = new THREE.Group();
+  g.name = wall.id;
+  if (wall.hidden) return g;
   const sp = getSpace();
   const cut = wallBoards(wall, sp, getStock());
   const st = statusOf(wall);
   const selected = wall.id === getSelectedId();
-  const g = new THREE.Group();
-  g.name = wall.id;
   cut.boards.forEach((board, i) => {
     const bad = !st.ok || !board.fits;
     const geo = boardGeo(wall, board);

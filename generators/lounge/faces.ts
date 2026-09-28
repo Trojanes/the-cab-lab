@@ -2,7 +2,9 @@
  * Lounge face layer: top openings, lid finger holes, FaceRef joints.
  */
 import { dim, ref } from "../_lib/dim.ts";
-import { addFeature, annotate, localRect, type Board, type Joint } from "../_lib/model.ts";
+import { setEdgeBand } from "../_lib/edgeBand.ts";
+import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, localRect, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
+import { RULES as R } from "./rules.ts";
 import { resolveDeclaredJoints } from "../_lib/resolveJoints.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import type { LoungeGroove, LoungeHinge, LoungeLid, LoungeLock, LoungeOpening } from "./types.ts";
@@ -15,6 +17,7 @@ export function buildLoungeFaces(fb: {
   locks?: LoungeLock[];
   grooves?: LoungeGroove[];
   doorColour: string;
+  carcassColour?: string;
 }): Joint[] {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
@@ -84,9 +87,49 @@ export function buildLoungeFaces(fb: {
     if (!board) continue;
     addFeature(board, g.face, {
       id: g.id, kind: "groove", u0: g.u0, u1: g.u1, v0: g.v0, v1: g.v1,
-      depth: g.depth, for: "middle_cabinet_mid_divider", source: "lounge",
+      depth: g.depth, for: g.for ?? "middle_cabinet_mid_divider", source: "lounge",
     });
   }
 
+  if (B.has("back_rail")) bandFrameEdges(fb.boards, fb.carcassColour ?? "White Stipple", fb.doorColour);
   return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
+}
+
+/**
+ * Frame L: every edge that shows, in the carcass colour (it is all partition stock). The seat ring's top
+ * edges, the wing sides' room-facing ends, the lids all round, and the rail edges that face into the
+ * storage. Run ends count as against a wall; edges on the floor, the wall, a slot or another board stay bare.
+ * A wing drawer: its front and fixed strip all round, and the wing sides' room ends, in the door colour;
+ * with the drawer out, the drawer rail's rear edge and the wing supports' front edges show.
+ */
+function bandFrameEdges(boards: Board[], colour: string, doorColour: string) {
+  const tape = { thickness: R.EDGE_BAND_THICKNESS_MM.value, colour };
+  const band = (b: Board | undefined, normal: AxisDir) => {
+    if (!b) return;
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), tape);
+  };
+  const by = (id: string) => boards.find((b) => b.id === id);
+  for (const id of ["main_front", "l_front", "main_end", "l_side", "l_outer_side", "back_rail"]) band(by(id), "+Z");
+  band(by("l_side"), "-Y");
+  band(by("l_outer_side"), "-Y");
+  if (by("l_drawer_front")) {
+    const doorTape = { thickness: R.EDGE_BAND_THICKNESS_MM.value, colour: doorColour };
+    for (const id of ["l_drawer_front", "l_drawer_strip"]) {
+      const b = by(id)!;
+      for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+    }
+    // The wing sides' room ends frame the drawer: door colour there.
+    for (const id of ["l_side", "l_outer_side"]) {
+      const b = by(id)!;
+      for (const f of boundaryEdgeFaces(b, "-Y")) setEdgeBand(b, Number(f.id.slice(1)), doorTape);
+    }
+    band(by("l_drawer_rail"), "+Y");
+    band(by("l_support_inner"), "-Y");
+    band(by("l_support_outer"), "-Y");
+  }
+  for (const id of ["main_rail_back", "main_rail_front", "back_rail"]) band(by(id), "-Z");
+  for (const id of ["main_lid", "l_lid"]) {
+    const lid = by(id);
+    if (lid) for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
+  }
 }

@@ -85,6 +85,31 @@ export function worldOf(pose, local) {
   return [p.x + r[0], p.y + r[1], p.z + r[2]];
 }
 
+/** Cabinet-local point of a world point (inverse of worldOf). */
+export function localOf(pose, world) {
+  const p = poseOf(pose);
+  return mulVec(transpose(rotationMatrix(p.rotX, p.rotY, p.rotZ)), [world[0] - p.x, world[1] - p.y, world[2] - p.z]);
+}
+
+/**
+ * Which corner of a local box a local point is at: −1 = the x0 / y0 / z0 side, +1 = the x1 / y1 / z1 side.
+ * Stored on a cabinet when it is drawn (the first click), so a later size change can grow from that corner.
+ */
+export function cornerOf(box, local) {
+  const side = (v, a, b) => (v - a <= b - v ? -1 : 1);
+  return { x: side(local[0], box.x0, box.x1), y: side(local[1], box.y0, box.y1), z: side(local[2], box.z0, box.z1) };
+}
+
+/** Pose that keeps `corner` of `box0` (at `pose`) where it is when the cabinet's local box becomes `box1`. Rotation unchanged. */
+export function keepCorner(pose, box0, box1, corner) {
+  const at = (box) => [corner.x < 0 ? box.x0 : box.x1, corner.y < 0 ? box.y0 : box.y1, corner.z < 0 ? box.z0 : box.z1];
+  const p = poseOf(pose);
+  const fixed = worldOf(p, at(box0));
+  const r = mulVec(rotationMatrix(p.rotX, p.rotY, p.rotZ), at(box1));
+  const round = (v) => Math.round(v * 1000) / 1000;
+  return { ...pose, x: round(fixed[0] - r[0]), y: round(fixed[1] - r[1]), z: round(fixed[2] - r[2]) };
+}
+
 /** Six edge directions leaving a corner: the cabinet's local axes and their opposites, in world space. */
 export function localAxes(pose) {
   const p = poseOf(pose);

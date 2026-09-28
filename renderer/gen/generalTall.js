@@ -39,6 +39,9 @@ function ref(key) {
   if (!entry) throw new Error(`dim ref: unknown key "${key}" (record it before referencing it)`);
   return { __ref: true, key, value: entry.value };
 }
+function valueOf(key) {
+  return active.entries[key]?.value ?? NaN;
+}
 function formulaOf(fn, override) {
   if (override) return override;
   const src = fn.toString();
@@ -81,6 +84,12 @@ function dim(key, terms, fn, options = {}) {
 }
 function same(key, of) {
   return dim(key, { v: ref(of) }, (t) => t.v, { formula: `= ${of}` });
+}
+function ex(terms, fn, formula) {
+  return { terms, fn, formula };
+}
+function lit(v) {
+  return { terms: {}, fn: () => v, formula: String(v) };
 }
 function defineRules(module, raw) {
   const out = {};
@@ -402,6 +411,46 @@ function recordBoardBox(id, x0, x1, y0, y1, z0, z1) {
   };
 }
 
+// generators/_lib/trace.ts
+function evalExpr(e) {
+  const values = {};
+  for (const [name, term] of Object.entries(e.terms)) values[name] = val(term);
+  return e.fn(values);
+}
+function recordLoop(id, axes, pairs, round = false) {
+  const q = (n) => round ? Math.round(n * 1e3) / 1e3 : n;
+  return pairs.map(([a, b], i) => {
+    const x = q(evalExpr(a));
+    const y = q(evalExpr(b));
+    dim(`${id}.pv[${i}].${axes[0]}`, a.terms, round ? (t) => q(a.fn(t)) : a.fn, { formula: a.formula });
+    dim(`${id}.pv[${i}].${axes[1]}`, b.terms, round ? (t) => q(b.fn(t)) : b.fn, { formula: b.formula });
+    return [x, y];
+  });
+}
+
+// generators/_lib/edgeBand.ts
+function outlineOf(b) {
+  return localOutline(b) ?? rectOutline(b);
+}
+function setEdgeBand(b, i, band) {
+  if (!Number.isInteger(i) || i < 0) throw new Error(`${b.id}: edge ${i} is not an outline index`);
+  const n = outlineOf(b).length;
+  if (i >= n) throw new Error(`${b.id}: edge ${i} is past the outline (${n} edges)`);
+  const face = faceOf(b, `E${i}`);
+  if (!band) {
+    if (!face.finish?.edgeBand) return;
+    delete face.finish.edgeBand;
+    if (face.finish.colour == null) delete face.finish;
+    return;
+  }
+  if (!Number.isFinite(band.thickness) || band.thickness <= 0) {
+    throw new Error(`${b.id}.E${i}: edge band thickness must be millimetres above 0`);
+  }
+  const stored = { thickness: band.thickness };
+  if (band.colour) stored.colour = band.colour;
+  face.finish = { ...face.finish, edgeBand: stored };
+}
+
 // generators/_lib/resolveJoints.ts
 var EPS2 = 0.6;
 function overlap(a0, a1, b0, b1) {
@@ -497,7 +546,30 @@ var GT_RELATIONSHIP_DECLARATIONS = [
 function present(d, ids) {
   return [d.panelAId, d.panelBId, d.hostPanelId, d.targetPanelId].every((id) => ids.has(id));
 }
-function relationshipDeclarationsForBoards(boardIds) {
+function overlaps(a0, a1, b0, b1) {
+  return a0 < b1 - 0.01 && b0 < a1 - 0.01;
+}
+function near(a0, a1, b0, b1) {
+  const gap = Math.max(b0 - a1, a0 - b1);
+  return gap <= 0.6 && gap >= -0.6;
+}
+function meets(a, b) {
+  const ox = overlaps(a.x0, a.x1, b.x0, b.x1);
+  const oy = overlaps(a.y0, a.y1, b.y0, b.y1);
+  const oz = overlaps(a.z0, a.z1, b.z0, b.z1);
+  return ox && oy && oz || near(a.x0, a.x1, b.x0, b.x1) && oy && oz || near(a.y0, a.y1, b.y0, b.y1) && ox && oz || near(a.z0, a.z1, b.z0, b.z1) && ox && oy;
+}
+function joinRule(a, b) {
+  const types = /* @__PURE__ */ new Set([a.boardType, b.boardType]);
+  if (types.has("vertical_divider") || [...types].some((t) => t?.startsWith("Zi") || t === "full_zi" || t === "half_zi" || t === "shortened_zi")) return "tall_zi_joint_v1";
+  if ([...types].some((t) => t?.startsWith("H"))) return "tall_h_support_v1";
+  if (types.has("V5")) return "tall_fridge_divider_v1";
+  if (types.has("side_panel")) return "tall_side_panel_v1";
+  return "tall_butt_v1";
+}
+function relationshipDeclarationsForBoards(boardsOrIds) {
+  const boards = Array.isArray(boardsOrIds) ? boardsOrIds : [];
+  const boardIds = Array.isArray(boardsOrIds) ? new Set(boards.map((b) => b.id)) : boardsOrIds;
   const extra = [];
   const vs = ["V1", "V2", "V3", "V4", "V5"].filter((id) => boardIds.has(id));
   const bottoms = [...boardIds].filter((id) => /^H\d+_(bottom|fridge)$/.test(id));
@@ -506,17 +578,158 @@ function relationshipDeclarationsForBoards(boardIds) {
     for (const v of vs) extra.push(D(`gt_${deck.toLowerCase()}_${v.toLowerCase()}`, deck, v, "face_contact", "surface_to_surface", []));
     for (const h of bottoms) extra.push(D(`gt_${deck.toLowerCase()}_${h.toLowerCase()}`, deck, h, "structural_butt_joint", "edge_to_surface", ["screw_hole"]));
   }
+  const base = [...GT_RELATIONSHIP_DECLARATIONS, ...extra].filter((d) => present(d, boardIds));
+  const seenPairs = new Set(base.map((d) => [d.panelAId, d.panelBId].sort().join("|")));
+  const more = [];
+  for (let i = 0; i < boards.length; i += 1) {
+    for (let k = i + 1; k < boards.length; k += 1) {
+      const a = boards[i];
+      const b = boards[k];
+      if (a.category === "front_panel" || b.category === "front_panel" || a.boardType === "front_panel" || b.boardType === "front_panel") continue;
+      if (a.id === "T4" || b.id === "T4" || a.id === "T5" || b.id === "T5") continue;
+      const key = [a.id, b.id].sort().join("|");
+      if (seenPairs.has(key) || !meets(a, b)) continue;
+      seenPairs.add(key);
+      const id = `gt_${a.id}_${b.id}`.replace(/[^A-Za-z0-9_]/g, "_").toLowerCase();
+      more.push({ ...D(id, a.id, b.id, "structural_butt_joint", "edge_to_surface", ["screw_hole"]), ruleId: joinRule(a, b) });
+    }
+  }
   const seen = /* @__PURE__ */ new Set();
-  return [...GT_RELATIONSHIP_DECLARATIONS, ...extra].filter((d) => {
+  return [...base, ...more].filter((d) => {
     if (!present(d, boardIds) || seen.has(d.declarationId)) return false;
     seen.add(d.declarationId);
     return true;
   });
 }
 
+// generators/generalTall/rules.json
+var rules_default = {
+  DEFAULT_PANEL_THICKNESS: { value: 15, doc: "CPT \u7F3A\u7701\u3002" },
+  DEFAULT_FRONT_FACE_ALLOWANCE: { value: 16, doc: "FPT \u7F3A\u7701\uFF08frontPanelThickness > frontFaceAllowance > doorPanelThickness > 16\uFF09\u3002" },
+  DEFAULT_ZI_THICKNESS: { value: 15, doc: "Zi \u8FB9\u754C\u677F\u539A\u7F3A\u7701\uFF1BZi \u69FD\u9AD8 = ziT + 1\u3002" },
+  DEFAULT_H_THICKNESS: { value: 15, doc: "H \u652F\u6491\u539A\u3002" },
+  DEFAULT_SIDE_CLEARANCE: { value: 3, doc: "\u4FA7\u9699\u3002" },
+  DEFAULT_DIVIDER_THICKNESS: { value: 15, doc: "VD \u539A\uFF1Bzi_groove \u5BBD = \u6B64\u503C + 1\u3002" },
+  STYLE_1_INSERT_SLOT_THICKNESS: { value: 16, doc: "style_1 \u63D2\u677F\uFF08T3/B3\uFF09z \u6BB5\u9AD8\u3002" },
+  TOP_STYLE_1_MIN_FRONT_RAIL_HEIGHT: { value: 40, doc: "\u9876\u7CFB\u7EDF style_1 \u8F68\u9AD8\u4E0B\u9650\u3002" },
+  BOTTOM_STYLE_1_MIN_FRONT_RAIL_HEIGHT: { value: 53, doc: "\u5E95\u7CFB\u7EDF style_1 \u8F68\u9AD8\u4E0B\u9650\u3002" },
+  STYLE_1_SECOND_RAIL_THICKNESS: { value: 15, doc: "T2/B2 \u539A\uFF08\u5B57\u9762\u91CF\uFF0C\u4E0D\u968F CPT\uFF09\u3002" },
+  STYLE_1_FIRST_RAIL_THICKNESS: { value: 16, doc: "T1/B1 \u539A\uFF08\u5B57\u9762\u91CF\uFF0C\u4E0D\u968F FPT\uFF09\u3002" },
+  STYLE_1_INSERT_FRONT_NOTCH_DEPTH: { value: 75, doc: "T3/B3 \u524D\u8033\u6DF1\u5EA6\uFF08Y \u5411\uFF09\u3002\u524D\u6BB5\u5168\u5BBD\uFF0C\u505C\u5728\u7ACB\u6883\u53F0\u9636 y=80 \u4E4B\u524D\uFF1B\u5176\u540E\u5DE6\u53F3\u6536\u8FDB CPT\u3002" },
+  STYLE_1_INSERT_BOARD_DEPTH: { value: 150, doc: "T3/B3 \u677F\u6DF1\u3002" },
+  ZI_FULL_FRONT_REAR_NOTCH_DEPTH: { value: 105, doc: "full_zi \u524D\u540E\u7F3A\u53E3\u6DF1\u3002" },
+  ZI_HALF_FRONT_NOTCH_DEPTH: { value: 45, doc: "half_zi \u524D\u7F3A\u53E3\u6DF1\u3002" },
+  ZI_HALF_DEPTH: { value: 150, doc: "half_zi \u677F\u6DF1\u3002" },
+  ZI_SLOT_CLEARANCE: { value: 1, doc: "Zi \u69FD\u9AD8\u4F59\u91CF\uFF08\u69FD\u9AD8 = ziT+1\uFF0C\u8FB9\u754C\u5FC3 \xB1(ziT+1)/2\uFF09\u3002" },
+  ZI_SLOT_DEPTH: { value: 50, doc: "Zi \u69FD\u6DF1\uFF08\u6570\u636E\u5B57\u6BB5\uFF09\u3002" },
+  V12_Y_FRONT_FACE: { value: 70, doc: "\u7ACB\u677F\u524D\u8138\u7684\u67DC\u4F53 y\u3002\u9876\u8F68 T2 \u540E\u7F18\u505C\u5728\u540C\u4E00\u6761\u7EBF\u4E0A\uFF0C\u4E24\u5757\u677F\u8D34\u4E0A\u3002" },
+  V12_Y_STEP_INNER: { value: 80, doc: "V1/V2 \u5C40\u90E8 Y\uFF1A\u53F0\u9636\u3002" },
+  V12_Y_REAR: { value: 150, doc: "V1/V2 \u5C40\u90E8 Y\uFF1A\u540E\u7F18\uFF08\u5C40\u90E8\u7CFB\uFF09\u3002" },
+  V12_ZI_SLOT_INNER: { value: 100, doc: "V1/V2 Zi \u69FD\u5185\u7F18\uFF08\u69FD y\u2208[100,150]\uFF09\u3002" },
+  V34_Y_FRONT: { value: 0, doc: "V3/V4 \u5C40\u90E8 Y\uFF1A\u524D\u7F18\u3002" },
+  V34_ZI_SLOT_INNER: { value: 50, doc: "V3/V4 Zi \u69FD\u5916\u7F18\uFF08\u69FD y\u2208[0,50]\uFF09\u3002" },
+  V34_Y_REAR: { value: 150, doc: "V3/V4 \u5C40\u90E8 Y\uFF1A\u540E\u7F18\u3002" },
+  V34_TOP_NOTCH_FRONT_Y: { value: 29, doc: "V3/V4 \u9876\u90E8 L \u7F3A\u53E3\u524D\u89D2\u3002" },
+  V34_TOP_NOTCH_INNER_Y: { value: 134, doc: "V3/V4 \u9876\u90E8 L \u7F3A\u53E3\u5185\u89D2\u3002" },
+  V34_NOTCH_HEIGHT: { value: 105, doc: "V3/V4 \u9876/\u5E95 L \u7F3A\u53E3\u9AD8\uFF08\u81EA CH \u4E0B\u91CF / \u81EA\u5730\u9762\u8D77\uFF09\u3002" },
+  V34_END_NOTCH_THICKNESS: { value: 16, doc: "V3/V4 L \u7F3A\u53E3\u7AD6\u8FB9\u539A\u5EA6\uFF08CH\u221216 \u754C\uFF09\u3002" },
+  ZI_GROOVE_WIDTH_CLEARANCE: { value: 1, doc: "VD \u69FD\u5BBD = dividerT + 1\u3002" },
+  ZI_GROOVE_Y_OVERHANG: { value: 5, doc: "zi_groove y \u8D85\u820C\u533A \xB15\u3002" },
+  DIVIDER_TONGUE_GROOVE_CLEARANCE: { value: 0.5, doc: "VD \u820C\u63D2\u5165 = CPT/2 \u2212 0.5\u3002" },
+  H34_CLEARANCE_DEPTH: { value: 16, doc: "VD \u540E\u5E26\u8BA9\u4F4D\u69FD\u6DF1\uFF08y\u2208[midDepth\u221216, midDepth]\uFF09\u3002" },
+  H34_Z_BELOW: { value: 5, doc: "H34 \u8BA9\u4F4D\u69FD z \u4E0B\u63A2\uFF08H34.z0 \u2212 5\uFF09\u3002" },
+  H34_Z_ABOVE_START: { value: 105, doc: "H34 \u8BA9\u4F4D\u69FD z \u4E0A\u4F38\uFF08H34.z0 + 105\uFF09\u3002" },
+  H12_DEPTH: { value: 15, doc: "blank_panel \u652F\u6491\u6DF1\u3002" },
+  H12_SPLIT_HEIGHT: { value: 300, doc: "\u62C6\u5206\u9608\u503C\uFF08\u2265300 \u62C6\u4E24\u6761\u5404 100\uFF0C<300 \u5355\u5757\u6574\u9AD8\uFF09\u3002" },
+  H_SUPPORT_THICKNESS: { value: 15, doc: "H \u677F\u539A\u3002" },
+  H_SUPPORT_HEIGHT: { value: 100, doc: "H \u677F\u9AD8\u3002" },
+  H_SUPPORT_SIDE_DEPTH_START: { value: 150, doc: "\u5DE6\u53F3\u6A2A\u6865\u524D\u7AEF\u7684\u67DC\u4F53 y\u3002\u4E0D\u8DDF\u7ACB\u677F\u540E\u7F18\u8D70\u3002" },
+  H_SUPPORT_SIDE_REAR_CLEARANCE: { value: 150, doc: "\u5DE6\u53F3\u6A2A\u6865\u540E\u7F18 = midDepth \u2212 150\u3002" },
+  H34_DEPTH: { value: 15, doc: "H34 \u677F\u6DF1\u3002" },
+  V_AVOIDANCE_PARTIAL_FRONT_Y: { value: 70, doc: "V3/V4 partial \u907F\u8BA9\u524D\u89D2\uFF08ad \u2264 150\uFF09\u3002" },
+  AVOIDANCE_SUPPORT_THICKNESS: { value: 15, doc: "\u907F\u8BA9\u652F\u6491\u677F\u539A\uFF08\u5B57\u9762\u91CF\uFF09\u3002" },
+  MIN_END_SYSTEM_GAP: { value: 50, doc: "\u7AEF\u7CFB\u7EDF\u524D\u540E\u6761\u6700\u5C0F\u95F4\u9699\uFF08\u4F4E\u4E8E \u2192 merge \u5019\u9009 warning\uFF09\u3002" },
+  DEFAULT_FRONT_CLEARANCE: { value: 2.5, doc: "\u95E8\u7F1D fc\u3002" },
+  LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED \u69FD\u5BBD\uFF08ledGroove\uFF1AT3 \u9876\u9762\u3001B3 \u5E95\u9762\u7684 T \u5F62\u69FD\uFF1B\u4E0E\u540A\u67DC\u76F8\u540C\uFF09\u3002" },
+  LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED \u69FD\u6DF1\u3002" },
+  LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "T3 / B3 \u524D\u7F18\u5230 LED \u4E3B\u69FD\u8FD1\u8FB9\u7684\u7559\u8FB9\u3002" },
+  LED_GROOVE_BRANCH_END_INSET_MM: { value: 80, doc: "\u4E24\u6761 LED \u652F\u69FD\u4E2D\u5FC3\u8DDD\u677F\u4E24\u7AEF\uFF1B\u652F\u69FD\u4ECE\u4E3B\u69FD\u901A\u5230\u677F\u540E\u7F18\uFF0C\u5BBD\u540C\u69FD\u5BBD\u3002" },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "\u5C01\u8FB9\u5E26\u539A\u5EA6\u3002\u989C\u8272\u53E6\u5B9A\uFF1A\u95E8\u677F\u6599\u7684\u8FB9\u3001\u4EE5\u53CA\u548C\u95E8\u9762\u9F50\u5E73\u9732\u5728\u524D\u9762\u7684\u67DC\u4F53\u8FB9\uFF08V1/V2/V5 \u524D\u8FB9\u3001\u51B0\u7BB1\u5D4C\u677F\u9876\u4E0A\u7684 TH1 \u524D\u8FB9\u3001\u62BD\u5C49\u4E0A\u65B9\u9732\u51FA\u7684\u51B0\u7BB1\u5E95\u677F\u548C\u524D\u6491\u6761\u524D\u8FB9\uFF09\u7528\u95E8\u677F\u989C\u8272\uFF0C\u5176\u4F59\u770B\u5F97\u89C1\u7684\u67DC\u4F53\u8FB9\u7528\u67DC\u4F53\u989C\u8272\uFF08\u542B H \u6A2A\u6865\u671D\u7A7A\u683C\u5B50\u7684\u90A3\u6761\u957F\u8FB9\uFF1B\u671D\u51B0\u7BB1\u8154\u3001\u8D34\u5730\u8D34\u9876\u8D34\u677F\u7684\u4E0D\u5C01\uFF09\u3002" },
+  HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
+  HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
+  HINGE_CUP_FROM_EDGE: { value: 22.5, doc: "\u676F\u5FC3\u8DDD\u95E8\u8FB9\u3002" },
+  FLAP_HINGE_FROM_SIDE: { value: 100, doc: "\u4E0A\u7FFB / \u4E0B\u7FFB\u95E8\u7684\u94F0\u94FE\u676F\u6CBF\u94F0\u94FE\u8FB9\u6392\u4E24\u4E2A\uFF0C\u676F\u5FC3\u8DDD\u95E8\u5DE6\u53F3\u4E24\u8FB9\uFF08\u4E0E\u540A\u67DC\u4E0A\u7FFB\u95E8\u76F8\u540C\uFF09\u3002" },
+  FLAP_HINGE_CUP_DEPTH: { value: 12, doc: "\u7FFB\u95E8\u94F0\u94FE\u676F\u6DF1\uFF08\u4E0E\u540A\u67DC\u4E0A\u7FFB\u95E8\u76F8\u540C\uFF1B\u4FA7\u5F00\u95E8\u7528 HINGE_CUP_DEPTH\uFF09\u3002" },
+  HINGE_SD_MIN: { value: 75, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0B\u9650\u3002" },
+  HINGE_SD_MAX: { value: 100, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0A\u9650\u3002" },
+  HINGE_SD_SPAN: { value: 300, doc: "sd = clamp[75,100](75 + (\u957F\u8FB9\u2212300)\xB725/300)\u3002" },
+  SD_GAIN_NUM: { value: 25, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u5B50\u3002" },
+  SD_GAIN_DEN: { value: 300, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u6BCD\u3002" },
+  DEFAULT_LOCK_SIDE_DISTANCE: { value: 80, doc: "\u4FA7\u9501\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
+  LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER: { value: 30.5, doc: "\u5B89\u88C5\u9762\u5230\u9501\u69FD\u5FC3\u3002" },
+  LOCK_SLOT_LENGTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u957F\u3002" },
+  LOCK_SLOT_WIDTH: { value: 15.5, doc: "\u9501\u69FD\u5BBD\uFF08r = \u5BBD/2\uFF09\u3002" },
+  DOOR_SHELF_MIN_ZONE_HEIGHT: { value: 350, doc: "\u533A\u9AD8\u4F4E\u4E8E\u6B64\u4E0D\u751F\u6210\u95E8\u5C42\u677F\u3002" },
+  SIDE_PANEL_WHITELIST_15: { value: 15, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
+  SIDE_PANEL_WHITELIST_16: { value: 16, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
+  FRIDGE_WIDTH_ALLOWANCE: { value: 45, doc: "CW = applianceWidth + 45\uFF08\u65E0\u5916\u9970\u4FA7\u677F\uFF09\u3002" },
+  FRIDGE_WIDTH_ALLOWANCE_WITH_EXTERIOR: { value: 61, doc: "CW = applianceWidth + 61\uFF08\u6709 16 mm \u5916\u9970\u4FA7\u677F\uFF09\u3002" },
+  FRIDGE_EXTERIOR_THICKNESS: { value: 16, doc: "\u51B0\u7BB1\u5916\u9970\u4FA7\u677F\u539A\uFF08Fridge recipe \u56FA\u5B9A 16\uFF09\u3002" },
+  FRIDGE_RAISED_THRESHOLD: { value: 105, doc: "fridgeBaseBottomZ \u2212 avoidH < 105 \u2192 raised\u3002" },
+  FRIDGE_BASE_ZI_DEPTH: { value: 224, doc: "\u51B0\u7BB1\u6B63\u4E0B\u65B9\u662F\u62BD\u5C49\u65F6\uFF0C\u62BD\u5C49\u4E0B\u9762\u90A3\u5757 Zi \u53EA\u505A\u5230\u8FD9\u4E2A\u6DF1\u5EA6\uFF08\u81EA\u67DC\u8EAB\u524D\u7F18\u91CF\uFF0C\u53EA\u6709\u524D\u7F3A\u53E3\uFF0CV3/V4 \u4E0D\u5F00\u69FD\uFF09\u3002\u53D6\u81EA 21 Bunk Dometic \u51B0\u7BB1\u67DC\u3002" },
+  FRIDGE_BASE_RAIL_DEPTH: { value: 100, doc: "\u51B0\u7BB1\u6B63\u4E0B\u65B9\u662F\u62BD\u5C49\u65F6\uFF0C\u51B0\u7BB1\u5E95\u677F\u4E0B\u7684\u524D\u6491\u6761\u6DF1\u5EA6\uFF08\u81EA\u67DC\u8EAB\u524D\u7F18\u91CF\uFF0C\u539A CPT\uFF0C\u8D34\u5728\u51B0\u7BB1\u5E95\u677F\u4E0B\u9762\uFF09\u3002" },
+  FRIDGE_BASE_DRAWER_FRONT_GAP: { value: 8.5, doc: "\u51B0\u7BB1\u6B63\u4E0B\u65B9\u7684\u62BD\u5C49\u9762\u677F\uFF0C\u4E0A\u6CBF\u505C\u5728\u51B0\u7BB1\u5E95\u677F\uFF08Zi\uFF09\u4E0B\u9762\u8FD9\u4E48\u591A\uFF1B\u51B0\u7BB1\u5E95\u677F\u548C\u524D\u6491\u6761\u7684\u524D\u8FB9\u9732\u5728\u4E0A\u9762\u3002" },
+  STYLE_2_FRONT_SYSTEM_DEPTH: { value: 100, doc: "TH1/BH1 \u6DF1\u5EA6\uFF08\u524D\u67DC\u8EAB y\u2208[0,100]\uFF09\u3002" },
+  STYLE_2_FRONT_SYSTEM_THICKNESS: { value: 15, doc: "TH1/BH1 \u539A\u3002" },
+  STYLE_2_FRONT_SYSTEM_Z_INSET: { value: 1, doc: "TH1/BH1 \u8DDD\u9876/\u5E95 1 mm\uFF1Az\u2208[CH\u221216,CH\u22121] / [1,16]\u3002" },
+  STYLE_2_END_NOTCH_DEPTH: { value: 105, doc: "V1/V2 style_2 \u7AEF\u7F3A\u53E3\u6DF1\uFF08Y \u5411\uFF09\u3002" },
+  T4_REAR_HORIZONTAL_DEPTH: { value: 100, doc: "T4 \u6DF1\uFF1A\u540E\u7F18\u8D34 T5 \u524D\u7AEF\uFF0C\u524D\u7F18\u518D\u9000 100\u3002T5 \u540E\u7F18\u5728\u4FA7\u677F\u540E\u7F18\u5185\u4FA7 1 mm\u3002" },
+  T5_REAR_VERTICAL_HEIGHT: { value: 100, doc: "T5 \u9AD8\uFF1Az\u2208[CH\u2212100, CH]\u3002" },
+  T45_THICKNESS: { value: 15, doc: "T4/T5 \u539A\u3002" },
+  T45_WALL_INSET: { value: 1, doc: "T5 \u540E\u7F18 = midDepth\u22121\uFF0C\u505C\u5728\u4FA7\u677F\u540E\u7F18\u5185\u4FA7\u3002" },
+  STACKING_HEIGHT_TOLERANCE: { value: 1e-3, doc: "\u9AD8\u5EA6\u5DEE > \u6B64\u503C \u2192 mismatch warning\u3002" }
+};
+
+// generators/generalTall/rules.ts
+var RULES = defineRules("generalTall", rules_default);
+
 // generators/generalTall/faces.ts
+function addLedGroove(b, face) {
+  const K = `${b.id}.feat.LED`;
+  const width = dim(`${K}_MAIN.u1`, { x1: ref(`${b.id}.x1`), x0: ref(`${b.id}.x0`) }, (t) => t.x1 - t.x0);
+  const v0 = dim(`${K}_MAIN.v0`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM }, (t) => t.LAND);
+  const v1 = dim(`${K}_MAIN.v1`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.LAND + t.W);
+  const rear = dim(`${K}.rear`, { y1: ref(`${b.id}.y1`), y0: ref(`${b.id}.y0`) }, (t) => t.y1 - t.y0);
+  const depth = RULES.LED_GROOVE_DEPTH_MM.value;
+  addFeature(b, face, { id: `${b.id}_LED_MAIN`, kind: "tgroove", u0: 0, u1: width, v0, v1, depth, for: "led", key: `${K}_MAIN`, source: "generalTall" });
+  const centres = [
+    dim(`${K}_BRANCH_1.cu`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.INSET),
+    dim(`${K}_BRANCH_2.cu`, { w: ref(`${K}_MAIN.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.w - t.INSET)
+  ];
+  const half = RULES.LED_GROOVE_WIDTH_MM.value / 2;
+  centres.forEach((cu, i) => {
+    addFeature(b, face, {
+      id: `${b.id}_LED_BRANCH_${i + 1}`,
+      kind: "tgroove",
+      u0: cu - half,
+      u1: cu + half,
+      v0: v1,
+      v1: rear,
+      depth,
+      for: "led",
+      key: `${K}_BRANCH_${i + 1}`,
+      source: "generalTall"
+    });
+  });
+}
 function buildTallFaces(fb) {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
+  if (fb.ledGroove) {
+    const t3 = B.get("T3");
+    const b3 = B.get("B3");
+    if (t3) addLedGroove(t3, "A");
+    if (b3) addLedGroove(b3, "B");
+  }
   for (const b of fb.boards) {
     b.role = b.category;
     const doorLeaf = b.category === "front_panel" || b.boardType === "front_panel" || b.boardType === "style2_fixed_front_panel" || b.id === "T1" || b.id === "B1";
@@ -596,89 +809,62 @@ function buildTallFaces(fb) {
       source: "generalTall"
     });
   }
-  return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(new Set(fb.boards.map((b) => b.id))));
+  bandTallEdges(fb.boards, fb.doorColour, fb.fridgeZ);
+  return resolveDeclaredJoints(fb.boards, relationshipDeclarationsForBoards(fb.boards));
 }
-
-// generators/generalTall/rules.json
-var rules_default = {
-  DEFAULT_PANEL_THICKNESS: { value: 15, doc: "CPT \u7F3A\u7701\u3002" },
-  DEFAULT_FRONT_FACE_ALLOWANCE: { value: 16, doc: "FPT \u7F3A\u7701\uFF08frontPanelThickness > frontFaceAllowance > doorPanelThickness > 16\uFF09\u3002" },
-  DEFAULT_ZI_THICKNESS: { value: 15, doc: "Zi \u8FB9\u754C\u677F\u539A\u7F3A\u7701\uFF1BZi \u69FD\u9AD8 = ziT + 1\u3002" },
-  DEFAULT_H_THICKNESS: { value: 15, doc: "H \u652F\u6491\u539A\u3002" },
-  DEFAULT_SIDE_CLEARANCE: { value: 3, doc: "\u4FA7\u9699\u3002" },
-  DEFAULT_DIVIDER_THICKNESS: { value: 15, doc: "VD \u539A\uFF1Bzi_groove \u5BBD = \u6B64\u503C + 1\u3002" },
-  STYLE_1_INSERT_SLOT_THICKNESS: { value: 16, doc: "style_1 \u63D2\u677F\uFF08T3/B3\uFF09z \u6BB5\u9AD8\u3002" },
-  TOP_STYLE_1_MIN_FRONT_RAIL_HEIGHT: { value: 40, doc: "\u9876\u7CFB\u7EDF style_1 \u8F68\u9AD8\u4E0B\u9650\u3002" },
-  BOTTOM_STYLE_1_MIN_FRONT_RAIL_HEIGHT: { value: 53, doc: "\u5E95\u7CFB\u7EDF style_1 \u8F68\u9AD8\u4E0B\u9650\u3002" },
-  STYLE_1_SECOND_RAIL_THICKNESS: { value: 15, doc: "T2/B2 \u539A\uFF08\u5B57\u9762\u91CF\uFF0C\u4E0D\u968F CPT\uFF09\u3002" },
-  STYLE_1_FIRST_RAIL_THICKNESS: { value: 16, doc: "T1/B1 \u539A\uFF08\u5B57\u9762\u91CF\uFF0C\u4E0D\u968F FPT\uFF09\u3002" },
-  STYLE_1_INSERT_FRONT_NOTCH_DEPTH: { value: 75, doc: "T3/B3 \u524D\u8033\u6DF1\u5EA6\uFF08Y \u5411\uFF09\u3002\u524D\u6BB5\u5168\u5BBD\uFF0C\u505C\u5728\u7ACB\u6883\u53F0\u9636 y=80 \u4E4B\u524D\uFF1B\u5176\u540E\u5DE6\u53F3\u6536\u8FDB CPT\u3002" },
-  STYLE_1_INSERT_BOARD_DEPTH: { value: 150, doc: "T3/B3 \u677F\u6DF1\u3002" },
-  ZI_FULL_FRONT_REAR_NOTCH_DEPTH: { value: 105, doc: "full_zi \u524D\u540E\u7F3A\u53E3\u6DF1\u3002" },
-  ZI_HALF_FRONT_NOTCH_DEPTH: { value: 45, doc: "half_zi \u524D\u7F3A\u53E3\u6DF1\u3002" },
-  ZI_HALF_DEPTH: { value: 150, doc: "half_zi \u677F\u6DF1\u3002" },
-  ZI_SLOT_CLEARANCE: { value: 1, doc: "Zi \u69FD\u9AD8\u4F59\u91CF\uFF08\u69FD\u9AD8 = ziT+1\uFF0C\u8FB9\u754C\u5FC3 \xB1(ziT+1)/2\uFF09\u3002" },
-  ZI_SLOT_DEPTH: { value: 50, doc: "Zi \u69FD\u6DF1\uFF08\u6570\u636E\u5B57\u6BB5\uFF09\u3002" },
-  V12_Y_FRONT_FACE: { value: 70, doc: "\u7ACB\u677F\u524D\u8138\u7684\u67DC\u4F53 y\u3002\u9876\u8F68 T2 \u540E\u7F18\u505C\u5728\u540C\u4E00\u6761\u7EBF\u4E0A\uFF0C\u4E24\u5757\u677F\u8D34\u4E0A\u3002" },
-  V12_Y_STEP_INNER: { value: 80, doc: "V1/V2 \u5C40\u90E8 Y\uFF1A\u53F0\u9636\u3002" },
-  V12_Y_REAR: { value: 150, doc: "V1/V2 \u5C40\u90E8 Y\uFF1A\u540E\u7F18\uFF08\u5C40\u90E8\u7CFB\uFF09\u3002" },
-  V12_ZI_SLOT_INNER: { value: 100, doc: "V1/V2 Zi \u69FD\u5185\u7F18\uFF08\u69FD y\u2208[100,150]\uFF09\u3002" },
-  V34_Y_FRONT: { value: 0, doc: "V3/V4 \u5C40\u90E8 Y\uFF1A\u524D\u7F18\u3002" },
-  V34_ZI_SLOT_INNER: { value: 50, doc: "V3/V4 Zi \u69FD\u5916\u7F18\uFF08\u69FD y\u2208[0,50]\uFF09\u3002" },
-  V34_Y_REAR: { value: 150, doc: "V3/V4 \u5C40\u90E8 Y\uFF1A\u540E\u7F18\u3002" },
-  V34_TOP_NOTCH_FRONT_Y: { value: 29, doc: "V3/V4 \u9876\u90E8 L \u7F3A\u53E3\u524D\u89D2\u3002" },
-  V34_TOP_NOTCH_INNER_Y: { value: 134, doc: "V3/V4 \u9876\u90E8 L \u7F3A\u53E3\u5185\u89D2\u3002" },
-  V34_NOTCH_HEIGHT: { value: 105, doc: "V3/V4 \u9876/\u5E95 L \u7F3A\u53E3\u9AD8\uFF08\u81EA CH \u4E0B\u91CF / \u81EA\u5730\u9762\u8D77\uFF09\u3002" },
-  V34_END_NOTCH_THICKNESS: { value: 16, doc: "V3/V4 L \u7F3A\u53E3\u7AD6\u8FB9\u539A\u5EA6\uFF08CH\u221216 \u754C\uFF09\u3002" },
-  ZI_GROOVE_WIDTH_CLEARANCE: { value: 1, doc: "VD \u69FD\u5BBD = dividerT + 1\u3002" },
-  ZI_GROOVE_Y_OVERHANG: { value: 5, doc: "zi_groove y \u8D85\u820C\u533A \xB15\u3002" },
-  DIVIDER_TONGUE_GROOVE_CLEARANCE: { value: 0.5, doc: "VD \u820C\u63D2\u5165 = CPT/2 \u2212 0.5\u3002" },
-  H34_CLEARANCE_DEPTH: { value: 16, doc: "VD \u540E\u5E26\u8BA9\u4F4D\u69FD\u6DF1\uFF08y\u2208[midDepth\u221216, midDepth]\uFF09\u3002" },
-  H34_Z_BELOW: { value: 5, doc: "H34 \u8BA9\u4F4D\u69FD z \u4E0B\u63A2\uFF08H34.z0 \u2212 5\uFF09\u3002" },
-  H34_Z_ABOVE_START: { value: 105, doc: "H34 \u8BA9\u4F4D\u69FD z \u4E0A\u4F38\uFF08H34.z0 + 105\uFF09\u3002" },
-  H12_DEPTH: { value: 15, doc: "blank_panel \u652F\u6491\u6DF1\u3002" },
-  H12_SPLIT_HEIGHT: { value: 300, doc: "\u62C6\u5206\u9608\u503C\uFF08\u2265300 \u62C6\u4E24\u6761\u5404 100\uFF0C<300 \u5355\u5757\u6574\u9AD8\uFF09\u3002" },
-  H_SUPPORT_THICKNESS: { value: 15, doc: "H \u677F\u539A\u3002" },
-  H_SUPPORT_HEIGHT: { value: 100, doc: "H \u677F\u9AD8\u3002" },
-  H_SUPPORT_SIDE_DEPTH_START: { value: 150, doc: "\u5DE6\u53F3\u6A2A\u6865\u524D\u7AEF\u7684\u67DC\u4F53 y\u3002\u4E0D\u8DDF\u7ACB\u677F\u540E\u7F18\u8D70\u3002" },
-  H_SUPPORT_SIDE_REAR_CLEARANCE: { value: 150, doc: "\u5DE6\u53F3\u6A2A\u6865\u540E\u7F18 = midDepth \u2212 150\u3002" },
-  H34_DEPTH: { value: 15, doc: "H34 \u677F\u6DF1\u3002" },
-  V_AVOIDANCE_PARTIAL_FRONT_Y: { value: 70, doc: "V3/V4 partial \u907F\u8BA9\u524D\u89D2\uFF08ad \u2264 150\uFF09\u3002" },
-  AVOIDANCE_SUPPORT_THICKNESS: { value: 15, doc: "\u907F\u8BA9\u652F\u6491\u677F\u539A\uFF08\u5B57\u9762\u91CF\uFF09\u3002" },
-  MIN_END_SYSTEM_GAP: { value: 50, doc: "\u7AEF\u7CFB\u7EDF\u524D\u540E\u6761\u6700\u5C0F\u95F4\u9699\uFF08\u4F4E\u4E8E \u2192 merge \u5019\u9009 warning\uFF09\u3002" },
-  DEFAULT_FRONT_CLEARANCE: { value: 2.5, doc: "\u95E8\u7F1D fc\u3002" },
-  HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
-  HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
-  HINGE_CUP_FROM_EDGE: { value: 22.5, doc: "\u676F\u5FC3\u8DDD\u95E8\u8FB9\u3002" },
-  HINGE_SD_MIN: { value: 75, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0B\u9650\u3002" },
-  HINGE_SD_MAX: { value: 100, doc: "\u94F0\u94FE\u4FA7\u8DDD\u4E0A\u9650\u3002" },
-  HINGE_SD_SPAN: { value: 300, doc: "sd = clamp[75,100](75 + (\u957F\u8FB9\u2212300)\xB725/300)\u3002" },
-  SD_GAIN_NUM: { value: 25, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u5B50\u3002" },
-  SD_GAIN_DEN: { value: 300, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u6BCD\u3002" },
-  DEFAULT_LOCK_SIDE_DISTANCE: { value: 80, doc: "\u4FA7\u9501\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
-  LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER: { value: 30.5, doc: "\u5B89\u88C5\u9762\u5230\u9501\u69FD\u5FC3\u3002" },
-  LOCK_SLOT_LENGTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u957F\u3002" },
-  LOCK_SLOT_WIDTH: { value: 15.5, doc: "\u9501\u69FD\u5BBD\uFF08r = \u5BBD/2\uFF09\u3002" },
-  DOOR_SHELF_MIN_ZONE_HEIGHT: { value: 350, doc: "\u533A\u9AD8\u4F4E\u4E8E\u6B64\u4E0D\u751F\u6210\u95E8\u5C42\u677F\u3002" },
-  SIDE_PANEL_WHITELIST_15: { value: 15, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
-  SIDE_PANEL_WHITELIST_16: { value: 16, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
-  FRIDGE_WIDTH_ALLOWANCE: { value: 45, doc: "CW = applianceWidth + 45\uFF08\u65E0\u5916\u9970\u4FA7\u677F\uFF09\u3002" },
-  FRIDGE_WIDTH_ALLOWANCE_WITH_EXTERIOR: { value: 61, doc: "CW = applianceWidth + 61\uFF08\u6709 16 mm \u5916\u9970\u4FA7\u677F\uFF09\u3002" },
-  FRIDGE_EXTERIOR_THICKNESS: { value: 16, doc: "\u51B0\u7BB1\u5916\u9970\u4FA7\u677F\u539A\uFF08Fridge recipe \u56FA\u5B9A 16\uFF09\u3002" },
-  FRIDGE_RAISED_THRESHOLD: { value: 105, doc: "fridgeBaseBottomZ \u2212 avoidH < 105 \u2192 raised\u3002" },
-  STYLE_2_FRONT_SYSTEM_DEPTH: { value: 100, doc: "TH1/BH1 \u6DF1\u5EA6\uFF08\u524D\u67DC\u8EAB y\u2208[0,100]\uFF09\u3002" },
-  STYLE_2_FRONT_SYSTEM_THICKNESS: { value: 15, doc: "TH1/BH1 \u539A\u3002" },
-  STYLE_2_FRONT_SYSTEM_Z_INSET: { value: 1, doc: "TH1/BH1 \u8DDD\u9876/\u5E95 1 mm\uFF1Az\u2208[CH\u221216,CH\u22121] / [1,16]\u3002" },
-  STYLE_2_END_NOTCH_DEPTH: { value: 105, doc: "V1/V2 style_2 \u7AEF\u7F3A\u53E3\u6DF1\uFF08Y \u5411\uFF09\u3002" },
-  T4_REAR_HORIZONTAL_DEPTH: { value: 100, doc: "T4 \u6DF1\uFF1A\u540E\u7F18\u8D34 T5 \u524D\u7AEF\uFF0C\u524D\u7F18\u518D\u9000 100\u3002T5 \u540E\u7F18\u5728\u4FA7\u677F\u540E\u7F18\u5185\u4FA7 1 mm\u3002" },
-  T5_REAR_VERTICAL_HEIGHT: { value: 100, doc: "T5 \u9AD8\uFF1Az\u2208[CH\u2212100, CH]\u3002" },
-  T45_THICKNESS: { value: 15, doc: "T4/T5 \u539A\u3002" },
-  T45_WALL_INSET: { value: 1, doc: "T5 \u540E\u7F18 = midDepth\u22121\uFF0C\u505C\u5728\u4FA7\u677F\u540E\u7F18\u5185\u4FA7\u3002" },
-  STACKING_HEIGHT_TOLERANCE: { value: 1e-3, doc: "\u9AD8\u5EA6\u5DEE > \u6B64\u503C \u2192 mismatch warning\u3002" }
-};
-
-// generators/generalTall/rules.ts
-var RULES = defineRules("generalTall", rules_default);
+var CARCASS_COLOUR = "White Stipple";
+function bandTallEdges(boards, doorColour, fridgeZ) {
+  const tape = RULES.EDGE_BAND_THICKNESS_MM.value;
+  const band = (b, normal, colour) => {
+    for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
+  };
+  const top = Math.max(...boards.map((b) => b.z1));
+  const overXY = (a, b) => a.x0 < b.x1 - 0.01 && b.x0 < a.x1 - 0.01 && a.y0 < b.y1 - 0.01 && b.y0 < a.y1 - 0.01;
+  const bandH = (b) => {
+    for (const [normal, z, dir] of [["+Z", b.z1, 1], ["-Z", b.z0, -1]]) {
+      if (z <= 0.01 || z >= top - 0.01) continue;
+      const covered = boards.some((o) => o !== b && overXY(o, b) && Math.abs((dir > 0 ? o.z0 : o.z1) - z) <= 1);
+      const probe = z + dir;
+      const inFridge = fridgeZ != null && probe >= fridgeZ[0] && probe <= fridgeZ[1];
+      if (!covered && !inFridge) band(b, normal, CARCASS_COLOUR);
+    }
+  };
+  const infill = boards.find((b) => b.id === "TopStyle2FixedFrontPanel" && b.y0 > -0.01);
+  const rail = boards.find((b) => b.id === "FridgeBaseRail");
+  const fridgeFloor = rail ? boards.find((b) => b.id.startsWith("Zi_") && Math.abs(b.z0 - rail.z1) < 0.01) : void 0;
+  for (const b of boards) {
+    const t = b.boardType;
+    if (b === rail || b === fridgeFloor) {
+      band(b, "-Y", doorColour);
+    } else if (t === "front_panel" || t === "style2_fixed_front_panel" && b !== infill) {
+      for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: doorColour });
+    } else if (b === infill) {
+      band(b, "-Z", doorColour);
+    } else if (b.id === "V1" || b.id === "V2") {
+      band(b, "-Y", doorColour);
+      band(b, "+Y", CARCASS_COLOUR);
+    } else if (b.id === "V3" || b.id === "V4") {
+      band(b, "-Y", CARCASS_COLOUR);
+    } else if (b.id.startsWith("SidePanel_") || b.id === "V5") {
+      band(b, "-Y", doorColour);
+    } else if (b.id === "T1") {
+      band(b, "-Z", doorColour);
+    } else if (b.id === "B1") {
+      band(b, "+Z", doorColour);
+    } else if (b.id === "TH1") {
+      if (infill) band(b, "-Y", doorColour);
+    } else if (b.id === "T3" || b.id === "B3" || t === "half_zi" || t === "shortened_zi") {
+      band(b, "-Y", CARCASS_COLOUR);
+      band(b, "+Y", CARCASS_COLOUR);
+    } else if (t === "full_zi" || b.id.startsWith("DS_") || b.id.startsWith("VD_") || b.id === "T4" || b.id === "avoidance_horizontal") {
+      band(b, "-Y", CARCASS_COLOUR);
+    } else if (b.id === "T5") {
+      band(b, "-Z", CARCASS_COLOUR);
+    } else if (/^H(13|24|34)_/.test(b.id)) {
+      bandH(b);
+    }
+  }
+}
 
 // generators/_lib/preview.ts
 var PV = {
@@ -947,6 +1133,2662 @@ function generateGTSvgPreview(result, options = {}) {
   return svgRoot(width, height, { scale, ox, oy, w: CW, h: CH }, "Tall cabinet front elevation", parts.join(""));
 }
 
+// generators/generalTall/presets.json
+var presets_default = {
+  module: "generalTall",
+  presets: [
+    {
+      id: "ui-default",
+      label: "Tall \xB7 2000\xD7600\xD7584 \xB7 side+drawer+double\uFF08\u9EC4\u91D1 uiDefault\uFF09",
+      params: {
+        cabinetHeight: 2e3,
+        cabinetWidth: 600,
+        cabinetDepth: 584,
+        panelThickness: 16,
+        frontPanelThickness: 16,
+        ziThickness: 15,
+        hThickness: 15,
+        sideClearance: 3,
+        dividerThickness: 15,
+        topSystem: {
+          style: "style_1",
+          frontRailHeight: 40
+        },
+        bottomSystem: {
+          style: "style_1",
+          frontRailHeight: 53
+        },
+        zones: [
+          {
+            id: "zone-1",
+            type: "side_door",
+            height: 600
+          },
+          {
+            id: "zone-2",
+            type: "drawer",
+            height: 300
+          },
+          {
+            id: "zone-3",
+            type: "double_door",
+            height: 945,
+            verticalDivider: true
+          }
+        ]
+      },
+      pins: {
+        boards: {
+          V1: {
+            x0: 0,
+            x1: 16,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 2e3
+          },
+          V2: {
+            x0: 584,
+            x1: 600,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 2e3
+          },
+          V3: {
+            x0: 0,
+            x1: 16,
+            y0: 418,
+            y1: 568,
+            z0: 0,
+            z1: 2e3
+          },
+          V4: {
+            x0: 584,
+            x1: 600,
+            y0: 418,
+            y1: 568,
+            z0: 0,
+            z1: 2e3
+          },
+          T1: {
+            x0: 0,
+            x1: 600,
+            y0: 39,
+            y1: 55,
+            z0: 1960,
+            z1: 2e3
+          },
+          T2: {
+            x0: 0,
+            x1: 600,
+            y0: 55,
+            y1: 70,
+            z0: 1960,
+            z1: 2e3
+          },
+          T3: {
+            x0: 0,
+            x1: 600,
+            y0: 0,
+            y1: 150,
+            z0: 1944,
+            z1: 1960
+          },
+          B1: {
+            x0: 0,
+            x1: 600,
+            y0: 39,
+            y1: 55,
+            z0: 0,
+            z1: 53
+          },
+          B2: {
+            x0: 0,
+            x1: 600,
+            y0: 55,
+            y1: 70,
+            z0: 0,
+            z1: 53
+          },
+          B3: {
+            x0: 0,
+            x1: 600,
+            y0: 0,
+            y1: 150,
+            z0: 53,
+            z1: 69
+          },
+          T5: {
+            x0: 0,
+            x1: 600,
+            y0: 552,
+            y1: 567,
+            z0: 1900,
+            z1: 2e3
+          },
+          T4: {
+            x0: 0,
+            x1: 600,
+            y0: 452,
+            y1: 552,
+            z0: 1984,
+            z1: 1999
+          },
+          "Zi_boundary-zone-2": {
+            x0: 0,
+            x1: 600,
+            y0: 0,
+            y1: 568,
+            z0: 669,
+            z1: 684
+          },
+          "Zi_boundary-zone-3": {
+            x0: 0,
+            x1: 600,
+            y0: 0,
+            y1: 568,
+            z0: 984,
+            z1: 999
+          },
+          H13_top: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 418,
+            z0: 1900,
+            z1: 2e3
+          },
+          H24_top: {
+            x0: 585,
+            x1: 600,
+            y0: 150,
+            y1: 418,
+            z0: 1900,
+            z1: 2e3
+          },
+          H13_bottom: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 418,
+            z0: 0,
+            z1: 100
+          },
+          H24_bottom: {
+            x0: 585,
+            x1: 600,
+            y0: 150,
+            y1: 418,
+            z0: 0,
+            z1: 100
+          },
+          H34_bottom: {
+            x0: 15,
+            x1: 585,
+            y0: 553,
+            y1: 568,
+            z0: 0,
+            z1: 100
+          },
+          H13_mid: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 418,
+            z0: 999,
+            z1: 1099
+          },
+          H24_mid: {
+            x0: 585,
+            x1: 600,
+            y0: 150,
+            y1: 418,
+            z0: 999,
+            z1: 1099
+          },
+          H34_mid: {
+            x0: 15,
+            x1: 585,
+            y0: 553,
+            y1: 568,
+            z0: 999,
+            z1: 1099
+          },
+          "VD_zone-3": {
+            x0: 292.5,
+            x1: 307.5,
+            y0: 0,
+            y1: 568,
+            z0: 999,
+            z1: 1944
+          },
+          "FP_zone-1": {
+            x0: 2.5,
+            x1: 597.5,
+            y0: -16,
+            y1: 0,
+            z0: 53,
+            z1: 675.25
+          },
+          "FP_zone-2": {
+            x0: 2.5,
+            x1: 597.5,
+            y0: -16,
+            y1: 0,
+            z0: 677.75,
+            z1: 990.25
+          },
+          "FP_zone-3_L": {
+            x0: 2.5,
+            x1: 298.75,
+            y0: -16,
+            y1: 0,
+            z0: 992.75,
+            z1: 1960
+          },
+          "FP_zone-3_R": {
+            x0: 301.25,
+            x1: 597.5,
+            y0: -16,
+            y1: 0,
+            z0: 992.75,
+            z1: 1960
+          }
+        },
+        points: {
+          "V1.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              668.5
+            ],
+            [
+              100,
+              668.5
+            ],
+            [
+              100,
+              684.5
+            ],
+            [
+              150,
+              684.5
+            ],
+            [
+              150,
+              983.5
+            ],
+            [
+              100,
+              983.5
+            ],
+            [
+              100,
+              999.5
+            ],
+            [
+              150,
+              999.5
+            ],
+            [
+              150,
+              2e3
+            ],
+            [
+              70,
+              2e3
+            ],
+            [
+              70,
+              1960
+            ],
+            [
+              80,
+              1960
+            ],
+            [
+              80,
+              1944
+            ],
+            [
+              0,
+              1944
+            ],
+            [
+              0,
+              69
+            ],
+            [
+              80,
+              69
+            ],
+            [
+              80,
+              53
+            ],
+            [
+              70,
+              53
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V2.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              668.5
+            ],
+            [
+              100,
+              668.5
+            ],
+            [
+              100,
+              684.5
+            ],
+            [
+              150,
+              684.5
+            ],
+            [
+              150,
+              983.5
+            ],
+            [
+              100,
+              983.5
+            ],
+            [
+              100,
+              999.5
+            ],
+            [
+              150,
+              999.5
+            ],
+            [
+              150,
+              2e3
+            ],
+            [
+              70,
+              2e3
+            ],
+            [
+              70,
+              1960
+            ],
+            [
+              80,
+              1960
+            ],
+            [
+              80,
+              1944
+            ],
+            [
+              0,
+              1944
+            ],
+            [
+              0,
+              69
+            ],
+            [
+              80,
+              69
+            ],
+            [
+              80,
+              53
+            ],
+            [
+              70,
+              53
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V3.pv": [
+            [
+              418,
+              0
+            ],
+            [
+              568,
+              0
+            ],
+            [
+              568,
+              1895
+            ],
+            [
+              552,
+              1895
+            ],
+            [
+              552,
+              1984
+            ],
+            [
+              447,
+              1984
+            ],
+            [
+              447,
+              2e3
+            ],
+            [
+              418,
+              2e3
+            ],
+            [
+              418,
+              999.5
+            ],
+            [
+              468,
+              999.5
+            ],
+            [
+              468,
+              983.5
+            ],
+            [
+              418,
+              983.5
+            ],
+            [
+              418,
+              684.5
+            ],
+            [
+              468,
+              684.5
+            ],
+            [
+              468,
+              668.5
+            ],
+            [
+              418,
+              668.5
+            ],
+            [
+              418,
+              0
+            ]
+          ],
+          "V4.pv": [
+            [
+              418,
+              0
+            ],
+            [
+              568,
+              0
+            ],
+            [
+              568,
+              1895
+            ],
+            [
+              552,
+              1895
+            ],
+            [
+              552,
+              1984
+            ],
+            [
+              447,
+              1984
+            ],
+            [
+              447,
+              2e3
+            ],
+            [
+              418,
+              2e3
+            ],
+            [
+              418,
+              999.5
+            ],
+            [
+              468,
+              999.5
+            ],
+            [
+              468,
+              983.5
+            ],
+            [
+              418,
+              983.5
+            ],
+            [
+              418,
+              684.5
+            ],
+            [
+              468,
+              684.5
+            ],
+            [
+              468,
+              668.5
+            ],
+            [
+              418,
+              668.5
+            ],
+            [
+              418,
+              0
+            ]
+          ],
+          "T3.pv": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              75
+            ],
+            [
+              16,
+              75
+            ],
+            [
+              16,
+              150
+            ],
+            [
+              584,
+              150
+            ],
+            [
+              584,
+              75
+            ],
+            [
+              600,
+              75
+            ],
+            [
+              600,
+              0
+            ]
+          ],
+          "B3.pv": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              75
+            ],
+            [
+              16,
+              75
+            ],
+            [
+              16,
+              150
+            ],
+            [
+              584,
+              150
+            ],
+            [
+              584,
+              75
+            ],
+            [
+              600,
+              75
+            ],
+            [
+              600,
+              0
+            ]
+          ],
+          "Zi_boundary-zone-2.pv": [
+            [
+              16,
+              0
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              0,
+              105
+            ],
+            [
+              0,
+              463
+            ],
+            [
+              16,
+              463
+            ],
+            [
+              16,
+              568
+            ],
+            [
+              584,
+              568
+            ],
+            [
+              584,
+              463
+            ],
+            [
+              600,
+              463
+            ],
+            [
+              600,
+              105
+            ],
+            [
+              584,
+              105
+            ],
+            [
+              584,
+              0
+            ],
+            [
+              16,
+              0
+            ]
+          ],
+          "Zi_boundary-zone-3.pv": [
+            [
+              16,
+              0
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              0,
+              105
+            ],
+            [
+              0,
+              463
+            ],
+            [
+              16,
+              463
+            ],
+            [
+              16,
+              568
+            ],
+            [
+              584,
+              568
+            ],
+            [
+              584,
+              463
+            ],
+            [
+              600,
+              463
+            ],
+            [
+              600,
+              105
+            ],
+            [
+              584,
+              105
+            ],
+            [
+              584,
+              0
+            ],
+            [
+              16,
+              0
+            ]
+          ],
+          "VD_zone-3.pv": [
+            [
+              0,
+              991.5
+            ],
+            [
+              189.333,
+              991.5
+            ],
+            [
+              189.333,
+              999
+            ],
+            [
+              378.667,
+              999
+            ],
+            [
+              378.667,
+              991.5
+            ],
+            [
+              568,
+              991.5
+            ],
+            [
+              568,
+              999
+            ],
+            [
+              552,
+              999
+            ],
+            [
+              552,
+              1099
+            ],
+            [
+              568,
+              1099
+            ],
+            [
+              568,
+              1895
+            ],
+            [
+              552,
+              1895
+            ],
+            [
+              552,
+              1944
+            ],
+            [
+              0,
+              1944
+            ],
+            [
+              0,
+              991.5
+            ]
+          ]
+        },
+        features: {},
+        faceFeatures: {
+          "V1.A.zi_slot_V1_boundary-zone-2": {
+            u0: 100,
+            u1: 150,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V1.A.zi_slot_V1_boundary-zone-3": {
+            u0: 100,
+            u1: 150,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-zone-2": {
+            u0: 100,
+            u1: 150,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-zone-3": {
+            u0: 100,
+            u1: 150,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "V3.A.zi_slot_V3_boundary-zone-2": {
+            u0: 0,
+            u1: 50,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V3.A.zi_slot_V3_boundary-zone-3": {
+            u0: 0,
+            u1: 50,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "V4.B.zi_slot_V4_boundary-zone-2": {
+            u0: 0,
+            u1: 50,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V4.B.zi_slot_V4_boundary-zone-3": {
+            u0: 0,
+            u1: 50,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "Zi_boundary-zone-3.A.zi_groove_VD_zone-3_boundary-zone-3": {
+            u0: 292,
+            u1: 308,
+            v0: 184.333,
+            v1: 383.667,
+            depth: 8
+          },
+          "FP_zone-1.A.FP_zone-1_hinge_1": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 522.25
+          },
+          "FP_zone-1.A.FP_zone-1_hinge_2": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 100
+          },
+          "FP_zone-3_L.A.FP_zone-3_L_hinge_1": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 867.25
+          },
+          "FP_zone-3_L.A.FP_zone-3_L_hinge_2": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 100
+          },
+          "FP_zone-3_R.A.FP_zone-3_R_hinge_1": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 273.75,
+            cy: 867.25
+          },
+          "FP_zone-3_R.A.FP_zone-3_R_hinge_2": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 273.75,
+            cy: 100
+          }
+        }
+      }
+    },
+    {
+      id: "base-params",
+      label: "Tall \xB7 2100\xD7664\xD7600 \xB7 5 \u533A\u94FE\uFF08\u9EC4\u91D1 baseParams\uFF0Cmismatch \u221230\uFF09",
+      params: {
+        cabinetHeight: 2100,
+        cabinetWidth: 664,
+        cabinetDepth: 600,
+        panelThickness: 16,
+        frontFaceAllowance: 16,
+        ziThickness: 15,
+        hThickness: 15,
+        sideClearance: 3,
+        dividerThickness: 15,
+        topSystem: {
+          style: "style_1",
+          frontRailHeight: 40
+        },
+        bottomSystem: {
+          style: "style_1",
+          frontRailHeight: 53
+        },
+        zones: [
+          {
+            id: "side-door",
+            type: "side_door",
+            height: 600
+          },
+          {
+            id: "drawer-a",
+            type: "drawer",
+            height: 300
+          },
+          {
+            id: "drawer-b",
+            type: "drawer",
+            height: 300
+          },
+          {
+            id: "blank",
+            type: "blank_panel",
+            height: 400
+          },
+          {
+            id: "open",
+            type: "open_space",
+            height: 300
+          }
+        ]
+      },
+      pins: {
+        boards: {
+          V1: {
+            x0: 0,
+            x1: 16,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 2100
+          },
+          V2: {
+            x0: 648,
+            x1: 664,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 2100
+          },
+          V3: {
+            x0: 0,
+            x1: 16,
+            y0: 434,
+            y1: 584,
+            z0: 0,
+            z1: 2100
+          },
+          V4: {
+            x0: 648,
+            x1: 664,
+            y0: 434,
+            y1: 584,
+            z0: 0,
+            z1: 2100
+          },
+          T1: {
+            x0: 0,
+            x1: 664,
+            y0: 39,
+            y1: 55,
+            z0: 2060,
+            z1: 2100
+          },
+          T2: {
+            x0: 0,
+            x1: 664,
+            y0: 55,
+            y1: 70,
+            z0: 2060,
+            z1: 2100
+          },
+          T3: {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 150,
+            z0: 2044,
+            z1: 2060
+          },
+          B1: {
+            x0: 0,
+            x1: 664,
+            y0: 39,
+            y1: 55,
+            z0: 0,
+            z1: 53
+          },
+          B2: {
+            x0: 0,
+            x1: 664,
+            y0: 55,
+            y1: 70,
+            z0: 0,
+            z1: 53
+          },
+          B3: {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 150,
+            z0: 53,
+            z1: 69
+          },
+          T5: {
+            x0: 0,
+            x1: 664,
+            y0: 568,
+            y1: 583,
+            z0: 2e3,
+            z1: 2100
+          },
+          T4: {
+            x0: 0,
+            x1: 664,
+            y0: 468,
+            y1: 568,
+            z0: 2084,
+            z1: 2099
+          },
+          "Zi_boundary-drawer-a": {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 584,
+            z0: 669,
+            z1: 684
+          },
+          "Zi_boundary-drawer-b": {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 584,
+            z0: 984,
+            z1: 999
+          },
+          "Zi_boundary-blank": {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 584,
+            z0: 1299,
+            z1: 1314
+          },
+          H13_top: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 434,
+            z0: 2e3,
+            z1: 2100
+          },
+          H24_top: {
+            x0: 649,
+            x1: 664,
+            y0: 150,
+            y1: 434,
+            z0: 2e3,
+            z1: 2100
+          },
+          H13_bottom: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 434,
+            z0: 0,
+            z1: 100
+          },
+          H24_bottom: {
+            x0: 649,
+            x1: 664,
+            y0: 150,
+            y1: 434,
+            z0: 0,
+            z1: 100
+          },
+          H34_bottom: {
+            x0: 15,
+            x1: 649,
+            y0: 569,
+            y1: 584,
+            z0: 0,
+            z1: 100
+          },
+          H13_mid: {
+            x0: 0,
+            x1: 15,
+            y0: 150,
+            y1: 434,
+            z0: 1e3,
+            z1: 1100
+          },
+          H24_mid: {
+            x0: 649,
+            x1: 664,
+            y0: 150,
+            y1: 434,
+            z0: 1e3,
+            z1: 1100
+          },
+          H34_mid: {
+            x0: 15,
+            x1: 649,
+            y0: 569,
+            y1: 584,
+            z0: 1e3,
+            z1: 1100
+          },
+          H12_blank_top: {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 15,
+            z0: 1614,
+            z1: 1714
+          },
+          H12_blank_bottom: {
+            x0: 0,
+            x1: 664,
+            y0: 0,
+            y1: 15,
+            z0: 1314,
+            z1: 1414
+          },
+          "FP_side-door": {
+            x0: 2.5,
+            x1: 661.5,
+            y0: -16,
+            y1: 0,
+            z0: 53,
+            z1: 675.25
+          },
+          "FP_drawer-a": {
+            x0: 2.5,
+            x1: 661.5,
+            y0: -16,
+            y1: 0,
+            z0: 677.75,
+            z1: 990.25
+          },
+          "FP_drawer-b": {
+            x0: 2.5,
+            x1: 661.5,
+            y0: -16,
+            y1: 0,
+            z0: 992.75,
+            z1: 1305.25
+          }
+        },
+        points: {
+          "V1.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              668.5
+            ],
+            [
+              100,
+              668.5
+            ],
+            [
+              100,
+              684.5
+            ],
+            [
+              150,
+              684.5
+            ],
+            [
+              150,
+              983.5
+            ],
+            [
+              100,
+              983.5
+            ],
+            [
+              100,
+              999.5
+            ],
+            [
+              150,
+              999.5
+            ],
+            [
+              150,
+              1298.5
+            ],
+            [
+              100,
+              1298.5
+            ],
+            [
+              100,
+              1314.5
+            ],
+            [
+              150,
+              1314.5
+            ],
+            [
+              150,
+              2100
+            ],
+            [
+              70,
+              2100
+            ],
+            [
+              70,
+              2060
+            ],
+            [
+              80,
+              2060
+            ],
+            [
+              80,
+              2044
+            ],
+            [
+              0,
+              2044
+            ],
+            [
+              0,
+              69
+            ],
+            [
+              80,
+              69
+            ],
+            [
+              80,
+              53
+            ],
+            [
+              70,
+              53
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V2.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              668.5
+            ],
+            [
+              100,
+              668.5
+            ],
+            [
+              100,
+              684.5
+            ],
+            [
+              150,
+              684.5
+            ],
+            [
+              150,
+              983.5
+            ],
+            [
+              100,
+              983.5
+            ],
+            [
+              100,
+              999.5
+            ],
+            [
+              150,
+              999.5
+            ],
+            [
+              150,
+              1298.5
+            ],
+            [
+              100,
+              1298.5
+            ],
+            [
+              100,
+              1314.5
+            ],
+            [
+              150,
+              1314.5
+            ],
+            [
+              150,
+              2100
+            ],
+            [
+              70,
+              2100
+            ],
+            [
+              70,
+              2060
+            ],
+            [
+              80,
+              2060
+            ],
+            [
+              80,
+              2044
+            ],
+            [
+              0,
+              2044
+            ],
+            [
+              0,
+              69
+            ],
+            [
+              80,
+              69
+            ],
+            [
+              80,
+              53
+            ],
+            [
+              70,
+              53
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V3.pv": [
+            [
+              434,
+              0
+            ],
+            [
+              584,
+              0
+            ],
+            [
+              584,
+              1995
+            ],
+            [
+              568,
+              1995
+            ],
+            [
+              568,
+              2084
+            ],
+            [
+              463,
+              2084
+            ],
+            [
+              463,
+              2100
+            ],
+            [
+              434,
+              2100
+            ],
+            [
+              434,
+              1314.5
+            ],
+            [
+              484,
+              1314.5
+            ],
+            [
+              484,
+              1298.5
+            ],
+            [
+              434,
+              1298.5
+            ],
+            [
+              434,
+              684.5
+            ],
+            [
+              484,
+              684.5
+            ],
+            [
+              484,
+              668.5
+            ],
+            [
+              434,
+              668.5
+            ],
+            [
+              434,
+              0
+            ]
+          ],
+          "V4.pv": [
+            [
+              434,
+              0
+            ],
+            [
+              584,
+              0
+            ],
+            [
+              584,
+              1995
+            ],
+            [
+              568,
+              1995
+            ],
+            [
+              568,
+              2084
+            ],
+            [
+              463,
+              2084
+            ],
+            [
+              463,
+              2100
+            ],
+            [
+              434,
+              2100
+            ],
+            [
+              434,
+              1314.5
+            ],
+            [
+              484,
+              1314.5
+            ],
+            [
+              484,
+              1298.5
+            ],
+            [
+              434,
+              1298.5
+            ],
+            [
+              434,
+              684.5
+            ],
+            [
+              484,
+              684.5
+            ],
+            [
+              484,
+              668.5
+            ],
+            [
+              434,
+              668.5
+            ],
+            [
+              434,
+              0
+            ]
+          ],
+          "T3.pv": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              75
+            ],
+            [
+              16,
+              75
+            ],
+            [
+              16,
+              150
+            ],
+            [
+              648,
+              150
+            ],
+            [
+              648,
+              75
+            ],
+            [
+              664,
+              75
+            ],
+            [
+              664,
+              0
+            ]
+          ],
+          "B3.pv": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              75
+            ],
+            [
+              16,
+              75
+            ],
+            [
+              16,
+              150
+            ],
+            [
+              648,
+              150
+            ],
+            [
+              648,
+              75
+            ],
+            [
+              664,
+              75
+            ],
+            [
+              664,
+              0
+            ]
+          ],
+          "Zi_boundary-drawer-a.pv": [
+            [
+              16,
+              0
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              0,
+              105
+            ],
+            [
+              0,
+              479
+            ],
+            [
+              16,
+              479
+            ],
+            [
+              16,
+              584
+            ],
+            [
+              648,
+              584
+            ],
+            [
+              648,
+              479
+            ],
+            [
+              664,
+              479
+            ],
+            [
+              664,
+              105
+            ],
+            [
+              648,
+              105
+            ],
+            [
+              648,
+              0
+            ],
+            [
+              16,
+              0
+            ]
+          ],
+          "Zi_boundary-drawer-b.pv": [
+            [
+              0,
+              0
+            ],
+            [
+              0,
+              45
+            ],
+            [
+              16,
+              45
+            ],
+            [
+              16,
+              150
+            ],
+            [
+              648,
+              150
+            ],
+            [
+              648,
+              45
+            ],
+            [
+              664,
+              45
+            ],
+            [
+              664,
+              0
+            ],
+            [
+              0,
+              0
+            ]
+          ],
+          "Zi_boundary-blank.pv": [
+            [
+              16,
+              0
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              0,
+              105
+            ],
+            [
+              0,
+              479
+            ],
+            [
+              16,
+              479
+            ],
+            [
+              16,
+              584
+            ],
+            [
+              648,
+              584
+            ],
+            [
+              648,
+              479
+            ],
+            [
+              664,
+              479
+            ],
+            [
+              664,
+              105
+            ],
+            [
+              648,
+              105
+            ],
+            [
+              648,
+              0
+            ],
+            [
+              16,
+              0
+            ]
+          ]
+        },
+        features: {},
+        faceFeatures: {
+          "V1.A.zi_slot_V1_boundary-drawer-a": {
+            u0: 100,
+            u1: 150,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V1.A.zi_slot_V1_boundary-drawer-b": {
+            u0: 100,
+            u1: 150,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "V1.A.zi_slot_V1_boundary-blank": {
+            u0: 100,
+            u1: 150,
+            v0: 1298.5,
+            v1: 1314.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-drawer-a": {
+            u0: 100,
+            u1: 150,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-drawer-b": {
+            u0: 100,
+            u1: 150,
+            v0: 983.5,
+            v1: 999.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-blank": {
+            u0: 100,
+            u1: 150,
+            v0: 1298.5,
+            v1: 1314.5,
+            depth: 50
+          },
+          "V3.A.zi_slot_V3_boundary-drawer-a": {
+            u0: 0,
+            u1: 50,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V3.A.zi_slot_V3_boundary-blank": {
+            u0: 0,
+            u1: 50,
+            v0: 1298.5,
+            v1: 1314.5,
+            depth: 50
+          },
+          "V4.B.zi_slot_V4_boundary-drawer-a": {
+            u0: 0,
+            u1: 50,
+            v0: 668.5,
+            v1: 684.5,
+            depth: 50
+          },
+          "V4.B.zi_slot_V4_boundary-blank": {
+            u0: 0,
+            u1: 50,
+            v0: 1298.5,
+            v1: 1314.5,
+            depth: 50
+          },
+          "FP_side-door.A.FP_side-door_hinge_1": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 522.25
+          },
+          "FP_side-door.A.FP_side-door_hinge_2": {
+            diameter: 35,
+            depth: 12.5,
+            cx: 22.5,
+            cy: 100
+          }
+        }
+      }
+    },
+    {
+      id: "rogue-dometic",
+      label: "Rogue Dometic fridge \xB7 593 \xD7 640 \xD7 1965",
+      ui: true,
+      params: {
+        cabinetHeight: 1965,
+        cabinetWidth: 593,
+        cabinetDepth: 640,
+        panelThickness: 15,
+        frontPanelThickness: 16,
+        sideClearance: 3,
+        leftSidePanelThickness: 16,
+        leftSidePanelFinish: "colour",
+        rightSidePanelThickness: 0,
+        exteriorSide: "left",
+        ledGroove: true,
+        topSystem: {
+          style: "style_2",
+          height: 101
+        },
+        bottomSystem: {
+          style: "style_1",
+          frontRailHeight: 55
+        },
+        frontHardware: {
+          frontClearance: 3
+        },
+        zones: [
+          {
+            id: "zone-1",
+            type: "bottom_flap",
+            height: 172,
+            lockPosition: "top"
+          },
+          {
+            id: "zone-2",
+            type: "drawer",
+            height: 247,
+            lockPosition: "top"
+          },
+          {
+            id: "zone-3",
+            type: "fridge",
+            height: 1344,
+            applianceWidthMm: 532,
+            applianceHeightMm: 1344
+          }
+        ]
+      },
+      pins: {
+        boards: {
+          V1: {
+            x0: 16,
+            x1: 31,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 1965
+          },
+          V2: {
+            x0: 578,
+            x1: 593,
+            y0: 0,
+            y1: 150,
+            z0: 0,
+            z1: 1965
+          },
+          V3: {
+            x0: 16,
+            x1: 31,
+            y0: 474,
+            y1: 624,
+            z0: 0,
+            z1: 1965
+          },
+          V4: {
+            x0: 578,
+            x1: 593,
+            y0: 474,
+            y1: 624,
+            z0: 0,
+            z1: 1965
+          },
+          V5: {
+            x0: 563,
+            x1: 578,
+            y0: 0,
+            y1: 150,
+            z0: 520,
+            z1: 1949
+          },
+          TH1: {
+            x0: 16,
+            x1: 593,
+            y0: 0,
+            y1: 100,
+            z0: 1949,
+            z1: 1964
+          },
+          TopStyle2FixedFrontPanel: {
+            x0: 31,
+            x1: 563,
+            y0: 0,
+            y1: 16,
+            z0: 1864,
+            z1: 1949
+          },
+          B1: {
+            x0: 16,
+            x1: 593,
+            y0: 39,
+            y1: 55,
+            z0: 0,
+            z1: 55
+          },
+          B2: {
+            x0: 16,
+            x1: 593,
+            y0: 55,
+            y1: 70,
+            z0: 0,
+            z1: 55
+          },
+          B3: {
+            x0: 16,
+            x1: 593,
+            y0: 0,
+            y1: 150,
+            z0: 55,
+            z1: 70
+          },
+          T5: {
+            x0: 16,
+            x1: 593,
+            y0: 608,
+            y1: 623,
+            z0: 1865,
+            z1: 1965
+          },
+          T4: {
+            x0: 16,
+            x1: 593,
+            y0: 508,
+            y1: 608,
+            z0: 1949,
+            z1: 1964
+          },
+          "Zi_boundary-zone-2": {
+            x0: 16,
+            x1: 593,
+            y0: 0,
+            y1: 224,
+            z0: 243,
+            z1: 258
+          },
+          "Zi_boundary-zone-3": {
+            x0: 16,
+            x1: 593,
+            y0: 0,
+            y1: 624,
+            z0: 505,
+            z1: 520
+          },
+          H13_top: {
+            x0: 16,
+            x1: 31,
+            y0: 150,
+            y1: 474,
+            z0: 1865,
+            z1: 1965
+          },
+          H24_top: {
+            x0: 578,
+            x1: 593,
+            y0: 150,
+            y1: 474,
+            z0: 1865,
+            z1: 1965
+          },
+          H13_bottom: {
+            x0: 16,
+            x1: 31,
+            y0: 150,
+            y1: 474,
+            z0: 0,
+            z1: 100
+          },
+          H24_bottom: {
+            x0: 578,
+            x1: 593,
+            y0: 150,
+            y1: 474,
+            z0: 0,
+            z1: 100
+          },
+          H34_bottom: {
+            x0: 31,
+            x1: 578,
+            y0: 609,
+            y1: 624,
+            z0: 0,
+            z1: 100
+          },
+          H13_mid: {
+            x0: 16,
+            x1: 31,
+            y0: 150,
+            y1: 474,
+            z0: 932.5,
+            z1: 1032.5
+          },
+          H24_mid: {
+            x0: 578,
+            x1: 593,
+            y0: 150,
+            y1: 474,
+            z0: 932.5,
+            z1: 1032.5
+          },
+          H34_mid: {
+            x0: 31,
+            x1: 578,
+            y0: 609,
+            y1: 624,
+            z0: 932.5,
+            z1: 1032.5
+          },
+          H13_fridgeBase: {
+            x0: 16,
+            x1: 31,
+            y0: 150,
+            y1: 474,
+            z0: 258,
+            z1: 504.5
+          },
+          H24_fridgeBase: {
+            x0: 578,
+            x1: 593,
+            y0: 150,
+            y1: 474,
+            z0: 258,
+            z1: 504.5
+          },
+          H34_fridgeBase: {
+            x0: 31,
+            x1: 578,
+            y0: 609,
+            y1: 624,
+            z0: 405,
+            z1: 505
+          },
+          FridgeBaseRail: {
+            x0: 31,
+            x1: 578,
+            y0: 0,
+            y1: 100,
+            z0: 490,
+            z1: 505
+          },
+          "FP_zone-1": {
+            x0: 19,
+            x1: 590,
+            y0: -16,
+            y1: 0,
+            z0: 55,
+            z1: 249
+          },
+          "FP_zone-2": {
+            x0: 19,
+            x1: 590,
+            y0: -16,
+            y1: 0,
+            z0: 252,
+            z1: 496.5
+          },
+          SidePanel_L: {
+            x0: 0,
+            x1: 16,
+            y0: -16,
+            y1: 624,
+            z0: 0,
+            z1: 1965
+          }
+        },
+        points: {
+          "V1.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              242.5
+            ],
+            [
+              100,
+              242.5
+            ],
+            [
+              100,
+              258.5
+            ],
+            [
+              150,
+              258.5
+            ],
+            [
+              150,
+              504.5
+            ],
+            [
+              100,
+              504.5
+            ],
+            [
+              100,
+              520.5
+            ],
+            [
+              150,
+              520.5
+            ],
+            [
+              150,
+              1965
+            ],
+            [
+              105,
+              1965
+            ],
+            [
+              105,
+              1949
+            ],
+            [
+              0,
+              1949
+            ],
+            [
+              0,
+              71
+            ],
+            [
+              80,
+              71
+            ],
+            [
+              80,
+              55
+            ],
+            [
+              70,
+              55
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V2.pv": [
+            [
+              70,
+              0
+            ],
+            [
+              150,
+              0
+            ],
+            [
+              150,
+              242.5
+            ],
+            [
+              100,
+              242.5
+            ],
+            [
+              100,
+              258.5
+            ],
+            [
+              150,
+              258.5
+            ],
+            [
+              150,
+              504.5
+            ],
+            [
+              100,
+              504.5
+            ],
+            [
+              100,
+              520.5
+            ],
+            [
+              150,
+              520.5
+            ],
+            [
+              150,
+              1965
+            ],
+            [
+              105,
+              1965
+            ],
+            [
+              105,
+              1949
+            ],
+            [
+              0,
+              1949
+            ],
+            [
+              0,
+              71
+            ],
+            [
+              80,
+              71
+            ],
+            [
+              80,
+              55
+            ],
+            [
+              70,
+              55
+            ],
+            [
+              70,
+              0
+            ]
+          ],
+          "V3.pv": [
+            [
+              474,
+              0
+            ],
+            [
+              624,
+              0
+            ],
+            [
+              624,
+              1860
+            ],
+            [
+              608,
+              1860
+            ],
+            [
+              608,
+              1949
+            ],
+            [
+              503,
+              1949
+            ],
+            [
+              503,
+              1965
+            ],
+            [
+              474,
+              1965
+            ],
+            [
+              474,
+              520.5
+            ],
+            [
+              524,
+              520.5
+            ],
+            [
+              524,
+              504.5
+            ],
+            [
+              474,
+              504.5
+            ],
+            [
+              474,
+              0
+            ]
+          ],
+          "V4.pv": [
+            [
+              474,
+              0
+            ],
+            [
+              624,
+              0
+            ],
+            [
+              624,
+              1860
+            ],
+            [
+              608,
+              1860
+            ],
+            [
+              608,
+              1949
+            ],
+            [
+              503,
+              1949
+            ],
+            [
+              503,
+              1965
+            ],
+            [
+              474,
+              1965
+            ],
+            [
+              474,
+              520.5
+            ],
+            [
+              524,
+              520.5
+            ],
+            [
+              524,
+              504.5
+            ],
+            [
+              474,
+              504.5
+            ],
+            [
+              474,
+              0
+            ]
+          ],
+          "V5.pv": [
+            [
+              0,
+              520
+            ],
+            [
+              150,
+              520
+            ],
+            [
+              150,
+              1949
+            ],
+            [
+              0,
+              1949
+            ],
+            [
+              0,
+              520
+            ]
+          ],
+          "B3.pv": [
+            [
+              16,
+              0
+            ],
+            [
+              16,
+              75
+            ],
+            [
+              31,
+              75
+            ],
+            [
+              31,
+              150
+            ],
+            [
+              578,
+              150
+            ],
+            [
+              578,
+              75
+            ],
+            [
+              593,
+              75
+            ],
+            [
+              593,
+              0
+            ]
+          ],
+          "Zi_boundary-zone-2.pv": [
+            [
+              31,
+              0
+            ],
+            [
+              31,
+              105
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              16,
+              224
+            ],
+            [
+              31,
+              224
+            ],
+            [
+              31,
+              224
+            ],
+            [
+              578,
+              224
+            ],
+            [
+              578,
+              224
+            ],
+            [
+              593,
+              224
+            ],
+            [
+              593,
+              105
+            ],
+            [
+              578,
+              105
+            ],
+            [
+              578,
+              0
+            ],
+            [
+              31,
+              0
+            ]
+          ],
+          "Zi_boundary-zone-3.pv": [
+            [
+              31,
+              0
+            ],
+            [
+              31,
+              105
+            ],
+            [
+              16,
+              105
+            ],
+            [
+              16,
+              519
+            ],
+            [
+              31,
+              519
+            ],
+            [
+              31,
+              624
+            ],
+            [
+              578,
+              624
+            ],
+            [
+              578,
+              519
+            ],
+            [
+              593,
+              519
+            ],
+            [
+              593,
+              105
+            ],
+            [
+              578,
+              105
+            ],
+            [
+              578,
+              0
+            ],
+            [
+              31,
+              0
+            ]
+          ]
+        },
+        features: {},
+        faceFeatures: {
+          "V1.A.zi_slot_V1_boundary-zone-2": {
+            u0: 100,
+            u1: 150,
+            v0: 242.5,
+            v1: 258.5,
+            depth: 50
+          },
+          "V1.A.zi_slot_V1_boundary-zone-3": {
+            u0: 100,
+            u1: 150,
+            v0: 504.5,
+            v1: 520.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-zone-2": {
+            u0: 100,
+            u1: 150,
+            v0: 242.5,
+            v1: 258.5,
+            depth: 50
+          },
+          "V2.B.zi_slot_V2_boundary-zone-3": {
+            u0: 100,
+            u1: 150,
+            v0: 504.5,
+            v1: 520.5,
+            depth: 50
+          },
+          "V3.A.zi_slot_V3_boundary-zone-3": {
+            u0: 0,
+            u1: 50,
+            v0: 504.5,
+            v1: 520.5,
+            depth: 50
+          },
+          "V4.B.zi_slot_V4_boundary-zone-3": {
+            u0: 0,
+            u1: 50,
+            v0: 504.5,
+            v1: 520.5,
+            depth: 50
+          },
+          "B3.B.B3_LED_MAIN": {
+            u0: 0,
+            u1: 577,
+            v0: 18,
+            v1: 32.5,
+            depth: 6.5
+          },
+          "B3.B.B3_LED_BRANCH_1": {
+            u0: 72.75,
+            u1: 87.25,
+            v0: 32.5,
+            v1: 150,
+            depth: 6.5
+          },
+          "B3.B.B3_LED_BRANCH_2": {
+            u0: 489.75,
+            u1: 504.25,
+            v0: 32.5,
+            v1: 150,
+            depth: 6.5
+          },
+          "FP_zone-1.A.FP_zone-1_hinge_1": {
+            diameter: 35,
+            depth: 12,
+            cx: 100,
+            cy: 22.5
+          },
+          "FP_zone-1.A.FP_zone-1_hinge_2": {
+            diameter: 35,
+            depth: 12,
+            cx: 471,
+            cy: 22.5
+          },
+          "FP_zone-1.A.FP_zone-1_lock": {
+            u0: 258,
+            u1: 313,
+            v0: 149.75,
+            v1: 165.25,
+            radius: 7.75
+          },
+          "FP_zone-2.A.FP_zone-2_lock": {
+            u0: 258,
+            u1: 313,
+            v0: 199.75,
+            v1: 215.25,
+            radius: 7.75
+          }
+        }
+      }
+    }
+  ]
+};
+
+// generators/generalTall/uiPresets.ts
+var GT_UI_PRESETS = presets_default.presets.filter((p) => p.ui === true).map((p) => ({ id: p.id, label: p.label, params: p.params }));
+
 // generators/generalTall/generator.ts
 var asNum = (v, fb) => {
   const n = Number(v);
@@ -1154,13 +3996,20 @@ function fitTallCabinetHeight(input, cabinetHeight) {
   const scratch = [];
   const stacked = computeStack(normalize({ ...input, cabinetHeight: H, zones: trial }, scratch), scratch, scratch);
   const room = r2(H - stacked.calculatedHeight);
-  const height = Math.max(SLACK_ZONE_MIN, room);
+  const floor = Math.min(SLACK_ZONE_MIN, asNum(zones[index].height, SLACK_ZONE_MIN));
+  const height = Math.max(floor, room);
   const nextZones = zones.map((zone, i) => i === index ? { ...zone, height } : zone);
   const fitted = height === room ? H : r2(stacked.calculatedHeight + height);
   return { ...input, cabinetHeight: fitted, zones: nextZones };
 }
-function yz(pts) {
-  return pts.map(([y, z]) => ({ y: r2(y), z: r2(z) }));
+function link(key) {
+  return ex({ v: ref(key) }, (t) => t.v, `= ${key}`);
+}
+function yzTrace(id, pairs) {
+  return recordLoop(id, ["y", "z"], pairs, true).map(([y, z]) => ({ y, z }));
+}
+function xyTrace(id, pairs) {
+  return recordLoop(id, ["x", "y"], pairs, true).map(([x, y]) => ({ x, y }));
 }
 function mkBoard(id, name, category, boardType, thickness, kind, plane, axis, x0, x1, y0, y1, z0, z1, profileVector) {
   const box = recordBoardBox(id, r2(x0), r2(x1), r2(y0), r2(y1), r2(z0), r2(z1));
@@ -1177,130 +4026,423 @@ function mkBoard(id, name, category, boardType, thickness, kind, plane, axis, x0
     profileVector: profileVector ? profileVector.map((p) => ({ ...p })) : void 0
   };
 }
-function v12Profile(s, slots, yOrigin) {
-  const CH = s.CH;
-  const tRear = RULES.V12_Y_REAR.value;
-  const slotY = RULES.V12_ZI_SLOT_INNER.value;
-  const frontY = RULES.V12_Y_FRONT_FACE.value;
-  const stepY = RULES.V12_Y_STEP_INNER.value;
+function v12Profile(s, slots, id) {
+  const shift = (localKey) => ex(
+    { y: ref(localKey), o: ref("tall.stileY0") },
+    (t) => t.y + t.o,
+    `${localKey.slice("tall.v12.".length)} + stileY0`
+  );
+  const front = shift("tall.v12.front");
+  const rear = shift("tall.v12.rear");
+  const step = shift("tall.v12.step");
+  const slotY = shift("tall.v12.slot");
+  const zero = lit(0);
+  const CH = link("tall.CH");
   const topStyle1 = s.topSys.style === "style_1";
   const botStyle1 = s.botSys.style === "style_1";
-  const notchD = RULES.STYLE_2_END_NOTCH_DEPTH.value;
-  const notchT = RULES.V34_END_NOTCH_THICKNESS.value;
-  const pts = botStyle1 ? [[frontY, 0], [tRear, 0]] : [[tRear, 0]];
+  const pairs = botStyle1 ? [[front, zero], [rear, zero]] : [[rear, zero]];
   for (const sl of slots) {
-    pts.push([tRear, r2(sl.z0)], [slotY, r2(sl.z0)], [slotY, r2(sl.z1)], [tRear, r2(sl.z1)]);
+    const z0 = link(`tall.slot.${sl.boundaryId}.z0`);
+    const z1 = link(`tall.slot.${sl.boundaryId}.z1`);
+    pairs.push([rear, z0], [slotY, z0], [slotY, z1], [rear, z1]);
   }
-  pts.push([tRear, CH]);
+  pairs.push([rear, CH]);
   if (topStyle1) {
-    const insT = RULES.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    const topFrontRail = r2(CH - (s.topSys.railH - insT));
-    pts.push(
-      [frontY, CH],
-      [frontY, topFrontRail],
-      [stepY, topFrontRail],
-      [stepY, r2(topFrontRail - insT)],
-      [0, r2(topFrontRail - insT)]
-    );
+    dim(`${id}.topRail`, { CH: ref("tall.CH"), railH: ref("tall.topRailH"), ins: ref("tall.insertT") }, (t) => Math.round((t.CH - (t.railH - t.ins)) * 1e3) / 1e3, { formula: "CH - (railH - insertT)" });
+    dim(`${id}.topBelow`, { rail: ref(`${id}.topRail`), ins: ref("tall.insertT") }, (t) => Math.round((t.rail - t.ins) * 1e3) / 1e3, { formula: "topRail - insertT" });
+    const topRail = link(`${id}.topRail`);
+    const below = link(`${id}.topBelow`);
+    pairs.push([front, CH], [front, topRail], [step, topRail], [step, below], [zero, below]);
   } else {
-    pts.push([notchD, CH], [notchD, r2(CH - notchT)], [0, r2(CH - notchT)]);
+    const notchD = shift("tall.v12.notchD");
+    const notchZ = ex({ CH: ref("tall.CH"), t: ref("tall.notchT") }, (t) => Math.round((t.CH - t.t) * 1e3) / 1e3, "CH - notchT");
+    pairs.push([notchD, CH], [notchD, notchZ], [zero, notchZ]);
   }
   if (botStyle1) {
-    const insT = RULES.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    const botRail = s.botSys.railH;
-    pts.push(
-      [0, r2(botRail)],
-      [stepY, r2(botRail)],
-      [stepY, r2(botRail - insT)],
-      [frontY, r2(botRail - insT)],
-      [frontY, 0]
-    );
+    const botRail = link("tall.botRailH");
+    const below = ex({ rail: ref("tall.botRailH"), ins: ref("tall.insertT") }, (t) => Math.round((t.rail - t.ins) * 1e3) / 1e3, "botRail - insertT");
+    pairs.push([zero, botRail], [step, botRail], [step, below], [front, below], [front, zero]);
   } else {
-    pts.push([0, notchT], [notchD, notchT], [notchD, 0], [tRear, 0]);
+    const notchD = shift("tall.v12.notchD");
+    const notchT = link("tall.notchT");
+    pairs.push([zero, notchT], [notchD, notchT], [notchD, zero], [rear, zero]);
   }
-  return yz(pts.map(([y, z]) => [y + yOrigin, z]));
+  return yzTrace(id, pairs);
 }
-function v34Profile(s, slots, warnings, yOff, rear = RULES.V34_Y_REAR.value) {
-  const CH = s.CH;
-  const tRear = rear;
-  const slotY = RULES.V34_ZI_SLOT_INNER.value;
-  const nh = RULES.V34_NOTCH_HEIGHT.value;
-  const ni = Math.max(0, tRear - (RULES.V34_Y_REAR.value - RULES.V34_TOP_NOTCH_INNER_Y.value));
-  const nf = Math.max(0, Math.min(ni, tRear - (RULES.V34_Y_REAR.value - RULES.V34_TOP_NOTCH_FRONT_Y.value)));
-  const nt = RULES.V34_END_NOTCH_THICKNESS.value;
-  const Y = (y) => r2(y + yOff);
-  const kept = [];
-  for (const sl of slots) {
-    if (sl.z0 < CH - nh && sl.z1 > 0) kept.push(sl);
-    else warnings.push(`Zi slot at z [${r2(sl.z0)}, ${r2(sl.z1)}] intersects avoidance/edge on V3/V4; slot omitted.`);
-  }
-  kept.sort((a, b) => b.z1 - a.z1);
-  let start;
-  if (s.avoid.enabled && s.avoid.height > 0 && s.avoid.depth > 0) {
-    const ah = s.avoid.height, ad = s.avoid.depth;
-    if (ad <= 150) {
-      start = [
-        [0, 0],
-        [RULES.V_AVOIDANCE_PARTIAL_FRONT_Y.value, 0],
-        [RULES.V_AVOIDANCE_PARTIAL_FRONT_Y.value, ah],
-        [tRear, ah]
-      ];
-    } else {
-      start = [[0, ah], [tRear, ah]];
-    }
+function v34Profile(s, slots, warnings, id) {
+  const CH = link("tall.CH");
+  const rear = link("tall.v34.rear");
+  const off = link("tall.v34.yOff");
+  const yAt = (local, name) => {
+    dim(`${id}.ly.${name}`, local.terms, local.fn, { formula: local.formula });
+    return ex({ y: ref(`${id}.ly.${name}`), off: ref("tall.v34.yOff") }, (t) => Math.round((t.y + t.off) * 1e3) / 1e3, `${local.formula ?? name} + yOff`);
+  };
+  const slotY = yAt(ex({ y: RULES.V34_ZI_SLOT_INNER }, (t) => t.y, "V34_ZI_SLOT_INNER"), "slot");
+  const yRear = yAt(rear, "rear");
+  const yZero = off;
+  dim(`${id}.ni`, {
+    rear: ref("tall.v34.rear"),
+    span: RULES.V34_Y_REAR,
+    inner: RULES.V34_TOP_NOTCH_INNER_Y
+  }, (t) => Math.max(0, t.rear - (t.span - t.inner)), { formula: "max(0, rear - (V34_Y_REAR - notchInner))" });
+  dim(`${id}.nf`, {
+    ni: ref(`${id}.ni`),
+    rear: ref("tall.v34.rear"),
+    span: RULES.V34_Y_REAR,
+    front: RULES.V34_TOP_NOTCH_FRONT_Y
+  }, (t) => Math.max(0, Math.min(t.ni, t.rear - (t.span - t.front))), { formula: "max(0, min(ni, rear - (V34_Y_REAR - notchFront)))" });
+  const yNi = yAt(link(`${id}.ni`), "ni");
+  const yNf = yAt(link(`${id}.nf`), "nf");
+  const zNotch = ex({ CH: ref("tall.CH"), nh: RULES.V34_NOTCH_HEIGHT }, (t) => Math.round((t.CH - t.nh) * 1e3) / 1e3, "CH - notchH");
+  const zThick = ex({ CH: ref("tall.CH"), nt: RULES.V34_END_NOTCH_THICKNESS }, (t) => Math.round((t.CH - t.nt) * 1e3) / 1e3, "CH - notchT");
+  const kept = slots.filter((sl) => {
+    const ok = sl.z0 < s.CH - RULES.V34_NOTCH_HEIGHT.value && sl.z1 > 0;
+    if (!ok) warnings.push(`Zi slot at z [${r2(sl.z0)}, ${r2(sl.z1)}] intersects avoidance/edge on V3/V4; slot omitted.`);
+    return ok;
+  }).sort((a, b) => b.z1 - a.z1);
+  const pairs = [];
+  const ah = s.avoid.enabled && s.avoid.height > 0 && s.avoid.depth > 0 ? s.avoid.height : 0;
+  if (ah > 0 && s.avoid.depth <= 150) {
+    const yPartial = yAt(ex({ y: RULES.V_AVOIDANCE_PARTIAL_FRONT_Y }, (t) => t.y, "V_AVOIDANCE_PARTIAL_FRONT_Y"), "partial");
+    const zAh = ex({ h: ah }, (t) => t.h, "avoidH");
+    pairs.push([yZero, lit(0)], [yPartial, lit(0)], [yPartial, zAh], [yRear, zAh]);
+  } else if (ah > 0) {
+    const zAh = ex({ h: ah }, (t) => t.h, "avoidH");
+    pairs.push([yZero, zAh], [yRear, zAh]);
   } else {
-    start = [[0, 0], [tRear, 0]];
+    pairs.push([yZero, lit(0)], [yRear, lit(0)]);
   }
-  const pts = [
-    ...start,
-    [tRear, r2(CH - nh)],
-    [ni, r2(CH - nh)],
-    [ni, r2(CH - nt)],
-    [nf, r2(CH - nt)],
-    [nf, CH],
-    [0, CH]
-  ];
+  const zStart = pairs[0][1];
+  pairs.push([yRear, zNotch], [yNi, zNotch], [yNi, zThick], [yNf, zThick], [yNf, CH], [yZero, CH]);
   for (const sl of kept) {
-    pts.push([0, r2(sl.z1)], [slotY, r2(sl.z1)], [slotY, r2(sl.z0)], [0, r2(sl.z0)]);
+    const z0 = link(`tall.slot.${sl.boundaryId}.z0`);
+    const z1 = link(`tall.slot.${sl.boundaryId}.z1`);
+    pairs.push([yZero, z1], [slotY, z1], [slotY, z0], [yZero, z0]);
   }
-  pts.push([0, start[0][1]]);
-  return yz(pts.map(([y, z]) => [Y(y), z]));
+  pairs.push([yZero, zStart]);
+  return yzTrace(id, pairs);
 }
-function fullZiProfile(s) {
-  const x = (v) => r2(v + s.dx);
-  const mw = s.midWidth, md = s.midDepth, nd = RULES.ZI_FULL_FRONT_REAR_NOTCH_DEPTH.value;
-  return [
-    { x: x(s.CPT), y: 0 },
-    { x: x(s.CPT), y: nd },
-    { x: x(0), y: nd },
-    { x: x(0), y: r2(md - nd) },
-    { x: x(s.CPT), y: r2(md - nd) },
-    { x: x(s.CPT), y: md },
-    { x: x(mw - s.CPT), y: md },
-    { x: x(mw - s.CPT), y: r2(md - nd) },
-    { x: x(mw), y: r2(md - nd) },
-    { x: x(mw), y: nd },
-    { x: x(mw - s.CPT), y: nd },
-    { x: x(mw - s.CPT), y: 0 },
-    { x: x(s.CPT), y: 0 }
-  ];
+function xOf(id, name, local) {
+  dim(`${id}.lx.${name}`, local.terms, local.fn, { formula: local.formula });
+  return ex({ x: ref(`${id}.lx.${name}`), dx: ref("tall.leftT") }, (t) => Math.round((t.x + t.dx) * 1e3) / 1e3, `${local.formula ?? name} + leftSide`);
 }
-function halfZiProfile(s) {
-  const x = (v) => r2(v + s.dx);
-  const mw = s.midWidth;
-  const nd = RULES.ZI_HALF_FRONT_NOTCH_DEPTH.value;
-  const dep = RULES.ZI_HALF_DEPTH.value;
-  return [
-    { x: x(0), y: 0 },
-    { x: x(0), y: nd },
-    { x: x(s.CPT), y: nd },
-    { x: x(s.CPT), y: dep },
-    { x: x(mw - s.CPT), y: dep },
-    { x: x(mw - s.CPT), y: nd },
-    { x: x(mw), y: nd },
-    { x: x(mw), y: 0 },
-    { x: x(0), y: 0 }
-  ];
+function fullZiProfile(id, yCap) {
+  const capY = (e, name) => {
+    if (yCap == null) return e;
+    dim(`${id}.yc.${name}`, e.terms, e.fn, { formula: e.formula });
+    return ex({ y: ref(`${id}.yc.${name}`), cap: yCap }, (t) => Math.min(t.y, t.cap), `min(${e.formula ?? name}, avoidShort)`);
+  };
+  const cpt = ex({ CPT: ref("tall.CPT") }, (t) => t.CPT, "CPT");
+  const zero = lit(0);
+  const mw = link("tall.mw");
+  const md = link("tall.md");
+  const nd = ex({ d: RULES.ZI_FULL_FRONT_REAR_NOTCH_DEPTH }, (t) => t.d, "ZI_FULL_FRONT_REAR_NOTCH_DEPTH");
+  const back = ex({ md: ref("tall.md"), d: RULES.ZI_FULL_FRONT_REAR_NOTCH_DEPTH }, (t) => Math.round((t.md - t.d) * 1e3) / 1e3, "midDepth - notch");
+  const xCpt = xOf(id, "cpt", cpt);
+  const x0 = xOf(id, "0", zero);
+  const xMw = xOf(id, "mw", mw);
+  const xMwC = xOf(id, "mwC", ex({ mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => t.mw - t.CPT, "midWidth - CPT"));
+  const y0 = capY(lit(0), "0");
+  const yNd = capY(nd, "nd");
+  const yBack = capY(back, "back");
+  const yMd = capY(md, "md");
+  return xyTrace(id, [
+    [xCpt, y0],
+    [xCpt, yNd],
+    [x0, yNd],
+    [x0, yBack],
+    [xCpt, yBack],
+    [xCpt, yMd],
+    [xMwC, yMd],
+    [xMwC, yBack],
+    [xMw, yBack],
+    [xMw, yNd],
+    [xMwC, yNd],
+    [xMwC, y0],
+    [xCpt, y0]
+  ]);
+}
+function halfZiProfile(id) {
+  const cpt = ex({ CPT: ref("tall.CPT") }, (t) => t.CPT, "CPT");
+  const zero = lit(0);
+  const nd = ex({ d: RULES.ZI_HALF_FRONT_NOTCH_DEPTH }, (t) => t.d, "ZI_HALF_FRONT_NOTCH_DEPTH");
+  const dep = ex({ d: RULES.ZI_HALF_DEPTH }, (t) => t.d, "ZI_HALF_DEPTH");
+  const x0 = xOf(id, "0", zero);
+  const xCpt = xOf(id, "cpt", cpt);
+  const xMw = xOf(id, "mw", link("tall.mw"));
+  const xMwC = xOf(id, "mwC", ex({ mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => t.mw - t.CPT, "midWidth - CPT"));
+  return xyTrace(id, [
+    [x0, lit(0)],
+    [x0, nd],
+    [xCpt, nd],
+    [xCpt, dep],
+    [xMwC, dep],
+    [xMwC, nd],
+    [xMw, nd],
+    [xMw, lit(0)],
+    [x0, lit(0)]
+  ]);
+}
+function insertProfile(id) {
+  const dx = link("tall.leftT");
+  const notch = ex({ n: RULES.STYLE_1_INSERT_FRONT_NOTCH_DEPTH }, (t) => t.n, "STYLE_1_INSERT_FRONT_NOTCH_DEPTH");
+  const depth = ex({ d: RULES.STYLE_1_INSERT_BOARD_DEPTH }, (t) => t.d, "STYLE_1_INSERT_BOARD_DEPTH");
+  const xIn = ex({ dx: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.dx + t.CPT) * 1e3) / 1e3, "left + CPT");
+  const xOut = ex({ dx: ref("tall.leftT"), mw: ref("tall.mw"), CPT: ref("tall.CPT") }, (t) => Math.round((t.dx + t.mw - t.CPT) * 1e3) / 1e3, "left + midWidth - CPT");
+  const xEnd = ex({ dx: ref("tall.leftT"), mw: ref("tall.mw") }, (t) => Math.round((t.dx + t.mw) * 1e3) / 1e3, "left + midWidth");
+  return xyTrace(id, [
+    [dx, lit(0)],
+    [dx, notch],
+    [xIn, notch],
+    [xIn, depth],
+    [xOut, depth],
+    [xOut, notch],
+    [xEnd, notch],
+    [xEnd, lit(0)]
+  ]);
+}
+function stampTallBoards(s, boards) {
+  dim("tall.topFront", { h: s.topSys.frontRail }, (t) => t.h, { formula: "frontRail" });
+  dim("tall.botFront", { h: s.botSys.frontRail }, (t) => t.h, { formula: "frontRail" });
+  const zero = lit(0);
+  const ch = link("tall.CH");
+  const dx = link("tall.leftT");
+  const xEnd = ex({ x: ref("tall.leftT"), mw: ref("tall.mw") }, (t) => Math.round((t.x + t.mw) * 1e3) / 1e3, "left + midWidth");
+  const xL1 = ex({ L: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.L + t.CPT) * 1e3) / 1e3, "left + CPT");
+  const xR1 = ex({ CW: ref("tall.CW"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.R) * 1e3) / 1e3, "CW - right");
+  const xR0 = ex({ CW: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CW - t.R - t.CPT) * 1e3) / 1e3, "CW - right - CPT");
+  const yRear1 = ex({ y: ref("tall.v34.yOff"), r: ref("tall.v34.rear") }, (t) => Math.round((t.y + t.r) * 1e3) / 1e3, "yOff + rear");
+  const negF = ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT");
+  const md = link("tall.md");
+  const sideY1 = ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1e3) / 1e3, "FPT + midDepth");
+  const hTop0 = ex({ CH: ref("tall.CH"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH - t.h) * 1e3) / 1e3, "CH - H_SUPPORT_HEIGHT");
+  const hHi = ex({ h: RULES.H_SUPPORT_HEIGHT }, (t) => t.h, "H_SUPPORT_HEIGHT");
+  const hX1 = ex({ x: ref("tall.leftT"), t: RULES.H_SUPPORT_THICKNESS }, (t) => Math.round((t.x + t.t) * 1e3) / 1e3, "left + H thickness");
+  const hX0 = ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: RULES.H_SUPPORT_THICKNESS }, (t) => Math.round((t.x + t.mw - t.t) * 1e3) / 1e3, "left + midWidth - H thickness");
+  const t1z0 = ex({ CH: ref("tall.CH"), h: ref("tall.topFront") }, (t) => Math.round((t.CH - t.h) * 1e3) / 1e3, "CH - frontRail");
+  const t3z0 = ex({ CH: ref("tall.CH"), h: ref("tall.topRailH") }, (t) => Math.round((t.CH - t.h) * 1e3) / 1e3, "CH - topRailH");
+  const insY = ex({ d: RULES.STYLE_1_INSERT_BOARD_DEPTH }, (t) => t.d, "STYLE_1_INSERT_BOARD_DEPTH");
+  const t5z0 = ex({ CH: ref("tall.CH"), h: RULES.T5_REAR_VERTICAL_HEIGHT }, (t) => Math.round((t.CH - t.h) * 1e3) / 1e3, "CH - T5 height");
+  const t4y0 = ex({ y: ref("tall.t5Front"), d: RULES.T4_REAR_HORIZONTAL_DEPTH }, (t) => Math.round((t.y - t.d) * 1e3) / 1e3, "T5 front - T4 depth");
+  const t4z0 = ex({ CH: ref("tall.CH"), t: RULES.STYLE_1_FIRST_RAIL_THICKNESS }, (t) => Math.round((t.CH - t.t) * 1e3) / 1e3, "CH - rail thickness");
+  const t4z1 = ex({ CH: ref("tall.CH"), inset: RULES.T45_WALL_INSET }, (t) => Math.round((t.CH - t.inset) * 1e3) / 1e3, "CH - wall inset");
+  const h34y0 = ex({ md: ref("tall.md"), d: RULES.H34_DEPTH }, (t) => Math.round((t.md - t.d) * 1e3) / 1e3, "midDepth - H34 depth");
+  dim("tall.fc", { fc: s.fc }, (t) => t.fc, { formula: "frontClearance" });
+  dim("tall.leaf.x0", { L: ref("tall.leftT"), fc: ref("tall.fc") }, (t) => Math.round((t.L + t.fc) * 1e3) / 1e3, { formula: "left + clearance" });
+  dim("tall.leaf.x1", { CW: ref("tall.CW"), R: ref("tall.rightT"), fc: ref("tall.fc") }, (t) => Math.round((t.CW - t.R - t.fc) * 1e3) / 1e3, { formula: "CW - right - clearance" });
+  dim("tall.leaf.midL", { x0: ref("tall.leaf.x0"), x1: ref("tall.leaf.x1"), fc: ref("tall.fc") }, (t) => Math.round(((t.x0 + t.x1) / 2 - t.fc / 2) * 1e3) / 1e3, { formula: "mid - clearance / 2" });
+  dim("tall.leaf.midR", { x0: ref("tall.leaf.x0"), x1: ref("tall.leaf.x1"), fc: ref("tall.fc") }, (t) => Math.round(((t.x0 + t.x1) / 2 + t.fc / 2) * 1e3) / 1e3, { formula: "mid + clearance / 2" });
+  for (const b of boards) {
+    const put = (face, e) => {
+      if (Math.abs(evalExpr(e) - b[face]) > 0.05) return;
+      dim(`${b.id}.${face}`, e.terms, e.fn, { formula: e.formula });
+    };
+    const id = b.id;
+    if (id === "V1" || id === "V3") {
+      put("x0", dx);
+      put("x1", xL1);
+    }
+    if (id === "V2" || id === "V4") {
+      put("x0", xR0);
+      put("x1", xR1);
+    }
+    if (id === "V1" || id === "V2") {
+      put("y0", link("tall.stileY0"));
+      put("y1", link("tall.v12Rear"));
+      put("z0", zero);
+      put("z1", ch);
+    }
+    if (id === "V3" || id === "V4") {
+      put("y0", link("tall.v34.yOff"));
+      put("y1", yRear1);
+      put("z0", zero);
+      put("z1", ch);
+    }
+    if (id === "V5") {
+      const onLeft = s.exteriorSide !== "left";
+      put("x0", onLeft ? xL1 : ex({ x: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.x - t.R - 2 * t.CPT) * 1e3) / 1e3, "CW - right - 2 CPT"));
+      put("x1", onLeft ? ex({ L: ref("tall.leftT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.L + 2 * t.CPT) * 1e3) / 1e3, "left + 2 CPT") : ex({ CW: ref("tall.CW"), R: ref("tall.rightT"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CW - t.R - t.CPT) * 1e3) / 1e3, "CW - right - CPT"));
+      put("y0", link("tall.FPT"));
+      put("y1", sideY1);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "fridgeZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "fridgeZ1"));
+      if (Number.isFinite(valueOf("tall.th1.z0"))) {
+        put("y0", link("tall.stileY0"));
+        put("y1", link("tall.v12Rear"));
+        put("z1", link("tall.th1.z0"));
+      }
+    }
+    if (/^(T[1-5]|B[1-3]|TH1|BH1)$/.test(id) || id.startsWith("Zi_")) {
+      put("x0", dx);
+      put("x1", xEnd);
+    }
+    if (id === "T1" || id === "T2") {
+      put("z0", t1z0);
+      put("z1", ch);
+    }
+    if (id === "T1" || id === "B1") {
+      put("y0", link("tall.railY0"));
+      put("y1", link("tall.t1Rear"));
+    }
+    if (id === "T2" || id === "B2") {
+      put("y0", link("tall.t1Rear"));
+      put("y1", link("tall.railRear"));
+    }
+    if (id === "B1" || id === "B2") {
+      put("z0", zero);
+      put("z1", link("tall.botFront"));
+    }
+    if (id === "T3") {
+      put("y0", zero);
+      put("y1", insY);
+      put("z0", t3z0);
+      put("z1", t1z0);
+      put("z0", ex({ CH: ref("tall.CH"), h: ref("tall.topFront"), CPT: ref("tall.CPT") }, (t) => Math.round((t.CH - t.h - t.CPT) * 1e3) / 1e3, "CH - frontRail - CPT"));
+    }
+    if (id === "B3") {
+      put("y0", zero);
+      put("y1", insY);
+      put("z0", link("tall.botFront"));
+      put("z1", link("tall.botRailH"));
+      put("z1", ex({ h: ref("tall.botFront"), CPT: ref("tall.CPT") }, (t) => Math.round((t.h + t.CPT) * 1e3) / 1e3, "frontRail + CPT"));
+    }
+    if (id === "T5") {
+      put("y0", link("tall.t5Front"));
+      put("y1", link("tall.t5Rear"));
+      put("z0", t5z0);
+      put("z1", ch);
+    }
+    if (id === "T4") {
+      put("y0", t4y0);
+      put("y1", link("tall.t5Front"));
+      put("z0", t4z0);
+      put("z1", t4z1);
+    }
+    if (id.startsWith("Zi_")) {
+      put("y0", zero);
+      put("y1", md);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "boundaryZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "boundaryZ1"));
+    }
+    if (id.startsWith("H13")) {
+      put("x0", dx);
+      put("x1", hX1);
+      put("y0", link("tall.hY0"));
+      put("y1", link("tall.hY1"));
+    }
+    if (id.startsWith("H24")) {
+      put("x0", hX0);
+      put("x1", xEnd);
+      put("y0", link("tall.hY0"));
+      put("y1", link("tall.hY1"));
+    }
+    if (id.startsWith("H34")) {
+      put("x0", hX1);
+      put("x1", hX0);
+      if (Number.isFinite(valueOf("V5.x1"))) put("x0", link("V5.x1"));
+      if (Number.isFinite(valueOf("V5.x0"))) put("x1", link("V5.x0"));
+      put("y0", h34y0);
+      put("y1", md);
+    }
+    if (/_mid$/.test(id) && id.startsWith("H")) {
+      if (Number.isFinite(valueOf("tall.hMid.z0"))) {
+        put("z0", link("tall.hMid.z0"));
+        put("z1", link("tall.hMid.z1"));
+      } else {
+        put("z0", ex({ CH: ref("tall.CH"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH / 2 - t.h / 2) * 1e3) / 1e3, "CH / 2 - H / 2"));
+        put("z1", ex({ CH: ref("tall.CH"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.CH / 2 + t.h / 2) * 1e3) / 1e3, "CH / 2 + H / 2"));
+      }
+    }
+    if (id.startsWith("VD_")) {
+      put("x0", ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: param({ divider: s.dividerT }).divider }, (t) => Math.round((t.x + t.mw / 2 - t.t / 2) * 1e3) / 1e3, "centre - divider / 2"));
+      put("x1", ex({ x: ref("tall.leftT"), mw: ref("tall.mw"), t: param({ divider: s.dividerT }).divider }, (t) => Math.round((t.x + t.mw / 2 + t.t / 2) * 1e3) / 1e3, "centre + divider / 2"));
+      put("y0", zero);
+      put("y1", md);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "zoneZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "zoneZ1"));
+    }
+    if (id.startsWith("FP_")) {
+      if (id.endsWith("_L")) {
+        put("x0", link("tall.leaf.x0"));
+        put("x1", link("tall.leaf.midL"));
+      } else if (id.endsWith("_R")) {
+        put("x0", link("tall.leaf.midR"));
+        put("x1", link("tall.leaf.x1"));
+      } else {
+        put("x0", link("tall.leaf.x0"));
+        put("x1", link("tall.leaf.x1"));
+      }
+      put("y0", negF);
+      put("y1", zero);
+      put("z0", ex({ z: b.z0 }, (t) => t.z, "leafZ0"));
+      put("z1", ex({ z: b.z1 }, (t) => t.z, "leafZ1"));
+    }
+    if (/_top$/.test(id) && id.startsWith("H")) {
+      put("z0", hTop0);
+      put("z1", ch);
+    }
+    if (/_bottom$/.test(id) && id.startsWith("H")) {
+      put("z0", zero);
+      put("z1", hHi);
+    }
+    if (id.startsWith("FP_") || id.endsWith("FixedFrontPanel")) {
+      put("y0", negF);
+      put("y1", zero);
+    }
+    if (id === "TopStyle2FixedFrontPanel" && Number.isFinite(valueOf("tall.th1.z0"))) {
+      put("x0", xL1);
+      put("x1", xR0);
+      if (Number.isFinite(valueOf("V5.x1"))) {
+        put("x0", link("V5.x1"));
+        put("x1", link("V5.x0"));
+      }
+      put("y0", zero);
+      put("y1", link("tall.FPT"));
+      put("z0", t1z0);
+      put("z1", link("tall.th1.z0"));
+    }
+    if (id === "TH1" && Number.isFinite(valueOf("tall.th1.z0"))) put("z0", link("tall.th1.z0"));
+    if (id.startsWith("SidePanel_")) {
+      put("y0", negF);
+      put("y1", md);
+      put("z0", zero);
+      put("z1", ch);
+    }
+    if (id.startsWith("SidePanel_L")) {
+      put("x0", zero);
+      put("x1", link("tall.leftT"));
+    }
+    if (id.startsWith("SidePanel_R")) {
+      put("x1", link("tall.CW"));
+      put("x0", ex({ CW: ref("tall.CW"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.R) * 1e3) / 1e3, "CW - right"));
+    }
+    if (id === "avoidance_horizontal" || id === "Avoidance_Vertical") {
+      put("x0", dx);
+      put("x1", xEnd);
+    }
+    if (s.avoid.enabled) {
+      const avoidH = ex({ h: s.avoid.height }, (t) => t.h, "avoidH");
+      const avoidZ0 = ex({ h: s.avoid.height, t: RULES.AVOIDANCE_SUPPORT_THICKNESS }, (t) => Math.round((t.h - t.t) * 1e3) / 1e3, "avoidH - support");
+      if (id === "avoidance_horizontal") {
+        put("z0", avoidZ0);
+        put("z1", avoidH);
+      }
+      if (id === "Avoidance_Vertical") {
+        put("y0", link("tall.avoidY0"));
+        put("y1", ex({ y: ref("tall.avoidY0"), t: RULES.AVOIDANCE_SUPPORT_THICKNESS }, (t) => Math.round((t.y + t.t) * 1e3) / 1e3, "avoidY0 + support"));
+        put("z0", zero);
+        put("z1", avoidZ0);
+      }
+    }
+    if (id.endsWith("_fridge") && Number.isFinite(valueOf("tall.hFridge.z0"))) {
+      put("z0", link("tall.hFridge.z0"));
+      put("z1", link("tall.hFridge.z1"));
+    }
+    if (id.startsWith("VD_") || id.startsWith("DS_")) {
+      put("y0", zero);
+      put("y1", md);
+    }
+  }
 }
 function generateGeneralTall(input) {
   beginProvenance();
@@ -1311,8 +4453,26 @@ function generateGeneralTall(input) {
   const s = normalize(prepared, errors);
   warnings.push(...fridgeNotes);
   const P = param({ CH: s.CH, CW: s.CW, CD: s.CD, CPT: s.CPT, FPT: s.FPT });
+  dim("tall.CH", { CH: P.CH }, (t) => t.CH, { formula: "CH" });
+  dim("tall.CW", { CW: P.CW }, (t) => t.CW, { formula: "CW" });
+  dim("tall.CPT", { CPT: P.CPT }, (t) => t.CPT, { formula: "CPT" });
+  dim("tall.FPT", { FPT: P.FPT }, (t) => t.FPT, { formula: "FPT" });
+  dim("tall.leftT", { t: param({ leftSide: s.leftT }).leftSide }, (t) => t.t, { formula: "leftSide" });
+  dim("tall.rightT", { t: param({ rightSide: s.rightT }).rightSide }, (t) => t.t, { formula: "rightSide" });
+  dim("tall.mw", { CW: ref("tall.CW"), L: ref("tall.leftT"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.L - t.R) * 1e3) / 1e3, { formula: "CW - sides" });
   dim("tall.midDepth", { CD: P.CD, FPT: P.FPT }, (t) => t.CD - t.FPT);
+  dim("tall.md", { CD: P.CD, FPT: P.FPT }, (t) => Math.round((t.CD - t.FPT) * 1e3) / 1e3, { formula: "CD - FPT" });
   const stileY0 = dim("tall.stileY0", { FPT: P.FPT }, () => 0);
+  dim("tall.v12.front", { y: RULES.V12_Y_FRONT_FACE }, (t) => t.y, { formula: "V12_Y_FRONT_FACE" });
+  dim("tall.v12.rear", { y: RULES.V12_Y_REAR }, (t) => t.y, { formula: "V12_Y_REAR" });
+  dim("tall.v12.step", { y: RULES.V12_Y_STEP_INNER }, (t) => t.y, { formula: "V12_Y_STEP_INNER" });
+  dim("tall.v12.slot", { y: RULES.V12_ZI_SLOT_INNER }, (t) => t.y, { formula: "V12_ZI_SLOT_INNER" });
+  dim("tall.v12.notchD", { d: RULES.STYLE_2_END_NOTCH_DEPTH }, (t) => t.d, { formula: "STYLE_2_END_NOTCH_DEPTH" });
+  dim("tall.notchT", { t: RULES.V34_END_NOTCH_THICKNESS }, (t) => t.t, { formula: "V34_END_NOTCH_THICKNESS" });
+  dim("tall.insertT", { t: RULES.STYLE_1_INSERT_SLOT_THICKNESS }, (t) => t.t, { formula: "STYLE_1_INSERT_SLOT_THICKNESS" });
+  dim("tall.topRailH", { h: s.topSys.railH }, (t) => t.h, { formula: "topRailH" });
+  dim("tall.botRailH", { h: s.botSys.railH }, (t) => t.h, { formula: "botRailH" });
+  dim("tall.ziT", { t: param({ ziThickness: s.ziT }).ziThickness }, (t) => t.t, { formula: "ziThickness" });
   const v12Rear = dim("tall.v12Rear", { y0: ref("tall.stileY0"), rear: RULES.V12_Y_REAR }, (t) => t.y0 + t.rear);
   const railRear = dim("tall.railRear", { face: RULES.V12_Y_FRONT_FACE }, (t) => t.face);
   const railY0 = dim("tall.railY0", {
@@ -1365,8 +4525,17 @@ function generateGeneralTall(input) {
       }
     }
   }
+  const fridgeIdx = fridgeZoneItem ? zoneItems.indexOf(fridgeZoneItem) : -1;
+  const baseDrawer = fridgeIdx > 0 && zoneItems[fridgeIdx - 1].zone.type === "drawer" ? zoneItems[fridgeIdx - 1] : null;
+  const fridgeFloor = baseDrawer ? boundaries.find((b) => b.id === `boundary-${fridgeZoneItem.zone.id}` && b.boundaryType === "full_zi") : void 0;
+  const drawerBase = fridgeFloor ? boundaries.find((b) => b.id === `boundary-${baseDrawer.zone.id}` && b.boundaryType === "full_zi") : void 0;
   const v12Slots = boundaries.filter((b) => b.boundaryType === "full_zi" || b.boundaryType === "half_zi").map((b) => ({ z0: r2(b.centerZ - (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
-  const v34Slots = boundaries.filter((b) => b.boundaryType === "full_zi").map((b) => ({ z0: r2(b.centerZ - (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
+  const v34Slots = boundaries.filter((b) => b.boundaryType === "full_zi" && b !== drawerBase).map((b) => ({ z0: r2(b.centerZ - (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), z1: r2(b.centerZ + (s.ziT + RULES.ZI_SLOT_CLEARANCE.value) / 2), boundaryId: b.id }));
+  for (const b of boundaries) {
+    if (b.boundaryType !== "full_zi" && b.boundaryType !== "half_zi") continue;
+    dim(`tall.slot.${b.id}.z0`, { cz: b.centerZ, zi: ref("tall.ziT"), clr: RULES.ZI_SLOT_CLEARANCE }, (t) => Math.round((t.cz - (t.zi + t.clr) / 2) * 1e3) / 1e3, { formula: "centerZ - (ziT + 1) / 2" });
+    dim(`tall.slot.${b.id}.z1`, { cz: b.centerZ, zi: ref("tall.ziT"), clr: RULES.ZI_SLOT_CLEARANCE }, (t) => Math.round((t.cz + (t.zi + t.clr) / 2) * 1e3) / 1e3, { formula: "centerZ + (ziT + 1) / 2" });
+  }
   const sideY0 = FPT;
   const sideY1 = r2(FPT + md);
   const vLeftX0 = s.leftT;
@@ -1390,7 +4559,7 @@ function generateGeneralTall(input) {
     v12Y1,
     0,
     CH,
-    v12Profile(s, v12Slots, v12Y0)
+    v12Profile(s, v12Slots, "V1")
   ));
   boards.push(mkBoard(
     "V2",
@@ -1407,13 +4576,19 @@ function generateGeneralTall(input) {
     v12Y1,
     0,
     CH,
-    v12Profile(s, v12Slots, v12Y0)
+    v12Profile(s, v12Slots, "V2")
   ));
   const v34Y1 = r2(stileY0 + md);
   let v34Y0 = r2(stileY0 + Math.max(0, md - RULES.V34_Y_REAR.value));
   if (v34Y0 < v12Y1) v34Y0 = v12Y1;
   const v34Depth = r2(Math.max(0, v34Y1 - v34Y0));
   const v34Rear = Math.min(RULES.V34_Y_REAR.value, v34Depth);
+  dim("tall.v34.yOff", { y0: stileY0, md: ref("tall.md"), rear: RULES.V34_Y_REAR, stop: v12Y1 }, (t) => {
+    let y = Math.round((t.y0 + Math.max(0, t.md - t.rear)) * 1e3) / 1e3;
+    if (y < t.stop) y = t.stop;
+    return y;
+  }, { formula: "max(stile + max(0, midDepth - V34_Y_REAR), frontStileRear)" });
+  dim("tall.v34.rear", { depth: v34Depth, rear: RULES.V34_Y_REAR }, (t) => Math.min(t.rear, t.depth), { formula: "min(V34_Y_REAR, depth)" });
   boards.push(mkBoard(
     "V3",
     "Rear Stile Left",
@@ -1429,7 +4604,7 @@ function generateGeneralTall(input) {
     r2(v34Y0 + v34Rear),
     0,
     CH,
-    v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)
+    v34Profile(s, v34Slots, warnings, "V3")
   ));
   boards.push(mkBoard(
     "V4",
@@ -1446,8 +4621,15 @@ function generateGeneralTall(input) {
     r2(v34Y0 + v34Rear),
     0,
     CH,
-    v34Profile(s, v34Slots, warnings, v34Y0, v34Rear)
+    v34Profile(s, v34Slots, warnings, "V4")
   ));
+  const topFridge = !!fridgeZoneItem && s.topSys.style === "style_2" && zoneItems[zoneItems.length - 1] === fridgeZoneItem;
+  const th1Z0 = s.topSys.style === "style_2" ? dim(
+    "tall.th1.z0",
+    { CH: ref("tall.CH"), t: RULES.STYLE_2_FRONT_SYSTEM_THICKNESS, inset: RULES.STYLE_2_FRONT_SYSTEM_Z_INSET },
+    (t) => Math.round((t.CH - t.t - t.inset) * 1e3) / 1e3,
+    { formula: "CH - TH1 thickness - inset" }
+  ) : NaN;
   if (fridgeZoneItem) {
     const v5OnLeft = s.exteriorSide !== "left";
     let v5x0, v5x1;
@@ -1458,6 +4640,10 @@ function generateGeneralTall(input) {
       v5x1 = r2(s.CW - s.rightT - CPT);
       v5x0 = r2(v5x1 - CPT);
     }
+    const v5Z0 = ex({ z: fridgeZoneItem.z0 }, (t) => t.z, "fridgeZ0");
+    const v5Front = topFridge ? link("tall.stileY0") : link("tall.FPT");
+    const v5Rear = topFridge ? link("tall.v12Rear") : ex({ F: ref("tall.FPT"), md: ref("tall.md") }, (t) => Math.round((t.F + t.md) * 1e3) / 1e3, "FPT + midDepth");
+    const v5Z1 = topFridge ? link("tall.th1.z0") : ex({ z: fridgeZoneItem.z1 }, (t) => t.z, "fridgeZ1");
     boards.push(mkBoard(
       "V5",
       "V5",
@@ -1469,17 +4655,11 @@ function generateGeneralTall(input) {
       "X",
       v5x0,
       v5x1,
-      sideY0,
-      sideY1,
+      topFridge ? v12Y0 : sideY0,
+      topFridge ? v12Y1 : sideY1,
       fridgeZoneItem.z0,
-      fridgeZoneItem.z1,
-      yz([
-        [sideY0, fridgeZoneItem.z0],
-        [sideY1, fridgeZoneItem.z0],
-        [sideY1, fridgeZoneItem.z1],
-        [sideY0, fridgeZoneItem.z1],
-        [sideY0, fridgeZoneItem.z0]
-      ])
+      topFridge ? th1Z0 : fridgeZoneItem.z1,
+      yzTrace("V5", [[v5Front, v5Z0], [v5Rear, v5Z0], [v5Rear, v5Z1], [v5Front, v5Z1], [v5Front, v5Z0]])
     ));
     warnings.push(
       `Fridge zone ${fridgeZoneItem.zone.id}: V5 on ${v5OnLeft ? "left" : "right"} (exteriorSide=${s.exteriorSide}).`
@@ -1513,22 +4693,9 @@ function generateGeneralTall(input) {
   }
   {
     const insDepth = RULES.STYLE_1_INSERT_BOARD_DEPTH.value;
-    const notch = RULES.STYLE_1_INSERT_FRONT_NOTCH_DEPTH.value;
     const t1H = RULES.STYLE_1_FIRST_RAIL_THICKNESS.value;
     const t2H = RULES.STYLE_1_SECOND_RAIL_THICKNESS.value;
-    const insT = RULES.STYLE_1_INSERT_SLOT_THICKNESS.value;
-    const insertProfile = () => [
-      { x: dx, y: 0 },
-      { x: dx, y: notch },
-      { x: r2(dx + CPT), y: notch },
-      { x: r2(dx + CPT), y: insDepth },
-      { x: r2(dx + mw - CPT), y: insDepth },
-      { x: r2(dx + mw - CPT), y: notch },
-      { x: r2(dx + mw), y: notch },
-      { x: r2(dx + mw), y: 0 }
-    ];
     if (s.topSys.style === "style_1") {
-      const topBand0 = r2(CH - s.topSys.railH);
       const topRail0 = r2(CH - s.topSys.frontRail);
       boards.push(mkBoard(
         "T1",
@@ -1581,9 +4748,9 @@ function generateGeneralTall(input) {
         r2(dx + mw),
         0,
         insDepth,
-        topBand0,
+        r2(topRail0 - CPT),
         topRail0,
-        insertProfile()
+        insertProfile("T3")
       ));
     } else if (s.topSys.style === "style_2") {
       const sysH = s.topSys.frontRail;
@@ -1603,31 +4770,52 @@ function generateGeneralTall(input) {
         r2(dx + mw),
         0,
         dep,
-        r2(CH - 16),
+        th1Z0,
         r2(CH - inset),
         void 0
       ));
-      boards.push(mkBoard(
-        "TopStyle2FixedFrontPanel",
-        "Top Style 2 Fixed Front Panel",
-        "top_system",
-        "style2_fixed_front_panel",
-        FPT,
-        "door",
-        "XZ",
-        "Y",
-        r2(dx + s.sideClearance),
-        r2(dx + mw - s.sideClearance),
-        -FPT,
-        0,
-        r2(CH - sysH),
-        CH,
-        void 0
-      ));
+      if (topFridge) {
+        const v5 = boards.find((b) => b.id === "V5");
+        const v5Left = v5.x0 < dx + mw / 2;
+        boards.push(mkBoard(
+          "TopStyle2FixedFrontPanel",
+          "Top Style 2 Fixed Front Panel",
+          "top_system",
+          "style2_fixed_front_panel",
+          FPT,
+          "door",
+          "XZ",
+          "Y",
+          v5Left ? v5.x1 : vLeftX1,
+          v5Left ? vRightX0 : v5.x0,
+          0,
+          FPT,
+          r2(CH - sysH),
+          th1Z0,
+          void 0
+        ));
+      } else {
+        boards.push(mkBoard(
+          "TopStyle2FixedFrontPanel",
+          "Top Style 2 Fixed Front Panel",
+          "top_system",
+          "style2_fixed_front_panel",
+          FPT,
+          "door",
+          "XZ",
+          "Y",
+          r2(dx + s.sideClearance),
+          r2(dx + mw - s.sideClearance),
+          -FPT,
+          0,
+          r2(CH - sysH),
+          CH,
+          void 0
+        ));
+      }
     }
     if (s.botSys.style === "style_1") {
       const botRail1 = r2(s.botSys.frontRail);
-      const botBand1 = r2(s.botSys.railH);
       boards.push(mkBoard(
         "B1",
         "Bottom Front Rail",
@@ -1680,8 +4868,8 @@ function generateGeneralTall(input) {
         0,
         insDepth,
         botRail1,
-        botBand1,
-        insertProfile()
+        r2(botRail1 + CPT),
+        insertProfile("B3")
       ));
     } else if (s.botSys.style === "style_2") {
       const sysH = s.botSys.frontRail;
@@ -1780,14 +4968,17 @@ function generateGeneralTall(input) {
     const hitsAvoid = s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && s.avoid.depth < md && b.z0 < s.avoid.height && b.z1 > 0 && !isDividerSupportBoundary(b);
     if (type === "half_zi") {
       y1 = md;
-      prof = halfZiProfile(s);
+      prof = halfZiProfile(`Zi_${b.id}`);
+    } else if (b === drawerBase) {
+      type = "shortened_zi";
+      y1 = r2(Math.min(md, RULES.FRIDGE_BASE_ZI_DEPTH.value));
+      prof = fullZiProfile(`Zi_${b.id}`, y1);
+    } else if (hitsAvoid) {
+      type = "shortened_zi";
+      y1 = avoidShortY;
+      prof = fullZiProfile(`Zi_${b.id}`, y1);
     } else {
-      prof = fullZiProfile(s);
-      if (hitsAvoid) {
-        type = "shortened_zi";
-        y1 = avoidShortY;
-        prof = fullZiProfile(s).map((p) => "y" in p && !("z" in p) ? { ...p, y: Math.min(p.y, y1) } : p);
-      }
+      prof = fullZiProfile(`Zi_${b.id}`, null);
     }
     boards.push(mkBoard(
       `Zi_${b.id}`,
@@ -1823,7 +5014,9 @@ function generateGeneralTall(input) {
   const vdZone = [...zoneItems].reverse().find((zi) => zi.zone.type === "double_door" && zi.zone.verticalDivider === true);
   const vdShelf = vdZone ? boundaries.find((b) => b.id === `boundary-${vdZone.zone.id}` && (b.boundaryType === "full_zi" || b.boundaryType === "shortened_zi")) : void 0;
   if (vdShelf) {
-    const above0 = r2(vdShelf.z1 - 1);
+    const above0 = r2(vdShelf.z1);
+    dim("tall.hMid.z0", { z: vdShelf.z1 }, (t) => t.z, { formula: "divider top" });
+    dim("tall.hMid.z1", { z0: ref("tall.hMid.z0"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z0 + t.h) * 1e3) / 1e3, { formula: "z0 + H height" });
     for (const h of hMid) {
       h.z0 = above0;
       h.z1 = r2(above0 + Hspan);
@@ -1842,7 +5035,7 @@ function generateGeneralTall(input) {
     for (const h of hMid) {
       if (!(h.z0 < zi.z1 && h.z1 > zi.z0)) continue;
       if (h.name === "H34_mid") {
-        const nz0 = r2(zi.z1 - 1), nz1 = r2(zi.z1 - 1 + H);
+        const nz0 = r2(zi.z1), nz1 = r2(zi.z1 + H);
         if (nz1 > CH) {
           hZiConflicts.push(`${h.name} movement above Zi would exceed cabinet bounds; movement skipped.`);
           continue;
@@ -1850,7 +5043,7 @@ function generateGeneralTall(input) {
         h.z0 = nz0;
         h.z1 = nz1;
       } else {
-        const nz1 = r2(zi.z0 - 1), nz0 = r2(zi.z0 - 1 - H);
+        const nz1 = r2(zi.z0), nz0 = r2(zi.z0 - H);
         if (nz0 < 0) {
           hZiConflicts.push(`${h.name} movement below Zi would exceed cabinet bounds; movement skipped.`);
           continue;
@@ -1916,7 +5109,7 @@ function generateGeneralTall(input) {
       let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
       let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
       const v5 = boards.find((board) => board.id === "V5");
-      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+      if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - RULES.H34_DEPTH.value) {
         if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
         else x1 = r2(Math.min(x1, v5.x0));
       }
@@ -1947,6 +5140,8 @@ function generateGeneralTall(input) {
     const below = boundaries.find((b) => b.id === `boundary-${fridgeZoneItem.zone.id}`);
     const hz0 = below ? below.z1 : fridgeZoneItem.z0;
     const hz1 = r2(hz0 + RULES.H_SUPPORT_HEIGHT.value);
+    dim("tall.hFridge.z0", { z: hz0 }, (t) => t.z, { formula: "boundary above the fridge" });
+    dim("tall.hFridge.z1", { z0: ref("tall.hFridge.z0"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z0 + t.h) * 1e3) / 1e3, { formula: "z0 + H height" });
     const hFridge = [
       { name: "H13_fridge", z0: hz0, z1: hz1 },
       { name: "H24_fridge", z0: hz0, z1: hz1 },
@@ -1997,7 +5192,7 @@ function generateGeneralTall(input) {
         let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
         let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
         const v5 = boards.find((board) => board.id === "V5");
-        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0) {
+        if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - RULES.H34_DEPTH.value) {
           if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
           else x1 = r2(Math.min(x1, v5.x0));
         }
@@ -2020,6 +5215,93 @@ function generateGeneralTall(input) {
         ));
       }
     }
+  }
+  if (baseDrawer && fridgeFloor) {
+    const z0 = dim("tall.fridgeBase.z0", { z: baseDrawer.z0 }, (t) => t.z, { formula: "drawer zone bottom" });
+    const zTop = evalExpr(link(`tall.slot.${fridgeFloor.id}.z0`));
+    const floor = dim("tall.fridgeFloor.z0", { z: fridgeFloor.z0 }, (t) => t.z, { formula: "fridge floor underside" });
+    const h34z0 = dim("tall.fridgeBase.h34z0", { z: ref("tall.fridgeFloor.z0"), h: RULES.H_SUPPORT_HEIGHT }, (t) => Math.round((t.z - t.h) * 1e3) / 1e3, { formula: "fridge floor - H height" });
+    const railZ0 = dim("tall.fridgeBase.railZ0", { z: ref("tall.fridgeFloor.z0"), CPT: ref("tall.CPT") }, (t) => Math.round((t.z - t.CPT) * 1e3) / 1e3, { formula: "fridge floor - CPT" });
+    const railY1 = dim("tall.fridgeBase.railY1", { d: RULES.FRIDGE_BASE_RAIL_DEPTH }, (t) => t.d, { formula: "FRIDGE_BASE_RAIL_DEPTH" });
+    boards.push(mkBoard(
+      "H13_fridgeBase",
+      "H13 fridge base",
+      "h_support",
+      "H13_fridgeBase",
+      s.hT,
+      "carcass",
+      "YZ",
+      "X",
+      dx,
+      r2(dx + RULES.H_SUPPORT_THICKNESS.value),
+      hY0,
+      hY1,
+      z0,
+      zTop,
+      void 0
+    ));
+    boards.push(mkBoard(
+      "H24_fridgeBase",
+      "H24 fridge base",
+      "h_support",
+      "H24_fridgeBase",
+      s.hT,
+      "carcass",
+      "YZ",
+      "X",
+      r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value),
+      r2(dx + mw),
+      hY0,
+      hY1,
+      z0,
+      zTop,
+      void 0
+    ));
+    boards.push(mkBoard(
+      "H34_fridgeBase",
+      "H34 fridge base",
+      "h_support",
+      "H34_fridgeBase",
+      s.hT,
+      "carcass",
+      "XZ",
+      "Y",
+      r2(dx + RULES.H_SUPPORT_THICKNESS.value),
+      r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value),
+      r2(md - RULES.H34_DEPTH.value),
+      md,
+      h34z0,
+      floor,
+      void 0
+    ));
+    boards.push(mkBoard(
+      "FridgeBaseRail",
+      "Fridge Base Front Rail",
+      "h_support",
+      "fridge_base_rail",
+      CPT,
+      "carcass",
+      "XY",
+      "Z",
+      vLeftX1,
+      vRightX0,
+      0,
+      railY1,
+      railZ0,
+      floor,
+      void 0
+    ));
+    for (const id of ["H13_fridgeBase", "H24_fridgeBase"]) {
+      same(`${id}.y0`, "tall.hY0");
+      same(`${id}.y1`, "tall.hY1");
+      same(`${id}.z0`, "tall.fridgeBase.z0");
+      same(`${id}.z1`, `tall.slot.${fridgeFloor.id}.z0`);
+    }
+    same("H34_fridgeBase.z0", "tall.fridgeBase.h34z0");
+    same("H34_fridgeBase.z1", "tall.fridgeFloor.z0");
+    same("FridgeBaseRail.z0", "tall.fridgeBase.railZ0");
+    same("FridgeBaseRail.z1", "tall.fridgeFloor.z0");
+    same("FridgeBaseRail.y1", "tall.fridgeBase.railY1");
   }
   for (const zi of zoneItems) {
     if (zi.zone.type !== "blank_panel") continue;
@@ -2108,28 +5390,43 @@ function generateGeneralTall(input) {
       if (prev && band.z0 <= prev.z1 + EPS3) prev.z1 = r2(Math.max(prev.z1, band.z1));
       else h34Cuts.push({ z0: r2(band.z0), z1: r2(band.z1) });
     }
+    const yMd = link("tall.md");
+    const yCut = ex({ md: ref("tall.md"), d: RULES.H34_CLEARANCE_DEPTH }, (t) => Math.round((t.md - t.d) * 1e3) / 1e3, "midDepth - H34_CLEARANCE_DEPTH");
+    const yTy0 = ex({ md: ref("tall.md") }, (t) => Math.round(t.md / 3 * 1e3) / 1e3, "midDepth / 3");
+    const yTy1 = ex({ md: ref("tall.md") }, (t) => Math.round(2 * t.md / 3 * 1e3) / 1e3, "2 * midDepth / 3");
+    dim(`${vd.id}.tongue`, { CPT: ref("tall.CPT"), c: RULES.DIVIDER_TONGUE_GROOVE_CLEARANCE }, (t) => Math.round((t.CPT / 2 - t.c) * 1e3) / 1e3, { formula: "CPT / 2 - clearance" });
+    const zTongue = ex({ z: z0, tongue: ref(`${vd.id}.tongue`) }, (t) => Math.round((t.z - t.tongue) * 1e3) / 1e3, "zoneZ0 - tongue");
+    const zZone0 = ex({ z: z0 }, (t) => t.z, "zoneZ0");
+    const zZone1 = ex({ z: z1 }, (t) => t.z, "zoneZ1");
+    const pairs = [
+      [lit(0), zTongue],
+      [yTy0, zTongue],
+      [yTy0, zZone0],
+      [yTy1, zZone0],
+      [yTy1, zTongue]
+    ];
     const rear = [[md, rearBottomZ]];
     let zCursor = rearBottomZ;
+    let cutN = 0;
+    const pushRear = (y, z, formula) => {
+      dim(`${vd.id}.rz.${cutN}`, { z }, (t) => t.z, { formula });
+      pairs.push([y, link(`${vd.id}.rz.${cutN}`)]);
+      cutN += 1;
+    };
+    pushRear(yMd, rearBottomZ, "zoneZ0 - tongue");
     for (const cut of h34Cuts) {
       const cz0 = r2(Math.max(cut.z0, zCursor));
       const cz1 = r2(cut.z1);
       if (cz1 <= zCursor + EPS3) continue;
-      if (cz0 > zCursor + EPS3) rear.push([md, cz0]);
-      rear.push([h34CutY0, cz0], [h34CutY0, cz1]);
-      if (cz1 < z1 - EPS3) rear.push([md, cz1]);
+      if (cz0 > zCursor + EPS3) pushRear(yMd, cz0, "H34 or T5 band");
+      pushRear(yCut, cz0, "H34 or T5 band");
+      pushRear(yCut, cz1, "H34 or T5 band");
+      if (cz1 < z1 - EPS3) pushRear(yMd, cz1, "H34 or T5 band");
       zCursor = cz1;
     }
-    if (z1 > zCursor + EPS3) rear.push([md, z1]);
-    const prof = yz([
-      [0, rearBottomZ],
-      [ty0, rearBottomZ],
-      [ty0, z0],
-      [ty1, z0],
-      [ty1, rearBottomZ],
-      ...rear,
-      [0, z1],
-      [0, rearBottomZ]
-    ]);
+    if (z1 > zCursor + EPS3) pushRear(yMd, z1, "zoneZ1");
+    pairs.push([lit(0), zZone1], [lit(0), zTongue]);
+    const prof = yzTrace(vd.id, pairs);
     boards.push(mkBoard(
       vd.id,
       `Vertical Divider ${zoneItem.zone.id}`,
@@ -2240,6 +5537,7 @@ function generateGeneralTall(input) {
       } else {
         z1 = r2(zi.z1 - s.fc / 2);
       }
+      if (zi === baseDrawer && fridgeFloor) z1 = r2(fridgeFloor.z0 - RULES.FRIDGE_BASE_DRAWER_FRONT_GAP.value);
       const x0 = r2(s.leftT + s.fc), x1 = r2(s.CW - s.rightT - s.fc);
       if (zt === "double_door") {
         const mid = r2((x0 + x1) / 2);
@@ -2273,7 +5571,15 @@ function generateGeneralTall(input) {
     const cupDepth = asNum(hs.cupDepth, RULES.HINGE_CUP_DEPTH.value);
     const fromEdge = asNum(hs.cupCenterFromEdge, RULES.HINGE_CUP_FROM_EDGE.value);
     const zt = fp.zone.zone.type;
-    if (zt !== "drawer") {
+    if (zt === "top_flap" || zt === "bottom_flap") {
+      const custom = hs.sideDistance && hs.sideDistance !== "auto" && Number.isFinite(Number(hs.sideDistance));
+      const fromSide = custom ? Number(hs.sideDistance) : RULES.FLAP_HINGE_FROM_SIDE.value;
+      const cz = zt === "bottom_flap" ? r2(fp.z0 + fromEdge) : r2(fp.z1 - fromEdge);
+      const depth = asNum(hs.cupDepth, RULES.FLAP_HINGE_CUP_DEPTH.value);
+      [r2(fp.x0 + fromSide), r2(fp.x1 - fromSide)].forEach((cx, i) => {
+        hinges.push({ id: `${fp.id}_hinge_${i + 1}`, panelId: fp.id, centerX: cx, centerZ: cz, diameter: cupD, depth });
+      });
+    } else if (zt !== "drawer") {
       const h = r2(fp.z1 - fp.z0);
       let sd;
       if (hs.sideDistance && hs.sideDistance !== "auto" && Number.isFinite(Number(hs.sideDistance))) {
@@ -2298,12 +5604,21 @@ function generateGeneralTall(input) {
       let mountingFace = "bottom";
       let mountingBoardId;
       const lp = zt2.lockPosition;
+      const zIdx = zoneItems.indexOf(fp.zone);
+      const nextZone = zoneItems[zIdx + 1];
+      const zoneAbove = nextZone ? boundaries.find((b) => b.id === `boundary-${nextZone.zone.id}` && b.boundaryType !== "none") : void 0;
+      const zoneBelow = boundaries.find((b) => b.id === `boundary-${fp.zone.zone.id}` && b.boundaryType !== "none");
       if (lp === "top") {
-        cz = r2(fp.z1 - RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
+        const underRail = fp.zone === baseDrawer && fridgeFloor;
+        const mount = underRail ? r2(fridgeFloor.z0 - CPT) : zoneAbove ? zoneAbove.z0 : fp.z1;
+        cz = r2(mount - RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "top";
+        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : void 0;
       } else if (lp === "bottom") {
-        cz = r2(fp.z0 + RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
+        const mount = zoneBelow ? zoneBelow.z1 : fp.z0;
+        cz = r2(mount + RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "bottom";
+        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : void 0;
       } else if (lp === "side") {
         mountingFace = "side";
         mountingBoardId = `VD_${fp.zone.zone.id}`;
@@ -2342,7 +5657,14 @@ function generateGeneralTall(input) {
     let prof;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
       const ad = s.avoid.depth, ah = s.avoid.height;
-      prof = yz([[-FPT, 0], [r2(md - ad), 0], [r2(md - ad), ah], [md, ah], [md, CH], [-FPT, CH]]);
+      prof = yzTrace(`SidePanel_${side}`, [
+        [ex({ F: ref("tall.FPT") }, (t2) => -t2.F, "-FPT"), lit(0)],
+        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t2) => Math.round((t2.md - t2.d) * 1e3) / 1e3, "midDepth - avoidD"), lit(0)],
+        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t2) => Math.round((t2.md - t2.d) * 1e3) / 1e3, "midDepth - avoidD"), ex({ h: s.avoid.height }, (t2) => t2.h, "avoidH")],
+        [link("tall.md"), ex({ h: s.avoid.height }, (t2) => t2.h, "avoidH")],
+        [link("tall.md"), link("tall.CH")],
+        [ex({ F: ref("tall.FPT") }, (t2) => -t2.F, "-FPT"), link("tall.CH")]
+      ]);
     }
     boards.push(mkBoard(
       `SidePanel_${side}`,
@@ -2406,8 +5728,18 @@ function generateGeneralTall(input) {
       void 0
     ));
   }
+  stampTallBoards(s, boards);
   attachFaces(boards);
-  const joints = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input) });
+  const joints = buildTallFaces({
+    boards,
+    ziSlots,
+    ziGrooves,
+    hinges,
+    locks,
+    doorColour: doorColourOf(input),
+    ledGroove: input.ledGroove === true,
+    fridgeZ: fridgeZoneItem ? [fridgeZoneItem.z0, fridgeZoneItem.z1] : null
+  });
   const grain = applyGrain(
     boards,
     (b) => b.id.startsWith("SidePanel_") ? "side" : b.stock?.kind === "door" ? "front" : null,
@@ -2461,6 +5793,7 @@ function generateGeneralTall(input) {
   return result;
 }
 export {
+  GT_UI_PRESETS,
   fitTallCabinetHeight,
   generateGTSvgPreview,
   generateGeneralTall

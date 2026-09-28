@@ -37,10 +37,10 @@ import { wallPickables, solidBoxes } from "./walls3d.js";
 import { wallBoards } from "./walls.js";
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
-import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, boardCornerLocals } from "./pose.js";
+import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, boardCornerLocals, localOf, cornerOf } from "./pose.js";
 import { faceLabel } from "./boardModel.js";
 import {
-  initBoardSketch, boardActive, boardMode, startBoard, cancelBoard, boardPointerDown, boardPointerMove, boardKeydown,
+  initBoardSketch, boardActive, boardMode, startBoard, cancelBoard, boardPointerDown, boardPointerMove, boardPointerUp, boardKeydown,
 } from "./boardSketch.js";
 
 export { startBoard, boardRightClick, boardUndoKey } from "./boardSketch.js";
@@ -997,10 +997,15 @@ function createFromBox(b, how, side = defaultSide(b)) {
     clamped: b.clamped, box: { x0: b.x0, y0: b.y0, z0: b.z0, W: b.W, D: b.D, H: b.H },
     side: { axis: side.axis, dir: side.dir }, wall: side.wall, size: { W: fit.W, D: fit.D, H: fit.H }, pose: fit.pose,
   });
+  // The first click is a corner of the drawn box: remember which one, in the cabinet frame.
+  const corner = rb && rb.anchor
+    ? cornerOf({ x0: 0, x1: fit.W, y0: -FRONT_THICKNESS_DEFAULT, y1: fit.D, z0: 0, z1: fit.H }, localOf(fit.pose, [rb.anchor.x, rb.anchor.y, rb.anchor.z]))
+    : null;
   const cab = job.addCabinet(
     placing,
     fit.pose,
     { W: fit.W, D: Math.max(mod.minSize.D, fit.D), H: fit.H },
+    { history: true, corner },
   );
   lastSize = { moduleId: placing, W: b.W, D: b.D, H: b.H };
   lastCreated = cab.id;
@@ -4139,8 +4144,8 @@ function endDrag(e) {
   hideTip();
   emitMode();
 }
-canvas.addEventListener("pointerup", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); });
-canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); });
+canvas.addEventListener("pointerup", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); if (boardActive()) boardPointerUp(e); });
+canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); endResizeDrag(e); if (boardActive()) boardPointerUp(e); });
 
 canvas.addEventListener("pointerleave", () => {
   if (placing && !rb) { hideSnapMarker(); hideFaceHint(); hideTip(); }
@@ -4510,12 +4515,10 @@ window.addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (!sel || move) return;
-  if ((e.key === "v" || e.key === "V") && !e.ctrlKey && !e.metaKey && !e.altKey) {
-    const boardId = job.getSubSelection()?.boardId;
-    job.toggleBoardsVisible(sel.id, boardId ? [boardId] : null);
-    return;
+  if ((e.key === "v" || e.key === "V") && !e.ctrlKey && !e.metaKey && !e.altKey && !move) {
+    if (job.toggleSelectionVisible()) return;
   }
+  if (!sel || move) return;
   if (e.key === "m" || e.key === "M") {
     startMove(sel.id);
   } else if (e.key === "Delete" || e.key === "Backspace") {

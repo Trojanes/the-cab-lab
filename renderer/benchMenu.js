@@ -86,6 +86,7 @@ canvas.addEventListener("contextmenu", (e) => {
     const ready = cabs.some((c) => c.moduleId === "overheadCabinet") && cabs.some((c) => c.moduleId === "kitchenCabinet");
     const items = [
       { title: wall.id },
+      { label: wall.hidden ? "Show" : "Hide", run: () => job.toggleWallVisible(wall.id) },
       { label: "Fit to cabinets", disabled: !ready, run: () => startFitPick(wall.id) },
     ];
     if (wall.fit) items.push({ label: "Clear cabinet fit", run: () => job.setWallFit(wall.id, null, "clear") });

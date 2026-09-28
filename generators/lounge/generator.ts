@@ -29,6 +29,8 @@ const asNum = (v: unknown, fb: number) => {
   return Number.isFinite(n) ? n : fb;
 };
 const r2 = (v: number) => Math.round(v * 1000) / 1000;
+/** Door-stock boards: the room face takes the door colour. */
+const FRONT_TYPES = new Set(["front", "cabinet_door", "drawer_front", "fixed_front"]);
 
 function mkBoard(
   id: string, name: string, boardType: string, thickness: number,
@@ -39,7 +41,7 @@ function mkBoard(
   const box = recordBoardBox(id, r2(x0), r2(x1), r2(y0), r2(y1), r2(z0), r2(z1));
   return {
     id, name,
-    category: boardType === "front" || boardType === "cabinet_door" ? "front_panel" : boardType,
+    category: FRONT_TYPES.has(boardType) ? "front_panel" : boardType,
     boardType,
     materialThickness: thickness, profilePlane: plane, thicknessAxis: axis,
     stock: { kind: "partition", thickness },
@@ -298,6 +300,142 @@ function addMiddleCabinet(
   addDoor("middle_cabinet_right_door", x0 + dc + doorSlotWidth + dc, false);
 }
 
+/**
+ * Frame L (21 Bunk new lounge). Built with the wing on the right, then mirrored for LEFT.
+ * `d` is depth from the wall (y = back − d); x runs along the wall. Every outer panel is full height;
+ * the top of each run is one lid, `FRAME_LID_GAP` clear of the panels round it and flush with their top,
+ * resting at H − T on an inner frame: in the main run two end supports and two rails, in the wing two
+ * side supports. One rear rail runs the whole length at the wall and drops into slots in the three
+ * panels that reach the wall; the main rails drop into slots in the main supports.
+ * `ft` non-null = the wing's room end is a drawer (door stock `ft`): a fixed strip from the top down
+ * STRIP_REVEAL + T, the drawer front under it `FRAME_DRAWER_GAP` clear all round, and a drawer rail
+ * behind the strip whose tongues sit in pockets in the two wing supports. No drawer box.
+ */
+function addFrameL(
+  L: number, Dm: number, Dl: number, Wl: number, H: number, T: number, right: boolean, ft: number | null,
+  boards: Board[], lids: LoungeLid[], locks: LoungeLock[], grooves: LoungeGroove[], errors: string[],
+) {
+  const c = R.FRAME_WALL_GAP.value;
+  const s = R.FRAME_SLOT_CLEARANCE.value;
+  const g = R.FRAME_LID_GAP.value;
+  const hr = R.FRAME_INNER_RAIL_HEIGHT.value;
+  const nd = R.FRAME_HALVING_NOTCH.value;
+  const hg = R.FRAME_HALVING_GAP.value;
+  const P = param({ L, Wl, H, T });
+  const Lm = dim("lounge.frame.mainLength", { L: P.L, Wl: P.Wl }, (t) => r2(t.L - t.Wl), { formula: "L - Wl" });
+  const railZ0 = dim("lounge.frame.railBottom", { H: P.H, T: P.T, hr: R.FRAME_INNER_RAIL_HEIGHT }, (t) => r2(t.H - t.T - t.hr), { formula: "H - T - FRAME_INNER_RAIL_HEIGHT" });
+  const slotZ = dim("lounge.frame.slotBottom", { z: ref("lounge.frame.railBottom"), nd: R.FRAME_HALVING_NOTCH, hg: R.FRAME_HALVING_GAP }, (t) => r2(t.z + t.nd - t.hg), { formula: "railBottom + FRAME_HALVING_NOTCH - FRAME_HALVING_GAP" });
+  const seat = dim("lounge.frame.lidSeat", { H: P.H, T: P.T }, (t) => r2(t.H - t.T), { formula: "H - T" });
+  const slot = r2(T + s);
+
+  if (Wl < R.L_MIN_WING_WIDTH.value) errors.push(`L: the wing is only ${Wl} wide — at least ${R.L_MIN_WING_WIDTH.value}.`);
+  if (!(Lm > 3 * T + 2 * s)) errors.push(`L: the main run is only ${Lm} long.`);
+  if (!(Dm > 4 * T + 3 * s + 2 * g)) errors.push(`L: the main depth ${Dm} does not fit the rear rail, both inner rails and the front.`);
+  if (!(Dl > Dm)) errors.push(`L: the wing (${Dl}) must reach past the main front (${Dm}).`);
+  if (!(railZ0 > 0 && slotZ < seat)) errors.push(`L: height ${H} is too low for the rails (${hr} + ${T}).`);
+  const gd = R.FRAME_DRAWER_GAP.value;
+  let stripZ0 = 0, frontTop = 0;
+  if (ft != null) {
+    const stripH = dim("lounge.frame.drawer.stripHeight", { rev: R.FRAME_DRAWER_STRIP_REVEAL, T: P.T }, (t) => r2(t.rev + t.T), { formula: "FRAME_DRAWER_STRIP_REVEAL + T" });
+    stripZ0 = dim("lounge.frame.drawer.stripBottom", { H: P.H, s: ref("lounge.frame.drawer.stripHeight") }, (t) => r2(t.H - t.s), { formula: "H - stripHeight" });
+    frontTop = dim("lounge.frame.drawer.frontTop", { z: ref("lounge.frame.drawer.stripBottom"), g: R.FRAME_DRAWER_GAP }, (t) => r2(t.z - t.g), { formula: "stripBottom - FRAME_DRAWER_GAP" });
+    const room = r2(frontTop - gd);
+    if (!(room > R.LOCK_DROP.value + R.LOCK_HEIGHT.value / 2)) {
+      errors.push(`L drawer: height ${H} leaves only ${room} for the drawer front under the ${stripH} strip.`);
+    }
+  }
+  if (errors.length) return;
+
+  const back = Dl;
+  const X = (a: number, b: number): [number, number] => (right ? [r2(a), r2(b)] : [r2(L - b), r2(L - a)]);
+  const px = (x: number) => r2(right ? x : L - x);
+  const Y = (d0: number, d1: number): [number, number] => [r2(back - d1), r2(back - d0)];
+  const yz = (pts: [number, number][]) => [...pts, pts[0]].map(([d, z]) => ({ y: r2(back - d), z: r2(z) }));
+  const xz = (pts: [number, number][]) => [...pts, pts[0]].map(([x, z]) => ({ x: px(x), z: r2(z) }));
+  const push = (id: string, name: string, type: string, plane: "XY" | "XZ" | "YZ", axis: "X" | "Y" | "Z",
+    x: [number, number], y: [number, number], z: [number, number], pv?: Board["profileVector"], th = T) => {
+    const [x0, x1] = X(x[0], x[1]);
+    const board = mkBoard(id, name, type, th, plane, axis, x0, x1, y[0], y[1], z[0], z[1], pv);
+    boards.push(board);
+    return board;
+  };
+
+  // Panels that reach the wall: full height, a slot for the rear rail at the wall corner.
+  const atWall = r2(c + T);
+  const wallPanel = (dEnd: number): [number, number][] => [[0, 0], [dEnd, 0], [dEnd, H], [atWall, H], [atWall, slotZ], [0, slotZ]];
+  push("main_end", "Main End", "side", "YZ", "X", [0, T], Y(0, Dm - T), [0, H], yz(wallPanel(Dm - T)));
+  push("main_front", "Main Front", "seat_front", "XZ", "Y", [0, Lm], Y(Dm - T, Dm), [0, H]);
+  push("l_side", "L Side (junction)", "side", "YZ", "X", [Lm, Lm + T], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
+  push("l_outer_side", "L Outer Side", "side", "YZ", "X", [L - T, L], Y(0, Dl), [0, H], yz(wallPanel(Dl)));
+  if (ft == null) push("l_front", "L Front", "seat_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - T, Dl), [0, H]);
+
+  // Rear rail: the whole length at the wall, halving slots over main_end, the junction side and the outer side.
+  const n = railZ0 + nd;
+  push("back_rail", "Rear Rail", "rear_rail", "XZ", "Y", [0, L], Y(c, c + T), [railZ0, H], xz([
+    [0, H], [0, n], [slot, n], [slot, railZ0],
+    [Lm - s / 2, railZ0], [Lm - s / 2, n], [Lm + T + s / 2, n], [Lm + T + s / 2, railZ0],
+    [L - slot, railZ0], [L - slot, n], [L, n], [L, H],
+  ]));
+
+  // Main run: end supports against main_end and the junction side, slotted for the two rails.
+  const railBackD: [number, number] = [T + 2 * c, 2 * T + 2 * c];
+  const railFrontD: [number, number] = [Dm - 2 * T - c, Dm - T - c];
+  const support: [number, number][] = [
+    [T + c, 0], [Dm - T, 0], [Dm - T, slotZ], [railFrontD[0], slotZ], [railFrontD[0], seat],
+    [railBackD[1], seat], [railBackD[1], slotZ], [T + c, slotZ],
+  ];
+  push("main_end_support", "Main End Support", "lid_support", "YZ", "X", [T, 2 * T], Y(T + c, Dm - T), [0, seat], yz(support));
+  push("main_l_support", "Main Junction Support", "lid_support", "YZ", "X", [Lm - T, Lm], Y(T + c, Dm - T), [0, seat], yz(support));
+  const rail: [number, number][] = [
+    [T, n], [2 * T + s, n], [2 * T + s, railZ0], [Lm - T - s, railZ0], [Lm - T - s, n], [Lm, n], [Lm, seat], [T, seat],
+  ];
+  push("main_rail_back", "Main Rear Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railBackD[0], railBackD[1]), [railZ0, seat], xz(rail));
+  push("main_rail_front", "Main Front Inner Rail", "lid_rail", "XZ", "Y", [T, Lm], Y(railFrontD[0], railFrontD[1]), [railZ0, seat], xz(rail));
+
+  // Wing: a support against each side, from the rear rail to the front (the front board's back face).
+  const wingFront = ft == null ? T : ft;
+  const supIn = push("l_support_inner", "L Inner Support", "lid_support", "YZ", "X", [Lm + T, Lm + 2 * T], Y(T + c, Dl - wingFront), [0, seat]);
+  const supOut = push("l_support_outer", "L Outer Support", "lid_support", "YZ", "X", [L - 2 * T, L - T], Y(T + c, Dl - wingFront), [0, seat]);
+
+  if (ft != null) {
+    push("l_drawer_strip", "L Drawer Fixed Strip", "fixed_front", "XZ", "Y", [Lm + T, L - T], Y(Dl - ft, Dl), [stripZ0, H], undefined, ft);
+    push("l_drawer_front", "L Drawer Front", "drawer_front", "XZ", "Y", [Lm + T + gd, L - T - gd], Y(Dl - ft, Dl), [gd, frontTop], undefined, ft);
+    locks.push({
+      id: "l_drawer_front_lock", panelId: "l_drawer_front", centerX: px((Lm + L) / 2), centerZ: r2(frontTop - R.LOCK_DROP.value),
+      width: R.LOCK_WIDTH.value, height: R.LOCK_HEIGHT.value, radius: R.LOCK_HEIGHT.value / 2,
+    });
+    // Drawer rail behind the strip, between the supports; its rear part tongues into them.
+    const tg = r2(T / 2 - R.FRAME_DRAWER_TONGUE_GAP.value);
+    const xl = Lm + 2 * T, xr = L - 2 * T;
+    const d1 = Dl - ft, d0 = d1 - R.FRAME_DRAWER_RAIL_DEPTH.value, dt = d1 - R.FRAME_DRAWER_RAIL_PLAIN_FRONT.value;
+    const xy = (pts: [number, number][]) => [...pts, pts[0]].map(([x, d]) => ({ x: px(x), y: r2(back - d) }));
+    push("l_drawer_rail", "L Drawer Rail", "drawer_rail", "XY", "Z", [xl - tg, xr + tg], Y(d0, d1), [stripZ0, stripZ0 + T], xy([
+      [xl - tg, d0], [xr + tg, d0], [xr + tg, dt], [xr, dt], [xr, d1], [xl, d1], [xl, dt], [xl - tg, dt],
+    ]));
+    const ov = R.FRAME_DRAWER_POCKET_OVERRUN.value;
+    const [py0, py1] = Y(d0 - ov, dt + ov);
+    for (const [sup, faceDrawerSide] of [[supIn, right ? "A" : "B"], [supOut, right ? "B" : "A"]] as const) {
+      grooves.push({
+        id: `${sup.id}_drawer_rail_pocket`, boardId: sup.id, face: faceDrawerSide,
+        u0: r2(py0 - sup.y0), u1: r2(py1 - sup.y0), v0: r2(stripZ0 - s / 2 - sup.z0), v1: r2(stripZ0 + T + s / 2 - sup.z0),
+        depth: r2(T / 2), for: "l_drawer_rail",
+      });
+    }
+  }
+
+  // Lids: the whole top of each run, g clear of everything round them, flush with the panels.
+  const lid = (id: string, name: string, x: [number, number], d: [number, number]) => {
+    const b = push(id, name, "lid", "XY", "Z", x, Y(d[0], d[1]), [seat, H]);
+    b.profileVector = [
+      { x: b.x0, y: b.y0 }, { x: b.x1, y: b.y0 }, { x: b.x1, y: b.y1 }, { x: b.x0, y: b.y1 }, { x: b.x0, y: b.y0 },
+    ];
+    b.profileHoles = [circleHole((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, R.FRAME_FINGER_HOLE_DIAMETER.value)];
+    lids.push({ id, x0: b.x0, y0: b.y0, width: r2(b.x1 - b.x0), depth: r2(b.y1 - b.y0), holeDiameter: R.FRAME_FINGER_HOLE_DIAMETER.value });
+  };
+  lid("main_lid", "Main Lid", [T + g, Lm - g], [T + c + g, Dm - T - g]);
+  lid("l_lid", "L Lid", [Lm + T + g, L - T - g], [T + c + g, Dl - wingFront - g]);
+}
+
 export function generateLounge(raw: LoungeParams): LoungeResult {
   beginProvenance();
   const warnings: string[] = [];
@@ -321,7 +459,11 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
   const wheel = wheelOn ? { AD, AH } : undefined;
 
   if (H <= ppt) warnings.push("Height should be greater than panel thickness.");
-  if (raw.lFrontAccess && raw.lFrontAccess !== "NONE") warnings.push("lFrontAccess is a placeholder and does not change geometry.");
+  const frameL = style === "L_SHAPE" && raw.construction !== "classic";
+  const lDrawer = frameL && raw.lFrontAccess === "DRAWER";
+  if (raw.lFrontAccess && raw.lFrontAccess !== "NONE" && !lDrawer) {
+    warnings.push(`lFrontAccess ${raw.lFrontAccess} is only built as a drawer on the frame L; ignored.`);
+  }
 
   if (style === "I_SHAPE") {
     const W = asNum(raw.mainWidth, 2000);
@@ -373,6 +515,14 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
     const ret = asNum(raw.lWidth, 1600);
     const thick = asNum(raw.lDepth, 600);
     const right = (raw.lPosition ?? "RIGHT") !== "LEFT";
+    if (frameL) {
+      if (wheelOn) warnings.push("L frame: wheel arch avoidance is not in the frame lounge yet; ignored.");
+      const ft = lDrawer ? Math.max(1, asNum(raw.frontPanelThickness, R.FRAME_DRAWER_FRONT_THICKNESS.value)) : null;
+      const back = r2(ret);
+      footprint.main = right ? { x0: 0, x1: r2(mainW - thick), y0: r2(back - mainD), y1: back } : { x0: thick, x1: mainW, y0: r2(back - mainD), y1: back };
+      footprint.l = right ? { x0: r2(mainW - thick), x1: mainW, y0: 0, y1: back } : { x0: 0, x1: thick, y0: 0, y1: back };
+      addFrameL(mainW, mainD, ret, thick, H, ppt, right, ft, boards, lids, locks, grooves, errors);
+    } else {
     if (!(ret > mainD)) warnings.push("L: the return should extend past the middle front.");
     if (!(thick < mainW)) warnings.push("L: return thickness should be less than the back length.");
     if (wheelOn) {
@@ -413,6 +563,7 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
       addAvoidanceCovers("l_", lX0, lX1, back, AD, AH, ppt, boards);
       addAvoidanceCovers("main_", mainX0, mainX1, back, AD, AH, ppt, boards);
     }
+    }
   }
 
   attachFaces(boards);
@@ -421,7 +572,11 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
   const milling = applyMilling(boards);
 
   return {
-    params: { style, height: H, partitionPanelThickness: ppt, panelHeight: Hprime },
+    params: {
+      style, height: H, partitionPanelThickness: ppt, panelHeight: Hprime,
+      ...(style === "L_SHAPE" ? { construction: frameL ? "frame" as const : "classic" as const } : {}),
+      ...(frameL ? { lFrontAccess: lDrawer ? "DRAWER" as const : "NONE" as const } : {}),
+    },
     boards, milling, openings, lids, footprint, hinges, locks, grooves, joints,
     validation: { errors, warnings },
     debug: { provenance: endProvenance(), boardFrame: "final" },

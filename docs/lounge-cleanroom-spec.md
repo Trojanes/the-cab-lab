@@ -22,7 +22,8 @@
 | mainWidth / mainDepth | 2000 / 600 | 主段（I/L 用） |
 | lWidth / lDepth / lPosition | 1600 / 800 / RIGHT | L 段（LEFT/RIGHT） |
 | topLidEnabled | true | 顶板带检修口+盖板 |
-| lFrontAccess | NONE | DRAWER/FLAP（占位，不改几何） |
+| lFrontAccess | NONE | DRAWER：框架式 L 的拐角段前板换成抽屉面 + 固定条 + 横条（§10.1）；FLAP / classic 仍是占位 |
+| frontPanelThickness | 16 | L 端抽屉面 / 固定条门板料厚（新建时取 job 门板料） |
 | totalWidth / singleLoungeWidth | 4000 / 1500 | PARALLEL 总宽/单段宽 |
 | depth | 800 | PARALLEL 段深 |
 | avoidanceDepth / avoidanceHeight | 300 / 250 | 轮拱避让深/高 |
@@ -127,7 +128,7 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 - I：W > 2·ppt、D > 2·ppt、H > ppt；避让深 < D、避让高 < H−ppt。
 - PARALLEL：totalW ≥ 2·SW（否则两段重叠）；避让同上。
 - 中柜：startHeight > 避让高；宽 ≤ gap、深 ≤ D；宽 > 3×门缝、高 > 2×门缝；2×铰链侧距 < 门高。
-- 占位项告警：lFrontAccess 非 NONE、L 形的轮拱避让。
+- 占位项告警：lFrontAccess 在 classic / 非 L 上、FLAP，框架式 L 的轮拱避让。
 
 ## 8. 黄金验收数值（L 默认参数：H420/W2000/D600/lW1600/lD800/RIGHT）
 
@@ -147,3 +148,45 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 3. audit 无未声明重叠；三声明接缝 touching。
 4. bench 爆炸视图验证装配；floor plan 折线放置（I/L/U/Parallel 四形态）。
 5. 补 U_SHAPE 真实现（规格见 §5）。
+
+## 10. 框架式 L（construction = "frame"，L 形缺省；21 Bunk 新卡座）
+
+旧做法（construction = "classic"，§8 黄金 `golden-l`）是外板高 H−ppt、顶板盖上、顶板正中开口放带台阶的小盖子。框架式把外板做满到 H，整段顶面就是一块盖子，嵌在外板之间、顶面齐平，坐在内部托盖框架上。全部 18 隔断料（数控里旧卡座也是 18 White Stipple 隔断料），没有门板料、没有翻门。
+
+参数：L = mainWidth（沿墙总长），Dm = mainDepth，Dl = lWidth（拐角段往房间深），Wl = lDepth（拐角段沿墙宽，≥ L_MIN_WING_WIDTH 300，否则 error），H，T = ppt。主段长 Lm = L − Wl。d = 离墙深度（y = Dl − d）。先按拐角段在右（RIGHT）排，LEFT 整套沿墙镜像。常数（rules.json）：墙缝 c = FRAME_WALL_GAP 1、缺口余量 s = FRAME_SLOT_CLEARANCE 1、盖缝 g = FRAME_LID_GAP 2、托条高 hr = FRAME_INNER_RAIL_HEIGHT 100、咬合缺口 FRAME_HALVING_NOTCH 20、咬合间隙 FRAME_HALVING_GAP 5、拉手孔 ⌀ FRAME_FINGER_HOLE_DIAMETER 50。横条底 = H − T − hr；竖板缺口底 = 横条底 + 20 − 5；托盖面 = H − T。
+
+| 板 | 平面 | x（沿墙） | d（离墙） | z | 说明 |
+|---|---|---|---|---|---|
+| main_end | YZ | 0..T | 0..Dm−T | 0..H | 墙角缺口 d 0..c+T、z 缺口底..H |
+| main_front | XZ | 0..Lm | Dm−T..Dm | 0..H | |
+| l_side（交接共用） | YZ | Lm..Lm+T | 0..Dl | 0..H | 墙角缺口同上 |
+| l_outer_side | YZ | L−T..L | 0..Dl | 0..H | 墙角缺口同上 |
+| l_front | XZ | Lm+T..L−T | Dl−T..Dl | 0..H | |
+| back_rail | XZ | 0..L | c..c+T | 横条底..H | 底边在 main_end（0..T+s）、l_side（Lm−s/2..Lm+T+s/2）、l_outer_side（L−T−s..L）开 20 缺口 |
+| main_end_support / main_l_support | YZ | T..2T / Lm−T..Lm | T+c..Dm−T | 0..H−T | 顶部两个缺口 d T+c..2T+2c、Dm−2T−c..Dm−T，z 缺口底..H−T |
+| main_rail_back / main_rail_front | XZ | T..Lm | T+2c..2T+2c / Dm−2T−c..Dm−T−c | 横条底..H−T | 两端底边 20 缺口 T..2T+s、Lm−T−s..Lm |
+| l_support_inner / l_support_outer | YZ | Lm+T..Lm+2T / L−2T..L−T | T+c..Dl−T | 0..H−T | 拐角段不设托条 |
+| main_lid | XY | T+g..Lm−g | T+c+g..Dm−T−g | H−T..H | ⌀50 正中 |
+| l_lid | XY | Lm+T+g..L−T−g | T+c+g..Dl−T−g | H−T..H | ⌀50 正中 |
+
+封边（EDGE_BAND_THICKNESS_MM 1，全部柜体色）：座面一圈的上边（main_front、l_front、main_end、l_side、l_outer_side、back_rail，墙角缺口处不封）；l_side、l_outer_side 朝房间的前边；两块盖子四边；储物格里看得见的边——main_rail_back / main_rail_front 下边、back_rail 缺口之间的下边。端头一律当作顶墙，不封；托板四边都顶着板或压在盖子下，不封。
+
+盖子的拉手孔是贯通圆孔（face A `hole` through），3D 按圆挖穿（renderer/boardGeom.js throughLoops）。
+
+黄金 `rogue-l`（2087 × 960 × 420，Dm 560，Wl 560，RIGHT）：14 块板，主段盖 1505 × 519，拐角段盖 520 × 919。靠墙面只有 back_rail，为以后的轮拱避让留位；框架式 L 暂不做轮拱（wheelAvoidanceEnabled 只给 warning）。
+
+### 10.1 L 端抽屉（lFrontAccess = "DRAWER"，只在框架式 L）
+
+照 21 Bunk classic 卡座 L 端的抽屉口（Component863 / 864 / l_front），换到框架上。没有抽屉盒。`l_front` 不再出，换成三块板（FT = frontPanelThickness，缺省 FRAME_DRAWER_FRONT_THICKNESS 16，门板料）：
+
+| 板 | 料 | 范围（右侧拐角段，d 从墙量） |
+|---|---|---|
+| l_drawer_strip 固定条 | 门板 FT | 两侧板板面之间；d Dl − FT → Dl；z H − (FRAME_DRAWER_STRIP_REVEAL 100 + T) → H（T 18 时 118 高：classic 的 100 固定条 + 18 顶板） |
+| l_drawer_front 抽屉面 | 门板 FT | 离两侧板板面、离固定条、离地各 FRAME_DRAWER_GAP 2；锁孔 LOCK_WIDTH 55 × LOCK_HEIGHT 15.5，水平居中，中心离面顶 LOCK_DROP 30.5（上边离面顶 22.75） |
+| l_drawer_rail 抽屉顶横条 | 柜体 T | 固定条背后，d Dl − FT − FRAME_DRAWER_RAIL_DEPTH 100 → Dl − FT；底边和固定条底边平，z H − 118 → H − 100；夹在两块拐角段托板之间，后 70（RAIL_DEPTH − FRAME_DRAWER_RAIL_PLAIN_FRONT 30）两头各伸 T/2 − FRAME_DRAWER_TONGUE_GAP 0.5 = 8.5 的舌头 |
+
+托板（l_support_inner / outer）伸到固定条背面（Dl − FT），靠抽屉一面开横条槽：深 T/2 = 9，高 T + FRAME_SLOT_CLEARANCE（19，上下各 0.5），长 = 舌头 + 2 × FRAME_DRAWER_POCKET_OVERRUN 5 = 80。托板满高落地，以后当滑轨安装面。拐角段盖子前边离固定条 FRAME_LID_GAP 2（比无抽屉深 2）。
+
+封边：抽屉面、固定条四边门板色；l_side、l_outer_side 朝房间的前边（抽屉那一面两边的条子）改封门板色；横条朝墙的后边、两块托板朝房间的前边柜体色（抽屉拉出来看得见）。横条落不下（抽屉面放不下锁孔）时报 `L drawer: height H leaves only N …`。classic 结构或 FLAP 只给 warning，不改几何。
+
+黄金 `rogue-l-drawer`（rogue-l + DRAWER，FT 16）：16 块板，固定条 524 × 118，抽屉面 520 × 298，横条 505 × 100（舌头含在内），拐角段盖 520 × 921。

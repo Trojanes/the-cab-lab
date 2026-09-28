@@ -1492,6 +1492,7 @@ window.addEventListener("keydown", (e) => {
   if (e.ctrlKey || e.metaKey) return; // undo / redo / save keep working
   if (e.target === dimInput || (e.target instanceof Node && cardEl.contains(e.target))) return; // the fields handle their own keys
   e.stopImmediatePropagation();
+  if ((e.key === "v" || e.key === "V") && !e.altKey) { job.toggleSelectionVisible(); return; }
   if (e.key === "Escape") {
     e.preventDefault();
     if (!cancelStep("esc")) closeFloorPlan("esc");
@@ -1651,6 +1652,7 @@ function render() {
     const w = job.getWall(s.id);
     const st = statusFor(w);
     const sel = selId === s.id;
+    if (w.hidden) ctx.globalAlpha = 0.4;
     rect(s.x[0], s.y[0], s.x[1], s.y[1], st.ok ? C.wall : C.wallBad, !st.ok ? C.wallBadLine : sel ? C.wallSel : C.wallLine, sel ? 2.5 : 1);
     const cx = (s.x[0] + s.x[1]) / 2;
     const cy = (s.y[0] + s.y[1]) / 2;
@@ -1700,6 +1702,7 @@ function render() {
       if (s.solid.along === "x") line(u, s.y[0], u, s.y[1], C.dim, 2);
       else line(s.x[0], u, s.x[1], u, C.dim, 2);
     }
+    if (w.hidden) ctx.globalAlpha = 1;
   }
 
   // Tool feedback.

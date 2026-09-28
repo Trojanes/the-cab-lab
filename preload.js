@@ -10,6 +10,7 @@ contextBridge.exposeInMainWorld("cablab", {
   log: (line) => ipcRenderer.invoke("log:append", line),
   logDump: (text) => ipcRenderer.invoke("log:dump", text),
   openLogs: () => ipcRenderer.invoke("log:open"),
+  onSketchAid: (cb) => { ipcRenderer.on("sketch:aid", (_e, key) => cb(key)); },
   versions: { electron: process.versions.electron, chrome: process.versions.chrome },
 
   // Generator bench (see docs/bench-spec.md). Main window: openBench().

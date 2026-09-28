@@ -278,12 +278,14 @@ export function addCabinet(moduleId, pose, size, extra) {
     pose: { x: 0, y: 0, z: 0, rotZ: 0, ...pose },
     params: { ...mod.defaults(s.W, s.D, s.H, { finish: job.finish, stock: job.stock }), ...(opts.params || {}) },
   };
+  // The corner of the local box the user clicked first when drawing it ({x,y,z} each ±1); a size change grows from it.
+  if (opts.corner) cab.placeCorner = { ...opts.corner };
   bindToSpace(cab);
   job.cabinets.push(cab);
   bindAttached();
   selectedId = cab.id;
   subSel = null;
-  log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params });
+  log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params, placeCorner: cab.placeCorner ?? null });
   dirty = true;
   emit("job");
   return cab;
@@ -559,6 +561,42 @@ export function toggleBoardsVisible(id, boardIds) {
   if (!targets.length) return false;
   const hidden = new Set(cab.hidden || []);
   return setBoardsVisible(id, targets.every((b) => hidden.has(b)), targets);
+}
+
+/**
+ * Show or hide one partition in the 3D view. Stored as `wall.hidden` and saved
+ * with the job. The wall still exists for the floor plan, snaps and overlap checks.
+ */
+export function setWallVisible(id, visible) {
+  const wall = getWall(id);
+  if (!wall) return false;
+  if (!!wall.hidden === !visible) return false;
+  pushHistory();
+  if (visible) delete wall.hidden;
+  else wall.hidden = true;
+  log("wall.visibility", { id, visible: !!visible });
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+export function toggleWallVisible(id) {
+  const wall = getWall(id);
+  if (!wall) return false;
+  return setWallVisible(id, !!wall.hidden);
+}
+
+/**
+ * V. The selected partition, or the selected board, or every board when the
+ * cabinet itself is selected. A face selection toggles its board.
+ */
+export function toggleSelectionVisible() {
+  const wall = getSelectedWall();
+  if (wall) return toggleWallVisible(wall.id);
+  const cab = getSelected();
+  if (!cab) return false;
+  const boardId = getSubSelection()?.boardId;
+  return toggleBoardsVisible(cab.id, boardId ? [boardId] : null);
 }
 
 export function setPose(id, pose, { history = true } = {}) {

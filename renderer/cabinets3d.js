@@ -827,13 +827,12 @@ function addHingeMarks(group, b) {
     const radius = (ft.diameter || 35) / 2;
     const x = b.x0 + ft.center[0];
     const z = b.z0 + ft.center[1];
-    for (const y of [b.y0 - 0.8, b.y1 + 0.8]) {
-      const mark = new THREE.Mesh(new THREE.RingGeometry(radius - 1.2, radius, 40), hingeMat);
-      mark.rotation.x = -Math.PI / 2;
-      mark.position.set(x, y, z);
-      mark.userData = { kind: "hinge" };
-      group.add(mark);
-    }
+    // The cup itself is cut as a pocket (boardGeom.js); the ring only marks its rim on the drilled face A (+Y).
+    const mark = new THREE.Mesh(new THREE.RingGeometry(radius - 1.2, radius, 40), hingeMat);
+    mark.rotation.x = -Math.PI / 2;
+    mark.position.set(x, b.y1 + 0.8, z);
+    mark.userData = { kind: "hinge" };
+    group.add(mark);
   }
 }
 
@@ -938,7 +937,9 @@ export function hideGhost() {
 // positions change on a pointer move). The closed shape becomes a solid once.
 const SKETCH_MAX = 4096; // points, arcs included
 const sketchGeo = new THREE.BufferGeometry();
-sketchGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3));
+const sketchPos = new THREE.BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3);
+sketchPos.setUsage(THREE.DynamicDrawUsage);
+sketchGeo.setAttribute("position", sketchPos);
 const sketchMat = new THREE.LineBasicMaterial({ color: 0x4f86e0, depthTest: false, transparent: true });
 const sketchLine = new THREE.Line(sketchGeo, sketchMat);
 sketchLine.frustumCulled = false;
@@ -946,21 +947,60 @@ sketchLine.renderOrder = 29;
 sketchLine.visible = false;
 scene.add(sketchLine);
 
-/** `points` = world {x, y, z}; `closed` joins the last to the first; `bad` draws it red. */
-export function showSketchPath(points, { closed = false, bad = false } = {}) {
+// Construction preview: green dashes, same buffer pattern as the rubber band.
+const GUIDE_COLOR = 0x3ddc84;
+const guideRubberGeo = new THREE.BufferGeometry();
+const guideRubberPos = new THREE.BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3);
+const guideRubberDist = new THREE.BufferAttribute(new Float32Array(SKETCH_MAX), 1);
+guideRubberPos.setUsage(THREE.DynamicDrawUsage);
+guideRubberDist.setUsage(THREE.DynamicDrawUsage);
+guideRubberGeo.setAttribute("position", guideRubberPos);
+guideRubberGeo.setAttribute("lineDistance", guideRubberDist);
+const guideRubberMat = new THREE.LineDashedMaterial({ color: GUIDE_COLOR, dashSize: 28, gapSize: 16, depthTest: false, transparent: true });
+const guideRubber = new THREE.Line(guideRubberGeo, guideRubberMat);
+guideRubber.frustumCulled = false;
+guideRubber.renderOrder = 31;
+guideRubber.visible = false;
+scene.add(guideRubber);
+
+function writeLine(pos, points, count) {
+  for (let i = 0; i < count; i += 1) pos.setXYZ(i, points[i].x, points[i].y, points[i].z);
+}
+function writeDashDistances(dist, pos, count) {
+  dist.setX(0, 0);
+  let d = 0;
+  for (let i = 1; i < count; i += 1) {
+    d += Math.hypot(pos.getX(i) - pos.getX(i - 1), pos.getY(i) - pos.getY(i - 1), pos.getZ(i) - pos.getZ(i - 1));
+    dist.setX(i, d);
+  }
+  dist.clearUpdateRanges();
+  dist.addUpdateRange(0, count);
+  dist.needsUpdate = true;
+}
+
+/** `points` = world {x, y, z}; `closed` joins the last to the first; `bad` draws it red; `construction` is a green dashed guide. */
+export function showSketchPath(points, { closed = false, bad = false, construction = false } = {}) {
   const n = Math.min(points.length, SKETCH_MAX - 1);
-  if (n < 2) { sketchLine.visible = false; return; }
-  const pos = sketchGeo.attributes.position;
-  for (let i = 0; i < n; i += 1) pos.setXYZ(i, points[i].x, points[i].y, points[i].z);
+  if (n < 2) { sketchLine.visible = false; guideRubber.visible = false; return; }
   let count = n;
-  if (closed) { pos.setXYZ(n, points[0].x, points[0].y, points[0].z); count += 1; }
-  pos.needsUpdate = true;
-  sketchGeo.setDrawRange(0, count);
+  const target = construction && !bad ? guideRubberPos : sketchPos;
+  const geo = construction && !bad ? guideRubberGeo : sketchGeo;
+  if (closed) count += 1;
+  writeLine(target, closed ? [...points.slice(0, n), points[0]] : points, count);
+  uploadPositions(target, geo, count);
+  if (construction && !bad) {
+    writeDashDistances(guideRubberDist, guideRubberPos, count);
+    sketchLine.visible = false;
+    guideRubber.visible = true;
+    return;
+  }
+  guideRubber.visible = false;
   sketchMat.color.setHex(bad ? 0xd94b4b : 0x4f86e0);
   sketchLine.visible = true;
 }
 export function hideSketchPath() {
   sketchLine.visible = false;
+  guideRubber.visible = false;
 }
 
 let sketchSolid = null;
@@ -1007,13 +1047,28 @@ export function showSketchSolid(axis, shapes, t0, t1, { colour = null, colourAt 
   scene.add(sketchSolid);
 }
 
-// Closed shapes already in the sketch: one line set, rebuilt when a shape is added or removed.
-let sketchProfiles = null;
+// Closed shapes already in the sketch. One buffer for the life of the view:
+// disposing and allocating a new one at the end of each step stalled the frame.
+const PROFILE_MAX = 16384; // vertices, two per segment
 const sketchProfileMat = new THREE.LineBasicMaterial({ vertexColors: true, depthTest: false, transparent: true });
+const profileGeo = new THREE.BufferGeometry();
+let profilePos = new THREE.BufferAttribute(new Float32Array(PROFILE_MAX * 3), 3);
+let profileCol = new THREE.BufferAttribute(new Float32Array(PROFILE_MAX * 3), 3);
+profilePos.setUsage(THREE.DynamicDrawUsage);
+profileCol.setUsage(THREE.DynamicDrawUsage);
+profileGeo.setAttribute("position", profilePos);
+profileGeo.setAttribute("color", profileCol);
+const sketchProfiles = new THREE.LineSegments(profileGeo, sketchProfileMat);
+sketchProfiles.renderOrder = 28;
+sketchProfiles.frustumCulled = false;
+sketchProfiles.visible = false;
+scene.add(sketchProfiles);
 
 // The item or piece a modify tool is about to act on: one preallocated orange line.
 const pickGeo = new THREE.BufferGeometry();
-pickGeo.setAttribute("position", new THREE.Float32BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3));
+const pickPos = new THREE.BufferAttribute(new Float32Array(SKETCH_MAX * 3), 3);
+pickPos.setUsage(THREE.DynamicDrawUsage);
+pickGeo.setAttribute("position", pickPos);
 const pickMat = new THREE.LineBasicMaterial({ color: 0xf0a050, depthTest: false, transparent: true });
 const pickLine = new THREE.Line(pickGeo, pickMat);
 pickLine.frustumCulled = false;
@@ -1028,44 +1083,121 @@ export function showSketchPick(points, { closed = false, bad = false } = {}) {
   for (let i = 0; i < n; i += 1) pos.setXYZ(i, points[i].x, points[i].y, points[i].z);
   let count = n;
   if (closed) { pos.setXYZ(n, points[0].x, points[0].y, points[0].z); count += 1; }
-  pos.needsUpdate = true;
-  pickGeo.setDrawRange(0, count);
+  uploadPositions(pickPos, pickGeo, count);
   pickMat.color.setHex(bad ? 0xd94b4b : 0xf0a050);
   pickLine.visible = true;
 }
 export function hideSketchPick() {
   pickLine.visible = false;
 }
+/** Upload only the vertices just written. The rest of the preallocated buffer stays put. */
+function uploadPositions(attr, geo, count) {
+  geo.setDrawRange(0, count);
+  attr.clearUpdateRanges();
+  attr.addUpdateRange(0, count * 3);
+  attr.needsUpdate = true;
+}
+
 /** `lines` = `{ pts: [world {x, y, z}], closed }`; open lines are dimmer. */
 export function showSketchProfiles(lines) {
-  hideSketchProfiles();
-  const pos = [];
-  const col = [];
+  let segments = 0;
+  for (const l of lines || []) {
+    const n = l.pts ? l.pts.length : 0;
+    if (n < 2) continue;
+    segments += l.closed ? n : n - 1;
+  }
+  const verts = segments * 2;
+  if (verts < 2) { sketchProfiles.visible = false; return; }
+  if (verts > profilePos.count) {
+    const n = Math.max(verts, profilePos.count * 2);
+    profilePos = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+    profileCol = new THREE.BufferAttribute(new Float32Array(n * 3), 3);
+    profilePos.setUsage(THREE.DynamicDrawUsage);
+    profileCol.setUsage(THREE.DynamicDrawUsage);
+    profileGeo.setAttribute("position", profilePos);
+    profileGeo.setAttribute("color", profileCol);
+  }
+  const pa = profilePos.array;
+  const ca = profileCol.array;
+  let o = 0;
   for (const l of lines || []) {
     const r = l.pts;
+    if (!r || r.length < 2) continue;
     const count = l.closed ? r.length : r.length - 1;
-    const c = l.closed ? [0.85, 0.87, 0.89] : [0.55, 0.6, 0.66];
+    const R = l.closed ? 0.85 : 0.55;
+    const G = l.closed ? 0.87 : 0.6;
+    const B = l.closed ? 0.89 : 0.66;
     for (let i = 0; i < count; i += 1) {
       const a = r[i];
       const b = r[(i + 1) % r.length];
-      pos.push(a.x, a.y, a.z, b.x, b.y, b.z);
-      col.push(...c, ...c);
+      pa[o] = a.x; pa[o + 1] = a.y; pa[o + 2] = a.z;
+      pa[o + 3] = b.x; pa[o + 4] = b.y; pa[o + 5] = b.z;
+      ca[o] = R; ca[o + 1] = G; ca[o + 2] = B;
+      ca[o + 3] = R; ca[o + 4] = G; ca[o + 5] = B;
+      o += 6;
     }
   }
-  if (!pos.length) return;
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
-  geo.setAttribute("color", new THREE.Float32BufferAttribute(col, 3));
-  sketchProfiles = new THREE.LineSegments(geo, sketchProfileMat);
-  sketchProfiles.renderOrder = 28;
-  sketchProfiles.frustumCulled = false;
-  scene.add(sketchProfiles);
+  profileGeo.setDrawRange(0, verts);
+  profilePos.clearUpdateRanges();
+  profilePos.addUpdateRange(0, verts * 3);
+  profilePos.needsUpdate = true;
+  profileCol.clearUpdateRanges();
+  profileCol.addUpdateRange(0, verts * 3);
+  profileCol.needsUpdate = true;
+  sketchProfiles.visible = true;
 }
 export function hideSketchProfiles() {
-  if (!sketchProfiles) return;
-  scene.remove(sketchProfiles);
-  sketchProfiles.geometry.dispose();
-  sketchProfiles = null;
+  sketchProfiles.visible = false;
+}
+
+// Committed construction lines: green dashes. One buffer, rewritten when the sketch changes.
+const GUIDE_MAX = 8192;
+const guideGeo = new THREE.BufferGeometry();
+const guidePos = new THREE.BufferAttribute(new Float32Array(GUIDE_MAX * 3), 3);
+const guideDist = new THREE.BufferAttribute(new Float32Array(GUIDE_MAX), 1);
+guidePos.setUsage(THREE.DynamicDrawUsage);
+guideDist.setUsage(THREE.DynamicDrawUsage);
+guideGeo.setAttribute("position", guidePos);
+guideGeo.setAttribute("lineDistance", guideDist);
+const guideMat = new THREE.LineDashedMaterial({ color: GUIDE_COLOR, dashSize: 28, gapSize: 16, depthTest: false, transparent: true });
+const guideLines = new THREE.LineSegments(guideGeo, guideMat);
+guideLines.frustumCulled = false;
+guideLines.renderOrder = 27;
+guideLines.visible = false;
+scene.add(guideLines);
+
+/** `lines` = `{ pts: [world {x, y, z}], closed }` drawn as green dashes. Not part of a board. */
+export function showSketchGuides(lines) {
+  const pa = guidePos.array;
+  const da = guideDist.array;
+  let v = 0;
+  for (const l of lines || []) {
+    const r = l.pts;
+    if (!r || r.length < 2) continue;
+    const count = l.closed ? r.length : r.length - 1;
+    for (let i = 0; i < count && v + 2 <= GUIDE_MAX; i += 1) {
+      const a = r[i];
+      const b = r[(i + 1) % r.length];
+      const o = v * 3;
+      pa[o] = a.x; pa[o + 1] = a.y; pa[o + 2] = a.z;
+      pa[o + 3] = b.x; pa[o + 4] = b.y; pa[o + 5] = b.z;
+      da[v] = 0;
+      da[v + 1] = Math.hypot(b.x - a.x, b.y - a.y, b.z - a.z);
+      v += 2;
+    }
+  }
+  if (v < 2) { guideLines.visible = false; return; }
+  guideGeo.setDrawRange(0, v);
+  guidePos.clearUpdateRanges();
+  guidePos.addUpdateRange(0, v * 3);
+  guidePos.needsUpdate = true;
+  guideDist.clearUpdateRanges();
+  guideDist.addUpdateRange(0, v);
+  guideDist.needsUpdate = true;
+  guideLines.visible = true;
+}
+export function hideSketchGuides() {
+  guideLines.visible = false;
 }
 export function hideSketchSolid() {
   if (!sketchSolid) return;

@@ -21,5 +21,21 @@
   "MIDDLE_CABINET_HINGE_DEPTH": { "value": 12.5, "doc": "中柜铰链杯深。" },
   "LOCK_WIDTH": { "value": 55, "doc": "razor_long_rounded_1 锁槽宽。" },
   "LOCK_HEIGHT": { "value": 15.5, "doc": "锁槽高。" },
-  "LOCK_DROP": { "value": 30.5, "doc": "锁心低于上分隔安装面。" }
+  "LOCK_DROP": { "value": 30.5, "doc": "锁心低于上分隔安装面。" },
+  "FRAME_LID_GAP": { "value": 2, "doc": "框架式 L：盖子四周每边留缝（盖子嵌在外板之间，顶面与外板齐平）。" },
+  "FRAME_FINGER_HOLE_DIAMETER": { "value": 50, "doc": "框架式 L：盖子正中的拉手孔径（贯通）。" },
+  "FRAME_WALL_GAP": { "value": 1, "doc": "框架式 L：贴墙后横条离墙；内部托条离后横条 / 前板也是这么多。" },
+  "FRAME_SLOT_CLEARANCE": { "value": 1, "doc": "框架式 L：咬合缺口比板厚宽这么多（缺口宽 = 板厚 + 1）。" },
+  "FRAME_INNER_RAIL_HEIGHT": { "value": 100, "doc": "框架式 L：主段前后托条高，顶面在 H − 板厚；贴墙后横条高 = 这个 + 板厚。" },
+  "FRAME_HALVING_NOTCH": { "value": 20, "doc": "框架式 L：横条 / 托条从底边往上开的咬合缺口深。" },
+  "FRAME_HALVING_GAP": { "value": 5, "doc": "框架式 L：咬合处横条缺口顶与竖板缺口底之间的间隙（竖板缺口从横条底 + 20 − 5 开到顶）。" },
+  "FRAME_DRAWER_STRIP_REVEAL": { "value": 100, "doc": "框架 L 端抽屉：固定条在盖子底下露出的高度。21 Bunk classic 卡座是 100 高的固定条上压 18 顶板；框架没有顶板，所以固定条高 = 100 + 板厚。" },
+  "FRAME_DRAWER_FRONT_THICKNESS": { "value": 16, "doc": "框架 L 端抽屉面和固定条的门板料厚（没有 frontPanelThickness 参数时）。" },
+  "FRAME_DRAWER_GAP": { "value": 2, "doc": "框架 L 端抽屉面四周留缝：离两侧板板面、离固定条、离地。" },
+  "FRAME_DRAWER_RAIL_DEPTH": { "value": 100, "doc": "框架 L 端抽屉顶横条（固定条后面）从固定条背面往墙的深度。" },
+  "FRAME_DRAWER_RAIL_PLAIN_FRONT": { "value": 30, "doc": "抽屉顶横条靠固定条那头不带舌头的长度；舌头在后面的 RAIL_DEPTH - 30。" },
+  "FRAME_DRAWER_TONGUE_GAP": { "value": 0.5, "doc": "抽屉顶横条舌头 = 托板槽深 - 0.5（槽深为托板半厚）。" },
+  "FRAME_DRAWER_POCKET_OVERRUN": { "value": 5, "doc": "托板上的横条槽比舌头每头长 5；槽高 = 板厚 + FRAME_SLOT_CLEARANCE。" },
+  "L_MIN_WING_WIDTH": { "value": 300, "doc": "框架式 L：拐角段沿墙宽度下限。" },
+  "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "框架式 L 封边带厚，全部柜体色：座面一圈的上边（前板、侧板、后横条）、拐角段两块侧板朝房间的前边、盖子四边、储物格里看得见的托条和后横条下边。端头一律当作顶墙，不封。" }
 }

@@ -26,8 +26,20 @@ export interface LoungeParams {
   lWidth?: number;
   lDepth?: number;
   lPosition?: LPosition;
+  /**
+   * L only. "frame" (default): outer panels full height, the whole top of each run is a lid sitting
+   * flush between them on an inner frame, one rear rail along the wall (21 Bunk new lounge).
+   * "classic": the older top panel with a rebated lid in its middle.
+   */
+  construction?: "frame" | "classic";
   topLidEnabled?: boolean;
+  /**
+   * The wing's room end. Frame L "DRAWER": the wing front becomes a door-stock drawer front with a
+   * fixed strip over it and a drawer rail behind the strip (no drawer box). "FLAP" is not built yet.
+   */
   lFrontAccess?: "NONE" | "DRAWER" | "FLAP";
+  /** Door stock of the frame L drawer front and its fixed strip. */
+  frontPanelThickness?: number;
   totalWidth?: number;
   singleLoungeWidth?: number;
   depth?: number;
@@ -101,6 +113,8 @@ export interface LoungeGroove {
   v0: number;
   v1: number;
   depth: number;
+  /** The board that sits in it (default the middle cabinet's divider). */
+  for?: string;
 }
 
 export interface LoungeResult {
@@ -111,6 +125,8 @@ export interface LoungeResult {
     height: number;
     partitionPanelThickness: number;
     panelHeight: number;
+    construction?: "frame" | "classic";
+    lFrontAccess?: "NONE" | "DRAWER";
   };
   boards: ModelBoard[];
   openings: LoungeOpening[];
