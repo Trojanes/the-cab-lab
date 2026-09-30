@@ -1,2 +1,9 @@
 node_modules/
 logs/
+
+# Cloud credentials / local config — never commit (see .env.example)
+.env
+.env.*
+!.env.example
+*-credentials.json
+service-account*.json

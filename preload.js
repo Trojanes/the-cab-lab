@@ -10,6 +10,13 @@ contextBridge.exposeInMainWorld("cablab", {
   log: (line) => ipcRenderer.invoke("log:append", line),
   logDump: (text) => ipcRenderer.invoke("log:dump", text),
   openLogs: () => ipcRenderer.invoke("log:open"),
+  // Cloud storage (cloud/, CAB_CLOUD_* env). All calls return null/{ok:false}
+  // when cloud is disabled or the upload fails — never throw into the page.
+  cloudStatus: () => ipcRenderer.invoke("cloud:status"),
+  cloudPush: (root, rel, text) => ipcRenderer.invoke("cloud:push", root, rel, text),
+  cloudPull: (root, rel) => ipcRenderer.invoke("cloud:pull", root, rel),
+  cloudList: (root, rel) => ipcRenderer.invoke("cloud:list", root, rel),
+  cloudDelete: (root, rel) => ipcRenderer.invoke("cloud:delete", root, rel),
   onSketchAid: (cb) => { ipcRenderer.on("sketch:aid", (_e, key) => cb(key)); },
   versions: { electron: process.versions.electron, chrome: process.versions.chrome },
 
