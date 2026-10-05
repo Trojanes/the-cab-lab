@@ -672,9 +672,6 @@ var rules_default = {
   DOOR_SHELF_MIN_ZONE_HEIGHT: { value: 350, doc: "\u533A\u9AD8\u4F4E\u4E8E\u6B64\u4E0D\u751F\u6210\u95E8\u5C42\u677F\u3002" },
   SIDE_PANEL_WHITELIST_15: { value: 15, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
   SIDE_PANEL_WHITELIST_16: { value: 16, doc: "\u4FA7\u677F\u539A\u767D\u540D\u5355\u6210\u5458\u3002" },
-  FRIDGE_WIDTH_ALLOWANCE: { value: 45, doc: "CW = applianceWidth + 45\uFF08\u65E0\u5916\u9970\u4FA7\u677F\uFF09\u3002" },
-  FRIDGE_WIDTH_ALLOWANCE_WITH_EXTERIOR: { value: 61, doc: "CW = applianceWidth + 61\uFF08\u6709 16 mm \u5916\u9970\u4FA7\u677F\uFF09\u3002" },
-  FRIDGE_EXTERIOR_THICKNESS: { value: 16, doc: "\u51B0\u7BB1\u5916\u9970\u4FA7\u677F\u539A\uFF08Fridge recipe \u56FA\u5B9A 16\uFF09\u3002" },
   FRIDGE_RAISED_THRESHOLD: { value: 105, doc: "fridgeBaseBottomZ \u2212 avoidH < 105 \u2192 raised\u3002" },
   FRIDGE_BASE_ZI_DEPTH: { value: 224, doc: "\u51B0\u7BB1\u6B63\u4E0B\u65B9\u662F\u62BD\u5C49\u65F6\uFF0C\u62BD\u5C49\u4E0B\u9762\u90A3\u5757 Zi \u53EA\u505A\u5230\u8FD9\u4E2A\u6DF1\u5EA6\uFF08\u81EA\u67DC\u8EAB\u524D\u7F18\u91CF\uFF0C\u53EA\u6709\u524D\u7F3A\u53E3\uFF0CV3/V4 \u4E0D\u5F00\u69FD\uFF09\u3002\u53D6\u81EA 21 Bunk Dometic \u51B0\u7BB1\u67DC\u3002" },
   FRIDGE_BASE_RAIL_DEPTH: { value: 100, doc: "\u51B0\u7BB1\u6B63\u4E0B\u65B9\u662F\u62BD\u5C49\u65F6\uFF0C\u51B0\u7BB1\u5E95\u677F\u4E0B\u7684\u524D\u6491\u6761\u6DF1\u5EA6\uFF08\u81EA\u67DC\u8EAB\u524D\u7F18\u91CF\uFF0C\u539A CPT\uFF0C\u8D34\u5728\u51B0\u7BB1\u5E95\u677F\u4E0B\u9762\uFF09\u3002" },
@@ -1031,7 +1028,8 @@ var GT_ZONE_LABELS = {
   fridge: "Fridge",
   top_flap: "Top flap",
   bottom_flap: "Bottom flap",
-  blank_panel: "Blank panel"
+  blank_panel: "Blank panel",
+  fixed_panel: "Fixed panel"
 };
 var OWNED_HEIGHT = /* @__PURE__ */ new Set(["fridge"]);
 function generateGTSvgPreview(result, options = {}) {
@@ -3796,7 +3794,7 @@ var asNum = (v, fb) => {
 };
 var r2 = (v) => Math.round(v * 1e3) / 1e3;
 var EPS3 = 1e-3;
-var PANEL_TYPES = /* @__PURE__ */ new Set(["side_door", "left_side_door", "right_side_door", "double_door", "drawer", "top_flap", "bottom_flap"]);
+var PANEL_TYPES = /* @__PURE__ */ new Set(["side_door", "left_side_door", "right_side_door", "double_door", "drawer", "top_flap", "bottom_flap", "fixed_panel"]);
 function applyFridgePrep(input, notes) {
   const zones = (input.zones ?? []).map((zone) => {
     if (zone.type !== "fridge") return zone;
@@ -3814,32 +3812,42 @@ function applyFridgePrep(input, notes) {
   if (!fridgeZones.length) return { ...input, zones };
   const exteriorSide = input.exteriorSide === "left" || input.exteriorSide === "right" ? input.exteriorSide : "none";
   const next = { ...input, zones, exteriorSide };
-  const sideMm = RULES.FRIDGE_EXTERIOR_THICKNESS.value;
-  if (exteriorSide === "left") {
-    next.leftSidePanelThickness = sideMm;
-    notes.push("Fridge exteriorSide=left \u2192 SidePanel_L thickness 16mm.");
-  } else if (exteriorSide === "right") {
-    next.rightSidePanelThickness = sideMm;
-    notes.push("Fridge exteriorSide=right \u2192 SidePanel_R thickness 16mm.");
+  const { CPT, FPT } = stockThickness(input);
+  if (exteriorSide !== "none") {
+    const key = exteriorSide === "left" ? "leftSidePanelThickness" : "rightSidePanelThickness";
+    const finish = exteriorSide === "left" ? input.leftSidePanelFinish : input.rightSidePanelFinish;
+    if (!(asNum(input[key], 0) > 0)) {
+      next[key] = finish === "colour" ? FPT : CPT;
+      notes.push(`Fridge exteriorSide=${exteriorSide} \u2192 SidePanel_${exteriorSide === "left" ? "L" : "R"} ${next[key]} mm (${finish === "colour" ? "door" : "carcass"} stock).`);
+    }
   }
   const sync = input.syncCabinetWidthFromFridge !== false;
-  const applianceWidth = Number(fridgeZones[0].applianceWidthMm);
-  if (sync && Number.isFinite(applianceWidth) && applianceWidth > 0) {
-    const allowance = exteriorSide === "none" ? RULES.FRIDGE_WIDTH_ALLOWANCE.value : RULES.FRIDGE_WIDTH_ALLOWANCE_WITH_EXTERIOR.value;
-    const targetWidth = applianceWidth + allowance;
+  const cutOut = Number(fridgeZones[0].applianceWidthMm);
+  if (sync && Number.isFinite(cutOut) && cutOut > 0) {
+    const sides = asNum(next.leftSidePanelThickness, 0) + asNum(next.rightSidePanelThickness, 0);
+    const targetWidth = fridgeCabinetWidth(cutOut, sides, CPT);
     if (Math.abs(asNum(input.cabinetWidth, 0) - targetWidth) > 0.01) {
-      notes.push(`Cabinet width synced from fridge appliance (${applianceWidth}+${allowance}=${targetWidth}).`);
+      notes.push(`Cabinet width synced from the fridge cut-out (${cutOut} + ${FRIDGE_STILES} \xD7 ${CPT} + sides ${sides} = ${targetWidth}).`);
     }
     next.cabinetWidth = targetWidth;
   }
   return next;
 }
+function stockThickness(input) {
+  return {
+    CPT: asNum(input.panelThickness, RULES.DEFAULT_PANEL_THICKNESS.value),
+    FPT: asNum(input.frontPanelThickness ?? input.frontFaceAllowance ?? input.doorPanelThickness, RULES.DEFAULT_FRONT_FACE_ALLOWANCE.value)
+  };
+}
+var FRIDGE_STILES = 3;
+function fridgeCabinetWidth(cutOut, sides, CPT) {
+  return Math.round((cutOut + sides + FRIDGE_STILES * CPT) * 1e3) / 1e3;
+}
 function normalize(input, errors) {
   const CH = asNum(input.cabinetHeight, 0);
   const CW = asNum(input.cabinetWidth, 0);
   const CD = asNum(input.cabinetDepth, 0);
-  const CPT = asNum(input.panelThickness, RULES.DEFAULT_PANEL_THICKNESS.value);
-  const FPT = asNum(input.frontPanelThickness ?? input.frontFaceAllowance ?? input.doorPanelThickness, RULES.DEFAULT_FRONT_FACE_ALLOWANCE.value);
+  const { CPT, FPT } = stockThickness(input);
   const ziT = asNum(input.ziThickness, RULES.DEFAULT_ZI_THICKNESS.value);
   const hT = asNum(input.hThickness, RULES.DEFAULT_H_THICKNESS.value);
   const dividerT = asNum(input.dividerThickness, RULES.DEFAULT_DIVIDER_THICKNESS.value);
@@ -3979,10 +3987,11 @@ function computeStack(s, errors, warnings) {
   return { zones: zoneItems, boundaries, topSys, botSys, calculatedHeight: r2(z + s.topSys.railH) };
 }
 var SLACK_ZONE_MIN = 300;
-function fitTallCabinetHeight(input, cabinetHeight) {
+function fitTallCabinetHeight(input, cabinetHeight, slackZoneId) {
   const zones = (input.zones ?? []).map((zone) => ({ ...zone }));
   const H = r2(cabinetHeight);
   if (!zones.length) return { ...input, cabinetHeight: H };
+  const chosen = slackZoneId ? zones.findIndex((zone) => zone.id === slackZoneId && zone.type !== "fridge") : -1;
   const named = zones.findIndex((zone) => zone.id === "zone-3" && zone.type !== "fridge");
   let fallback = -1;
   for (let i = zones.length - 1; i >= 0; i -= 1) {
@@ -3991,7 +4000,7 @@ function fitTallCabinetHeight(input, cabinetHeight) {
       break;
     }
   }
-  const index = named >= 0 ? named : fallback >= 0 ? fallback : zones.length - 1;
+  const index = chosen >= 0 ? chosen : named >= 0 ? named : fallback >= 0 ? fallback : zones.length - 1;
   const trial = zones.map((zone, i) => i === index ? { ...zone, height: 0 } : zone);
   const scratch = [];
   const stacked = computeStack(normalize({ ...input, cabinetHeight: H, zones: trial }, scratch), scratch, scratch);
@@ -4454,11 +4463,21 @@ function generateGeneralTall(input) {
   warnings.push(...fridgeNotes);
   const P = param({ CH: s.CH, CW: s.CW, CD: s.CD, CPT: s.CPT, FPT: s.FPT });
   dim("tall.CH", { CH: P.CH }, (t) => t.CH, { formula: "CH" });
-  dim("tall.CW", { CW: P.CW }, (t) => t.CW, { formula: "CW" });
   dim("tall.CPT", { CPT: P.CPT }, (t) => t.CPT, { formula: "CPT" });
   dim("tall.FPT", { FPT: P.FPT }, (t) => t.FPT, { formula: "FPT" });
   dim("tall.leftT", { t: param({ leftSide: s.leftT }).leftSide }, (t) => t.t, { formula: "leftSide" });
   dim("tall.rightT", { t: param({ rightSide: s.rightT }).rightSide }, (t) => t.t, { formula: "rightSide" });
+  const cutOutW = Number(prepared.zones.find((z) => z.type === "fridge")?.applianceWidthMm);
+  if (prepared.syncCabinetWidthFromFridge !== false && cutOutW > 0) {
+    dim("tall.CW", {
+      cutOut: param({ fridgeCutOutWidth: cutOutW }).fridgeCutOutWidth,
+      L: ref("tall.leftT"),
+      R: ref("tall.rightT"),
+      CPT: ref("tall.CPT")
+    }, (t) => fridgeCabinetWidth(t.cutOut, t.L + t.R, t.CPT), { formula: `fridge cut-out + sides + ${FRIDGE_STILES} CPT` });
+  } else {
+    dim("tall.CW", { CW: P.CW }, (t) => t.CW, { formula: "CW" });
+  }
   dim("tall.mw", { CW: ref("tall.CW"), L: ref("tall.leftT"), R: ref("tall.rightT") }, (t) => Math.round((t.CW - t.L - t.R) * 1e3) / 1e3, { formula: "CW - sides" });
   dim("tall.midDepth", { CD: P.CD, FPT: P.FPT }, (t) => t.CD - t.FPT);
   dim("tall.md", { CD: P.CD, FPT: P.FPT }, (t) => Math.round((t.CD - t.FPT) * 1e3) / 1e3, { formula: "CD - FPT" });
@@ -4495,14 +4514,16 @@ function generateGeneralTall(input) {
   let fridgeMode = "none";
   let fridgeGap = 0;
   let fridgeBaseBottomZ = 0;
+  let fridgeOpening = null;
   const fridgeZoneItem = zoneItems.find((zi) => zi.zone.type === "fridge");
   if (fridgeZoneItem) {
     const below = boundaries.find((b) => b.id === `boundary-${fridgeZoneItem.zone.id}`);
     fridgeBaseBottomZ = below ? below.z0 : fridgeZoneItem.z0;
     const aw = Number(fridgeZoneItem.zone.applianceWidthMm);
     const adp = Number(fridgeZoneItem.zone.applianceDepthMm);
-    if (Number.isFinite(aw) && aw > mw + 0.01) {
-      warnings.push(`Fridge zone ${fridgeZoneItem.zone.id} applianceWidthMm=${aw} exceeds interior midWidth=${mw}.`);
+    fridgeOpening = r2(mw - FRIDGE_STILES * CPT);
+    if (Number.isFinite(aw) && aw > fridgeOpening + 0.01) {
+      errors.push(`Fridge cut-out ${aw} does not fit: the opening between the stiles is ${fridgeOpening} (${r2(aw - fridgeOpening)} short).`);
     }
     if (Number.isFinite(adp) && adp > md + 0.01) {
       warnings.push(`Fridge zone ${fridgeZoneItem.zone.id} applianceDepthMm=${adp} exceeds interior midDepth=${md}.`);
@@ -5464,7 +5485,7 @@ function generateGeneralTall(input) {
   const dsBoards = [];
   for (const zi of zoneItems) {
     const zt = zi.zone.type;
-    if (!PANEL_TYPES.has(zt) || zt === "drawer" || zt === "top_flap" || zt === "bottom_flap") continue;
+    if (!PANEL_TYPES.has(zt) || zt === "drawer" || zt === "top_flap" || zt === "bottom_flap" || zt === "fixed_panel") continue;
     if (zi.zone.shelfEnabled !== true) continue;
     if (zi.height < RULES.DOOR_SHELF_MIN_ZONE_HEIGHT.value) continue;
     const shelfTopZ = r2(zi.z0 + asNum(zi.zone.shelfHeight, Math.round(zi.height / 2)));
@@ -5551,7 +5572,7 @@ function generateGeneralTall(input) {
   for (const fp of frontPanels) {
     boards.push(mkBoard(
       fp.id,
-      "Front Panel",
+      fp.zone.zone.type === "fixed_panel" ? "Fixed Front Panel" : "Front Panel",
       "front_panel",
       "front_panel",
       FPT,
@@ -5579,7 +5600,7 @@ function generateGeneralTall(input) {
       [r2(fp.x0 + fromSide), r2(fp.x1 - fromSide)].forEach((cx, i) => {
         hinges.push({ id: `${fp.id}_hinge_${i + 1}`, panelId: fp.id, centerX: cx, centerZ: cz, diameter: cupD, depth });
       });
-    } else if (zt !== "drawer") {
+    } else if (zt !== "drawer" && zt !== "fixed_panel") {
       const h = r2(fp.z1 - fp.z0);
       let sd;
       if (hs.sideDistance && hs.sideDistance !== "auto" && Number.isFinite(Number(hs.sideDistance))) {
@@ -5757,7 +5778,10 @@ function generateGeneralTall(input) {
       midDepth: md,
       panelThickness: CPT,
       frontPanelThickness: FPT,
-      ziThickness: s.ziT
+      ziThickness: s.ziT,
+      leftSidePanelThickness: s.leftT,
+      rightSidePanelThickness: s.rightT,
+      fridgeOpening
     },
     boards,
     grain,
@@ -5795,6 +5819,7 @@ function generateGeneralTall(input) {
 export {
   GT_UI_PRESETS,
   fitTallCabinetHeight,
+  fridgeCabinetWidth,
   generateGTSvgPreview,
   generateGeneralTall
 };

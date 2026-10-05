@@ -19,6 +19,7 @@ const ENTRIES = [
   { name: "bedSideTable", entry: path.join(MODULES_DIR, "bedSideTable", "generator.ts") },
   { name: "bunkBed", entry: path.join(MODULES_DIR, "bunkBed", "generator.ts") },
   { name: "overheadCabinet", entry: path.join(MODULES_DIR, "overheadCabinet", "generator.ts") },
+  { name: "uShapeOverhead", entry: path.join(MODULES_DIR, "uShapeOverhead", "generator.ts") },
   { name: "kitchen", entry: path.join(MODULES_DIR, "kitchen", "generator.ts") },
   { name: "generalTall", entry: path.join(MODULES_DIR, "generalTall", "generator.ts") },
   { name: "lounge", entry: path.join(MODULES_DIR, "lounge", "generator.ts") },

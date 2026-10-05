@@ -17,7 +17,7 @@
   <div id="bench">
 
     <header id="btop">
-      <button class="tb icon" id="leftToggle" title="Parameters &amp; rules pane ([)">☰</button>
+      <button class="tb icon" id="leftToggle" title="规则栏 ([)">☰</button>
       <div id="tabs" class="tabs"></div>
       <button class="tb icon" id="tabAdd" title="Open another generator">+</button>
       <div class="sep"></div>
@@ -30,11 +30,8 @@
     </header>
 
     <aside id="bleft">
-      <button class="pane-title fold-head" id="paramsFold" title="Show / hide the parameters">
-        <span class="fold-caret">▸</span> Parameters <span class="muted" id="paramsSummary"></span>
-      </button>
-      <div id="paramsForm" class="params hidden"></div>
-      <div class="pane-title">Rules <span class="muted" id="rulesFile"></span></div>
+      <div id="draftBox" class="draft-box hidden"></div>
+      <div class="pane-title">规则 <span class="muted" id="rulesFile"></span></div>
       <div id="rulesList" class="rules"></div>
     </aside>
 
@@ -63,6 +60,8 @@
         <div id="b2dSvg" class="b2d-svg"></div>
       </div>
 
+      <div id="paramTray" class="param-tray hidden" title="一级参数。拖到蓝色公式上加入，从蓝色公式拖回来去掉。"></div>
+
       <div id="tools" class="tools">
         <div class="group seg-group" id="viewGroup">
           <button class="tb seg active" data-view="3d">3D</button>
@@ -81,8 +80,6 @@
         <button class="tb" id="explodeToggle" title="Explode mode · trails · labels · assembly order">Explode ▾</button>
         <button class="tb" id="btnFrame" title="Frame the cabinet (F)">Frame</button>
         <button class="tb" id="moreToggle" title="Opacity · section · what is drawn">⋯</button>
-        <span class="spacer"></span>
-        <button class="tb icon" id="bottomToggle" title="Boards &amp; audit (])">▾</button>
         <div id="explodePop" class="pop hidden">
           <div class="group seg-group" id="explodeModeGroup">
             <button class="tb seg" data-mode="assembly" title="Each board slides out along the face it is joined on; parts move with what they sit on">Assembly</button>
@@ -99,24 +96,13 @@
           <label class="field-inline">Cut Y <input type="range" id="cutY" min="0" max="1" step="0.01" value="1"></label>
           <label class="field-inline">Cut Z <input type="range" id="cutZ" min="0" max="1" step="0.01" value="1"></label>
           <label class="field-inline"><input type="checkbox" id="showJoints" checked> joints</label>
-          <label class="field-inline"><input type="checkbox" id="showPoints" checked> points</label>
         </div>
       </div>
-
-      <section id="bottom">
-        <div class="drawer-tabs">
-          <button class="dtab active" data-dtab="boards">Boards</button>
-          <button class="dtab" data-dtab="audit">Audit <span class="badge" id="auditBadge"></span></button>
-        </div>
-        <div class="drawer-body">
-          <div class="dpane active" data-dpane="boards"></div>
-          <div class="dpane" data-dpane="audit"></div>
-        </div>
-      </section>
     </main>
 
     <aside id="bright">
       <div id="selPanel" class="selpanel"></div>
+      <div id="commitBar" class="commit-bar hidden"></div>
     </aside>
 
     <footer id="bstatus">
@@ -126,7 +112,7 @@
       <span class="dot"></span>
       <span class="st badge-row" id="stBadges"></span>
       <span class="spacer"></span>
-      <span class="st" id="stHint">Wheel-drag orbit · right-drag pan · click a board / point / joint · right-click a board → Edit board · [ ] panes · F frame · Esc back</span>
+      <span class="st" id="stHint">滚轮旋转 · 右键平移 · 右侧是这台生成器的输入 · 右键一块板才改它的规则 · [ 规则栏 · F 取景 · Esc 返回</span>
     </footer>
 
   </div>
@@ -156,6 +142,20 @@
       <div class="modal-actions">
         <button class="tb" data-cancel>Cancel</button>
         <button class="tb primary" data-ok>Write rules.json &amp; rebuild</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="layoutDialog" class="modal hidden">
+    <div class="modal-card">
+      <div class="modal-title">提交规则修改</div>
+      <div class="modal-sub" id="layoutSub"></div>
+      <div id="layoutChanges" class="rule-affected"></div>
+      <textarea id="layoutReason" rows="3" placeholder="为什么这样改？一句话，之后改规则的人（包括 AI）要靠它理解设计意图。"></textarea>
+      <div class="kind-errors" id="layoutErr"></div>
+      <div class="modal-actions">
+        <button class="tb" data-cancel>取消</button>
+        <button class="tb primary" data-ok>写入 layout.json 并重建</button>
       </div>
     </div>
   </div>

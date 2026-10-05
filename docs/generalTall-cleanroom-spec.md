@@ -36,16 +36,16 @@
 | left/rightSidePanelThickness | 否 | 0 | **∈ {0, 15, 16} 硬编码白名单**，否则 error |
 | left/rightSidePanelAdaptAvoidance | 否 | = !ignoreAvoidance | 侧板是否切避让缺口（per-side） |
 | left/rightSidePanelIgnoreAvoidance | 否 | false | 旧参数（adapt 未显式给出时的默认来源） |
-| zones[].type | 是 | — | 11 种：side_door / left_side_door / right_side_door / double_door / drawer / open_space / open_appliance / fridge / top_flap / bottom_flap / blank_panel |
+| zones[].type | 是 | — | 12 种：side_door / left_side_door / right_side_door / double_door / drawer / open_space / open_appliance / fridge / top_flap / bottom_flap / blank_panel / fixed_panel（门料固定面板，不开：无铰链、无锁、无门层板；今天用在冰箱上方，以后换微波炉） |
 | zones[].height | 是 | — | 区高（堆叠输入；冰箱区被 applianceHeightMm 覆盖） |
 | zones[].shelfEnabled / shelfHeight | 否 | — | 门层板（DS）；区高 <350 不生成 |
 | zones[].lockPosition / lockHeight | 否 | — | top / bottom / side / shelf_top / shelf_bottom；side 时 lockHeight 为距区底高度 |
 | zones[].hingeSettings | 否 | — | {cupDiameter 35, cupDepth 12.5, cupCenterFromEdge 22.5, useThreeHinges, sideDistance:"auto"或数值} |
 | zones[].verticalDivider | 否 | false | double_door 竖分隔（VD + 上下边界升级 full_zi） |
 | zones[].dividerCenterX | 否 | midWidth/2 | VD 心线（**core 坐标**）；越界 error "outside MidWidth" |
-| zones[].applianceWidthMm / DepthMm / HeightMm | 否 | — | 冰箱尺寸（宽度/深度/高度） |
-| exteriorSide | 否 | none | left / right / none（冰箱装饰板侧） |
-| syncCabinetWidthFromFridge | 否 | false | CW 按冰箱宽同步（见 §7.3） |
+| zones[].applianceWidthMm / DepthMm / HeightMm | 否 | — | 冰箱**开孔**尺寸（厂家给的 cut-out，不是机身）；开口正好等于它 |
+| exteriorSide | 否 | none | left / right / none（冰箱外露侧；该侧没给侧板厚时按它的料补上：colour → FPT，否则 CPT） |
+| syncCabinetWidthFromFridge | 否 | true | CW 按冰箱开孔同步（见 §7.3） |
 | frontHardware | 否 | — | {frontPanelsEnabled, frontClearance 2.5, locksEnabled, lockPresetId "razor_long_rounded_1", defaultHingeSettings} |
 
 ## 3. 规则常量
@@ -87,8 +87,7 @@
 | LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER | 30.5 | 安装面到锁槽心 |
 | LOCK_SLOT 长×宽 / 圆角 | 55 × 15.5 / r7.75 | preset razor_long_rounded_1 |
 | DOOR_SHELF_MIN_ZONE_HEIGHT | 350 | 区高低于此不生成门层板 |
-| SIDE_PANEL_MM（冰箱） | 16 | exteriorSide 强制侧板厚 |
-| 冰箱宽度余量 | 45 | CW = applianceWidth + 45（+16 有侧板） |
+| 冰箱柜宽 | 公式 | CW = 开孔宽 + 左侧板 + 右侧板 + 3 × CPT（V1 / V2 / V5，各一块柜体料；`fridgeCabinetWidth`）。2026-10-01 前是写死的 +45 / +61 和强制 16 侧板：CPT 16 时开口少 3，柜体料侧板被改成 16 |
 | 冰箱 raised 阈值 | 105 | 底隙 <105 → raised 避让模式 |
 | 堆叠高度容差 | 0.001 | 高度差 > 此值 → mismatch warning |
 | 侧板厚白名单 | {0,15,16} | 硬编码校验 |
@@ -201,7 +200,7 @@
 
 **errors（阻断）**：侧板厚 <0 或 ∉{0,15,16}；MidWidth ≤0（"MidWidth must be > 0 after side panel thickness…"）；avoidance depth ≤0（NEG-05 "Avoidance depth must be > 0; received -1."）；zone height ≤0（"Zone … height must be > 0."）；style_2 高 <60（"top/bottom Style 2 height must be >= 60 mm."）；dividerCenterX 越界（"outside MidWidth"）。
 
-**warnings（不阻断）**：高度失配（见 7.1）；top_flap 非最高功能区（"Top flap must be the highest functional zone directly below Top System." / "…is not the highest functional zone…"）；bottom_flap 非最低（"…is not the lowest functional zone; hinge semantics still apply…"）；冰箱高度同步 note（含区 id 与 1470 等数值）；家电超内腔（applianceWidthMm/DepthMm/exceeds）；CW 同步（"Cabinet width synced…611/595"）；raised 模式（"…gap … < 105 mm: raised avoidance mode…"）；H 冲突移动评估/跳过（"H mid overlaps full_zi/shortened_zi; Stage 2 movement evaluated."、"…half Zi movement rule deferred."、"…movement below/above Zi would exceed cabinet bounds; movement skipped."）；merge 候选（"Top/bottom merge candidate detected: MidDepth front/rear gap is below 50mm"）；V3/V4 槽与避让相交省略；避让支撑尺寸无效跳过 / X 越界仍生成；Zi 槽重叠；"Assembly overlap: …"；侧板 y0 偏差（sidePanelOverlapAudit）；side lock 越界夹取提示。
+**warnings（不阻断）**：高度失配（见 7.1）；top_flap 非最高功能区（"Top flap must be the highest functional zone directly below Top System." / "…is not the highest functional zone…"）；bottom_flap 非最低（"…is not the lowest functional zone; hinge semantics still apply…"）；冰箱高度同步 note（含区 id 与 1470 等数值）；冰箱深超内腔（applianceDepthMm exceeds）；CW 同步（"Cabinet width synced from the fridge cut-out (532 + 3 × 15 + sides 16 = 593)"）；raised 模式（"…gap … < 105 mm: raised avoidance mode…"）；H 冲突移动评估/跳过（"H mid overlaps full_zi/shortened_zi; Stage 2 movement evaluated."、"…half Zi movement rule deferred."、"…movement below/above Zi would exceed cabinet bounds; movement skipped."）；merge 候选（"Top/bottom merge candidate detected: MidDepth front/rear gap is below 50mm"）；V3/V4 槽与避让相交省略；避让支撑尺寸无效跳过 / X 越界仍生成；Zi 槽重叠；"Assembly overlap: …"；侧板 y0 偏差（sidePanelOverlapAudit）；side lock 越界夹取提示。
 
 **板件有效性**：三向尺寸任一 ≤0/非有限 → invalid boards（NEG-02 中置上翻门 22 块 invalid → FAIL；oracle 要求主用例 0 invalid）。
 
@@ -250,12 +249,13 @@
 | 高度 | 冰箱区高度 = applianceHeightMm（覆盖 zone.height，warning 记录同步） |
 | 前脸 | 冰箱腔**不生成 front panel**（保持开放） |
 | 封边 | 只封外圈直边（缺口、榫头、贴墙贴顶、压在别的板上的不封），带厚 EDGE_BAND_THICKNESS_MM 1。门板色：FP_* 四边、盖板式固定板四边、冰箱嵌板只封下边、SidePanel 前边、V1/V2/V5 前边、T1 下边、B1 上边、TH1 前边（仅冰箱嵌板时露出）、冰箱底座时冰箱底板 Zi 和 FridgeBaseRail 的前边（抽屉面板停在其下 8.5，一直露着）。柜体色：T3/B3 前后边、full_zi 前边、half/shortened_zi 前后边、DS/VD 前边、T4 前边、T5 下边、avoidance_horizontal 前边、H 横桥朝空格子的那条长边（两头顶在立梃上；贴地、贴柜顶、贴别的板 1 mm 以内、朝冰箱腔的不封：H*_top 封下边、H*_bottom 封上边、中撑封离开 Zi 的那一边、H34_fridgeBase 封下边）。不封：T2、B2、BH1、H13/H24_fridgeBase、Avoidance_Vertical、V3、V4。导出 .cnjob 暂不带封边（先手动确认，再把同一套逻辑套进生成器） |
-| 载入修补 | fitTallCabinetHeight 让 zone-3（或最后一个非冰箱区）吃差额，最低 300；已经低于 300 且刚好合上的区（冰箱下的 247 抽屉）保持原高，只是不能再缩 |
-| 宽度同步 | syncCabinetWidthFromFridge：CW = applianceWidthMm + 45；exteriorSide=left/right 时强制该侧 16 侧板 → CW = 550+45+16 = 611（warning 含 611）；none → 595、不强制侧板 |
+| 载入修补 | fitTallCabinetHeight 让 slackZoneId（给了的话）、否则 zone-3（或最后一个非冰箱区）吃差额，最低 300；已经低于 300 且刚好合上的区（冰箱下的 247 抽屉）保持原高，只是不能再缩。冰箱柜模块传 slackZoneId：冰箱上方那格，没有就冰箱下面最近的一格 |
+| 宽度同步 | syncCabinetWidthFromFridge（缺省开）：CW = 开孔宽 + 两侧侧板厚 + 3 × CPT，开口（`result.params.fridgeOpening` = midWidth − 3 × CPT）正好等于开孔宽。侧板厚用它自己的料（colour 16 / carcass 15），侧板换料外宽 ±1、开口不动。exteriorSide 那侧没给侧板时按其料补上。开孔比开口宽 → **error** `Fridge cut-out N does not fit: … (M short)` |
+| 冰箱上方 | 只有一格：top_flap（上翻门）或 fixed_panel（固定面板）；和冰箱之间 full Zi（冰箱腔顶），V5 停在 Zi 下面，冰箱不再是最上一格所以不做 style_2 嵌板 |
 | V5 | 对侧立梃（§4 表）；z 贴冰箱腔 z0/z1（±0.5 断言）；仅首个冰箱腔 |
 | 冰箱紧贴 style_2 顶 | 固定板改为冰箱开口里的嵌板（V1/V2 内侧 ↔ V5，y[0,FPT]，冰箱腔顶 → TH1 底）；V5 改为 150 深前立梃并做到 TH1 底；中间隔着别的区时仍用门面盖板 |
 | 冰箱正下方是抽屉（冰箱底座） | 抽屉下面那块 Zi 缩到 FRIDGE_BASE_ZI_DEPTH 224（只有前缺口，V3/V4 不开槽）；抽屉区左右 H13/H24_fridgeBase（y hY0..hY1，抽屉区底 → 冰箱底板槽底）、后 H34_fridgeBase（冰箱底板下 H 高 100）、前撑条 FridgeBaseRail（V1 内侧 ↔ V2 内侧，y[0, FRIDGE_BASE_RAIL_DEPTH 100]，厚 CPT，贴冰箱底板下）；抽屉面板上沿 = 冰箱底板下表面 − FRIDGE_BASE_DRAWER_FRONT_GAP 8.5 |
-| 预设 | presets.json `rogue-dometic`（ui: true）：21 Bunk Dometic 冰箱柜 593×640×1965，下翻门 172 + 抽屉 247 + 冰箱 1344，style_2 顶 101，左 16 彩色侧板，ledGroove；29 块板全部钉值，高柜面板「Preset」下拉可选 |
+| 预设 | presets.json `rogue-dometic`（ui: true）：21 Bunk Dometic 冰箱柜 593×640×1965，下翻门 172 + 抽屉 247 + 冰箱 1344，style_2 顶 101，左 16 彩色侧板，ledGroove；29 块板全部钉值，冰箱柜面板「Preset」下拉可选（Storage 高柜不列带冰箱的预设） |
 | 避让模式 | gap = 冰箱底 z − avoidH（底部空隙）；gap <105 → **raised**：avoidance_horizontal 顶面贴冰箱底、生成 H13/H24/H34_fridge 三件（z ≥ 冰箱底）、**省略 H*_bottom**、warning；gap ≥105 → **normal**：保持输入避让高（horizontal z1=avoidH）、仍生成 H*_bottom、无 _fridge 板 |
 | 骨架保留 | 冰箱栈仍生成 T1/T2/T3/B1/B2/B3/V1/V2（结构与普通区一致） |
 | 声明 | §6 冰箱四条按现存板件过滤（left 外饰 → gt_sidepanel_l_v1 + gt_v5_v2；none → gt_v5_v1） |
@@ -372,7 +372,7 @@ full_zi z[1000,1015] 与 H mid [1000,1100] 冲突（overlap [1000,1014]）：H13
 - VD ← midWidth：core 心 668/2 = 334 → 板 x = 334+16（leftT）±7.5 = [342.5,357.5]；zi_groove x = 334±8 = [326,342]（core，坑⑤）。
 - 底舌 ← VD.z0 与 CPT：z = 999 − (16/2−0.5) = 991.5。
 - H34 让位槽 ← H34.z0：z = [z0−5, z0+105]（1000 → [995,1105]）。
-- 冰箱 CW ← appliance：550+45+16 = 611（有外饰侧板）/ 550+45 = 595（none）。
+- 冰箱 CW ← 开孔：532 + 16 + 3×15 = 593（Rogue，左 16 彩色侧板）/ 532 + 15 + 45 = 592（柜体料侧板）/ 619 + 3×16 = 667（CPT 16、无侧板）。
 - raised 判定：gap = 冰箱底 z − avoidH（≈284−200=84 < 105 → raised）。
 - 锁 shelf_top ← DS.z1 + 30.5；side ← zone.z0 + lockHeight（夹取 ≤ panel.z1）。
 - 侧板缺口 ← avoidance：(CD−depth, height) = (384, 400)，profile 折点 `[384,0],[384,400],[584,400]`。

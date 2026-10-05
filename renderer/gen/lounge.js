@@ -568,7 +568,7 @@ function buildLoungeFaces(fb) {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
-    if (b.boardType === "front" || b.category === "front_panel") {
+    if (b.boardType === "cabinet_door" || b.boardType === "drawer_front" || b.boardType === "fixed_front") {
       b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
       annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
       annotate(b, "A", { semantic: "back", visible: false });
@@ -1386,13 +1386,13 @@ function addParallelRun(prefix, label2, xStart, xEnd, D, H, ppt, Hprime, lidOn, 
     Hprime
   ));
 }
-function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, fit) {
+function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, fit, standOn = null) {
   const mc = raw.middleCabinet ?? {};
   const gap0 = totalW - asNum2(raw.singleLoungeWidth, 1500) * 2;
   const CW = asNum2(mc.width, Math.min(RULES.MIDDLE_CABINET_WIDTH.value, Math.max(0, gap0)));
   const CD = asNum2(mc.depth, RULES.MIDDLE_CABINET_DEPTH.value);
   const CH = asNum2(mc.height, RULES.MIDDLE_CABINET_HEIGHT.value);
-  const CSH = asNum2(mc.startHeight, RULES.MIDDLE_CABINET_START_HEIGHT.value);
+  const CSH = standOn ?? asNum2(mc.startHeight, RULES.MIDDLE_CABINET_START_HEIGHT.value);
   const dpt = Math.max(1, asNum2(mc.doorPanelThickness, RULES.MIDDLE_CABINET_DOOR_THICKNESS.value));
   const dc = Math.max(0, asNum2(mc.doorClearance, RULES.MIDDLE_CABINET_DOOR_CLEARANCE.value));
   const lockStyle = mc.doorLockStyle === "NONE" ? "NONE" : "RAZOR_ROUNDED";
@@ -1402,7 +1402,7 @@ function addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnin
   const cupD = asNum2(mc.hingeCupDiameter, RULES.MIDDLE_CABINET_HINGE_DIAMETER.value);
   const cupDepth = Math.min(Math.max(0.5, asNum2(mc.hingeCupDepth, RULES.MIDDLE_CABINET_HINGE_DEPTH.value)), dpt);
   const gap = totalW - asNum2(raw.singleLoungeWidth, 1500) * 2;
-  if (raw.wheelAvoidanceEnabled && !(CSH > asNum2(raw.avoidanceHeight, RULES.DEFAULT_AVOIDANCE_HEIGHT.value))) {
+  if (standOn == null && raw.wheelAvoidanceEnabled && !(CSH > asNum2(raw.avoidanceHeight, RULES.DEFAULT_AVOIDANCE_HEIGHT.value))) {
     warnings.push("Middle cabinet start height must be greater than avoidance height.");
   }
   if (CW > Math.max(0, gap)) fit.push(`Middle cabinet width ${CW} exceeds the middle gap ${Math.max(0, gap)}.`);
@@ -1912,7 +1912,8 @@ function generateLounge(raw) {
       if (wheelOn) addAvoidanceCovers("parallel_", 0, totalW, D, AD, AH, ppt, boards);
     }
     const mcOn = frameP ? raw.hasMiddleCabinet ?? totalW - 2 * SW >= RULES.MIDDLE_CABINET_MIN_WIDTH.value : raw.hasMiddleCabinet === true;
-    if (mcOn && !errors.length) middleCabinet = addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, frameP ? errors : warnings);
+    const standOn = frameP ? wheelOn ? AH : 0 : null;
+    if (mcOn && !errors.length) middleCabinet = addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, frameP ? errors : warnings, standOn);
   } else {
     const mainW = asNum2(raw.mainWidth, 2e3);
     const mainD = asNum2(raw.mainDepth, 600);

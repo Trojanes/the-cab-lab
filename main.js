@@ -166,17 +166,15 @@ const benchQueue = [];
 // renderer/modules.js GENERATOR_DIRS).
 const MODULE_TO_DIR = {
   kitchenCabinet: "kitchen",
+  ensuiteCabinet: "kitchen",
+  uShapeOverheadCabinet: "uShapeOverhead",
   generalTallCabinet: "generalTall",
+  tallFridgeCabinet: "generalTall",
   loungeGenerator: "lounge",
 };
-const DIR_TO_MODULE = Object.fromEntries(Object.entries(MODULE_TO_DIR).map(([id, dir]) => [dir, id]));
 
 function generatorDirOf(moduleId) {
   return MODULE_TO_DIR[moduleId] || moduleId;
-}
-
-function moduleIdOfDir(dir) {
-  return DIR_TO_MODULE[dir] || dir;
 }
 
 function generatorFile(moduleId, name) {
@@ -244,12 +242,18 @@ ipcMain.handle("bench:open", (_event, request) => { openBench(request); return t
 // The bench tells us when it is ready to receive requests (after a load or a reload).
 ipcMain.handle("bench:ready", () => { benchReady = true; flushBenchQueue(); return true; });
 
-/** Modules that have a presets.json are bench-able. */
+/** Every module id whose generator folder has a presets.json. A shared folder
+ *  (generalTall → Storage and Fridge) lists each module, not just one of them. */
+function moduleIdsOfDir(dir) {
+  const ids = Object.entries(MODULE_TO_DIR).filter(([, d]) => d === dir).map(([id]) => id);
+  return ids.length ? ids : [dir];
+}
+
 ipcMain.handle("bench:modules", () => {
   try {
     return fs.readdirSync(GENERATORS_DIR, { withFileTypes: true })
       .filter((d) => d.isDirectory() && !d.name.startsWith("_") && fs.existsSync(path.join(GENERATORS_DIR, d.name, "presets.json")))
-      .map((d) => moduleIdOfDir(d.name));
+      .flatMap((d) => moduleIdsOfDir(d.name));
   } catch (_) { return []; }
 });
 ipcMain.handle("bench:presets:read", (_event, moduleId) => {
@@ -286,6 +290,24 @@ ipcMain.handle("bench:rules:write", (_event, moduleId, name, value) => {
     }
     writeAtomic(file, next);
     return { ok: true, path: file, name, from, to };
+  } catch (err) {
+    return { ok: false, path: file, error: err.message };
+  }
+});
+/** Placement rules (generators/<module>/layout.json); text null when the module has none. */
+ipcMain.handle("bench:layout:read", (_event, moduleId) => {
+  const file = generatorFile(moduleId, "layout.json");
+  try { return { path: file, text: fs.readFileSync(file, "utf8") }; } catch (err) { return { path: file, text: null, error: err.message }; }
+});
+/** Replace layout.json with a committed draft. The bench validated it by generating with it first. */
+ipcMain.handle("bench:layout:write", (_event, moduleId, text) => {
+  const file = generatorFile(moduleId, "layout.json");
+  try {
+    const parsed = JSON.parse(String(text));
+    if (!parsed || typeof parsed.boards !== "object" || typeof parsed.module !== "string") throw new Error("not a layout file");
+    if (!fs.existsSync(file)) throw new Error("this module has no layout.json");
+    writeAtomic(file, `${JSON.stringify(parsed, null, 2)}\n`);
+    return { ok: true, path: file };
   } catch (err) {
     return { ok: false, path: file, error: err.message };
   }
@@ -381,7 +403,7 @@ app.whenReady().then(() => {
         benchWin.focus();
         // Wait until the first tab has rendered (the generator ran) before shooting.
         for (let i = 0; i < 40; i += 1) {
-          const ready = await benchWin.webContents.executeJavaScript('!!document.querySelector(".btab") && !!document.querySelector(\'[data-dpane="boards"] tbody tr\')').catch(() => false);
+          const ready = await benchWin.webContents.executeJavaScript('!!document.querySelector(".btab") && (window.__bench?.cur()?.result?.boards?.length > 0)').catch(() => false);
           if (ready) break;
           await new Promise((r) => setTimeout(r, 500));
         }
@@ -399,6 +421,22 @@ app.whenReady().then(() => {
           throw lastErr || new Error("capture failed");
         };
         await shot(snap);
+        const formulas = await benchWin.webContents.executeJavaScript(`(() => {
+          window.__bench.enterMode("default", "T4");
+          return [...document.querySelectorAll("#selPanel .face-row input, #selPanel .size-row")].map((el) => (el.value || el.textContent || "").trim());
+        })()`);
+        console.log("default-mode formulas", JSON.stringify(formulas));
+        await new Promise((r) => setTimeout(r, 600));
+        await shot(snap.replace(/\.png$/i, "") + "-mode.png");
+        const menu = await benchWin.webContents.executeJavaScript(`(async () => {
+          document.querySelector("#tabAdd").click();
+          for (let i = 0; i < 20 && !document.querySelector("#ctxMenu button"); i += 1) await new Promise((r) => setTimeout(r, 50));
+          const rows = [...document.querySelectorAll("#ctxMenu button")].map((b) => ({ text: b.textContent, disabled: b.disabled }));
+          document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true }));
+          window.__bench.exitMode();
+          return rows;
+        })()`);
+        console.log("open-generator menu", JSON.stringify(menu));
         // Exploded (assembly mode, slider 0.7, popover open) and one step into the assembly sequence.
         await benchWin.webContents.executeJavaScript('{ const s = document.querySelector("#explode"); s.value = "0.7"; s.dispatchEvent(new Event("input", { bubbles: true })); document.querySelector("#btnFrame").click(); } true');
         await new Promise((r) => setTimeout(r, 1200));
@@ -408,10 +446,10 @@ app.whenReady().then(() => {
         await shot(snap.replace(/\.png$/i, "") + "-step.png");
         await benchWin.webContents.executeJavaScript('{ document.querySelector("#stepLabel").click(); const s = document.querySelector("#explode"); s.value = "0"; s.dispatchEvent(new Event("input", { bubbles: true })); document.body.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true })); } true');
         await new Promise((r) => setTimeout(r, 600));
-        await benchWin.webContents.executeJavaScript('document.querySelector(\'[data-dpane="boards"] tbody tr:nth-child(3)\')?.click(); true');
+        await benchWin.webContents.executeJavaScript('(() => { const ids = [...window.__bench.cur().boards.keys()]; window.__bench.select({ kind: "board", id: ids[2] || ids[0] }); return true; })()');
         await new Promise((r) => setTimeout(r, 1200));
         await shot(snap.replace(/\.png$/i, "") + "-sel.png");
-        await benchWin.webContents.executeJavaScript('document.querySelector(\'[data-dpane="boards"] tbody tr:nth-child(6)\')?.dispatchEvent(new MouseEvent("contextmenu", { bubbles: true, clientX: 400, clientY: 400 })); document.querySelector("#ctxMenu button")?.click(); true');
+        await benchWin.webContents.executeJavaScript('(() => { const ids = [...window.__bench.cur().boards.keys()]; window.__bench.enterL3(ids[5] || ids[0]); return true; })()');
         await new Promise((r) => setTimeout(r, 1200));
         await shot(snap.replace(/\.png$/i, "") + "-board.png");
         await benchWin.webContents.executeJavaScript('document.querySelectorAll("#b2dSvg .b2d-pt.outline")[13]?.dispatchEvent(new MouseEvent("click", { bubbles: true })); true');

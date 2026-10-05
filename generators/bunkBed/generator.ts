@@ -31,7 +31,7 @@
 import { Outline, beginProvenance, dim, endProvenance, lit, param, ref, type Term } from "../_lib/dim.ts";
 import { addFeature, annotate, attachFaces, boundaryEdgeFaces, faceRef, joint, tagEdges, type Board, type FaceId, type Joint } from "../_lib/model.ts";
 import { applyMilling } from "../_lib/milling.ts";
-import { applyDoorSides, doorColourOf, doorSidesOf } from "../_lib/finish.ts";
+import { applyDoorSides, doorColourBOf, doorColourOf, doorSidesOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { cutAt, flatten, notchedOutline, reverseRing, roundedRect, sillOutline, type Piece, type Pt } from "./partition.ts";
 import { RULES as R } from "./rules.ts";
@@ -140,6 +140,7 @@ export function generateBunkBed(raw: BunkBedParams) {
   const Td = round1(num(raw.doorThickness, 16));
   const color = String(raw.carcassColorName || DEFAULT_COLOR);
   const doorColour = doorColourOf(raw);
+  const lowerColour = doorColourBOf(raw);
   const doorSides = doorSidesOf(raw);
 
   beginProvenance();
@@ -312,7 +313,7 @@ export function generateBunkBed(raw: BunkBedParams) {
     const bunkFace = right ? ex0 : ex1;
     if (right ? bunkFace < upLadder : bunkFace > upLadder) errors.push(`the end cubby (${R.CUBBY_WIDTH_MM.value} wide) reaches into the upper opening`);
     const passes = (b: Board) => b.x0 <= ex0 + 1e-6 && b.x1 >= ex1 - 1e-6;
-    const endPanel = (id: string, name: string, z0: string, z1: string, strips: Board[] = []) => {
+    const endPanel = (id: string, name: string, z0: string, z1: string, strips: Board[] = [], paint = doorColour) => {
       const b = boxBoard(id, name, "end_panel", "YZ", "X", door, {
         x0: F(id, "x0", { face: ref("cubby.face"), Td: P.Td }, (t) => (right ? t.face - t.Td : t.face), right ? "face - Td" : "= cubby.face"),
         x1: F(id, "x1", { face: ref("cubby.face"), Td: P.Td }, (t) => (right ? t.face : t.face + t.Td), right ? "= cubby.face" : "face + Td"),
@@ -344,10 +345,10 @@ export function generateBunkBed(raw: BunkBedParams) {
       const v0 = F(id, "hole.v0", { v1: ref(`${id}.hole.v1`), HH: R.END_HOLE_HEIGHT_MM }, (t) => t.v1 - t.HH, "v1 - HH");
       if (u1 - u0 < 2 * R.END_HOLE_RADIUS_MM.value || v0 < R.END_HOLE_RADIUS_MM.value) errors.push(`${id}: no room for its hand hole`);
       else throughCutout(b, `${id}_HOLE`, flatten(roundedRect(u0, u1, v0, v1, R.END_HOLE_RADIUS_MM.value)), "hand_hole");
-      paintDoorStock(b, right ? "B" : "A", doorColour, color);
+      paintDoorStock(b, right ? "B" : "A", paint, color);
       return b;
     };
-    const endLower = endPanel("END_LOWER", "End panel · lower bunk", "deck.z1", "upperBase.z0", [ladderLedger, ledgerBack]);
+    const endLower = endPanel("END_LOWER", "End panel · lower bunk", "deck.z1", "upperBase.z0", [ladderLedger, ledgerBack], lowerColour);
     const endUpper = endPanel("END_UPPER", "End panel · upper bunk", "upperBase.z1", "H");
     layoutCubby = right ? { x0: round1(cubby), x1: W } : { x0: 0, x1: round1(cubby) };
 
@@ -381,7 +382,7 @@ export function generateBunkBed(raw: BunkBedParams) {
         diameter: R.BOOT_DOOR_HINGE_DIAMETER_MM.value, depth: R.BOOT_DOOR_HINGE_DEPTH_MM.value, through: false, for: "hinge", key: `BOOT_DOOR.hinge${i + 1}`,
       }));
     }
-    paintDoorStock(bootDoor, "B", doorColour, color);
+    paintDoorStock(bootDoor, "B", lowerColour, color);
     layoutDoor = { x0: bootDoor.x0, x1: bootDoor.x1, y0: bootDoor.y0, y1: bootDoor.y1, z0: bootDoor.z0, z1: bootDoor.z1 };
 
     // Sill: partition stock on the floor; the tongue fills the access through the partition and the inner side.

@@ -1,0 +1,5 @@
+{
+  "SIDE_CLEARANCE_MM": { "value": 50, "doc": "Clear gap kept at a U corner besides the door thickness, so a side arm does not enter the back run's corner." },
+  "MIN_USABLE_MM": { "value": 120, "doc": "Each run must keep at least this much width for its zones after the corner is reserved." },
+  "DEFAULT_RUN_DEPTH_MM": { "value": 400, "doc": "Carcass depth of each run when a new U overhead is created." }
+}

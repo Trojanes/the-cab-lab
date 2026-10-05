@@ -246,6 +246,8 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     dim(`${KM}.x1`, { x1: ref("T3.x1"), x0: ref("T3.x0") }, (t) => t.x1 - t.x0);
     dim(`${KM}.y0`, { LAND: R.LED_GROOVE_FRONT_LAND_MM }, (t) => t.LAND);
     dim(`${KM}.y1`, { LAND: R.LED_GROOVE_FRONT_LAND_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.LAND + t.W);
+    // One logical feature: every segment shares the group and the one depth rule (layout.json T3.features.LED).
+    const shared = { group: "T3.LED", depthKey: "T3.feat.LED.depth" };
     addFeature(t3, "A", {
       id: "T3_LED_MAIN",
       kind: "tgroove",
@@ -254,6 +256,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       for: "led",
       key: KM,
       source: "T3",
+      ...shared,
     });
     branches.forEach((br, i) => {
       const KB = `T3.feat.LED_BRANCH_${i + 1}`;
@@ -272,6 +275,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
         for: "led",
         key: KB,
         source: "T3",
+        ...shared,
       });
     });
   }

@@ -83,6 +83,37 @@ export function boardsOfKeys(keys) {
   return Array.from(ids);
 }
 
+/**
+ * Formula of `key` with every reference substituted, so only params, rule
+ * constants and literals remain. `frontZ0 - slot` becomes
+ * `(H - CPT) - TCH - FEATURE_GROOVE_WIDTH_MM`. A rule is shown by its
+ * rules.json name. A number that was only given a temporary name (a divider
+ * centreline, for example) stays under that name: it was not recorded as a
+ * reference, so there is no formula to substitute.
+ */
+export function flatFormula(prov, key, depth = 12, stack = new Set()) {
+  const e = entryOf(prov, key);
+  if (!e) return null;
+  if (depth <= 0 || stack.has(key)) return e.formula;
+  stack.add(key);
+  let formula = e.formula;
+  const terms = Object.entries(e.terms || {}).sort((a, b) => b[0].length - a[0].length);
+  const word = (name) => new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g");
+  const bare = (s) => /^[A-Za-z_][\w]*$/.test(s) || /^-?\d+(?:\.\d+)?$/.test(s);
+  for (const [name, t] of terms) {
+    if (t.kind !== "ref" || !t.ref) continue;
+    const child = flatFormula(prov, t.ref, depth - 1, stack);
+    if (!child) continue;
+    if (formula.trim() === name) formula = child;
+    else formula = formula.replace(word(name), bare(child) ? child : `(${child})`);
+  }
+  for (const [name, t] of terms) {
+    if (t.kind === "rule" && t.name && t.name !== name) formula = formula.replace(word(name), t.name);
+  }
+  stack.delete(key);
+  return formula.replace(/\s+/g, " ").trim();
+}
+
 /** "359 = H - TCH - 1  (H 400 · TCH 40)" */
 export function describe(prov, key) {
   const e = entryOf(prov, key);

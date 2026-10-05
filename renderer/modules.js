@@ -9,8 +9,9 @@ import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_R
 import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
 import { generateBunkBed, bunkUpperLimits, bunkMinSize, RULES as BUNK_RULES } from "./gen/bunkBed.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
+import { generateUShapeOverhead } from "./gen/uShapeOverhead.js";
 import { generateKitchenCabinet, generateKitchenSvgPreview } from "./gen/kitchen.js";
-import { fitTallCabinetHeight, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
+import { fitTallCabinetHeight, fridgeCabinetWidth, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
 import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
@@ -102,7 +103,7 @@ const smallCabinet = {
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
     const cpt = thickness(stock, "carcass");
-    const color = cabinetColor(finish);
+    const color = cabinetColor(finish, "B");
     return {
       cabinetWidth: W,
       cabinetDepth: D,
@@ -189,6 +190,7 @@ const smallCabinet = {
     { id: "right_door", label: "Door (hinge right)" },
     { id: "drawer", label: "Drawer" },
   ],
+  benchShape: "small",
 };
 
 /**
@@ -406,6 +408,7 @@ const bedroom = {
     return setBedroomLayout(params, d.key, Math.round(value));
   },
   zoneTypes: [],
+  benchShape: "bedroom",
 };
 
 /**
@@ -486,6 +489,7 @@ const bedBox = {
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],
+  benchShape: "bedBox",
 };
 
 /**
@@ -563,6 +567,7 @@ const bunkBed = {
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],
+  benchShape: "bunk",
 };
 
 /**
@@ -591,7 +596,7 @@ const bedSideTable = {
 
   defaults(W, D, H, materials) {
     const { finish } = materialsOf(materials);
-    const color = cabinetColor(finish);
+    const color = cabinetColor(finish, "B");
     return {
       width: round1(W),
       depth: round1(D),
@@ -676,6 +681,7 @@ const bedSideTable = {
     { id: "wall", label: "Door · hinge at the wall" },
     { id: "bed", label: "Door · hinge at the bed" },
   ],
+  benchShape: "bedSide",
 };
 
 /**
@@ -731,7 +737,7 @@ const overheadCabinet = {
       frontPanelThickness: thickness(stock, "door"),
       topClearanceHeight: 40,
       clearance: 2.5,
-      ledGroove: false, // manufacturing option; exposed later with the other advanced fields
+      ledGroove: false, // a new overhead starts with the T3 groove off; an older cabinet with no value still grooves (the generator treats a missing flag as on)
       carcassColor: color.carcassColor,
       carcassColorName: color.carcassColorName,
       doorSeries: color.doorSeries,
@@ -743,9 +749,44 @@ const overheadCabinet = {
     };
   },
 
-  generate(params) {
-    return generateOverheadCabinet(params);
+  generate(params, options) {
+    return generateOverheadCabinet(params, options);
   },
+
+  /**
+   * Generator Rules: the overall inputs, grouped as a cabinetmaker reads them.
+   * `sym` is the name formulas use; `source` says where the number comes from
+   * (this cabinet, the job's material catalogue, a generator rule default).
+   */
+  benchInputs: [
+    { group: "柜体尺寸", fields: [
+      { key: "cabinetWidth", sym: "Cw", label: "柜宽", source: "柜体" },
+      { key: "cabinetDepth", sym: "Cd", label: "柜身深度（不含门）", source: "柜体" },
+      { key: "cabinetHeight", sym: "H", label: "柜高", source: "柜体" },
+    ] },
+    { group: "材料", fields: [
+      { key: "featureWidth", sym: "CPT", label: "柜身板厚", source: "材料", rule: "DIVIDER_THICKNESS_MM" },
+      { key: "frontPanelThickness", sym: "FPT", label: "门板厚", source: "材料", rule: "DEFAULT_FRONT_PANEL_THICKNESS_MM" },
+    ] },
+    { group: "预留", fields: [
+      { key: "topClearanceHeight", sym: "TCH", label: "顶部预留", source: "规则默认", rule: "T1_HEIGHT_MM" },
+      { key: "clearance", sym: "clearance", label: "门缝", source: "规则默认", rule: "DEFAULT_CLEARANCE_MM" },
+    ] },
+    { group: "分区", kind: "zones" },
+    { group: "选项", fields: [
+      { key: "style", label: "样式", kind: "select", options: [["style_1", "样式 1"], ["style_2", "样式 2"]] },
+      { key: "ledGroove", label: "T3 LED 灯槽", kind: "bool", default: true },
+      { key: "hingeHoleDiameter", label: "铰链杯直径", source: "规则默认", rule: "DEFAULT_HINGE_HOLE_DIAMETER_MM" },
+      { key: "hingeHoleDepth", label: "铰链杯深", source: "规则默认", rule: "DEFAULT_HINGE_HOLE_DEPTH_MM" },
+      { key: "hingeHoleFromTop", label: "杯孔距顶", source: "规则默认", rule: "DEFAULT_HINGE_HOLE_FROM_TOP_MM" },
+      { key: "hingeHoleFromSide", label: "杯孔距侧", source: "规则默认", rule: "DEFAULT_HINGE_HOLE_FROM_SIDE_MM" },
+    ] },
+    { group: "油烟机 NCE", fields: [
+      { key: "rangehoodClearHeight", sym: "rangehoodClearHeight", label: "净空高度", source: "规则默认", rule: "RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM" },
+      { key: "rangehoodEdgeOffsetX", sym: "rangehoodEdgeOffsetX", label: "开孔距侧", source: "规则默认", rule: "RANGEHOOD_MIN_EDGE_MM" },
+      { key: "rangehoodAlignment", label: "开孔靠", kind: "select", options: [["left", "左侧"], ["right", "右侧"]] },
+    ] },
+  ],
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneIndex` is outlined. */
   frontView(result, { selectedZoneIndex = -1, gaps = "clear" } = {}) {
@@ -813,7 +854,86 @@ const overheadCabinet = {
     { id: "up_flap", label: "Up flap", short: "Flap" },
     { id: "fixed_panel", label: "Fixed panel", short: "Fixed" },
     { id: "open", label: "Open", short: "Open" },
+    { id: "rangehood_flap", label: "Range hood", short: "Hood" },
   ],
+};
+
+const uShapeOverheadCabinet = {
+  id: "uShapeOverheadCabinet",
+  label: "U overhead",
+  sub: "three runs",
+  placement: "ceiling",
+  noOrient: true,
+  growsDown: true,
+  panel: "uShape",
+  defaultSize: { W: 2400, D: 1500, H: 400 },
+  minSize: { W: 1200, D: 700, H: 200 },
+  zoneTypes: overheadCabinet.zoneTypes.filter((t) => t.id !== "rangehood_flap"),
+  sideZoneTypes: overheadCabinet.zoneTypes,
+
+  defaults(W, D, H, materials) {
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish);
+    return {
+      totalWidth: round1(W),
+      leftArmLength: round1(D),
+      rightArmLength: round1(D),
+      cabinetDepth: 400,
+      cabinetHeight: round1(H),
+      sideClearance: 50,
+      featureWidth: thickness(stock, "carcass"),
+      frontPanelThickness: thickness(stock, "door"),
+      topClearanceHeight: 40,
+      clearance: 2.5,
+      ledGroove: false,
+      carcassColor: color.carcassColor,
+      carcassColorName: color.carcassColorName,
+      doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
+      rangehoodClearHeight: 75,
+      rangehoodAlignment: "left",
+      rangehoodEdgeOffsetX: 40,
+      zones: {
+        LEFT: [{ id: "LEFT-1", type: "up_flap", width: 1 }],
+        BACK: [{ id: "BACK-1", type: "up_flap", width: 1 }],
+        RIGHT: [{ id: "RIGHT-1", type: "up_flap", width: 1 }],
+      },
+    };
+  },
+
+  generate(params) {
+    return generateUShapeOverhead(params);
+  },
+
+  envelope(params) {
+    return {
+      W: params.totalWidth,
+      D: Math.max(params.leftArmLength || 0, params.rightArmLength || 0),
+      H: params.cabinetHeight,
+    };
+  },
+
+  setEnvelope(params, { W, D, H }) {
+    const next = { ...params };
+    if (W != null) next.totalWidth = round1(W);
+    if (D != null) { next.leftArmLength = round1(D); next.rightArmLength = round1(D); }
+    if (H != null) next.cabinetHeight = round1(H);
+    return next;
+  },
+
+  resizeFaces: ["x-", "x+", "y-", "z-"],
+  resizeFace(params, side, size) {
+    if (side.axis === "x") return this.setEnvelope(params, { W: size });
+    if (side.axis === "y") return this.setEnvelope(params, { D: size });
+    if (side.axis === "z") return this.setEnvelope(params, { H: size });
+    return null;
+  },
+
+  dividers() { return []; },
+  benchShape: "uShape",
 };
 
 /**
@@ -821,17 +941,32 @@ const overheadCabinet = {
  * 坐标契约与生成器一致：y=0 前缘（门板悬于 y∈[−FPT,0]）。
  * 默认单列 left_door（无中间 V 板 → 无双侧半槽冲突）。
  */
+const BASE_ZONE_TYPES = [
+  { id: "left_door", label: "Door · hinge left" },
+  { id: "right_door", label: "Door · hinge right" },
+  { id: "double_door", label: "Double door" },
+  { id: "drawer", label: "Drawer" },
+  { id: "open", label: "Open" },
+  { id: "down_flap", label: "Down flap" },
+  { id: "custom", label: "Custom" },
+];
+
+/** Floor base run: kitchen or ensuite. Both use the kitchen generator; the box depth includes the door. */
+export function isBaseCabinet(moduleId) {
+  return moduleId === "kitchenCabinet" || moduleId === "ensuiteCabinet";
+}
+
 const kitchenCabinet = {
   id: "kitchenCabinet",
-  label: "Base",
-  sub: "kitchen run",
+  label: "Kitchen",
+  sub: "base run · stove",
   panel: "kitchen", // wide right-hand editor: front elevation (columns × zones)
   defaultSize: { W: 887, D: 270, H: 880 },
   minSize: { W: 300, D: 250, H: 400 },
 
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
-    const color = cabinetColor(finish);
+    const color = cabinetColor(finish, "B");
     const bch = 70;
     return {
       globalSettings: { length: round1(W), depth: round1(D), height: round1(H) },
@@ -982,16 +1117,46 @@ const kitchenCabinet = {
   },
 
   zoneTypes: [
-    { id: "left_door", label: "Door · hinge left" },
-    { id: "right_door", label: "Door · hinge right" },
-    { id: "double_door", label: "Double door" },
-    { id: "drawer", label: "Drawer" },
-    { id: "open", label: "Open" },
-    { id: "down_flap", label: "Down flap" },
+    ...BASE_ZONE_TYPES.slice(0, -1),
     { id: "stove", label: "Stove" },
-    { id: "custom", label: "Custom" },
-    { id: "unassigned", label: "Unassigned" },
+    BASE_ZONE_TYPES[BASE_ZONE_TYPES.length - 1],
   ],
+
+  /** Generator Rules: existing parameters only. Face formulas stay in the generator. */
+  benchShape: "base",
+  benchInputs: [
+    { group: "柜体尺寸", fields: [
+      { key: "globalSettings.length", sym: "L", label: "柜宽", source: "柜体" },
+      { key: "globalSettings.depth", sym: "D", label: "柜深（含门）", source: "柜体" },
+      { key: "globalSettings.height", sym: "H", label: "柜高", source: "柜体" },
+    ] },
+    { group: "材料", fields: [
+      { key: "materialThickness", sym: "CPT", label: "柜身板厚", source: "材料" },
+      { key: "frontThickness", sym: "FPT", label: "门板厚", source: "材料" },
+      { key: "frontClearance", sym: "clearance", label: "门缝", source: "柜体" },
+    ] },
+    { group: "踢脚", fields: [
+      { key: "bottomClearanceHeight", sym: "BCH", label: "踢脚高度", source: "柜体" },
+      { key: "bottomClearanceStyle", label: "踢脚", kind: "select", options: [["style_1", "内凹"], ["style_2", "齐平"]] },
+    ] },
+    { group: "列和行", kind: "columns" },
+  ],
+};
+
+/**
+ * Ensuite vanity: the same base carcass as Kitchen. No stove — a stove zone
+ * is a generator error, not rewritten as a door. Default size matches Kitchen
+ * until a vanity size is chosen.
+ */
+const ensuiteCabinet = {
+  ...kitchenCabinet,
+  id: "ensuiteCabinet",
+  label: "Ensuite",
+  sub: "vanity · no stove",
+  zoneTypes: BASE_ZONE_TYPES,
+  generate(params) {
+    return generateKitchenCabinet({ ...params, baseKind: "ensuite" });
+  },
 };
 
 /** The tall generator's door thickness: frontPanelThickness > frontFaceAllowance > doorPanelThickness > 16. */
@@ -999,16 +1164,24 @@ function tallDoorThickness(p) {
   return p.frontPanelThickness ?? p.frontFaceAllowance ?? p.doorPanelThickness ?? 16;
 }
 
+const hasFridge = (params) => (params?.zones || []).some((z) => z.type === "fridge");
+const TALL_STORAGE_PRESETS = GT_UI_PRESETS.filter((pr) => !hasFridge(pr.params));
+const TALL_FRIDGE_PRESETS = GT_UI_PRESETS.filter((pr) => hasFridge(pr.params));
+
 const generalTallCabinet = {
   id: "generalTallCabinet",
-  label: "Tall",
-  sub: "general tall",
+  label: "Storage",
+  sub: "tall · outer width fixed",
+  /** A tall saved with a fridge zone (before the split) opens as a fridge cabinet. */
+  moduleIdFor(params) {
+    return hasFridge(params) ? "tallFridgeCabinet" : "generalTallCabinet";
+  },
   panel: "tall", // wide right-hand editor: front elevation + zone card
   defaultSize: { W: 600, D: 568, H: 2000 }, // carcass 568 + 16 doors = cabinetDepth 584
   minSize: { W: 400, D: 350, H: 800 },
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
-    const color = cabinetColor(finish);
+    const color = cabinetColor(finish, "B");
     const base = {
       cabinetWidth: W,
       // The box's D stops at the carcass front (like every module); cabinetDepth also holds the doors.
@@ -1050,22 +1223,15 @@ const generalTallCabinet = {
     return generateGeneralTall(params);
   },
 
-  /** Named cabinets from generators/generalTall/presets.json (`ui: true`); every board is pinned there. */
-  presets: GT_UI_PRESETS,
+  /** Named cabinets from generators/generalTall/presets.json (`ui: true`, no fridge); every board is pinned there. */
+  presets: TALL_STORAGE_PRESETS,
   /** The preset's params in full; the cabinet keeps its colours (job catalogue) and grain choice. */
   applyPreset(params, presetId) {
-    const preset = GT_UI_PRESETS.find((pr) => pr.id === presetId);
-    if (!preset) return params;
-    const keep = {};
-    for (const k of ["doorSeries", "doorSides", "doorColor", "doorColorName", "colorSlot", "grain"]) {
-      if (params[k] !== undefined) keep[k] = params[k];
-    }
-    return { ...structuredClone(preset.params), ...keep };
+    return tallPresetParams(TALL_STORAGE_PRESETS, params, presetId);
   },
   /** Id of the preset these params still equal (colours aside), or null once anything was edited. */
   presetOf(params) {
-    const hit = GT_UI_PRESETS.find((pr) => Object.keys(pr.params).every((k) => JSON.stringify(params[k]) === JSON.stringify(pr.params[k])));
-    return hit ? hit.id : null;
+    return tallPresetOf(TALL_STORAGE_PRESETS, params);
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
@@ -1117,20 +1283,7 @@ const generalTallCabinet = {
    * result.stack). Moving it trades height between the two zones.
    */
   setDivider(params, result, index, pos) {
-    const items = (result?.stack || []).filter((it) => it.kind === "functional_zone");
-    const below = items[index];
-    const above = items[index + 1];
-    if (!below || !above) return params;
-    const zones = (params.zones || []).map((z) => ({ ...z }));
-    const pBelow = zones.find((z) => z.id === below.zoneId);
-    const pAbove = zones.find((z) => z.id === above.zoneId);
-    if (!pBelow || !pAbove) return params;
-    const gap = Math.max(0, above.z0 - below.z1); // the boundary panel
-    const top = Math.max(below.z0 + MIN_ZONE_HEIGHT, Math.min(above.z1 - gap - MIN_ZONE_HEIGHT, round1(pos - gap / 2)));
-    const total = round1(pBelow.height + pAbove.height);
-    pBelow.height = round1(top - below.z0);
-    pAbove.height = round1(total - pBelow.height);
-    return { ...params, zones };
+    return tradeTallZoneHeight(params, result, index, pos);
   },
 
   /** Move a double_door zone's vertical divider centre to interior x (from the left side panel's inner face). */
@@ -1144,6 +1297,19 @@ const generalTallCabinet = {
   },
 
   dividers() { return []; },
+  /** Generator Rules: existing parameters. Zone heights trade; the stack stays the cabinet height. */
+  benchShape: "tall",
+  benchInputs: [
+    { group: "柜体尺寸", fields: [
+      { key: "cabinetWidth", sym: "CW", label: "柜宽", source: "柜体" },
+      { key: "cabinetDepth", sym: "CD", label: "柜深（含门）", source: "柜体" },
+      { key: "cabinetHeight", sym: "H", label: "柜高", source: "柜体" },
+    ] },
+    { group: "材料", fields: [
+      { key: "panelThickness", sym: "CPT", label: "柜身板厚", source: "材料" },
+      { key: "frontPanelThickness", sym: "FPT", label: "门板厚", source: "材料" },
+    ] },
+  ],
   zoneTypes: [
     { id: "side_door", label: "Door (hinge side)" },
     { id: "left_side_door", label: "Door · hinge left" },
@@ -1152,10 +1318,237 @@ const generalTallCabinet = {
     { id: "drawer", label: "Drawer" },
     { id: "open_space", label: "Open" },
     { id: "open_appliance", label: "Open · appliance" },
-    { id: "fridge", label: "Fridge" },
     { id: "top_flap", label: "Top flap" },
     { id: "bottom_flap", label: "Bottom flap" },
     { id: "blank_panel", label: "Blank panel" },
+  ],
+};
+
+/** Move the boundary between stacked zones `index` / `index + 1` to z = `pos` (its panel's centre line); the pair keeps its total. */
+function tradeTallZoneHeight(params, result, index, pos) {
+  const items = (result?.stack || []).filter((it) => it.kind === "functional_zone");
+  const below = items[index];
+  const above = items[index + 1];
+  if (!below || !above) return params;
+  const zones = (params.zones || []).map((z) => ({ ...z }));
+  const pBelow = zones.find((z) => z.id === below.zoneId);
+  const pAbove = zones.find((z) => z.id === above.zoneId);
+  if (!pBelow || !pAbove) return params;
+  const gap = Math.max(0, above.z0 - below.z1); // the boundary panel
+  const top = Math.max(below.z0 + MIN_ZONE_HEIGHT, Math.min(above.z1 - gap - MIN_ZONE_HEIGHT, round1(pos - gap / 2)));
+  const total = round1(pBelow.height + pAbove.height);
+  pBelow.height = round1(top - below.z0);
+  pAbove.height = round1(total - pBelow.height);
+  return { ...params, zones };
+}
+
+function tallPresetParams(list, params, presetId) {
+  const preset = list.find((pr) => pr.id === presetId);
+  if (!preset) return params;
+  const keep = {};
+  for (const k of ["doorSeries", "doorSides", "doorColor", "doorColorName", "doorColorB", "doorColorNameB", "colorSlot", "grain"]) {
+    if (params[k] !== undefined) keep[k] = params[k];
+  }
+  return { ...structuredClone(preset.params), ...keep };
+}
+
+function tallPresetOf(list, params) {
+  const hit = list.find((pr) => Object.keys(pr.params).every((k) => JSON.stringify(params[k]) === JSON.stringify(pr.params[k])));
+  return hit ? hit.id : null;
+}
+
+// --- tall fridge cabinet ------------------------------------------------------------
+//
+// The fridge's cut-out is fixed; everything else follows it. Bottom → top:
+// drawers / down flaps, the fridge (one), then nothing, an up flap or a fixed
+// panel. Width = cut-out + side panel + V1 / V2 / V5 (fridgeCabinetWidth), so
+// a side panel's stock moves the outer width, never the opening. Only one side
+// panel, on the side that shows; exteriorSide follows it. The same generalTall
+// generator builds it.
+
+export const FRIDGE_BELOW_TYPES = ["drawer", "bottom_flap"];
+export const FRIDGE_ABOVE_TYPES = ["top_flap", "fixed_panel"];
+export const FRIDGE_ZONE_LABEL = { drawer: "Drawer", bottom_flap: "Down flap", top_flap: "Up flap", fixed_panel: "Fixed panel", fridge: "Fridge" };
+
+/** `{ index, below, fridge, above }` of a fridge cabinet's zones (bottom → top). */
+export function fridgeParts(zones = []) {
+  const index = zones.findIndex((z) => z.type === "fridge");
+  if (index < 0) return { index, below: zones, fridge: null, above: [] };
+  return { index, below: zones.slice(0, index), fridge: zones[index], above: zones.slice(index + 1) };
+}
+
+/** The zone that takes a cabinet height change: the one above the fridge, else the nearest one under it. */
+function fridgeSlack(zones, except = null) {
+  const { below, above } = fridgeParts(zones);
+  if (above[0] && above[0].id !== except) return above[0].id;
+  for (let k = below.length - 1; k >= 0; k -= 1) if (below[k].id !== except) return below[k].id;
+  return null;
+}
+
+/** Stack height (bottom system → top system) of these params as they stand. */
+function tallStackHeight(params) {
+  const stack = generateGeneralTall(params).stack || [];
+  return stack.length ? stack[stack.length - 1].z1 : params.cabinetHeight;
+}
+
+/**
+ * Params as a fridge cabinet: fridge height = cut-out height, exteriorSide from the one side panel,
+ * width from the cut-out, and the stack re-fitted to `H` through the slack zone (none = H follows the stack).
+ */
+export function fridgeFix(params, { H = params.cabinetHeight, except = null } = {}) {
+  const p = { ...params, zones: (params.zones || []).map((z) => ({ ...z })) };
+  const { fridge } = fridgeParts(p.zones);
+  if (fridge && fridge.applianceHeightMm > 0) fridge.height = fridge.applianceHeightMm;
+  const left = (p.leftSidePanelThickness ?? 0) > 0;
+  const right = (p.rightSidePanelThickness ?? 0) > 0;
+  p.exteriorSide = left && !right ? "left" : right && !left ? "right" : "none";
+  p.syncCabinetWidthFromFridge = true;
+  if (fridge && fridge.applianceWidthMm > 0) {
+    p.cabinetWidth = fridgeCabinetWidth(fridge.applianceWidthMm, (p.leftSidePanelThickness ?? 0) + (p.rightSidePanelThickness ?? 0), p.panelThickness ?? 15);
+  }
+  const slack = fridgeSlack(p.zones, except);
+  if (slack) return fitTallCabinetHeight(p, round1(H), slack);
+  return { ...p, cabinetHeight: round1(tallStackHeight(p)) };
+}
+
+/** What breaks the fridge-cabinet rules (a tall saved before the split may): shown as warnings, never removed. */
+export function fridgeRuleIssues(params) {
+  const zones = params.zones || [];
+  const issues = [];
+  const fridges = zones.filter((z) => z.type === "fridge");
+  if (!fridges.length) issues.push("No fridge zone: this is a fridge cabinet without a fridge.");
+  if (fridges.length > 1) issues.push(`${fridges.length} fridge zones: a fridge cabinet holds one fridge.`);
+  const { below, above } = fridgeParts(zones);
+  for (const z of below) {
+    if (!FRIDGE_BELOW_TYPES.includes(z.type)) issues.push(`${z.id} (${z.type}) under the fridge: only drawers and down flaps go there.`);
+  }
+  if (above.length > 1) issues.push(`${above.length} zones above the fridge: only one (an up flap or a fixed panel).`);
+  for (const z of above) {
+    if (!FRIDGE_ABOVE_TYPES.includes(z.type)) issues.push(`${z.id} (${z.type}) above the fridge: only an up flap or a fixed panel — nobody reaches a drawer up there.`);
+  }
+  if ((params.leftSidePanelThickness ?? 0) > 0 && (params.rightSidePanelThickness ?? 0) > 0) {
+    issues.push("Side panels on both sides: a fridge cabinet has one, on the side that shows.");
+  }
+  return issues;
+}
+
+/**
+ * Which face stays when the width changes: the one away from the side panel (the panel side shows,
+ * the other stands on a wall or a neighbour). No side panel: the corner the box was drawn from.
+ * −1 = the left face (local x = 0), +1 = the right face (local x = W).
+ */
+function fridgeWidthAnchor(params, cab) {
+  if (params.exteriorSide === "left") return 1;
+  if (params.exteriorSide === "right") return -1;
+  return cab?.placeCorner?.x ?? -1;
+}
+
+const tallFridgeCabinet = {
+  id: "tallFridgeCabinet",
+  label: "Fridge",
+  sub: "tall · fridge cut-out fixed",
+  panel: "tallFridge",
+  defaultSize: { W: 593, D: 624, H: 1965 }, // Rogue Dometic: cut-out 532 + 16 side + 3 × 15; carcass 624 + 16 doors
+  minSize: { W: 300, D: 350, H: 800 },
+  noOrient: "the fridge fixes the width — turn it with Move",
+  handles: ["D", "H"],
+  /** Face of the box that stays when the width follows the fridge or a side panel (job.setParams). */
+  widthAnchor: fridgeWidthAnchor,
+  defaults(W, D, H, materials) {
+    const { finish, stock } = materialsOf(materials);
+    const color = cabinetColor(finish, "B");
+    const seed = TALL_FRIDGE_PRESETS[0] ? structuredClone(TALL_FRIDGE_PRESETS[0].params) : {
+      cabinetHeight: 1965, cabinetWidth: 593, cabinetDepth: 640, sideClearance: 3,
+      leftSidePanelThickness: 16, leftSidePanelFinish: "colour", rightSidePanelThickness: 0,
+      topSystem: { style: "style_2", height: 101 }, bottomSystem: { style: "style_1", frontRailHeight: 55 },
+      frontHardware: { frontClearance: 3 },
+      zones: [
+        { id: "zone-1", type: "bottom_flap", height: 172, lockPosition: "top" },
+        { id: "zone-2", type: "drawer", height: 247, lockPosition: "top" },
+        { id: "zone-3", type: "fridge", height: 1344, applianceWidthMm: 532, applianceHeightMm: 1344 },
+      ],
+    };
+    const cpt = thickness(stock, "carcass");
+    const fpt = thickness(stock, "door");
+    const side = (key, finishKey) => ((seed[key] ?? 0) > 0 ? (seed[finishKey] === "colour" ? fpt : cpt) : 0);
+    const base = {
+      ...seed,
+      panelThickness: cpt,
+      frontPanelThickness: fpt,
+      leftSidePanelThickness: side("leftSidePanelThickness", "leftSidePanelFinish"),
+      rightSidePanelThickness: side("rightSidePanelThickness", "rightSidePanelFinish"),
+      cabinetDepth: round1(D + fpt),
+      doorSeries: color.doorSeries,
+      doorSides: color.doorSides,
+      doorColor: color.doorColor,
+      doorColorName: color.doorColorName,
+      colorSlot: color.colorSlot,
+    };
+    return fridgeFix(base, { H });
+  },
+  generate(params) {
+    return generateGeneralTall(params);
+  },
+
+  presets: TALL_FRIDGE_PRESETS,
+  applyPreset(params, presetId) {
+    return fridgeFix(tallPresetParams(TALL_FRIDGE_PRESETS, params, presetId));
+  },
+  presetOf(params) {
+    return tallPresetOf(TALL_FRIDGE_PRESETS, params);
+  },
+
+  frontView(result, { selectedZoneId = null, gaps = "clear" } = {}) {
+    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true, gaps });
+  },
+  envelope(params) {
+    return { W: params.cabinetWidth, D: round1(params.cabinetDepth - tallDoorThickness(params)), H: params.cabinetHeight };
+  },
+  normalizeParams(params) {
+    return params?.zones?.length ? fridgeFix(params) : params;
+  },
+  /** W is the fridge's: only D and H are set here. */
+  setEnvelope(params, { D, H }) {
+    const next = { ...params };
+    if (D != null) next.cabinetDepth = round1(D + tallDoorThickness(params));
+    return fridgeFix(next, { H: H ?? next.cabinetHeight });
+  },
+
+  resizeFaces: ["y-", "y+", "z+"],
+  /** Top face: the zone above the fridge (else the one under it) takes the difference. Null when it would go under its minimum. */
+  resizeFace(params, side, size) {
+    if (side.axis === "x") return null;
+    if (side.axis === "y") return this.setEnvelope(params, { D: size });
+    const fitted = fridgeFix(params, { H: size });
+    return Math.abs(fitted.cabinetHeight - size) > 0.05 ? null : fitted;
+  },
+
+  /** Front-view boundaries between zones `index` / `index + 1`; the fridge's own edges do not move. */
+  setDivider(params, result, index, pos) {
+    const items = (result?.stack || []).filter((it) => it.kind === "functional_zone");
+    const below = items[index];
+    const above = items[index + 1];
+    if (!below || !above || below.zoneType === "fridge" || above.zoneType === "fridge") return params;
+    return fridgeFix(tradeTallZoneHeight(params, result, index, pos));
+  },
+
+  dividers() { return []; },
+  /** Generator Rules: the cut-out is the parameter. Outer width is cut-out + side + 3 CPT. */
+  benchShape: "fridge",
+  benchInputs: [
+    { group: "柜体尺寸", fields: [
+      { key: "cabinetDepth", sym: "CD", label: "柜深（含门）", source: "柜体" },
+      { key: "cabinetHeight", sym: "H", label: "柜高", source: "柜体" },
+    ] },
+    { group: "材料", fields: [
+      { key: "panelThickness", sym: "CPT", label: "柜身板厚", source: "材料" },
+      { key: "frontPanelThickness", sym: "FPT", label: "门板厚", source: "材料" },
+    ] },
+  ],
+  zoneTypes: [
+    ...FRIDGE_BELOW_TYPES.map((id) => ({ id, label: FRIDGE_ZONE_LABEL[id] })),
+    { id: "fridge", label: FRIDGE_ZONE_LABEL.fridge },
+    ...FRIDGE_ABOVE_TYPES.map((id) => ({ id, label: FRIDGE_ZONE_LABEL[id] })),
   ],
 };
 
@@ -1168,7 +1561,7 @@ const loungeGenerator = {
   minSize: { W: 800, D: 400, H: 300 },
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
-    const color = cabinetColor(finish);
+    const color = cabinetColor(finish, "B");
     return {
       style: "L_SHAPE",
       height: H,
@@ -1287,6 +1680,17 @@ const loungeGenerator = {
   dividers() { return []; },
   setDivider(params) { return params; },
   zoneTypes: [],
+  /** Generator Rules: the run sizes already on the lounge. Lid split stays a workshop rule. */
+  benchShape: "lounge",
+  benchInputs: [
+    { group: "外形", fields: [
+      { key: "style", label: "样式", kind: "select" },
+      { key: "height", sym: "H", label: "座高", source: "柜体" },
+    ] },
+    { group: "材料", fields: [
+      { key: "partitionPanelThickness", sym: "T", label: "板厚", source: "材料" },
+    ] },
+  ],
 };
 
 const bedroomEast = {
@@ -1323,6 +1727,8 @@ const bedroomEast = {
       doorSides: color.doorSides,
       doorColor: color.doorColor,
       doorColorName: color.doorColorName,
+      doorColorB: color.doorColorB,
+      doorColorNameB: color.doorColorNameB,
       colorSlot: color.colorSlot,
     };
   },
@@ -1448,11 +1854,14 @@ const sketchBoard = {
 export const MODULES = {
   smallCabinet,
   overheadCabinet,
+  uShapeOverheadCabinet,
   bedroom,
   bedroomEast,
   bedBox,
   kitchenCabinet,
+  ensuiteCabinet,
   generalTallCabinet,
+  tallFridgeCabinet,
   loungeGenerator,
   bedSideTable,
   bunkBed,
@@ -1465,7 +1874,10 @@ export const MODULES = {
  */
 export const GENERATOR_DIRS = {
   kitchenCabinet: "kitchen",
+  ensuiteCabinet: "kitchen",
+  uShapeOverheadCabinet: "uShapeOverhead",
   generalTallCabinet: "generalTall",
+  tallFridgeCabinet: "generalTall",
   loungeGenerator: "lounge",
 };
 
@@ -1487,6 +1899,24 @@ export function moduleIdForGenerator(dirOrId) {
  * `moduleId` items arm that module; `planned` items are listed but disabled.
  */
 export const MODULE_GROUPS = [
+  {
+    id: "base",
+    label: "Base",
+    sub: "ensuite / kitchen",
+    items: [
+      { moduleId: "ensuiteCabinet", label: "Ensuite", sub: "vanity · no stove" },
+      { moduleId: "kitchenCabinet", label: "Kitchen", sub: "run · stove" },
+    ],
+  },
+  {
+    id: "tall",
+    label: "Tall",
+    sub: "storage / fridge",
+    items: [
+      { moduleId: "generalTallCabinet", label: "Storage", sub: "outer width fixed" },
+      { moduleId: "tallFridgeCabinet", label: "Fridge", sub: "fridge cut-out fixed" },
+    ],
+  },
   {
     id: "bedroom",
     label: "Bedroom",
@@ -1519,9 +1949,7 @@ export const MODULE_GROUPS = [
 ];
 
 /** Placeholders shown in the rail but not yet wired. */
-export const PLANNED_MODULES = [
-  { id: "uShapeOverheadCabinet", label: "U overhead", sub: "three runs" },
-];
+export const PLANNED_MODULES = [];
 
 export function getModule(id) {
   const m = MODULES[id];

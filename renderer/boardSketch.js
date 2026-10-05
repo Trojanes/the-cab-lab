@@ -13,7 +13,8 @@
 //           takes length + angle or dx + dy (the wheel switches), a rectangle
 //           dx + dy, a circle r. Fillet, Chamfer and Offset show their sizes there.
 //   stock   Finish sketch: pick the stock. Create makes one board per outer
-//           shape, all in one undo step.
+//           shape, all in one undo step. Edit sketch reopens one drawn board
+//           on this same sketch; Update writes that board back.
 //
 // Only previews follow the cursor. The sketch is drawn again only when it
 // changes, and the generator runs once per board, on Create. interact.js
@@ -28,12 +29,13 @@ import {
   showSnapMarker, hideSnapMarker, showAlignLines, hideAlignLines, showFaceHint, hideFaceHint, hideInference,
   showSketchPath, hideSketchPath, showSketchSolid, hideSketchSolid, showSketchProfiles, hideSketchProfiles,
   showSketchGuides, hideSketchGuides, showSketchPick, hideSketchPick,
+  syncCabinets, setSketchEditing,
 } from "./cabinets3d.js";
 import { showTip, hideTip } from "./hud.js";
 import { clearHeightAt, minClearHeight } from "./spaces.js";
 import { log } from "./log.js";
 import { doorSwatch } from "./doorSwatches.js";
-import { BOARD_MIN, colourFaceValue, onSketchFace, onSketchPlane, remembered, sketchBoardFromUV, stockChoices } from "./sketchBoard.js";
+import { BOARD_MIN, colourFaceValue, onSketchFace, onSketchPlane, originDelta, remembered, shiftGrooves, sketchBoardFromUV, sketchItemsFromBoard, stockChoices } from "./sketchBoard.js";
 import {
   toUV, fromUV, orthoPoint, polarPoint, roundLength, segmentHitsPath, pathSnaps, perpendicularFoot,
   pointFromEntry, cornerFromPair, screenAxes, ringsTouch, ringRelation, nestRings,
@@ -355,13 +357,55 @@ export function startBoard() {
 
 export function cancelBoard(how) {
   if (!sk) return;
-  const { step, items } = sk;
+  const { step, items, editId } = sk;
   sk = null;
   hideBars();
   clearPreview();
   endFaceView();
   canvas.style.cursor = "";
-  log("board.cancel", { step, how, items: items.length });
+  if (editId) {
+    setSketchEditing(null);
+    syncCabinets();
+  }
+  log("board.cancel", { step, how, items: items.length, id: editId || undefined });
+  ctx.emitMode();
+}
+
+/** Reopen one drawn board on the sketch. B still starts a new sketch. */
+export function startBoardEdit(id) {
+  if (sk && sk.editId === id) { cancelBoard("toggle"); return; }
+  const cab = job.getJob().cabinets.find((c) => c.id === id);
+  if (!cab || cab.moduleId !== "sketchBoard") {
+    log("board.blocked", { id, reason: "not a drawn board" });
+    return;
+  }
+  const restored = sketchItemsFromBoard(cab);
+  if (!restored.ok) {
+    log("board.blocked", { id, reason: restored.reason });
+    return;
+  }
+  if (sk) cancelBoard("tool off");
+  ctx.stopOthers();
+  guideLatch = false;
+  sk = {
+    step: "sketch", editId: id, face: restored.face, tool: null, items: restored.items, history: [],
+    path: [], anchor: null, pick: null, cursor: null, raw: null, client: null, snaps: null, plan: null, sel: null,
+    choice: restored.choice, colorFace: restored.choice.colorFace,
+  };
+  setSketchEditing(id);
+  syncCabinets();
+  hideFaceHint();
+  hideTip();
+  beginFaceView(restored.face);
+  canvas.style.cursor = "default";
+  showBars();
+  drawItems();
+  const arcs = restored.items.reduce((n, it) => n + (it.b || []).filter((b) => b).length, 0);
+  log("board.edit", {
+    id, points: restored.items[0].pts.length, holes: restored.items.length - 1, arcs,
+    plane: cab.params.plane, pull: cab.params.pull,
+  });
+  paintStatus();
   ctx.emitMode();
 }
 
@@ -419,6 +463,7 @@ function back() {
       return;
     }
     if (sk.items.length) { paintStatus("Finish sketch or Cancel on the sketch bar"); return; }
+    if (sk.editId) { cancelBoard("esc"); return; }
     sk.step = "pick";
     sk.face = null;
     hideBars();
@@ -1510,7 +1555,13 @@ function finishSketch(how) {
   if (!sk || sk.step !== "sketch") return;
   if (sk.path.length || sk.anchor) { paintStatus("Finish the shape you are drawing, or Esc to drop it"); return; }
   const { plan, problem } = planBoards();
-  if (problem) { paintStatus(problem); log("board.blocked", { reason: problem, how }); return; }
+  if (problem) { paintStatus(problem); log("board.blocked", { reason: problem, how, id: sk.editId || undefined }); return; }
+  if (sk.editId && plan.boards.length !== 1) {
+    const reason = "This board is one outline — a second shape would be a new board";
+    paintStatus(reason);
+    log("board.blocked", { reason, how, id: sk.editId });
+    return;
+  }
   sk.plan = plan;
   sk.step = "stock";
   sk.pick = null;
@@ -1560,12 +1611,14 @@ function paintCard() {
   }, list.map((c) => el("option", { value: c.id, text: c.label, selected: c.id === sk.choice.id })));
   card._faces = el("div", { class: "move-kind" });
   card._note = el("div", { class: "move-note" });
-  card._ok = el("button", { class: "tb primary", type: "button", text: "Create", onclick: () => create("ok") });
+  card._ok = el("button", { class: "tb primary", type: "button", text: sk.editId ? "Update" : "Create", onclick: () => create(sk.editId ? "update" : "ok") });
   const backBtn = el("button", { class: "tb", type: "button", text: "Back to sketch", onclick: () => back() });
   const n = sk.plan.boards.length;
+  const editing = !!sk.editId;
   card.replaceChildren(
-    el("div", { class: "move-card-title", text: n > 1 ? `${n} boards` : "Board" }),
-    sel, card._faces, card._note,
+    el("div", { class: "move-card-title", text: editing ? "Update board" : n > 1 ? `${n} boards` : "Board" }),
+    editing ? el("div", { class: "move-note", text: `${sk.choice.label} · ${sk.choice.thickness} mm` }) : sel,
+    card._faces, card._note,
     el("div", { class: "move-kind" }, [card._ok, backBtn]),
   );
   paintCardState();
@@ -1581,9 +1634,9 @@ function paintCardState() {
   const open = sk.plan.open ? ` · ${sk.plan.open} open line${sk.plan.open > 1 ? "s are" : " is"} left out` : "";
   card._note.textContent = tight
     ? `${t} mm is thicker than the room (${Math.round(room)} mm)`
-    : `${t} mm${holes ? ` · ${holes} opening${holes > 1 ? "s" : ""}` : ""}${open} · Enter creates · Esc back to the sketch`;
+    : `${t} mm${holes ? ` · ${holes} opening${holes > 1 ? "s" : ""}` : ""}${open} · Enter ${sk.editId ? "updates" : "creates"} · Esc back to the sketch`;
   card._faces.replaceChildren();
-  if (!sk.choice.single) return;
+  if (!sk.choice.single || sk.editId) return;
   for (const [id, label] of [["pull", "Outer face"], ["sketch", "Sketch face"]]) {
     card._faces.append(el("button", {
       class: `tb seg${sk.choice.colorFace === id ? " active" : ""}`, type: "button", text: label,
@@ -1597,6 +1650,48 @@ function paintCardState() {
   }
 }
 
+function poseLog(pose) {
+  const r = (v) => Math.round((Number(v) || 0) * 10) / 10;
+  return { x: r(pose.x), y: r(pose.y), z: r(pose.z), rotX: r(pose.rotX), rotY: r(pose.rotY), rotZ: r(pose.rotZ) };
+}
+
+/** Replace the open board. One undo step. Stock and colour stay as they were. */
+function commitEdit(how, placed) {
+  const id = sk.editId;
+  const face = sk.face;
+  const plan = sk.plan;
+  const cab = job.getJob().cabinets.find((c) => c.id === id);
+  const next = placed[0];
+  if (!cab || !next || plan.boards.length !== 1) return;
+  const from = cab.pose;
+  const params = cab.params.grain ? { ...next.params, grain: cab.params.grain } : next.params;
+  const delta = originDelta(face, from, next.pose);
+  sk = null;
+  hideBars();
+  clearPreview();
+  endFaceView();
+  canvas.style.cursor = "";
+  setSketchEditing(null);
+  job.pushHistory();
+  job.updateCabinet(id, (c) => {
+    c.pose = next.pose;
+    c.params = params;
+    const board = c.overrides?.boards?.BOARD;
+    if (board && board.grooves && (Math.abs(delta.du) > 1e-4 || Math.abs(delta.dv) > 1e-4)) {
+      c.overrides = {
+        ...c.overrides,
+        boards: { ...c.overrides.boards, BOARD: { ...board, grooves: shiftGrooves(board.grooves, delta.du, delta.dv) } },
+      };
+    }
+  });
+  log("board.edit.finish", {
+    id, how, points: params.outline.length, holes: (params.holes || []).length,
+    arcs: params.outline.filter((q) => q.b).length,
+    from: poseLog(from), to: poseLog(next.pose),
+  });
+  ctx.emitMode();
+}
+
 function create(how) {
   if (!sk || sk.step !== "stock") return;
   const room = roomLeft();
@@ -1606,6 +1701,7 @@ function create(how) {
   }
   const placed = placedBoards();
   if (placed.some((p) => !p)) return;
+  if (sk.editId) { commitEdit(how, placed); return; }
   const { choice, face, plan } = sk;
   const colorFace = sk.colorFace === "sketch" ? "sketch" : "pull";
   sk = null;

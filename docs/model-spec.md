@@ -82,6 +82,19 @@ interface Board {
 }
 ```
 
+**Door colour groups.** `job.finish.door.colors[0]` is colour A (upper), `[1]` is
+colour B (lower). One colour in the job: B equals A. A new cabinet copies its
+slot into `doorColorName` (`colorSlot` `A` or `B`) and always keeps
+`doorColorNameB`. A is overhead, U overhead, the north-south bedroom body
+(including T1, which is door stock), the east-west bedroom except the bedside,
+the bunk upper end panel, and a sketch board. B is kitchen and ensuite, the
+small cabinet, the bedside table, the lounge (mid-cabinet doors, drawer fronts
+and the fixed strip above them), general tall and fridge. The bunk lower end
+panel and boot flap use B; the upper end panel uses A. East-west bedside boards
+(`BS_SHOW`, `BS_FRONT_HI`, `BS_FRONT_LO`) use B; `T1`, `WARD_PANEL`,
+`WARD_FIXED`, `WARD_DOOR`, `OHC_FP*` and `OHC_FILLER` use A. Lounge seat fronts
+stay carcass. Existing cabinets keep the colour they copied at creation.
+
 **Sheet id.** Not stored. `sheetMaterial(board, params)` (`_lib/material.ts`) builds
 `{series}-{decor}-{1s|2s}-{thickness}` for the nest: carcass and partition are
 `pvc` (White Stipple, always `2s` — `pvc-white-stipple-2s-15`); door stock takes

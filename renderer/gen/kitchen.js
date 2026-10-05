@@ -643,7 +643,14 @@ var rules_default = {
   STOVE_CUT_FRONT_EXTRA: { value: 100, doc: "\u7076\u53F0\u5207\u5272\u533A y \u2208 [0, FPT+100]\u3002" },
   SLOT_Z_CLEARANCE: { value: 0.5, doc: "\u69FD z = \u677F z \xB1 0.5\u3002" },
   TONGUE_FALLBACK_SLACK: { value: 0.5, doc: "\u69FD\u4FE1\u606F\u7F3A\u5931\u65F6\u820C\u957F = CPT/2 \u2212 0.5\u3002" },
-  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges." }
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges." },
+  LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "B3 bottom-face LED groove width, the same channel as an overhead T3." },
+  LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "B3 bottom-face LED groove depth. It is not cut through the board." },
+  LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "Clear strip from B3's front edge to the near wall of the main LED channel." },
+  LED_GROOVE_BRANCH_END_INSET_MM: { value: 80, doc: "LED branch centres inset from each end of B3. A branch runs from the main channel to B3's rear edge." },
+  APPLIANCE_FLOOR_MIN_CLEAR_WIDTH_MM: { value: 500, doc: "Washer deck: minimum clear width between the column's side panels." },
+  APPLIANCE_FLOOR_MIN_DEPTH_MM: { value: 450, doc: "Washer deck: minimum carcass depth (box depth minus the door)." },
+  APPLIANCE_FLOOR_MIN_SPAN_MM: { value: 80, doc: "Washer deck: minimum Y span from B3's rear edge to the back upright." }
 };
 
 // generators/kitchen/rules.ts
@@ -659,6 +666,70 @@ function frontWorldY(b) {
   const c = U === "y" ? 0 : V === "y" ? 1 : -1;
   if (c < 0) return null;
   return b.y0 + (edge.from[c] + edge.to[c]) / 2;
+}
+function addKitchenB3Led(boards, on) {
+  if (!on) return [];
+  const b3 = boards.find((b) => b.id === "B3");
+  if (!b3) return ["B3 LED groove skipped: B3 board missing."];
+  const width = b3.x1 - b3.x0;
+  const rear = b3.y1 - b3.y0;
+  const W = RULES.LED_GROOVE_WIDTH_MM.value;
+  const inset = RULES.LED_GROOVE_BRANCH_END_INSET_MM.value;
+  const land = RULES.LED_GROOVE_FRONT_LAND_MM.value;
+  const depth = RULES.LED_GROOVE_DEPTH_MM.value;
+  if (depth >= b3.materialThickness - 1e-9) {
+    return [`B3 LED groove skipped: depth ${depth} would cut through the ${b3.materialThickness} mm board.`];
+  }
+  if (width <= inset * 2 + W) {
+    return [`B3 LED groove skipped: board width ${width.toFixed(1)} too narrow for 80 mm end insets.`];
+  }
+  const v0 = land;
+  const v1 = land + W;
+  if (v1 > rear + 1e-6) {
+    return [`B3 LED groove skipped: main channel leaves board depth ${rear.toFixed(1)}.`];
+  }
+  if (rear - v1 <= 1e-6) {
+    return ["B3 LED groove T-branches skipped: no remaining depth behind the main channel."];
+  }
+  const KM = "B3.feat.LED_MAIN";
+  dim(`${KM}.u0`, {}, () => 0);
+  dim(`${KM}.u1`, { w: ref("B3.x1"), x0: ref("B3.x0") }, (t) => t.w - t.x0);
+  dim(`${KM}.v0`, { land: RULES.LED_GROOVE_FRONT_LAND_MM }, (t) => t.land);
+  dim(`${KM}.v1`, { land: RULES.LED_GROOVE_FRONT_LAND_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.land + t.W);
+  addFeature(b3, "B", {
+    id: "B3_LED_MAIN",
+    kind: "tgroove",
+    u0: 0,
+    u1: width,
+    v0,
+    v1,
+    depth,
+    for: "led",
+    key: KM,
+    source: "kitchen",
+    group: "B3.LED"
+  });
+  [0, 1].forEach((i) => {
+    const KB = `B3.feat.LED_BRANCH_${i + 1}`;
+    const x0 = i === 0 ? dim(`${KB}.u0`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.INSET - t.W / 2) : dim(`${KB}.u0`, { w: ref(`${KM}.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET - t.W / 2);
+    const x1 = i === 0 ? dim(`${KB}.u1`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.INSET + t.W / 2) : dim(`${KB}.u1`, { w: ref(`${KM}.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET + t.W / 2);
+    dim(`${KB}.v0`, { v: ref(`${KM}.v1`) }, (t) => t.v);
+    dim(`${KB}.v1`, { rear: ref("B3.y1"), y0: ref("B3.y0") }, (t) => t.rear - t.y0);
+    addFeature(b3, "B", {
+      id: `B3_LED_BRANCH_${i + 1}`,
+      kind: "tgroove",
+      u0: x0,
+      u1: x1,
+      v0: v1,
+      v1: rear,
+      depth,
+      for: "led",
+      key: KB,
+      source: "kitchen",
+      group: "B3.LED"
+    });
+  });
+  return [];
 }
 function buildKitchenFaces(fb) {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
@@ -710,6 +781,21 @@ function buildKitchenFaces(fb) {
       key,
       source: "kitchen.screw"
     });
+  }
+  for (const tongue of fb.applianceTongues ?? []) {
+    for (const [boardId, face] of [[tongue.vLeft, "A"], [tongue.vRight, "B"]]) {
+      const v = B.get(boardId);
+      if (!v) continue;
+      const r = localRect(v, { y: [tongue.y0, tongue.y1], z: [tongue.z0, tongue.z1] });
+      addFeature(v, face, {
+        id: `${tongue.id}-${boardId}`,
+        kind: "groove",
+        ...r,
+        depth: tongue.depth,
+        for: tongue.id,
+        source: "kitchen.washer"
+      });
+    }
   }
   for (const h of fb.hinges) {
     const fp = B.get(h.panelId);
@@ -1147,7 +1233,8 @@ function normalize(input) {
         lockEnabled: zone.lockEnabled !== false,
         lockSideCenterOffset: asNum(zone.lockSideCenterOffset, RULES.LOCK_SIDE_OFFSET.value),
         leftSidePanelOptions: zone.leftSidePanelOptions,
-        rightSidePanelOptions: zone.rightSidePanelOptions
+        rightSidePanelOptions: zone.rightSidePanelOptions,
+        applianceFloorEnabled: zone.applianceFloorEnabled === true
       });
       z = r2(z - zh);
     }
@@ -1169,6 +1256,7 @@ function normalize(input) {
     leftOpts: DEFAULT_SIDE,
     rightOpts: DEFAULT_SIDE,
     cd: r2(D2 - FPT),
+    baseKind: input.baseKind === "ensuite" ? "ensuite" : "kitchen",
     avoidances: (input.wheelAvoidances ?? []).map((a) => ({
       id: a.id,
       x0: Math.round(asNum(a.x0, 0)),
@@ -1196,6 +1284,9 @@ function validate(s, errors, warnings) {
     }
     for (const z of col.zones) {
       if (z.zoneType === "unassigned") errors.push(`Zone ${z.id} in column ${col.id} has no zone type.`);
+      if (s.baseKind === "ensuite" && z.zoneType === "stove") {
+        errors.push(`Ensuite has no stove \u2014 zone ${z.id} in column ${col.id}.`);
+      }
     }
   }
   for (const a of s.avoidances) {
@@ -1230,6 +1321,9 @@ function loopPts(id, axes, pairs, round = false) {
 function traceLocalRect(id, axes, w, h) {
   const o = lit(0);
   return loopPts(id, axes, [[o, o], [w, o], [w, h], [o, h], [o, o]]);
+}
+function rectXZ(w, h) {
+  return [{ x: 0, z: 0 }, { x: w, z: 0 }, { x: w, z: h }, { x: 0, z: h }, { x: 0, z: 0 }];
 }
 function mkBoard(id, name, category, boardType, thickness, kind, plane, axis, x0, x1, y0, y1, z0, z1, profileVector) {
   const box = recordBoardBox(id, r2(x0), r2(x1), r2(y0), r2(y1), r2(z0), r2(z1));
@@ -1714,6 +1808,127 @@ function recordColumns(s) {
     }
   }
 }
+function wheelHit(col, avoidances) {
+  return avoidances.find((a) => a.x1 > a.x0 && a.height > 0 && a.depth > 0 && a.x0 < col.x1 && a.x1 > col.x0);
+}
+function addWasherFloor(s, col, zone, vL, vR) {
+  const errors = [];
+  const warnings = [];
+  const id = `${col.id}-${zone.id}-appliance-floor`;
+  if (s.baseKind !== "ensuite") {
+    errors.push(`Appliance floor in ${zone.id} is only on an ensuite.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  if (zone.zoneType !== "left_door" && zone.zoneType !== "right_door") {
+    errors.push(`Appliance floor in ${zone.id} requires a left or right door (not ${zone.zoneType}).`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  if (s.style2) {
+    errors.push(`Appliance floor in ${zone.id} requires Style 1 bottom clearance.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  const hit = wheelHit(col, s.avoidances);
+  if (hit) {
+    errors.push(`Appliance floor in ${zone.id} is not allowed: column intersects wheel avoidance ${hit.id}.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  const clearX0 = vL.x1;
+  const clearX1 = vR.x0;
+  const clearW = clearX1 - clearX0;
+  const floorY0 = RULES.SUPPORT_STRIP_WIDTH.value;
+  const floorY1 = r2(s.cd - s.CPT);
+  const span = floorY1 - floorY0;
+  if (clearW < RULES.APPLIANCE_FLOOR_MIN_CLEAR_WIDTH_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} needs clear width >= ${RULES.APPLIANCE_FLOOR_MIN_CLEAR_WIDTH_MM.value} mm (got ${r2(clearW)}).`);
+  }
+  if (s.cd < RULES.APPLIANCE_FLOOR_MIN_DEPTH_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} needs structural depth >= ${RULES.APPLIANCE_FLOOR_MIN_DEPTH_MM.value} mm (got ${r2(s.cd)}).`);
+  }
+  if (span < RULES.APPLIANCE_FLOOR_MIN_SPAN_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} has insufficient depth behind B3 (${r2(span)} mm).`);
+  }
+  if (errors.length) return { boards: [], tongue: null, errors, warnings };
+  const tongue = s.CPT / 2;
+  const tongueY0 = r2(floorY0 + span / 3);
+  const tongueY1 = r2(floorY0 + 2 * span / 3);
+  const x0 = r2(clearX0 - tongue);
+  const x1 = r2(clearX1 + tongue);
+  const z0 = s.BCH;
+  const z1 = r2(s.BCH + s.CPT);
+  const X0 = lit(clearX0);
+  const X1 = lit(clearX1);
+  const TX0 = lit(x0);
+  const TX1 = lit(x1);
+  const Y0 = lit(floorY0);
+  const Y1 = lit(floorY1);
+  const TY0 = lit(tongueY0);
+  const TY1 = lit(tongueY1);
+  const outline = loopPts(id, ["x", "y"], [
+    [X0, Y0],
+    [X1, Y0],
+    [X1, TY0],
+    [TX1, TY0],
+    [TX1, TY1],
+    [X1, TY1],
+    [X1, Y1],
+    [X0, Y1],
+    [X0, TY1],
+    [TX0, TY1],
+    [TX0, TY0],
+    [X0, TY0],
+    [X0, Y0]
+  ]);
+  const boards = [
+    mkBoard(
+      id,
+      "Washer floor",
+      "bottom",
+      "appliance_floor",
+      s.CPT,
+      "carcass",
+      "XY",
+      "Z",
+      x0,
+      x1,
+      floorY0,
+      floorY1,
+      z0,
+      z1,
+      outline
+    )
+  ];
+  [0.35, 0.75].forEach((at, index) => {
+    const center = floorY0 + span * at;
+    const y0 = r2(center - s.CPT / 2);
+    const y1 = r2(center + s.CPT / 2);
+    if (y0 < floorY0 + 1 || y1 > floorY1 - 1) return;
+    const sid = `${col.id}-${zone.id}-underside-${index + 1}`;
+    boards.push(mkBoard(
+      sid,
+      `Washer support ${index + 1}`,
+      "bottom",
+      "underside_support",
+      s.CPT,
+      "carcass",
+      "XZ",
+      "Y",
+      clearX0,
+      clearX1,
+      y0,
+      y1,
+      0,
+      s.BCH,
+      rectXZ(clearX1 - clearX0, s.BCH)
+    ));
+  });
+  if (boards.length < 3) warnings.push(`Appliance floor ${id}: underside supports skipped (floor span too short).`);
+  return {
+    boards,
+    tongue: { id, vLeft: vL.id, vRight: vR.id, y0: tongueY0, y1: tongueY1, z0, z1, depth: tongue },
+    errors,
+    warnings
+  };
+}
 function generateKitchenCabinet(input) {
   beginProvenance();
   resetPlans();
@@ -1925,6 +2140,7 @@ function generateKitchenCabinet(input) {
   }
   const requests = [];
   const funcBoards = [];
+  const applianceTongues = [];
   const addFuncBoard = (id, name, boardType, ci, z0, z1, z0e, z1e, isDrawer, zone) => {
     const vL = vPanels[ci], vR = vPanels[ci + 1];
     const clearX0 = vL.x1, clearX1 = vR.x0;
@@ -2026,8 +2242,22 @@ function generateKitchenCabinet(input) {
       }
     }
   });
+  s.columns.forEach((col) => {
+    col.zones.forEach((zone, index) => {
+      if (zone.applianceFloorEnabled && index !== col.zones.length - 1) {
+        errors.push(`Appliance floor in ${zone.id} is only allowed on the bottom zone of a column.`);
+      }
+    });
+  });
   s.columns.forEach((col, ci) => {
     const zone = col.zones[col.zones.length - 1];
+    if (zone?.applianceFloorEnabled) {
+      const made = addWasherFloor(s, col, zone, vPanels[ci], vPanels[ci + 1]);
+      errors.push(...made.errors);
+      warnings.push(...made.warnings);
+      boards.push(...made.boards);
+      if (made.tongue) applianceTongues.push(made.tongue);
+    }
     if (!zone || zone.z0 > BCH + EPS3) return;
     if (!PANEL_ZONE_TYPES.has(zone.zoneType) || zone.zoneType === "drawer" || zone.zoneType === "down_flap") return;
     if (!zone.shelfEnabled) return;
@@ -2624,7 +2854,8 @@ function generateKitchenCabinet(input) {
   for (const b of boards) refreshBoardBox(b);
   flushPlans();
   attachFaces(boards);
-  const joints = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input) });
+  const joints = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input), applianceTongues });
+  warnings.push(...addKitchenB3Led(boards, !s.style2 && input.ledGroove !== false));
   const grain = applyGrain(boards, (b) => b.stock?.kind === "door" ? "front" : null, input, { front: "horizontal" });
   applyDoorSides(boards, input);
   const milling = applyMilling(boards);

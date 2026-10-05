@@ -93,6 +93,152 @@ rewrites the JSON, appends `bench.rule.set` to the usage log with
 `{ module, name, from, to, reason, affected: [keys] }`, runs esbuild for that
 module and answers; the bench reloads and restores its tabs.
 
+## Placement rules (`layout.json`)
+
+Decided 2026‑10‑03 (Generator Rules editor, phase 1 of `GENERATOR_ROOTS_REQUIREMENTS_V2.md`):
+where a board sits is data, so the bench can change it and the change survives
+regeneration. Today only OHC `T1`–`T4`; every other board is still placed in code.
+
+```json
+"T4": {
+  "label": "顶部竖板 T4",
+  "axes": {
+    "x": { "from": "lo", "at": "0", "size": "Cw" },
+    "y": { "from": "hi", "at": "Cd - CPT - clearance", "size": "CPT" },
+    "z": { "from": "hi", "at": "H", "size": "T4_HEIGHT_MM" }
+  }
+}
+```
+
+- One rule per axis: `from` names the driving face (`lo` = x0 / y0 / z0, `hi` =
+  x1 / y1 / z1), `at` is where it sits, `size` the extent. The other face is the
+  driving face ± size, so moving one face moves the whole board along that axis
+  and keeps its size (default mode); `at: "T1.y1"` is a face relation (face mode)
+  in the same record — the two modes never store two answers.
+- Names in `at` / `size`: the generator's inputs (`Cw`, `Cd`, `H`, `CPT`, `FPT`,
+  `TCH`, `clearance`), rule constants by name, another placed board's face
+  (resolved on demand, file order does not matter) or a value recorded earlier
+  (`BP.z1`). Arithmetic and `min max abs floor ceil round sqrt` only
+  (`generators/_lib/expr.ts`, no eval).
+- Provenance keys: `T4.y1` (driving face, formula = `at`), `T4.ySize` (formula =
+  `size`), `T4.y0` (`T4.y1 - T4.ySize`). `debug.placement` lists the rules that
+  placed each board; a board not in it is still placed in code and is not editable.
+- Refused, as `validation.errors` with no boards: unknown name, a chain that comes
+  back to its own axis (`T4.x → T5.x → T4.x goes round in a circle`), size ≤ 0, a
+  malformed file. A box that no longer matches the board's outline (outlines are
+  still in code) is a `validation.warnings` line.
+- `generateOverheadCabinet(params, { layout })` uses a draft instead of the file
+  (live preview); the main app never passes one.
+- `relation: { kind: "contact" | "flush", ref: "T1.y1" }` on an axis = made in face
+  mode; `at` must equal `ref`, on the same axis, not the board itself. Contact is
+  re-checked every run (boxes still overlap in the plane, else a warning); flush
+  implies nothing (no joint, no machining).
+- `outline.corners` `{ FL, FR, RR, RL: { u, v } }` (OHC `T3`): corner points in the
+  placement frame (from the frame's low corner). The default rectangle keeps
+  geometry.ts's outline point for point; otherwise the outline is rebuilt from the
+  corners with the divider notches on the rear edge, the box becomes the outline's
+  extent (`T3.frame.*` keeps the frame) and the frame never moves. Crossing /
+  inside-out corners are refused.
+- `features.<id>.depth` (OHC `T3.LED`): one depth for every segment of the logical
+  feature (`group: "T3.LED"`, `depthKey` on each face feature, provenance
+  `T3.feat.LED.depth`). Depth = board thickness → warning (cuts through); deeper →
+  refused; never cut back silently.
+- Only boards placed before the rules run can be referenced: today BP (OHC); the
+  dividers come later in code (`D1 is placed in code after these boards`).
+- Divider notches in T3 / T4 belong to the dividers: when either board's frame is not
+  at the cabinet origin (moved, resized, T4 taller), its outline is rebuilt with the
+  notches where the dividers are, not carried along with the board (the screw holes
+  into the dividers already behave this way, `XDi - T4.x0`). geometry.ts's outline is
+  used only while the frame sits at the origin with its default size.
+
+## Generator Rules editor (bench UI)
+
+Decided 2026‑10‑03 (phases 2–5). Right-click a module → *Generator rules…* opens it.
+
+- **Other generators, display only** (not started; kitchen is first). The bench shows
+  the formula a face already has. Editing changes an existing parameter (a column
+  width, a row height, a cabinet depth) and the whole cabinet is generated again.
+  Nothing writes a new placement formula, and these modules do not grow a
+  `layout.json`. Three kinds on screen: a parameter the cabinet maker changes, a
+  workshop rule (`rules.json`, a reason is required), and a computed face (the
+  formula is shown, the edit lands on the parameter it uses). A face that comes
+  from the space or from another module (bedroom width, bed-box width and height)
+  is shown that way and is not edited here. Every board face must have a
+  provenance entry whose value matches the face before that module is listed.
+  Bunk and bed box already do. Bedside covers faces and outline points. East-west
+  bedroom records every face; a face that was placed as a millimetre keeps that
+  number until its own formula is named. Kitchen and ensuite are the first module
+  on the bench this way (`benchShape: "base"`): column widths, row heights, kick
+  and stock are the existing parameters; a face keeps the formula the generator
+  already has and is not given a new one. Ensuite offers no stove zone. Storage (`benchShape: "tall"`)
+  edits width, carcass depth, height, stock and side panels; zone heights trade
+  and the stack stays put. Fridge (`benchShape: "fridge"`) edits the cut-out;
+  outer width stays `cut-out + side + 3 CPT` and is not typed. Lounge
+  (`benchShape: "lounge"`) edits the style and the run sizes that style already
+  uses. A lid longer than 1600 still splits by the workshop rule.
+- **生成器界面** (right, the page on entry): the module's `benchInputs` (modules.js)
+  grouped as a cabinetmaker reads them, Chinese names, a source tag (柜体 / 材料 /
+  规则默认; an unset value shows the rule default as placeholder). Changing one
+  re-runs every rule and never rewrites a rule. Zones keep their total (the next
+  zone absorbs a change). Overhead also draws the zone strip and the front
+  elevation, the same editor the main app uses; a module with `frontView` shows
+  that elevation above the fields. The left pane is only the placement draft and
+  `rules.json`.
+- **放置规则 draft box** (left, top): the working copy of `layout.json`. Every edit
+  goes through `tryLayout()`: generated first, refused (with the generator's reason)
+  if the generator refuses it — the last good draft stays. 撤销 / 重做 (Ctrl+Z / Y),
+  放弃, 提交… (reason required; writes `layout.json`, rebuilds the bundle, logs
+  `bench.layout.commit`; scope = the generator template, the main app picks it up when
+  reopened). A face relation confirmed in the bench is only `bench.layout.edit` until
+  that commit — closing the window used to drop it with the page session. The draft
+  now stays in localStorage and the window asks before closing while it is dirty. A commit is refused (`bench.layout.conflict`) when layout.json changed
+  after the draft started (another tab, a teammate, the agent): nothing is overwritten.
+  The bench always generates from the file / draft, never the copy baked into its
+  bundle.
+- Opening the bench shows the generator editor on the right. It does not list
+  boards, and it does not draw the pink / blue outline dots. Right-click any
+  board: 参数调试 · 默认模式, 面的模式, 板件编辑. Those replace the right page
+  until 返回整体. A board in `layout.json` (OHC `T1`–`T4`) edits its placement
+  rule: a face formula moves that board and keeps its size. Any other board is
+  placed in code and the mode shows the formulas it already has. Confirming a new
+  box rule for it is refused (`layout: D2 stays in the generator code`) because
+  the outline would stay behind. It can still be picked as a reference face,
+  including a notch or a half-slot.
+- Right-click a board: 参数调试 · 默认模式 and 面的模式. Orange dimensions
+  are read only and show the size as a formula.
+  Blue face labels are editable in place. In default mode a row under the 3D
+  view lists the module's first-level parameters (`sym` on `benchInputs`, not
+  rule constants). Drag one onto a blue formula to append it; drag a chip in
+  a blue formula back onto that row to remove it. Orange sizes do not take a drop.
+- Clicking an outline point shows that point's two formulas, expanded the same
+  way. The drawing does not label points `P0`, `P1`, …
+- **默认模式**: other boards at 18 % opacity; six position labels (blue, ● = driving
+  face) and three dimension lines (orange) — labels are an HTML overlay laid out in
+  screen space so they never overlap. Panel: per axis, the two faces editable (typing
+  a formula on a face makes it the driving face, the size stays: whole-board move),
+  the size read-only. Formulas show the stored symbols (`CPT`, `Cw`, `T1.y1`);
+  Chinese names still parse if typed (`ruleText.js`).
+  Features that did not follow the board are listed with the formula that ties them
+  (e.g. T4 screw holes `XDi - T4.x0`).
+- **面的模式**: other boards stay solid. **移动 M** drags only the board under
+  edit (`bench.face.move`; the highlight plane is parented on that board and
+  moves with it; `nudge` is display only, 放回 or leaving the mode puts it back). Then ① a face of this board, ② a face of another board (
+  pickable; the raycast looks through them). A notch step, each axis-aligned wall of that notch, a half-slot's walls and floor (groove / T-groove), and a through opening's walls are faces. A slanted edge and a round hole are not: a relation is one axis.
+  Then 接触 or 延伸, plus an optional gap in mm (contact still requires the
+  outlines to overlap; the gap is how far short of touching they stop). Confirming
+  clears the display nudge and the board is already at the new place before 返回整体.
+  Preview: the move along
+  that one axis, the rule it replaces, the real contact area (`faceRegion.js`: outline
+  polygon for big faces, outline edges on the side for edge faces — a notch is not
+  solid). Refused: different axes, contact between same-facing faces, contact with
+  no overlap, a circle. Relations listed with 查看 / 改成公式.
+- **板件编辑** (the board page): corner formulas (u, v), draggable in the 2D view (a
+  corner a notch cut away is a dashed handle); a drag appends `+ Δ` (0.5 mm) to the
+  formula. Feature depth: one field per logical feature; clicking any segment in 2D
+  focuses it and highlights every segment.
+- Checks over the debugging port: `window.__bench` (tryLayout, enterMode, pickFace,
+  screenOf, labelRects …) — the same entry points the UI uses.
+
 ## Presets & pins (`presets.json`)
 
 ```json
@@ -161,10 +307,9 @@ module and answers; the bench reloads and restores its tabs.
 - Right: selection panel (faces / point / joint) with formula, terms (param
   blue · rule orange · ref purple), dependency tree, *Try a formula*, *Pin*,
   *Edit board*, *Report*.
-- Bottom (`]` toggles): **Boards** table; **Audit** — one list, worst first:
-  validation errors / warnings, declared joints with measured AABB status,
-  undeclared overlaps between two plain plates (outlined boards meet through
-  tongues and notches and are skipped), pin diffs. Counts repeat in the status bar.
+- Status bar: error / warning / pin counts (validation, joint gaps and overlaps,
+  undeclared overlaps of two plain plates, pin diffs). Outlined boards meet
+  through tongues and notches and are not counted as overlaps.
 - Top: tabs · preset select · **Preset ▾** (save, save as, pin all, reports
   folder) · breadcrumb · *Report…*.
 - L3: 2D SVG of the board in its plane, point list, local/cabinet toggle,

@@ -213,9 +213,9 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 
 过道端抽屉（aisleAccess = "DRAWER"，两段一起）：和 §10.1 L 端抽屉同一个 frameDrawer——`<side>_front` 不出，换成 `<side>_drawer_strip`（门板料 frontPanelThickness，x 0..SW−T，从顶往下 100 + T）、`<side>_drawer_front`（四周 2，锁孔上边离面顶 22.75）、`<side>_drawer_rail`（固定条背后 100 深，夹在两块托板之间，后 70 舌头 8.5 进托板朝抽屉那面的槽）；托板伸到固定条背面，盖子前边离固定条 2；座面板朝过道的前边改封门板色。开轮拱时轮拱深不能碰到抽屉横条的槽（error `Parallel drawer: …`）。
 
-中柜（框架平行沙发）：hasMiddleCabinet 没设时，两段之间 ≥ MIDDLE_CABINET_MIN_WIDTH 300 就自动放；middleCabinet.width 没设时取 MIDDLE_CABINET_WIDTH 600 和中间空隙里小的那个；比空隙宽是 error（会站进座位里）。实际尺寸在 `result.params.middleCabinet`（null = 没有）。
+中柜（框架平行沙发）：只定宽、深、高——开轮拱时站在避让盖板上表面（z = AH），没开时站在地上（z = 0），middleCabinet.startHeight 不用（上面以后另放 bench top）。hasMiddleCabinet 没设时，两段之间 ≥ MIDDLE_CABINET_MIN_WIDTH 300 就自动放；middleCabinet.width 没设时取 MIDDLE_CABINET_WIDTH 600 和中间空隙里小的那个；比空隙宽是 error（会站进座位里）。实际尺寸在 `result.params.middleCabinet`（null = 没有）。
 
-黄金 `rear-door-parallel`（1880 × 900 × 420，SW 560，AD 380 / AH 270，中柜 502 × 270 × 457 离地 319）：21 块板，盖子 538 × 859。
+黄金 `rear-door-parallel`（1880 × 900 × 420，SW 560，AD 380 / AH 270，中柜 502 × 270 × 457 站在避让盖板上 z 270 → 727）：21 块板，盖子 538 × 859。
 
 ### 10.1 L 端抽屉（lFrontAccess = "DRAWER"，只在框架式 L）
 

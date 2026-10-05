@@ -293,6 +293,26 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.ok(stove.boards.some((x) => x.id === "T3-1" && x.x0 === 0 && x.x1 === 900), "T3 kept full (y does not meet stove cut)");
   const v0p = stove.boards.find((x) => x.id === "V0")!.profileVector as { y: number; z: number }[];
   assert.ok(v0p.some((q) => q.y === 0 && q.z === 880), "edge stove V0 drops T1 front receiver");
+  assert.ok(!stove.validation.errors.some((e) => e.includes("Ensuite has no stove")), "a kitchen run may have a stove");
+}
+
+{
+  const ensuiteStove = generateKitchenCabinet({
+    baseKind: "ensuite",
+    globalSettings: { length: 900, depth: 400, height: 880 },
+    materialThickness: 15,
+    frontThickness: 16,
+    bottomClearanceHeight: 70,
+    columns: [
+      { id: "stove-col", width: 300, zones: [{ id: "st", height: 810, zoneType: "stove" }] },
+      { id: "door-col", width: 600, zones: [{ id: "d", height: 810, zoneType: "left_door" }] },
+    ],
+  });
+  assert.ok(
+    ensuiteStove.validation.errors.some((e) => e === "Ensuite has no stove — zone st in column stove-col."),
+    `ensuite stove refused: ${JSON.stringify(ensuiteStove.validation.errors)}`,
+  );
+  assert.ok(ensuiteStove.boards.some((b) => b.id.startsWith("T1-")), "the stove zone is not rewritten as a door");
 }
 
 /* ---------- 封边：门板颜色 / 柜体颜色，缺口和短边不封 ---------- */
@@ -349,6 +369,47 @@ assert.equal(r.debug?.boardFrame, "final");
   for (const j of r.joints) assert.equal(typeof j.rule, "string", j.id);
   const notch = entries["V1.pv[2].y"];
   assert.ok(Object.values(notch.terms).some((t) => t.kind === "rule" || t.kind === "ref"));
+}
+
+{
+  const ledOf = (result: ReturnType<typeof generateKitchenCabinet>) => {
+    const face = result.boards.find((b) => b.id === "B3")?.faces?.find((f) => f.id === "B");
+    return (face?.features ?? []).filter((f) => f.kind === "tgroove").map((f) => f.id);
+  };
+  const base = {
+    globalSettings: { length: 887, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70, bottomClearanceStyle: "style_1" as const,
+    columns: [{ id: "c1", width: 887, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const }] }],
+  };
+  assert.deepEqual(ledOf(generateKitchenCabinet(base)), ["B3_LED_MAIN", "B3_LED_BRANCH_1", "B3_LED_BRANCH_2"]);
+  assert.deepEqual(ledOf(generateKitchenCabinet({ ...base, ledGroove: false })), []);
+  assert.deepEqual(ledOf(generateKitchenCabinet({ ...base, bottomClearanceStyle: "style_2" })), []);
+  const narrow = generateKitchenCabinet({
+    ...base,
+    globalSettings: { ...base.globalSettings, length: 160 },
+    columns: [{ id: "c1", width: 160, zones: [{ id: "z1", height: 810, zoneType: "left_door" }] }],
+  });
+  assert.ok(narrow.validation.warnings.some((w) => w.includes("too narrow")), narrow.validation.warnings.join("; "));
+
+  const deep = {
+    baseKind: "ensuite" as const,
+    globalSettings: { length: 887, depth: 570, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70, bottomClearanceStyle: "style_1" as const,
+    columns: [{ id: "c1", width: 887, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const, applianceFloorEnabled: true }] }],
+  };
+  const washer = generateKitchenCabinet(deep);
+  assert.deepEqual(washer.validation.errors, [], washer.validation.errors.join("; "));
+  assert.ok(washer.boards.some((b) => b.id === "c1-z1-appliance-floor"));
+  assert.equal(washer.boards.filter((b) => b.id.startsWith("c1-z1-underside-")).length, 2);
+  const kitchenFloor = generateKitchenCabinet({ ...deep, baseKind: "kitchen" });
+  assert.ok(kitchenFloor.validation.errors.some((e) => e.includes("only on an ensuite")));
+  assert.ok(!kitchenFloor.boards.some((b) => b.boardType === "appliance_floor"));
+  const blocked = generateKitchenCabinet({
+    ...deep,
+    wheelAvoidances: [{ id: "w1", x0: 100, x1: 500, height: 300, depth: 200 }],
+  });
+  assert.ok(blocked.validation.errors.some((e) => e.includes("wheel avoidance w1")));
+  assert.ok(!blocked.boards.some((b) => b.boardType === "appliance_floor"));
 }
 
 console.log("kitchen: all golden tests passed");

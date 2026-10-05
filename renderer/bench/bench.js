@@ -12,8 +12,14 @@ import { showTip, hideTip } from "../hud.js";
 import { log } from "../log.js";
 import { collectPins, pinsForBoard, mergePins, checkPins, countPins } from "../gen/pins.js";
 import { renderBoard2D, boardPoints, planeAxes } from "./board2d.js";
-import { entryOf, FACES, tree, usesRule, usesParam, affectedByRule, affectedBy, boardsOfKeys, fmt, evaluate, varsFor } from "./provenance.js";
+import { entryOf, FACES, tree, usesRule, usesParam, affectedByRule, affectedBy, boardsOfKeys, fmt, evaluate, varsFor, flatFormula } from "./provenance.js";
 import { planExplode, assemblyOffsets, radialOffsets, explodeUnit, dirLabel, separation } from "./explode.js";
+import { nameTable, toDisplay, fromDisplay, FACE_NAMES, SIZE_NAMES, AXIS_NAMES, CORNER_NAMES, withOffset, sizeFormula, addParam, removeParam, formulaPieces } from "./ruleText.js";
+import { createDraft, isDirty, commitEdit, undo as undoDraft, redo as redoDraft, discard as discardDraft, rebase, setFace, setRelation, setCorner, setFeatureDepth, diffLayouts, movedBoards, ensureBoard } from "./draft.js";
+import { fridgeFix, fridgeParts, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths } from "../modules.js";
+import { fridgeCabinetWidth } from "../gen/generalTall.js";
+import { buildDefaultAnnotations, disposeAnnotations, LabelOverlay } from "./annotate.js";
+import { faceAt, faceRegion, overlapArea } from "./faceRegion.js";
 
 const bridge = window.cablab || null;
 const bench = bridge && bridge.bench;
@@ -31,12 +37,13 @@ const cache = new Map(); // tabId -> { result, prov, boards: Map, presets, rules
 function saveState() {
   try {
     const tabs = state.tabs.map((t) => ({ ...t, tryout: null }));
-    sessionStorage.setItem(STATE_KEY, JSON.stringify({ tabs, active: state.active }));
+    // localStorage survives closing the bench window. sessionStorage does not, so a draft died on close.
+    localStorage.setItem(STATE_KEY, JSON.stringify({ tabs, active: state.active }));
   } catch (_) { /* nothing */ }
 }
 function loadState() {
   try {
-    const raw = JSON.parse(sessionStorage.getItem(STATE_KEY) || "null");
+    const raw = JSON.parse(localStorage.getItem(STATE_KEY) || sessionStorage.getItem(STATE_KEY) || "null");
     if (raw && Array.isArray(raw.tabs)) {
       state = { tabs: raw.tabs, active: Math.min(raw.active, raw.tabs.length - 1) };
       tabSeq = raw.tabs.reduce((m, t) => Math.max(m, Number(String(t.id).split("-")[1]) || 0), 0);
@@ -63,13 +70,15 @@ function newTab(moduleId, { presetId = null, params = null, label = null } = {})
     opacity: 1,
     cut: { x: 1, y: 1, z: 1 },
     showJoints: true,
-    showPoints: true,
+    showPoints: false,
     selection: null,   // { kind: "board"|"point"|"joint"|"face", id, key?, keys?, label? }
     l3: null,          // board id being edited
     frame: "local",
     labels: true,
     tryout: null,      // { key, expr, value }
     camera: null,
+    draft: null,       // placement-rule draft (draft.js), when the module has layout.json
+    mode: null,        // { kind: "default" | "face", board, pick? } — a board's parameter mode
   };
 }
 
@@ -88,11 +97,18 @@ async function loadRules(moduleId) {
   try { return { rules: JSON.parse(res.text), path: res.path }; } catch (_) { return { rules: {}, path: res.path }; }
 }
 
-function generate(moduleId, params) {
+async function loadLayout(moduleId) {
+  if (!bench?.readLayout) return null;
+  const res = await bench.readLayout(moduleId);
+  if (!res || !res.text) return null;
+  try { return { layout: JSON.parse(res.text), path: res.path }; } catch (err) { log("bench.layout.corrupt", { module: moduleId, message: err.message }); return null; }
+}
+
+function generate(moduleId, params, layout = null) {
   const mod = MODULES[moduleId];
   if (!mod) return { boards: [], features: [], validation: { errors: [`unknown module ${moduleId}`], warnings: [] }, debug: {} };
   try {
-    return mod.generate(params);
+    return layout ? mod.generate(params, { layout }) : mod.generate(params);
   } catch (err) {
     log("bench.generate.failed", { module: moduleId, message: err.message, stack: err.stack });
     return { boards: [], features: [], validation: { errors: [`generator threw: ${err.message}`], warnings: [] }, debug: {} };
@@ -105,20 +121,25 @@ async function refresh({ keepCamera = true } = {}) {
   if (!t) { renderTabs(); renderEmpty(); return; }
   let c = cache.get(t.id);
   if (!c || c.moduleId !== t.moduleId) {
-    c = { moduleId: t.moduleId, presets: await loadPresets(t.moduleId), rules: await loadRules(t.moduleId) };
+    c = { moduleId: t.moduleId, presets: await loadPresets(t.moduleId), rules: await loadRules(t.moduleId), layoutFile: await loadLayout(t.moduleId) };
     cache.set(t.id, c);
   }
   if (!t.params) {
-    const preset = c.presets.presets.find((p) => p.id === t.presetId) || c.presets.presets[0];
+    const list = presetsFor(t.moduleId, c.presets);
+    const preset = list.find((p) => p.id === t.presetId) || list[0];
     if (preset) { t.presetId = preset.id; t.params = structuredClone(preset.params); }
     else t.params = MODULES[t.moduleId]?.defaults?.(1200, 350, 400) || {};
   }
-  c.result = generate(t.moduleId, t.params);
+  // The draft starts as the file. A draft saved before the file changed (another commit) starts again from the file.
+  if (c.layoutFile && (!t.draft || JSON.stringify(t.draft.base) !== JSON.stringify(c.layoutFile.layout)) && !isDirty(t.draft)) t.draft = createDraft(c.layoutFile.layout);
+  if (!c.layoutFile) t.draft = null;
+  // Always the file / draft, never the copy baked into the bundle: after a commit the bundle is stale until a reload.
+  c.result = generate(t.moduleId, t.params, t.draft ? t.draft.layout : null);
   c.prov = c.result.debug?.provenance || { entries: {}, rules: {} };
   c.boards = new Map((c.result.boards || []).map((b) => [b.id, b]));
   renderTabs();
   renderPresetSelect();
-  renderParams();
+  renderDraftBox();
   renderRules();
   build3D(keepCamera);
   renderBottom();
@@ -160,6 +181,7 @@ function activateTab(i) {
 }
 function closeTab(i) {
   const t = state.tabs[i];
+  if (isDirty(t.draft) && !window.confirm("这个页签有未提交的规则修改，关闭就会丢掉。继续？")) return;
   cache.delete(t.id);
   state.tabs.splice(i, 1);
   if (state.active >= state.tabs.length) state.active = state.tabs.length - 1;
@@ -205,12 +227,28 @@ async function pickModule() {
 
 // --- presets ---------------------------------------------------------------------------
 
+/** Presets this tab should offer. Storage and Fridge share generalTall/presets.json;
+ *  each tab only lists the cabinets of its own kind. */
+function presetsFor(moduleId, file) {
+  const all = file?.presets || [];
+  const fridge = (p) => (p.params?.zones || []).some((z) => z.type === "fridge");
+  if (moduleId === "tallFridgeCabinet") {
+    const hit = all.filter(fridge);
+    return hit.length ? hit : all;
+  }
+  if (moduleId === "generalTallCabinet") {
+    const hit = all.filter((p) => !fridge(p));
+    return hit.length ? hit : all;
+  }
+  return all;
+}
+
 function renderPresetSelect() {
   const t = tab();
   const c = cur();
   const sel = $("#presetSel");
   sel.replaceChildren();
-  for (const p of c?.presets?.presets || []) {
+  for (const p of presetsFor(t?.moduleId, c?.presets)) {
     const o = document.createElement("option");
     o.value = p.id;
     o.textContent = `${p.label || p.id} · ${countPins(p.pins || {})} pins`;
@@ -220,7 +258,7 @@ function renderPresetSelect() {
   custom.value = "";
   custom.textContent = t?.presetId ? "— custom (edited) —" : "custom params";
   sel.append(custom);
-  sel.value = t?.presetId && (c?.presets?.presets || []).some((p) => p.id === t.presetId) ? t.presetId : "";
+  sel.value = t?.presetId && presetsFor(t.moduleId, c?.presets).some((p) => p.id === t.presetId) ? t.presetId : "";
 }
 $("#presetSel").addEventListener("change", (e) => {
   const t = tab();
@@ -277,29 +315,23 @@ async function writePresets(c) {
 
 // --- params form -----------------------------------------------------------------------
 
-// Numbers are folded by default: the preset is the usual entry point.
-const PARAMS_OPEN_KEY = "cablab.bench.paramsOpen";
-let paramsOpen = false;
-try { paramsOpen = localStorage.getItem(PARAMS_OPEN_KEY) === "1"; } catch (_) { /* start folded */ }
-function applyParamsFold() {
-  $("#paramsForm").classList.toggle("hidden", !paramsOpen);
-  $("#paramsFold .fold-caret").textContent = paramsOpen ? "▾" : "▸";
-}
-$("#paramsFold").addEventListener("click", () => {
-  paramsOpen = !paramsOpen;
-  try { localStorage.setItem(PARAMS_OPEN_KEY, paramsOpen ? "1" : "0"); } catch (_) { /* not persisted */ }
-  applyParamsFold();
-});
-
-function renderParams() {
+/** Fill `form` with this generator's inputs. Shown on the right, not the left. */
+function renderParamsInto(form) {
   const t = tab();
-  const form = $("#paramsForm");
   form.replaceChildren();
-  applyParamsFold();
-  const env = t?.params && MODULES[t.moduleId]?.envelope ? safeEnvelope(t) : null;
-  $("#paramsSummary").textContent = env ? `${fmt(env.W)} × ${fmt(env.D)} × ${fmt(env.H)}` : "";
   if (!t || !t.params) return;
   const mod = MODULES[t.moduleId];
+  if (mod?.benchShape === "base") { renderBaseInputs(form, mod, t); return; }
+  if (mod?.benchShape === "tall") { renderTallInputs(form, mod, t); return; }
+  if (mod?.benchShape === "fridge") { renderFridgeInputs(form, mod, t); return; }
+  if (mod?.benchShape === "lounge") { renderLoungeInputs(form, mod, t); return; }
+  if (mod?.benchShape === "bedroom") { renderBedroomInputs(form, mod, t); return; }
+  if (mod?.benchShape === "bunk") { renderBunkInputs(form, mod, t); return; }
+  if (mod?.benchShape === "bedBox") { renderBedBoxInputs(form, mod, t); return; }
+  if (mod?.benchShape === "bedSide") { renderBedSideInputs(form, mod, t); return; }
+  if (mod?.benchShape === "small") { renderSmallInputs(form, mod, t); return; }
+  if (mod?.benchShape === "uShape") { renderUShapeInputs(form, mod, t); return; }
+  if (mod?.benchInputs) { renderInputs(form, mod, t); return; }
   const keys = Object.keys(t.params);
   // Show envelope-ish keys first.
   const order = ["cabinetWidth", "cabinetDepth", "cabinetHeight", "style"];
@@ -347,6 +379,695 @@ function renderParams() {
     form.append(hint);
   }
 }
+/** Symbol → Chinese name for the active tab's generator (inputs + rules.json labels). */
+function names() {
+  const t = tab();
+  const c = cur();
+  return nameTable(MODULES[t?.moduleId]?.benchInputs || [], c?.rules?.rules || {});
+}
+const ruleValue = (name) => cur()?.rules?.rules?.[name]?.value;
+
+/**
+ * Overall inputs (Generator Rules › 整体输入): what this cabinet is, grouped as
+ * a cabinetmaker reads it. Changing one re-runs every rule; it never rewrites a rule.
+ */
+function renderInputs(form, mod, t) {
+  const p = t.params;
+  const field = (f) => {
+    const row = h("label", { class: `field input-field${f.kind === "bool" ? " check" : ""}`, title: f.sym ? `公式里写作 ${f.sym}` : "" });
+    const has = p[f.key] != null;
+    const fallback = f.rule ? ruleValue(f.rule) : f.default;
+    row.append(h("span", { class: "in-label" }, [
+      h("span", { text: f.label }),
+      f.source ? h("span", { class: `src src-${f.source}`, text: has || !f.rule ? f.source : `${f.source} · 未设`, title: f.rule && !has ? `没有填写：用规则 ${f.rule} = ${fallback}` : "" }) : null,
+    ]));
+    let input;
+    if (f.kind === "bool") {
+      input = h("input", { type: "checkbox" });
+      input.checked = has ? !!p[f.key] : !!fallback;
+      input.addEventListener("change", () => setParam(f.key, input.checked));
+    } else if (f.kind === "select") {
+      input = h("select", {}, f.options.map(([v, label]) => h("option", { value: v, text: label })));
+      input.value = String(p[f.key] ?? f.options[0][0]);
+      input.addEventListener("change", () => setParam(f.key, input.value));
+    } else {
+      input = h("input", { type: "number", step: "0.5" });
+      input.value = has ? String(p[f.key]) : "";
+      if (!has && fallback != null) input.placeholder = String(fallback);
+      input.addEventListener("change", () => {
+        const v = Number(input.value);
+        if (input.value === "" && f.rule) { const next = { ...t.params }; delete next[f.key]; setParams(next, f.key, p[f.key], null); return; }
+        if (!Number.isFinite(v) || v <= 0) { input.classList.add("bad"); return; }
+        if (f.key === "cabinetWidth" && mod.setEnvelope) { setParams(mod.setEnvelope(t.params, { W: v }), f.key, p[f.key], v); return; }
+        setParam(f.key, v);
+      });
+    }
+    row.append(input);
+    return row;
+  };
+  for (const g of mod.benchInputs) {
+    // Overhead draws the zones as a strip above this form.
+    if (g.kind === "zones" && mod.id === "overheadCabinet") continue;
+    form.append(h("div", { class: "in-group", text: g.group }));
+    if (g.kind === "zones") { form.append(zonesEditor(mod, t)); continue; }
+    for (const f of g.fields) form.append(field(f));
+    if (g.group === "柜体尺寸" && p.cabinetDepth != null) {
+      const fpt = p.frontPanelThickness ?? ruleValue("DEFAULT_FRONT_PANEL_THICKNESS_MM") ?? 0;
+      form.append(h("div", { class: "empty small", text: `含门总深度 = 柜身深度 + 门板厚 = ${fmt(p.cabinetDepth + fpt)}（主程序面板里填的是这个数）` }));
+    }
+  }
+}
+
+/** Zones left → right: type and width. A width change is absorbed by the next zone (the last by the one before); the total stays the cabinet width. */
+function zonesEditor(mod, t) {
+  const zones = t.params.zones || [];
+  const wrap = h("div", { class: "zones-edit" });
+  const total = t.params.cabinetWidth;
+  const set = (next, what) => setParams({ ...t.params, zones: next }, `zones.${what}`, null, next.map((z) => z.width));
+  zones.forEach((z, i) => {
+    const type = h("select", {}, (mod.zoneTypes || []).map((zt) => h("option", { value: zt.id, text: zt.label })));
+    type.value = z.type;
+    type.addEventListener("change", () => set(zones.map((zz, k) => (k === i ? { ...zz, type: type.value } : zz)), "type"));
+    const w = h("input", { type: "number", step: "10" });
+    w.value = String(z.width);
+    w.addEventListener("change", () => {
+      const n = i < zones.length - 1 ? i + 1 : i - 1;
+      if (n < 0) { w.value = String(z.width); return; }
+      const max = z.width + zones[n].width - MIN_ZONE_WIDTH;
+      const v = Math.max(MIN_ZONE_WIDTH, Math.min(max, Math.round(Number(w.value))));
+      if (!Number.isFinite(v)) { w.value = String(z.width); return; }
+      const next = zones.map((zz) => ({ ...zz }));
+      next[n].width = Math.round((next[n].width - (v - next[i].width)) * 10) / 10;
+      next[i].width = v;
+      set(next, "width");
+    });
+    const del = h("button", { class: "tb icon", text: "×", title: "删除这个分区（宽度按比例分给其余分区）", disabled: zones.length < 2 ? "" : null });
+    del.addEventListener("click", () => set(fitZoneWidths(zones.filter((_, k) => k !== i), total), "remove"));
+    wrap.append(h("div", { class: "zone-row" }, [h("span", { class: "muted", text: String(i + 1) }), type, w, del]));
+  });
+  const add = h("button", { class: "tb", text: "+ 分区" });
+  add.addEventListener("click", () => {
+    if ((zones.length + 1) * MIN_ZONE_WIDTH > total) return;
+    set(fitZoneWidths([...zones, { id: `zone-${Date.now().toString(36)}`, type: "up_flap", width: MIN_ZONE_WIDTH }], total), "add");
+  });
+  wrap.append(h("div", { class: "zone-foot" }, [add, h("span", { class: "muted", text: `合计 ${fmt(zones.reduce((s, z) => s + z.width, 0))} = 柜宽 ${fmt(total)}` })]));
+  return wrap;
+}
+
+/** Kitchen / ensuite: edit the parameters the generator already has. Columns trade width; rows in a column trade height. */
+function renderBaseInputs(form, mod, t) {
+  const p = t.params;
+  const gs = p.globalSettings || {};
+  const num = (label, value, apply, step = "1") => {
+    const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
+    input.addEventListener("change", () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v <= 0) { input.classList.add("bad"); return; }
+      apply(v);
+    });
+    return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
+  };
+  form.append(h("div", { class: "in-group", text: "柜体尺寸" }));
+  form.append(num("柜宽", gs.length, (v) => setParams(mod.setEnvelope(p, { W: v }), "globalSettings.length", gs.length, v)));
+  form.append(num("柜深（含门）", gs.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "globalSettings.depth", gs.depth, v)));
+  form.append(num("柜高", gs.height, (v) => setParams(mod.setEnvelope(p, { H: v }), "globalSettings.height", gs.height, v)));
+  form.append(h("div", { class: "in-group", text: "材料" }));
+  form.append(num("柜身板厚", p.materialThickness, (v) => setParam("materialThickness", v), "0.5"));
+  form.append(num("门板厚", p.frontThickness, (v) => setParam("frontThickness", v), "0.5"));
+  form.append(num("门缝", p.frontClearance, (v) => setParam("frontClearance", v), "0.5"));
+  form.append(h("div", { class: "in-group", text: "踢脚" }));
+  form.append(num("踢脚高度", p.bottomClearanceHeight, (v) => {
+    const next = structuredClone(p);
+    next.bottomClearanceHeight = v;
+    setParams(mod.setEnvelope(next, { H: gs.height }), "bottomClearanceHeight", p.bottomClearanceHeight, v);
+  }));
+  const kick = h("select", {}, [["style_1", "内凹"], ["style_2", "齐平"]].map(([v, label]) => h("option", { value: v, text: label })));
+  kick.value = p.bottomClearanceStyle || "style_1";
+  kick.addEventListener("change", () => setParam("bottomClearanceStyle", kick.value));
+  form.append(h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: "踢脚" })]), kick]));
+  form.append(h("div", { class: "in-group", text: "列和行" }));
+  form.append(baseColumnsEditor(mod, t));
+  if (mod.id === "ensuiteCabinet") form.append(h("div", { class: "empty small", text: "浴室柜没有灶台。列上若已是灶台，生成器会报错，不会把它改成门。" }));
+}
+
+function baseColumnsEditor(mod, t) {
+  const columns = (t.params.columns || []).map((c) => ({ ...c, zones: (c.zones || []).map((z) => ({ ...z })) }));
+  const total = t.params.globalSettings?.length;
+  const zoneRoom = Math.round(((t.params.globalSettings?.height || 0) - (t.params.bottomClearanceHeight || 0)) * 10) / 10;
+  const wrap = h("div", { class: "zones-edit" });
+  const commit = (next, what) => setParams({ ...t.params, columns: next }, `columns.${what}`, null, next.map((c) => c.width));
+  const types = mod.zoneTypes || [];
+  columns.forEach((col, i) => {
+    const w = h("input", { type: "number", step: "10", value: String(col.width) });
+    w.addEventListener("change", () => {
+      const n = i < columns.length - 1 ? i + 1 : i - 1;
+      if (n < 0) { w.value = String(col.width); return; }
+      const max = col.width + columns[n].width - MIN_ZONE_WIDTH;
+      const v = Math.max(MIN_ZONE_WIDTH, Math.min(max, Math.round(Number(w.value))));
+      if (!Number.isFinite(v)) { w.value = String(col.width); return; }
+      const next = columns.map((c) => ({ ...c, zones: c.zones.map((z) => ({ ...z })) }));
+      next[n].width = Math.round((next[n].width - (v - next[i].width)) * 10) / 10;
+      next[i].width = v;
+      commit(next, "width");
+    });
+    const del = h("button", { class: "tb icon", text: "×", title: "删除这一列，宽度分给其余列", disabled: columns.length < 2 ? "" : null });
+    del.addEventListener("click", () => commit(fitZoneWidths(columns.filter((_, k) => k !== i), total), "remove"));
+    wrap.append(h("div", { class: "zone-row" }, [h("span", { class: "muted", text: `列 ${i + 1}` }), w, del]));
+    (col.zones || []).forEach((z, zi) => {
+      const type = h("select", {}, types.map((zt) => h("option", { value: zt.id, text: zt.label })));
+      type.value = z.zoneType || types[0]?.id;
+      type.addEventListener("change", () => {
+        const next = columns.map((c) => ({ ...c, zones: c.zones.map((zz) => ({ ...zz })) }));
+        next[i].zones[zi].zoneType = type.value;
+        commit(next, "type");
+      });
+      const hgt = h("input", { type: "number", step: "10", value: String(z.height) });
+      hgt.addEventListener("change", () => {
+        const zones = col.zones;
+        const n = zi < zones.length - 1 ? zi + 1 : zi - 1;
+        if (n < 0) { hgt.value = String(z.height); return; }
+        const max = z.height + zones[n].height - MIN_ZONE_HEIGHT;
+        const v = Math.max(MIN_ZONE_HEIGHT, Math.min(max, Math.round(Number(hgt.value))));
+        if (!Number.isFinite(v)) { hgt.value = String(z.height); return; }
+        const next = columns.map((c) => ({ ...c, zones: c.zones.map((zz) => ({ ...zz })) }));
+        next[i].zones[n].height = Math.round((next[i].zones[n].height - (v - next[i].zones[zi].height)) * 10) / 10;
+        next[i].zones[zi].height = v;
+        commit(next, "height");
+      });
+      const zd = h("button", { class: "tb icon", text: "×", title: "删除这一行，高度给相邻的行", disabled: (col.zones || []).length < 2 ? "" : null });
+      zd.addEventListener("click", () => {
+        const next = columns.map((c) => ({ ...c, zones: c.zones.map((zz) => ({ ...zz })) }));
+        const zones = next[i].zones;
+        const heir = zi < zones.length - 1 ? zi + 1 : zi - 1;
+        if (heir < 0) return;
+        zones[heir].height = Math.round((zones[heir].height + zones[zi].height) * 10) / 10;
+        zones.splice(zi, 1);
+        commit(next, "zoneRemove");
+      });
+      wrap.append(h("div", { class: "zone-row" }, [h("span", { class: "muted", text: `行 ${zi + 1}` }), type, hgt, zd]));
+    });
+    const addRow = h("button", { class: "tb", text: "+ 行" });
+    addRow.addEventListener("click", () => {
+      const zones = col.zones || [];
+      if (!zones.length || zones.reduce((s, z) => s + z.height, 0) < (zones.length + 1) * MIN_ZONE_HEIGHT) return;
+      const next = columns.map((c) => ({ ...c, zones: c.zones.map((zz) => ({ ...zz })) }));
+      const zs = next[i].zones;
+      let tallest = 0;
+      zs.forEach((z, k) => { if (z.height > zs[tallest].height) tallest = k; });
+      if (zs[tallest].height < MIN_ZONE_HEIGHT * 2) return;
+      const give = Math.min(200, Math.round(zs[tallest].height / 2));
+      if (zs[tallest].height - give < MIN_ZONE_HEIGHT) return;
+      zs[tallest].height = Math.round((zs[tallest].height - give) * 10) / 10;
+      zs.unshift({ id: `z-${Date.now().toString(36)}`, height: give, zoneType: "left_door" });
+      commit(next, "zoneAdd");
+    });
+    wrap.append(h("div", { class: "zone-foot" }, [addRow]));
+  });
+  const addCol = h("button", { class: "tb", text: "+ 列" });
+  addCol.addEventListener("click", () => {
+    if ((columns.length + 1) * MIN_ZONE_WIDTH > total) return;
+    const zoneH = zoneRoom;
+    commit(fitZoneWidths([...columns, { id: `c-${Date.now().toString(36)}`, width: MIN_ZONE_WIDTH, zones: [{ id: "z1", height: zoneH, zoneType: "left_door" }] }], total), "add");
+  });
+  wrap.append(h("div", { class: "zone-foot" }, [addCol, h("span", { class: "muted", text: `列宽合计应等于柜宽 ${fmt(total)}。每列行高合计应等于柜高减踢脚 ${fmt(zoneRoom)}。` })]));
+  return wrap;
+}
+
+function carcassDepth(p) {
+  const fpt = p.frontPanelThickness ?? p.frontFaceAllowance ?? p.doorPanelThickness ?? 16;
+  return Math.round(((p.cabinetDepth ?? 0) - fpt) * 10) / 10;
+}
+
+function tallSideMode(p, side) {
+  const t = p[side === "left" ? "leftSidePanelThickness" : "rightSidePanelThickness"] ?? 0;
+  if (!(t > 0)) return "none";
+  return p[side === "left" ? "leftSidePanelFinish" : "rightSidePanelFinish"] === "colour" ? "colour" : "carcass";
+}
+
+function withTallSide(p, side, mode) {
+  const cpt = p.panelThickness ?? 15;
+  const fpt = p.frontPanelThickness ?? 16;
+  const t = mode === "none" ? 0 : mode === "colour" ? fpt : cpt;
+  const thick = side === "left" ? "leftSidePanelThickness" : "rightSidePanelThickness";
+  const fin = side === "left" ? "leftSidePanelFinish" : "rightSidePanelFinish";
+  return { ...p, [thick]: t, [fin]: mode === "colour" ? "colour" : "carcass" };
+}
+
+function restampTallSides(p) {
+  let next = p;
+  for (const side of ["left", "right"]) {
+    const mode = tallSideMode(p, side);
+    if (mode !== "none") next = withTallSide(next, side, mode);
+  }
+  return next;
+}
+
+function segButtons(options, now, onPick) {
+  return h("div", { class: "seg-group" }, options.map(([id, text]) => h("button", {
+    type: "button", class: `tb seg${now === id ? " active" : ""}`, text, onclick: () => onPick(id),
+  })));
+}
+
+function renderTallInputs(form, mod, t) {
+  const p = t.params;
+  const num = (label, value, apply, step = "1") => {
+    const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
+    input.addEventListener("change", () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v <= 0) { input.classList.add("bad"); return; }
+      apply(v);
+    });
+    return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
+  };
+  form.append(h("div", { class: "in-group", text: "柜体尺寸" }));
+  form.append(num("柜宽", p.cabinetWidth, (v) => setParams(mod.setEnvelope(p, { W: v }), "cabinetWidth", p.cabinetWidth, v)));
+  form.append(num("柜身深度（不含门）", carcassDepth(p), (v) => setParams(mod.setEnvelope(p, { D: v }), "cabinetDepth", carcassDepth(p), v)));
+  form.append(num("柜高", p.cabinetHeight, (v) => setParams(mod.setEnvelope(p, { H: v }), "cabinetHeight", p.cabinetHeight, v)));
+  form.append(h("div", { class: "in-group", text: "材料" }));
+  form.append(num("柜身板厚", p.panelThickness, (v) => setParams(restampTallSides({ ...p, panelThickness: v }), "panelThickness", p.panelThickness, v), "0.5"));
+  form.append(num("门板厚", p.frontPanelThickness, (v) => setParams(restampTallSides({ ...p, frontPanelThickness: v }), "frontPanelThickness", p.frontPanelThickness, v), "0.5"));
+  form.append(h("div", { class: "in-group", text: "侧板" }));
+  for (const [side, label] of [["left", "左侧"], ["right", "右侧"]]) {
+    form.append(h("div", { class: "field input-field" }, [
+      h("span", { class: "in-label" }, [h("span", { text: label })]),
+      segButtons([["none", "无"], ["carcass", "柜身"], ["colour", "门板"]], tallSideMode(p, side), (mode) => {
+        const next = withTallSide(p, side, mode);
+        setParams(next, `${side}Side`, tallSideMode(p, side), mode);
+      }),
+    ]));
+  }
+  form.append(h("div", { class: "empty small", text: "柜身侧板用柜身板厚，门板色侧板用门板厚。两边可以同时有。" }));
+  form.append(h("div", { class: "in-group", text: "区域（从地面往上）" }));
+  form.append(tallZonesEditor(mod, t));
+}
+
+function tallZonesEditor(mod, t) {
+  const zones = (t.params.zones || []).map((z) => ({ ...z }));
+  const wrap = h("div", { class: "zones-edit" });
+  const commit = (next, what) => setParams({ ...t.params, zones: next }, `zones.${what}`, null, next.map((z) => z.height));
+  const types = mod.zoneTypes || [];
+  zones.forEach((z, i) => {
+    const type = h("select", {}, types.map((zt) => h("option", { value: zt.id, text: zt.label })));
+    type.value = types.some((zt) => zt.id === z.type) ? z.type : (types[0]?.id || z.type);
+    type.addEventListener("change", () => {
+      const next = zones.map((zz) => ({ ...zz }));
+      next[i].type = type.value;
+      commit(next, "type");
+    });
+    const hgt = h("input", { type: "number", step: "10", value: String(z.height) });
+    hgt.addEventListener("change", () => {
+      const n = i < zones.length - 1 ? i + 1 : i - 1;
+      const v = Math.round(Number(hgt.value));
+      if (!Number.isFinite(v)) { hgt.value = String(z.height); return; }
+      if (n < 0) {
+        setParams(mod.setEnvelope(t.params, { H: t.params.cabinetHeight + (v - z.height) }), "zones.height", z.height, v);
+        return;
+      }
+      const max = z.height + zones[n].height - MIN_ZONE_HEIGHT;
+      const nextH = Math.max(MIN_ZONE_HEIGHT, Math.min(max, v));
+      const next = zones.map((zz) => ({ ...zz }));
+      next[n].height = Math.round((next[n].height - (nextH - next[i].height)) * 10) / 10;
+      next[i].height = nextH;
+      commit(next, "height");
+    });
+    const del = h("button", { class: "tb icon", text: "×", title: "删掉这一格，高度给下面一格", disabled: zones.length < 2 ? "" : null });
+    del.addEventListener("click", () => {
+      const next = zones.map((zz) => ({ ...zz }));
+      const heir = i > 0 ? i - 1 : 1;
+      next[heir].height = Math.round((next[heir].height + next[i].height) * 10) / 10;
+      next.splice(i, 1);
+      commit(next, "remove");
+    });
+    wrap.append(h("div", { class: "zone-row" }, [h("span", { class: "muted", text: String(i + 1) }), type, hgt, del]));
+  });
+  const add = h("button", { class: "tb", text: "+ 区域" });
+  add.addEventListener("click", () => {
+    if (!zones.length) return;
+    let tallest = 0;
+    zones.forEach((z, k) => { if (z.height > zones[tallest].height) tallest = k; });
+    const give = Math.min(300, Math.round(zones[tallest].height - MIN_ZONE_HEIGHT));
+    if (give < MIN_ZONE_HEIGHT) return;
+    const next = zones.map((z) => ({ ...z }));
+    next[tallest].height = Math.round((next[tallest].height - give) * 10) / 10;
+    next.push({ id: `zone-${Date.now().toString(36)}`, type: "open_space", height: give });
+    commit(next, "add");
+  });
+  wrap.append(h("div", { class: "zone-foot" }, [add, h("span", { class: "muted", text: "高度在相邻两格之间腾挪，总高不变。新的一格放在最上面，从最高的一格里最多取 300。" })]));
+  return wrap;
+}
+
+function renderFridgeInputs(form, mod, t) {
+  const p = t.params;
+  const parts = fridgeParts(p.zones || []);
+  const fridge = parts.fridge;
+  const cpt = p.panelThickness ?? 15;
+  const sides = (p.leftSidePanelThickness ?? 0) + (p.rightSidePanelThickness ?? 0);
+  const outerW = fridge?.applianceWidthMm > 0 ? fridgeCabinetWidth(fridge.applianceWidthMm, sides, cpt) : p.cabinetWidth;
+  const num = (label, value, apply, step = "1") => {
+    const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
+    input.addEventListener("change", () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v <= 0) { input.classList.add("bad"); return; }
+      apply(v);
+    });
+    return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
+  };
+  const fix = (next, key, from, to) => setParams(fridgeFix(next), key, from, to);
+  form.append(h("div", { class: "in-group", text: "柜体尺寸" }));
+  form.append(h("div", { class: "empty small", text: fridge
+    ? `外宽 ${fmt(outerW)} = 开口 ${fmt(fridge.applianceWidthMm)} + 侧板 ${fmt(sides)} + 3 × 板厚 ${fmt(cpt)}`
+    : "没有冰箱区域。" }));
+  form.append(num("柜身深度（不含门）", carcassDepth(p), (v) => fix(mod.setEnvelope(p, { D: v }), "cabinetDepth", carcassDepth(p), v)));
+  form.append(num("柜高", p.cabinetHeight, (v) => fix(mod.setEnvelope(p, { H: v }), "cabinetHeight", p.cabinetHeight, v)));
+  form.append(h("div", { class: "in-group", text: "冰箱开口" }));
+  if (fridge) {
+    const cut = (key, label) => num(label, fridge[key], (v) => {
+      const zones = (p.zones || []).map((z) => ({ ...z }));
+      const f = zones.find((z) => z.type === "fridge");
+      f[key] = Math.round(v);
+      if (key === "applianceHeightMm") f.height = f.applianceHeightMm;
+      fix({ ...p, zones }, key, fridge[key], f[key]);
+    });
+    form.append(cut("applianceWidthMm", "开口宽"));
+    form.append(cut("applianceHeightMm", "开口高"));
+    form.append(cut("applianceDepthMm", "开口深"));
+  }
+  form.append(h("div", { class: "in-group", text: "材料" }));
+  form.append(num("柜身板厚", p.panelThickness, (v) => fix(restampTallSides({ ...p, panelThickness: v }), "panelThickness", p.panelThickness, v), "0.5"));
+  form.append(num("门板厚", p.frontPanelThickness, (v) => fix(restampTallSides({ ...p, frontPanelThickness: v }), "frontPanelThickness", p.frontPanelThickness, v), "0.5"));
+  const sideNow = (p.leftSidePanelThickness ?? 0) > 0 ? "left" : (p.rightSidePanelThickness ?? 0) > 0 ? "right" : "none";
+  const matNow = tallSideMode(p, sideNow === "none" ? "left" : sideNow);
+  form.append(h("div", { class: "in-group", text: "侧板（只一边）" }));
+  if ((p.leftSidePanelThickness ?? 0) > 0 && (p.rightSidePanelThickness ?? 0) > 0) {
+    form.append(h("div", { class: "empty small", text: "现在左右都有侧板。点一次左边或右边，就只留下那一边。" }));
+  }
+  form.append(h("div", { class: "field input-field" }, [
+    h("span", { class: "in-label" }, [h("span", { text: "哪一边" })]),
+    segButtons([["none", "无"], ["left", "左"], ["right", "右"]], sideNow, (side) => {
+      const mode = side === "none" ? "none" : (matNow === "none" ? "carcass" : matNow);
+      let next = { ...p, leftSidePanelThickness: 0, rightSidePanelThickness: 0, leftSidePanelFinish: "carcass", rightSidePanelFinish: "carcass" };
+      if (side !== "none") next = withTallSide(next, side, mode);
+      fix(next, "side", sideNow, side);
+    }),
+  ]));
+  form.append(h("div", { class: "field input-field" }, [
+    h("span", { class: "in-label" }, [h("span", { text: "料" })]),
+    segButtons([["carcass", "柜身"], ["colour", "门板"]], sideNow === "none" ? "carcass" : matNow, (mode) => {
+      if (sideNow === "none") return;
+      fix(withTallSide(p, sideNow, mode), "sideFinish", matNow, mode);
+    }),
+  ]));
+  form.append(h("div", { class: "in-group", text: "冰箱下面（从地面往上）" }));
+  form.append(fridgeZoneList(p, parts.below, "below", FRIDGE_BELOW_TYPES, { drawer: "抽屉", bottom_flap: "下翻门" }, (zones) => fix({ ...p, zones }, "below", null, zones.map((z) => z.height))));
+  form.append(h("div", { class: "in-group", text: "冰箱上面" }));
+  const above = parts.above[0] || null;
+  const aboveNow = above ? above.type : "none";
+  form.append(segButtons([["none", "无"], ["top_flap", "上翻门"], ["fixed_panel", "固定板"]], aboveNow, (type) => {
+    const zi = p.ziThickness ?? 15;
+    let zones = (p.zones || []).map((z) => ({ ...z }));
+    let H = p.cabinetHeight;
+    if (type === "none" && above) {
+      H = Math.round((H - above.height - zi) * 10) / 10;
+      zones = zones.filter((z) => z.id !== above.id);
+    } else if (above) {
+      zones = zones.map((z) => (z.id === above.id ? { ...z, type } : z));
+    } else if (type !== "none") {
+      const zone = { id: `zone-${Date.now().toString(36)}`, type, height: 300 };
+      zones = [...zones, zone];
+      H = Math.round((H + zone.height + zi) * 10) / 10;
+    }
+    setParams(fridgeFix({ ...p, zones }, { H }), "above", aboveNow, type);
+  }));
+  if (above) {
+    form.append(num("上面这一格的高度", above.height, (v) => {
+      const h = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
+      const zones = (p.zones || []).map((z) => (z.id === above.id ? { ...z, height: h } : { ...z }));
+      setParams(fridgeFix({ ...p, zones }, { H: Math.round((p.cabinetHeight + h - above.height) * 10) / 10 }), "above.height", above.height, h);
+    }));
+  }
+  form.append(h("div", { class: "empty small", text: "开口是厂家的洞口，不是冰箱外壳。外宽跟着开口、侧板和三块立柱走，不能单独填。" }));
+}
+
+function fridgeZoneList(p, list, kind, types, labels, commit) {
+  const wrap = h("div", { class: "zones-edit" });
+  const all = () => (p.zones || []).map((z) => ({ ...z }));
+  list.forEach((z, i) => {
+    const type = h("select", {}, types.map((id) => h("option", { value: id, text: labels[id] || id })));
+    type.value = types.includes(z.type) ? z.type : types[0];
+    type.addEventListener("change", () => {
+      const zones = all();
+      const hit = zones.find((zz) => zz.id === z.id);
+      if (hit) hit.type = type.value;
+      commit(zones);
+    });
+    const hgt = h("input", { type: "number", step: "10", value: String(z.height) });
+    hgt.addEventListener("change", () => {
+      const v = Math.round(Number(hgt.value));
+      if (!Number.isFinite(v) || v < MIN_ZONE_HEIGHT) { hgt.value = String(z.height); return; }
+      const zones = all();
+      const hit = zones.find((zz) => zz.id === z.id);
+      if (hit) hit.height = v;
+      setParams(fridgeFix({ ...p, zones }, { except: z.id }), `${kind}.height`, z.height, v);
+    });
+    const del = h("button", { class: "tb icon", text: "×", title: "删掉这一格" });
+    del.addEventListener("click", () => commit(all().filter((zz) => zz.id !== z.id)));
+    wrap.append(h("div", { class: "zone-row" }, [h("span", { class: "muted", text: String(i + 1) }), type, hgt, del]));
+  });
+  const add = h("button", { class: "tb", text: "+ 抽屉" });
+  add.addEventListener("click", () => {
+    const zones = all();
+    zones.unshift({ id: `zone-${Date.now().toString(36)}`, type: "drawer", height: 200, lockPosition: "top" });
+    commit(zones);
+  });
+  wrap.append(h("div", { class: "zone-foot" }, [add]));
+  return wrap;
+}
+
+function renderLoungeInputs(form, mod, t) {
+  const p = t.params;
+  const style = p.style || "L_SHAPE";
+  const frame = style === "I_SHAPE" || style === "L_SHAPE" || style === "PARALLEL" ? p.construction !== "classic" : false;
+  const num = (label, value, apply, min, step = "10") => {
+    const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
+    input.addEventListener("change", () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v)) { input.classList.add("bad"); return; }
+      apply(Math.max(min, Math.round(v)));
+    });
+    return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
+  };
+  const setKey = (key, value) => setParams({ ...p, [key]: value }, key, p[key], value);
+  const choice = (label, value, options, apply) => {
+    const sel = h("select", {}, options.map(([v, text]) => h("option", { value: v, text })));
+    sel.value = value;
+    sel.addEventListener("change", () => apply(sel.value));
+    return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), sel]);
+  };
+  form.append(h("div", { class: "in-group", text: "外形" }));
+  form.append(choice("样式", style, [["I_SHAPE", "I"], ["L_SHAPE", "L"], ["U_SHAPE", "U"], ["PARALLEL", "平行"]], (v) => setParams(mod.setStyle(p, v), "style", style, v)));
+  form.append(num("座高", p.height, (v) => setKey("height", v), mod.minSize?.H ?? 300));
+  if (style === "I_SHAPE") {
+    form.append(num("长度", p.mainWidth, (v) => setKey("mainWidth", v), 800));
+    form.append(num("座深", p.mainDepth, (v) => setKey("mainDepth", v), 300));
+  } else if (style === "L_SHAPE") {
+    form.append(num("沿墙总宽", p.mainWidth, (v) => setKey("mainWidth", v), 800));
+    form.append(num("座深", p.mainDepth, (v) => setKey("mainDepth", v), 300));
+    form.append(num("翼长", p.lWidth, (v) => setKey("lWidth", v), 400));
+    form.append(num("翼座深", p.lDepth, (v) => setKey("lDepth", v), 200));
+    form.append(choice("翼在", p.lPosition || "RIGHT", [["RIGHT", "右"], ["LEFT", "左"]], (v) => setKey("lPosition", v)));
+    if (frame) form.append(choice("翼端", p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("lFrontAccess", v)));
+  } else if (style === "U_SHAPE") {
+    form.append(num("总宽", p.mainWidth, (v) => setKey("mainWidth", v), 800));
+    form.append(num("总深", p.mainDepth, (v) => setKey("mainDepth", v), 600));
+    form.append(num("腿座深", p.lDepth, (v) => setKey("lDepth", v), 200));
+  } else if (style === "PARALLEL") {
+    form.append(num("总宽", p.totalWidth, (v) => setKey("totalWidth", v), 1600));
+    form.append(num("每边座宽", p.singleLoungeWidth, (v) => setKey("singleLoungeWidth", v), 400));
+    form.append(num("进深", p.depth, (v) => setKey("depth", v), 400));
+    if (frame) form.append(choice("过道端", p.aisleAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("aisleAccess", v)));
+    const on = p.hasMiddleCabinet !== false && (p.hasMiddleCabinet === true || (p.totalWidth ?? 0) - 2 * (p.singleLoungeWidth ?? 0) >= 300);
+    form.append(choice("中间柜", p.hasMiddleCabinet === false ? "off" : "on", [["on", "有"], ["off", "无"]], (v) => setKey("hasMiddleCabinet", v === "on")));
+    if (p.hasMiddleCabinet === true && p.middleCabinet) {
+      const mc = p.middleCabinet;
+      const setMc = (key, min) => (v) => setParams({ ...p, hasMiddleCabinet: true, middleCabinet: { ...mc, [key]: Math.max(min, v) } }, `middleCabinet.${key}`, mc[key], Math.max(min, v));
+      form.append(num("中间柜宽", mc.width, setMc("width", 100), 100));
+      form.append(num("中间柜深", mc.depth, setMc("depth", 100), 100));
+      form.append(num("中间柜高", mc.height, setMc("height", 100), 100));
+    }
+  }
+  form.append(h("div", { class: "in-group", text: "材料" }));
+  form.append(num("板厚", p.partitionPanelThickness ?? 18, (v) => setKey("partitionPanelThickness", Math.max(1, v)), 1, "0.5"));
+  if (!frame && style !== "U_SHAPE") {
+    form.append(choice("轮拱切口", p.wheelAvoidanceEnabled === true ? "on" : "off", [["off", "无"], ["on", "有"]], (v) => setKey("wheelAvoidanceEnabled", v === "on")));
+  }
+  form.append(h("div", { class: "empty small", text: "一段盖板超过 1600 会按车间规则切成多块。这个 1600 不在这里改。" }));
+}
+
+function benchNum(label, value, apply, min = 0, step = "10") {
+  const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
+  input.addEventListener("change", () => {
+    const v = Number(input.value);
+    if (!Number.isFinite(v)) { input.classList.add("bad"); return; }
+    apply(Math.max(min, Math.round(v)));
+  });
+  return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
+}
+
+function benchChoice(label, value, options, apply) {
+  const sel = h("select", {}, options.map(([v, text]) => h("option", { value: v, text })));
+  sel.value = value;
+  sel.addEventListener("change", () => apply(sel.value));
+  return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), sel]);
+}
+
+function renderBedroomInputs(form, mod, t) {
+  const p = t.params;
+  const setLayout = (key) => (v) => setParams(mod.setLayout(p, key, v), key, p[key], v);
+  form.append(h("div", { class: "empty small", text: `柜宽 ${fmt(p.width)}、柜高 ${fmt(p.height)}、屋顶来自空间，不在这里改。` }));
+  form.append(h("div", { class: "in-group", text: "进深" }));
+  form.append(benchNum("鼻子进深", p.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "depth", p.depth, v), mod.minSize?.D ?? 300));
+  form.append(h("div", { class: "in-group", text: "布局" }));
+  form.append(benchNum("靴箱高度", p.bootHeight, setLayout("bootHeight"), 0, "1"));
+  form.append(benchNum("衣柜宽度（两边一起）", p.wardrobeWidth, setLayout("wardrobeWidth"), 0, "1"));
+  form.append(benchNum("吊柜门底", p.ohcBottom, setLayout("ohcBottom"), 0, "1"));
+  form.append(benchChoice("衣柜样式", p.style || "style1", [["style1", "样式 1"], ["nook", "凹龛"]], (v) => setParams({ ...p, style: v }, "style", p.style, v)));
+  if ((p.style || "style1") !== "nook") form.append(benchNum("固定板分界", p.fixedPanelTop, setLayout("fixedPanelTop"), 0, "1"));
+  else form.append(h("div", { class: "empty small", text: "凹龛的衣柜底由靴箱高度算出来，没有分界可拖。" }));
+  form.append(benchChoice("吊柜分区", String((p.ohcZones || []).length || 2), [["2", "2 扇"], ["3", "3 扇"]], (v) => setParams(mod.setOhcCount(p, Number(v)), "ohcZones", (p.ohcZones || []).length, Number(v))));
+  const led = h("input", { type: "checkbox" });
+  led.checked = p.ledGroove !== false;
+  led.addEventListener("change", () => setParams({ ...p, ledGroove: led.checked }, "ledGroove", p.ledGroove, led.checked));
+  form.append(h("label", { class: "field input-field check" }, [h("span", { class: "in-label" }, [h("span", { text: "T3 灯槽" })]), led]));
+  form.append(h("div", { class: "in-group", text: "材料" }));
+  form.append(benchNum("柜身板厚", p.panelThickness, (v) => setParams({ ...p, panelThickness: v }, "panelThickness", p.panelThickness, v), 1, "0.5"));
+  form.append(benchNum("门板厚", p.doorPanelThickness, (v) => setParams({ ...p, doorPanelThickness: v }, "doorPanelThickness", p.doorPanelThickness, v), 1, "0.5"));
+}
+
+function renderBunkInputs(form, mod, t) {
+  const p = t.params;
+  const lim = mod.upperLimits ? mod.upperLimits(p) : { min: 0, max: p.height };
+  form.append(h("div", { class: "empty small", text: "开口离侧墙的距离在车间规则里，不在这里改。" }));
+  form.append(h("div", { class: "in-group", text: "箱子" }));
+  form.append(benchNum("长度（沿后墙）", p.length, (v) => setParams(mod.setEnvelope(p, { W: v }), "length", p.length, v), 600));
+  form.append(benchNum("进深", p.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "depth", p.depth, v), 200));
+  form.append(benchNum("顶高", p.height, (v) => setParams(mod.setEnvelope(p, { H: v }), "height", p.height, v), 400));
+  form.append(h("div", { class: "in-group", text: "铺位" }));
+  form.append(benchNum("甲板顶", p.deckTop, (v) => setParams({ ...p, deckTop: v }, "deckTop", p.deckTop, v), 0, "1"));
+  form.append(benchNum("上铺底面", p.upperZ, (v) => {
+    const n = Math.max(lim.min, Math.min(lim.max, v));
+    setParams({ ...p, upperZ: n }, "upperZ", p.upperZ, n);
+  }, lim.min, "1"));
+  form.append(h("div", { class: "empty small", text: `上铺底面停在 ${fmt(lim.min)} 和 ${fmt(lim.max)} 之间。相等高度是 ${fmt(lim.equal)}。` }));
+  form.append(benchChoice("梯子", p.endSide === "LEFT" ? "LEFT" : "RIGHT", [["RIGHT", "右侧"], ["LEFT", "左侧"]], (v) => setParams({ ...p, endSide: v }, "endSide", p.endSide, v)));
+}
+
+function renderBedBoxInputs(form, mod, t) {
+  const p = t.params;
+  form.append(h("div", { class: "empty small", text: `宽 ${fmt(p.width)}、高 ${fmt(p.height)} 来自床体（床框和靴箱）。板厚 18 是车间规则。这里只改进深。` }));
+  form.append(benchNum("进深", p.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "depth", p.depth, v), mod.minSize?.D ?? 50));
+}
+
+function renderBedSideInputs(form, mod, t) {
+  const p = t.params;
+  form.append(h("div", { class: "empty small", text: `宽 ${fmt(p.width)} 来自衣柜，不在这里改。另一张桌子会镜像这张的进深、高度、层板和门向。` }));
+  form.append(benchNum("进深", p.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "depth", p.depth, v), 40));
+  form.append(benchNum("高度", p.height, (v) => setParams(mod.setEnvelope(p, { H: v }), "height", p.height, v), 200));
+  form.append(benchNum("层板中线", p.shelfCenter, (v) => setParams({ ...p, shelfCenter: v }, "shelfCenter", p.shelfCenter, v), 0, "1"));
+  form.append(benchNum("门缝", p.clearance, (v) => setParams({ ...p, clearance: v }, "clearance", p.clearance, v), 0, "0.5"));
+  const types = [["drawer", "抽屉"], ["left_door", "左开门"], ["right_door", "右开门"]];
+  const zones = (p.zones || []).map((z) => ({ ...z }));
+  ["下格", "上格"].forEach((label, i) => {
+    const z = zones[i];
+    if (!z) return;
+    form.append(benchChoice(label, z.type || "drawer", types, (v) => {
+      const next = (p.zones || []).map((zz) => ({ ...zz }));
+      if (next[i]) next[i].type = v;
+      setParams({ ...p, zones: next }, `zones.${i}`, z.type, v);
+    }));
+  });
+}
+
+function renderSmallInputs(form, mod, t) {
+  const p = t.params;
+  form.append(h("div", { class: "empty small", text: "小柜的面式子还没逐条记下，右边可能没有公式。这里改的是已有的外形和行。" }));
+  form.append(benchNum("柜宽", p.cabinetWidth, (v) => setParams(mod.setEnvelope(p, { W: v }), "cabinetWidth", p.cabinetWidth, v), 120));
+  form.append(benchNum("柜深", p.cabinetDepth, (v) => setParams(mod.setEnvelope(p, { D: v }), "cabinetDepth", p.cabinetDepth, v), 100));
+  form.append(benchNum("柜高", p.cabinetHeight, (v) => setParams(mod.setEnvelope(p, { H: v }), "cabinetHeight", p.cabinetHeight, v), 120));
+  form.append(benchNum("柜身板厚", p.panelThickness, (v) => setParams(mod.setEnvelope({ ...p, panelThickness: v }, { H: p.cabinetHeight }), "panelThickness", p.panelThickness, v), 1, "0.5"));
+  form.append(benchNum("门板厚", p.frontPanelThickness, (v) => setParams({ ...p, frontPanelThickness: v }, "frontPanelThickness", p.frontPanelThickness, v), 1, "0.5"));
+  form.append(benchNum("门缝", p.frontClearance, (v) => setParams({ ...p, frontClearance: v }, "frontClearance", p.frontClearance, v), 0, "0.5"));
+  const zones = (p.zones || []).map((z) => ({ ...z }));
+  const types = mod.zoneTypes || [];
+  form.append(h("div", { class: "in-group", text: "行（从上往下）" }));
+  zones.forEach((z, i) => {
+    form.append(benchChoice(`行 ${i + 1}`, z.type || "left_door", types.map((zt) => [zt.id, zt.label]), (v) => {
+      const next = zones.map((zz) => ({ ...zz }));
+      next[i].type = v;
+      setParams({ ...p, zones: next }, "zones.type", z.type, v);
+    }));
+    form.append(benchNum(`行 ${i + 1} 高`, z.height, (v) => {
+      const n = i < zones.length - 1 ? i + 1 : i - 1;
+      if (n < 0) return;
+      const max = z.height + zones[n].height - MIN_ZONE_HEIGHT;
+      const nextH = Math.max(MIN_ZONE_HEIGHT, Math.min(max, v));
+      const next = zones.map((zz) => ({ ...zz }));
+      next[n].height = Math.round((next[n].height - (nextH - next[i].height)) * 10) / 10;
+      next[i].height = nextH;
+      setParams({ ...p, zones: next }, "zones.height", z.height, nextH);
+    }, MIN_ZONE_HEIGHT));
+  });
+}
+
+function renderUShapeInputs(form, mod, t) {
+  const p = t.params;
+  const set = (patch, key, from, to) => setParams({ ...p, ...patch }, key, from, to);
+  form.append(h("div", { class: "empty small", text: "三臂各自是一节吊柜。面的式子在每一节里，拼进 U 之后这里不一定还带得出来。臂上的分区宽度是比例，会摊到该臂的可用长度上。" }));
+  form.append(benchNum("总宽", p.totalWidth, (v) => set({ totalWidth: v }, "totalWidth", p.totalWidth, v), 1200));
+  form.append(benchNum("左臂长", p.leftArmLength, (v) => set({ leftArmLength: v }, "leftArmLength", p.leftArmLength, v), 400));
+  form.append(benchNum("右臂长", p.rightArmLength, (v) => set({ rightArmLength: v }, "rightArmLength", p.rightArmLength, v), 400));
+  form.append(benchNum("柜深", p.cabinetDepth, (v) => set({ cabinetDepth: v }, "cabinetDepth", p.cabinetDepth, v), 200));
+  form.append(benchNum("柜高", p.cabinetHeight, (v) => set({ cabinetHeight: v }, "cabinetHeight", p.cabinetHeight, v), 200));
+  form.append(benchNum("柜身板厚", p.featureWidth, (v) => set({ featureWidth: v }, "featureWidth", p.featureWidth, v), 1, "0.5"));
+  form.append(benchNum("门板厚", p.frontPanelThickness, (v) => set({ frontPanelThickness: v }, "frontPanelThickness", p.frontPanelThickness, v), 1, "0.5"));
+  form.append(benchNum("顶部预留", p.topClearanceHeight, (v) => set({ topClearanceHeight: v }, "topClearanceHeight", p.topClearanceHeight, v), 0, "1"));
+  form.append(benchNum("门缝", p.clearance, (v) => set({ clearance: v }, "clearance", p.clearance, v), 0, "0.5"));
+  const led = h("input", { type: "checkbox" });
+  led.checked = p.ledGroove === true;
+  led.addEventListener("change", () => set({ ledGroove: led.checked }, "ledGroove", p.ledGroove, led.checked));
+  form.append(h("label", { class: "field input-field check" }, [h("span", { class: "in-label" }, [h("span", { text: "T3 灯槽" })]), led]));
+  for (const [arm, label] of [["LEFT", "左臂"], ["BACK", "后背"], ["RIGHT", "右臂"]]) {
+    const zones = ((p.zones && p.zones[arm]) || []).map((z) => ({ ...z }));
+    form.append(h("div", { class: "in-group", text: label }));
+    const types = arm === "BACK" ? (mod.zoneTypes || []) : (mod.sideZoneTypes || mod.zoneTypes || []);
+    zones.forEach((z, i) => {
+      form.append(benchChoice(`${label} ${i + 1}`, z.type || "up_flap", types.map((zt) => [zt.id, zt.label]), (v) => {
+        const next = { ...(p.zones || {}), [arm]: zones.map((zz, k) => (k === i ? { ...zz, type: v } : { ...zz })) };
+        set({ zones: next }, `${arm}.type`, z.type, v);
+      }));
+      form.append(benchNum(`${label} ${i + 1} 宽`, z.width, (v) => {
+        const n = i < zones.length - 1 ? i + 1 : i - 1;
+        const copy = zones.map((zz) => ({ ...zz }));
+        if (n < 0) copy[i].width = Math.max(1, v);
+        else {
+          const sum = copy[i].width + copy[n].width;
+          const w = Math.max(1, Math.min(sum - 1, v));
+          copy[n].width = Math.round((sum - w) * 10) / 10;
+          copy[i].width = w;
+        }
+        set({ zones: { ...(p.zones || {}), [arm]: copy } }, `${arm}.width`, z.width, copy[i].width);
+      }, 1));
+    });
+  }
+}
+
+function setParams(next, key, from, to) {
+  const t = tab();
+  t.params = next;
+  t.tryout = null;
+  log("bench.param", { module: t.moduleId, key, from, to });
+  refresh();
+}
+
 function safeEnvelope(t) {
   try { return MODULES[t.moduleId].envelope(t.params); } catch (_) { return null; }
 }
@@ -386,7 +1107,8 @@ function renderRules() {
     row.dataset.rule = name;
     const n = document.createElement("span");
     n.className = "name";
-    n.textContent = name;
+    n.textContent = r.label || name;
+    if (r.label) n.append(h("span", { class: "muted sym", text: ` ${name}` }));
     n.title = used.has(name) ? `used by ${usesRule(c.prov, name).length} formulas in this run — click to highlight` : "not used in this run";
     n.addEventListener("click", () => highlightKeys(affectedByRule(c.prov, name), `rule ${name}`));
     const input = document.createElement("input");
@@ -441,6 +1163,991 @@ $("#ruleDialog [data-ok]").addEventListener("click", async () => {
   // The bundle is a static import: reload to pick it up; tabs come back from sessionStorage.
   location.reload();
 });
+
+// --- placement rules: draft, undo, commit ---------------------------------------------------
+// The draft (tab.draft) is the editor's working copy of layout.json. Every mode edits it through
+// tryLayout(): the generator runs with the candidate first, and a candidate it refuses never
+// replaces the last good draft. Commit writes layout.json with a reason; nothing else does.
+
+function ruleText(axisKey, r) {
+  if (!r) return "—";
+  const face = FACE_NAMES[`${axisKey}${r.from === "lo" ? "0" : "1"}`];
+  const rel = r.relation ? `（${r.relation.kind === "contact" ? "贴合" : "齐平"}）` : "";
+  return `${face} = ${toDisplay(r.at, names())}${rel}`;
+}
+function changeText(ch) {
+  const N = names();
+  if (ch.what === "axis") return `${ch.board} ${AXIS_NAMES[ch.key]}：${ruleText(ch.key, ch.from)} → ${ruleText(ch.key, ch.to)}`;
+  if (ch.what === "corner") {
+    const pt = (c) => (c ? `(${toDisplay(c.u, N)}, ${toDisplay(c.v, N)})` : "—");
+    return `${ch.board} ${CORNER_NAMES[ch.key] || ch.key}：${pt(ch.from)} → ${pt(ch.to)}`;
+  }
+  return `${ch.board} ${ch.to?.label || ch.from?.label || ch.key} 深度：${toDisplay(ch.from?.depth ?? "—", N)} → ${toDisplay(ch.to?.depth ?? "—", N)}`;
+}
+
+/** Generate with `next`; keep it only if the generator accepts it. Returns { ok, error?, result? }. */
+function tryLayout(next, label, meta = {}) {
+  const t = tab();
+  const c = cur();
+  if (!t?.draft) return { ok: false, error: "这个生成器还没有放置规则文件" };
+  const res = generate(t.moduleId, t.params, next);
+  const errs = res.validation?.errors || [];
+  if (errs.length) {
+    log("bench.layout.refused", { module: t.moduleId, label, errors: errs, ...meta });
+    return { ok: false, error: errs.join("；") };
+  }
+  const changes = diffLayouts(t.draft.layout, next);
+  if (!changes.length) return { ok: true, result: res, unchanged: true };
+  // A display nudge would hide the move until 返回整体. The rule position is the one on screen.
+  if (t.mode?.kind === "face") t.nudge = null;
+  t.draft = commitEdit(t.draft, next, label);
+  log("bench.layout.edit", { module: t.moduleId, label, changes, moved: movedBoards(c.result, res).map((m) => m.id), ...meta });
+  refresh();
+  return { ok: true, result: res };
+}
+
+function draftStep(kind) {
+  const t = tab();
+  if (!t?.draft) return;
+  const before = t.draft;
+  t.draft = kind === "undo" ? undoDraft(t.draft) : redoDraft(t.draft);
+  if (t.draft === before) return;
+  log(`bench.layout.${kind}`, { module: t.moduleId, changes: diffLayouts(before.layout, t.draft.layout) });
+  refresh();
+}
+
+function renderDraftBox() {
+  const t = tab();
+  const c = cur();
+  const box = $("#draftBox");
+  box.replaceChildren();
+  box.classList.toggle("hidden", !t?.draft || !c?.layoutFile);
+  if (!t?.draft || !c?.layoutFile) { $("#commitBar").classList.add("hidden"); $("#commitBar").replaceChildren(); return; }
+  const changes = diffLayouts(t.draft.base, t.draft.layout);
+  box.append(
+    h("div", { class: "draft-head" }, [
+      h("b", { text: "放置规则" }),
+      h("span", { class: `tag ${changes.length ? "gap" : "ok"}`, text: changes.length ? `草稿 · ${changes.length} 处未提交` : "与 layout.json 一致" }),
+    ]),
+    ...(changes.length ? [h("div", { class: "draft-list" }, changes.map((ch) => h("div", { text: changeText(ch) })))] : []),
+    h("div", { class: "btn-row" }, [
+      h("button", { class: "tb", text: "撤销", disabled: t.draft.past.length ? null : "", title: "Ctrl+Z", onclick: () => draftStep("undo") }),
+      h("button", { class: "tb", text: "重做", disabled: t.draft.future.length ? null : "", title: "Ctrl+Y", onclick: () => draftStep("redo") }),
+      h("button", { class: "tb", text: "放弃", disabled: changes.length ? null : "", onclick: () => {
+        if (!window.confirm("放弃全部未提交的规则修改？")) return;
+        log("bench.layout.discard", { module: t.moduleId, changes });
+        t.draft = discardDraft(t.draft);
+        refresh();
+      } }),
+    ]),
+  );
+  const bar = $("#commitBar");
+  bar.replaceChildren();
+  bar.classList.remove("hidden");
+  const commit = h("button", {
+    class: `tb commit-btn${changes.length ? " primary" : ""}`,
+    text: changes.length ? `提交 ${changes.length} 处修改…` : "没有待提交的修改",
+    disabled: changes.length ? null : "",
+    title: "写入 layout.json。要写一句原因。",
+    onclick: openLayoutCommit,
+  });
+  bar.append(commit);
+}
+
+function openLayoutCommit() {
+  const t = tab();
+  const c = cur();
+  const changes = diffLayouts(t.draft.base, t.draft.layout);
+  const before = generate(t.moduleId, t.params, t.draft.base);
+  const moved = movedBoards(before, c.result);
+  $("#layoutSub").textContent = `写入 generators/${t.moduleId}/layout.json · 作用范围：生成器模板，之后生成的每一个${MODULES[t.moduleId]?.label || ""}柜都会照新规则算（主程序重新打开后生效）`;
+  $("#layoutChanges").textContent = [
+    ...changes.map(changeText),
+    "",
+    `按当前整体输入，位置或尺寸变化的板：${moved.map((m) => m.id).join("、") || "无"}`,
+  ].join("\n");
+  $("#layoutReason").value = "";
+  $("#layoutErr").textContent = "";
+  $("#layoutDialog").classList.remove("hidden");
+  $("#layoutReason").focus();
+}
+$("#layoutDialog [data-cancel]").addEventListener("click", () => $("#layoutDialog").classList.add("hidden"));
+$("#layoutDialog [data-ok]").addEventListener("click", async () => {
+  const t = tab();
+  const c = cur();
+  const reason = $("#layoutReason").value.trim();
+  if (!reason) { $("#layoutErr").textContent = "写一句原因。"; return; }
+  if (!bench?.writeLayout) { $("#layoutErr").textContent = "没有文件通道（规则台不在主程序里打开）"; return; }
+  const changes = diffLayouts(t.draft.base, t.draft.layout);
+  // Someone (another tab, a teammate, the agent) committed since this draft started: do not write over it.
+  const onDisk = await loadLayout(t.moduleId);
+  if (onDisk && JSON.stringify(onDisk.layout) !== JSON.stringify(t.draft.base)) {
+    log("bench.layout.conflict", { module: t.moduleId, changes, theirs: diffLayouts(t.draft.base, onDisk.layout) });
+    $("#layoutErr").textContent = `layout.json 在这份草稿开始之后被改过（${diffLayouts(t.draft.base, onDisk.layout).map(changeText).join("；")}）。没有写入：先记下你的修改，放弃草稿后在新的文件上重做。`;
+    return;
+  }
+  const res = await bench.writeLayout(t.moduleId, JSON.stringify(t.draft.layout));
+  if (!res.ok) { $("#layoutErr").textContent = res.error || "写入失败"; return; }
+  log("bench.layout.commit", { module: t.moduleId, changes, reason, preset: t.presetId, path: res.path });
+  $("#layoutErr").textContent = "正在重建生成器包…";
+  const rb = await bench.rebuild(t.moduleId);
+  log("bench.rebuild", { module: t.moduleId, ok: rb.ok, ms: rb.ms, error: rb.error || null });
+  if (!rb.ok) { $("#layoutErr").textContent = `已写入，但重建失败：${rb.error}`; return; }
+  c.layoutFile = { ...c.layoutFile, layout: structuredClone(t.draft.layout) };
+  t.draft = rebase(t.draft);
+  $("#layoutDialog").classList.add("hidden");
+  $("#stInfo").textContent = `已写入 ${res.path}`;
+  refresh();
+});
+
+// --- board parameter modes: default (position formulas) / face (contact, flush) -------------------
+// Right-click any board → 参数调试. A board in layout.json edits its placement rule. A board
+// still placed in code shows the formulas it already has; confirming a new box rule is refused
+// by the generator when the outline would not follow. The overall inputs stay on the left.
+
+const MODE_GHOST = 0.18;
+let modeGroup = null;
+const labelOverlay = new LabelOverlay($("#bcenter"));
+labelOverlay.onCommit = (key, text) => {
+  const t = tab();
+  if (!t?.mode || !/^[xyz][01]$/.test(key)) { buildModeOverlay(); return; }
+  const res = applyFaceFormula(t.mode.board, key, text);
+  if (!res.ok) { t.mode.error = res.error; renderSelection(); buildModeOverlay(); }
+  else if (res.unchanged) buildModeOverlay();
+};
+labelOverlay.onCancel = () => { if (tab()?.mode) buildModeOverlay(); };
+labelOverlay.onDrop = (key, sym) => {
+  const t = tab();
+  const it = labelOverlay.items.find((x) => x.key === key);
+  if (!t?.mode || !it) return;
+  applyFaceFormula(t.mode.board, key, addParam(fromDisplay(it.formula, names()), sym));
+};
+labelOverlay.onChipDrag = (payload) => { paramDrag = payload; };
+(function tickOverlay() {
+  const t = tab();
+  if (t?.mode?.kind === "default") labelOverlay.update(camera, canvas, boardGroups.get(t.mode.board)?.group.position || null);
+  requestAnimationFrame(tickOverlay);
+})();
+
+/** Camera on one board, room around it for the labels. */
+function frameBoard(boardId) {
+  const b = cur()?.boards.get(boardId);
+  if (!b) return;
+  const box = new THREE.Box3(new THREE.Vector3(b.x0, b.y0, b.z0), new THREE.Vector3(b.x1, b.y1, b.z1));
+  const s = box.getBoundingSphere(new THREE.Sphere());
+  frame(s.center, Math.max(s.radius * 1.35, 250));
+  storeCamera();
+}
+
+function placementRule(boardId) {
+  return tab()?.draft?.layout?.boards?.[boardId] || null;
+}
+function boardLabel(boardId) {
+  return placementRule(boardId)?.label || cur()?.boards.get(boardId)?.name || boardId;
+}
+
+function enterMode(kind, boardId) {
+  const t = tab();
+  if (!t || !cur()?.boards.get(boardId)) return;
+  t.placeError = null;
+  if (t.l3) exitL3();
+  t.mode = { kind, board: boardId, error: null, pick: kind === "face" ? { step: "move" } : null };
+  t.selection = { kind: "board", id: boardId };
+  log("bench.mode", { module: t.moduleId, mode: kind, board: boardId });
+  build3D(true);
+  frameBoard(boardId);
+  renderSelection();
+  renderCrumb();
+  saveState();
+}
+function exitMode() {
+  const t = tab();
+  if (!t?.mode) return;
+  log("bench.mode", { module: t.moduleId, mode: null, board: t.mode.board });
+  t.mode = null;
+  t.faceMove = false;
+  t.nudge = null;
+  build3D(true);
+  renderSelection();
+  renderCrumb();
+  saveState();
+}
+
+/** The face that is not driving, written as the stored symbols: `x0 + xSize`. */
+function drivenText(axis, rule) {
+  const drive = `${axis}${rule.from === "lo" ? "0" : "1"}`;
+  return `${drive} ${rule.from === "lo" ? "+" : "−"} ${axis}Size`;
+}
+
+/** Default-mode label text for one board from its rule and the result. */
+function modeLabels(b, rule) {
+  const prov = cur().prov;
+  const faces = {};
+  const sizes = {};
+  for (const a of ["x", "y", "z"]) {
+    const r = rule.axes[a];
+    const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
+    for (const f of [`${a}0`, `${a}1`]) {
+      const isDrive = f === drive;
+      const shown = isDrive ? toDisplay(nameCenterlines(r.at)) : drivenText(a, r);
+      const second = r.relation && isDrive
+        ? `${r.relation.kind === "contact" ? "贴合" : "齐平"} ${toDisplay(r.relation.ref)}`
+        : `= ${shown}`;
+      const fr = entryOf(prov, `${b.id}.frame.${f}`)?.value;
+      const out = fr != null && Math.abs(fr - b[f]) > 1e-6 ? `（定位框 ${fmt(fr)}）` : "";
+      faces[f] = { drive: isDrive, editable: true, formula: shown, pieces: formulaPieces(shown, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}${out}${isDrive ? "  ●" : ""}`, second] };
+    }
+    const sz = entryOf(prov, `${b.id}.${a}Size`)?.value ?? b[`${a}1`] - b[`${a}0`];
+    const sizeText = toDisplay(nameCenterlines(r.size));
+    sizes[a] = { formula: sizeText, lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(sz)}`, `= ${sizeText}`] };
+  }
+  return { faces, sizes };
+}
+
+/** Names a placement formula may keep: input symbols and rule-constant ids. */
+function formulaNames() {
+  const t = tab();
+  const c = cur();
+  const names = new Set();
+  for (const g of MODULES[t?.moduleId]?.benchInputs || []) for (const f of g.fields || []) if (f.sym) names.add(f.sym);
+  for (const k of Object.keys(c?.rules?.rules || {})) names.add(k);
+  return names;
+}
+
+/** Flatten a face formula and replace names the placement rules cannot see (a divider centreline) with their number. */
+function concreteFormula(prov, key) {
+  const formula = flatFormula(prov, key);
+  if (!formula) return "0";
+  const allowed = formulaNames();
+  const locals = new Map();
+  const stack = new Set();
+  (function walk(k) {
+    const e = entryOf(prov, k);
+    if (!e || stack.has(k)) return;
+    stack.add(k);
+    for (const [name, term] of Object.entries(e.terms || {})) {
+      if (term.kind === "ref" && term.ref) walk(term.ref);
+      else if (term.kind === "value" && Number.isFinite(term.value)) locals.set(name, term.value);
+    }
+  })(key);
+  let out = formula;
+  for (const name of [...locals.keys()].sort((a, b) => b.length - a.length)) {
+    if (allowed.has(name)) continue;
+    const v = Math.round(locals.get(name) * 1000) / 1000;
+    out = out.replace(new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), String(v));
+  }
+  return nameCenterlines(out.replace(/\s+/g, " ").trim());
+}
+
+/** A centre line written as a millimetre value (666.7) is shown as its name (XD1). */
+function nameCenterlines(formula) {
+  const entries = cur()?.prov?.entries || {};
+  const xds = Object.entries(entries)
+    .filter(([k]) => /^XD\d+$/.test(k))
+    .map(([name, e]) => ({ name, value: e.value }));
+  return String(formula).replace(/(?<![\d.])\d+(?:\.\d+)?(?![\d.])/g, (num) => {
+    const v = Number(num);
+    let best = null;
+    for (const xd of xds) {
+      const d = Math.abs(xd.value - v);
+      if (d < 0.11 && (!best || d < best.d)) best = { name: xd.name, d };
+    }
+    return best ? best.name : num;
+  });
+}
+
+function seedAxes(board, prov) {
+  const axes = {};
+  for (const a of ["x", "y", "z"]) {
+    const lo = concreteFormula(prov, `${board.id}.${a}0`);
+    const hi = concreteFormula(prov, `${board.id}.${a}1`);
+    axes[a] = { from: "lo", at: lo, size: sizeFormula(lo, hi) };
+  }
+  return axes;
+}
+
+/** Six faces of a board that is still placed in generator code: editable formulas, size as a formula. */
+function provenanceLabels(b) {
+  const prov = cur().prov;
+  const faces = {};
+  const sizes = {};
+  for (const a of ["x", "y", "z"]) {
+    const lo = concreteFormula(prov, `${b.id}.${a}0`);
+    const hi = concreteFormula(prov, `${b.id}.${a}1`);
+    for (const f of [`${a}0`, `${a}1`]) {
+      const formula = toDisplay(f.endsWith("0") ? lo : hi);
+      faces[f] = { drive: false, editable: true, formula, pieces: formulaPieces(formula, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
+    }
+    const sz = toDisplay(sizeFormula(lo, hi));
+    sizes[a] = { formula: sz, lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(b[`${a}1`] - b[`${a}0`])}`, `= ${sz}`] };
+  }
+  return { faces, sizes };
+}
+
+function buildModeOverlay() {
+  if (modeGroup) { cabRoot.remove(modeGroup); disposeAnnotations(modeGroup); modeGroup = null; }
+  clearFacePlanes();
+  labelOverlay.set([]);
+  const t = tab();
+  const c = cur();
+  if (!t?.mode || !c) { syncParamTray(); return; }
+  const b = c.boards.get(t.mode.board);
+  const rule = placementRule(t.mode.board);
+  if (!b) { t.mode = null; syncParamTray(); return; }
+  if (t.mode.kind === "default") {
+    const { group, items } = buildDefaultAnnotations(b, rule ? modeLabels(b, rule) : provenanceLabels(b));
+    modeGroup = group;
+    labelOverlay.set(items);
+  } else {
+    modeGroup = buildFaceOverlay(b);
+  }
+  if (modeGroup) cabRoot.add(modeGroup);
+  syncParamTray();
+}
+
+/** First-level inputs: the symbols a formula is allowed to gain or lose by dragging. */
+function primaryParams() {
+  const out = [];
+  for (const g of MODULES[tab()?.moduleId]?.benchInputs || []) {
+    for (const f of g.fields || []) {
+      if (!f.sym || f.kind === "select" || f.kind === "bool") continue;
+      out.push({ sym: f.sym, label: f.label });
+    }
+  }
+  return out;
+}
+function primarySymbols() {
+  return primaryParams().map((p) => p.sym);
+}
+
+/** The chip currently being dragged. dataTransfer types are not reliable while the pointer is still moving. */
+let paramDrag = null;
+
+function syncParamTray() {
+  const tray = $("#paramTray");
+  const on = tab()?.mode?.kind === "default";
+  tray.classList.toggle("hidden", !on);
+  if (!on) { tray.replaceChildren(); return; }
+  const chips = primaryParams().map((p) => {
+    const chip = h("span", { class: "param-chip", text: p.sym, title: p.label || p.sym });
+    chip.draggable = true;
+    chip.addEventListener("dragstart", (e) => {
+      paramDrag = { sym: p.sym, face: null };
+      e.dataTransfer.setData("text/plain", p.sym);
+      e.dataTransfer.setData("text/cablab-param", p.sym);
+      e.dataTransfer.effectAllowed = "copy";
+    });
+    return chip;
+  });
+  tray.replaceChildren(h("span", { class: "tray-label", text: "一级参数" }), ...(chips.length ? chips : [h("span", { class: "muted", text: "这个生成器没有可拖的一级参数" })]));
+}
+
+$("#paramTray").addEventListener("dragover", (e) => {
+  if (!paramDrag?.face) return;
+  e.preventDefault();
+  $("#paramTray").classList.add("drop");
+});
+$("#paramTray").addEventListener("dragleave", () => $("#paramTray").classList.remove("drop"));
+$("#paramTray").addEventListener("drop", (e) => {
+  e.preventDefault();
+  $("#paramTray").classList.remove("drop");
+  const sym = paramDrag?.sym || e.dataTransfer.getData("text/cablab-param");
+  const face = paramDrag?.face || e.dataTransfer.getData("text/cablab-face");
+  paramDrag = null;
+  const t = tab();
+  const it = labelOverlay.items.find((x) => x.key === face);
+  if (!t?.mode || !sym || !face || !it) return;
+  applyFaceFormula(t.mode.board, face, removeParam(fromDisplay(it.formula, names()), sym));
+});
+window.addEventListener("dragend", () => { paramDrag = null; $("#paramTray").classList.remove("drop"); });
+
+/** A primary parameter dropped on a face formula is appended. A chip dragged out of a formula is ignored here. */
+function bindFormulaDrop(el, face, current) {
+  el.addEventListener("dragover", (e) => {
+    if (![...e.dataTransfer.types].includes("text/cablab-param")) return;
+    e.preventDefault();
+  });
+  el.addEventListener("drop", (e) => {
+    e.preventDefault();
+    const sym = e.dataTransfer.getData("text/cablab-param");
+    const from = e.dataTransfer.getData("text/cablab-face");
+    if (!sym || from) return;
+    applyFaceFormula(tab().mode.board, face, addParam(fromDisplay(current(), names()), sym));
+  });
+}
+
+/** Write one face formula. A board that has no placement rule yet gets one from its current faces, so the edit moves it. */
+function applyFaceFormula(boardId, face, text) {
+  const t = tab();
+  const c = cur();
+  const expr = fromDisplay(text, names());
+  if (!expr) return { ok: false, error: "公式是空的" };
+  if (t.mode) t.mode.error = null;
+  let layout = t.draft?.layout;
+  if (!layout) return { ok: false, error: "这个生成器还没有放置规则文件" };
+  if (!layout.boards?.[boardId]?.axes?.[face[0]]) layout = ensureBoard(layout, boardId, seedAxes(c.boards.get(boardId), c.prov));
+  let next;
+  try { next = setFace(layout, boardId, face, expr); } catch (err) { return { ok: false, error: err.message }; }
+  return tryLayout(next, `${boardId}.${face} = ${expr}`, { mode: "default", board: boardId, face });
+}
+
+/** Default mode for a board whose position was computed in the generator: blue faces are editable, the size is the formula. */
+function renderProvenancePanel(panel, id, b) {
+  const prov = cur().prov;
+  const t = tab();
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 默认模式` }),
+    h("div", { class: "panel-sub", text: "蓝色的面可以改公式，整块板跟着平移，尺寸不变。橘黄色的尺寸是两个面的差，不能单独改。" }),
+  ]));
+  for (const a of ["x", "y", "z"]) {
+    const lo = concreteFormula(prov, `${id}.${a}0`);
+    const hi = concreteFormula(prov, `${id}.${a}1`);
+    const rows = [`${a}0`, `${a}1`].map((f) => {
+      const text = toDisplay(f.endsWith("0") ? lo : hi);
+      const input = h("input", { type: "text", value: text, spellcheck: "false" });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value !== text) applyFaceFormula(id, f, input.value); if (e.key === "Escape") { input.value = text; input.blur(); } });
+      input.addEventListener("change", () => { if (input.value !== text) applyFaceFormula(id, f, input.value); });
+      bindFormulaDrop(input, f, () => input.value);
+      return h("div", { class: "face-row" }, [
+        h("span", { class: "fname", text: FACE_NAMES[f] }),
+        h("span", { class: "fval", text: fmt(b[f]) }),
+        input,
+      ]);
+    });
+    const sz = toDisplay(sizeFormula(lo, hi));
+    panel.append(h("div", { class: "mode-axis" }, [
+      h("div", { class: "axis-title" }, [h("span", { text: `${AXIS_NAMES[a]}（${a.toUpperCase()}）` })]),
+      ...rows,
+      h("div", { class: "size-row" }, [
+        h("span", { text: SIZE_NAMES[`${a}Size`] }),
+        h("span", { class: "fval", text: fmt(b[`${a}1`] - b[`${a}0`]) }),
+        h("span", { text: `= ${sz}` }),
+      ]),
+    ]));
+  }
+  if (t.mode.error) panel.append(h("div", { class: "mode-err", text: `没有采用：${t.mode.error}` }));
+  panel.append(modeButtons("default"));
+}
+
+/** Right panel in default mode: one block per axis, the two faces editable, the size read-only. */
+function renderDefaultPanel(panel) {
+  const t = tab();
+  const c = cur();
+  const id = t.mode.board;
+  const b = c.boards.get(id);
+  const rule = placementRule(id);
+  if (!rule) { renderProvenancePanel(panel, id, b); return; }
+  const N = names();
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 默认模式` }),
+    h("div", { class: "panel-sub", text: "改一个面的位置：整块板沿这条轴平移，尺寸不变。尺寸和形状在「板件编辑」里改。公式用原来的符号，如 CPT、2 * CPT、T1.y1。" }),
+  ]));
+  const apply = (face, text, input) => {
+    const expr = fromDisplay(text, N);
+    if (!expr) return;
+    let next;
+    try { next = setFace(t.draft.layout, id, face, expr); } catch (err) { t.mode.error = err.message; renderSelection(); return; }
+    // Cleared before trying: a successful edit redraws the panel inside tryLayout.
+    t.mode.error = null;
+    const res = tryLayout(next, `${id}.${face} = ${expr}`, { mode: "default", board: id, face });
+    if (!res.ok) { t.mode.error = res.error; renderSelection(); if (input) input.focus(); return; }
+    if (res.unchanged) renderSelection();
+  };
+  for (const a of ["x", "y", "z"]) {
+    const r = rule.axes[a];
+    const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
+    const rows = [`${a}0`, `${a}1`].map((f) => {
+      const isDrive = f === drive;
+      const text = isDrive ? toDisplay(r.at) : drivenText(a, r);
+      const input = h("input", { type: "text", value: text, spellcheck: "false", title: isDrive ? "这条轴的驱动面" : "输入新公式：这一面成为驱动面，对面跟着移同样的距离" });
+      input.dataset.face = f;
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value !== text) apply(f, input.value, input); if (e.key === "Escape") { input.value = text; input.blur(); } });
+      input.addEventListener("change", () => { if (input.value !== text) apply(f, input.value, input); });
+      bindFormulaDrop(input, f, () => input.value);
+      return h("div", { class: `face-row${isDrive ? " drive" : ""}` }, [h("span", { class: "fname", text: FACE_NAMES[f] }), h("span", { class: "fval", text: fmt(b[f]) }), input]);
+    });
+    const sz = entryOf(c.prov, `${id}.${a}Size`)?.value ?? b[`${a}1`] - b[`${a}0`];
+    const sticks = [`${a}0`, `${a}1`].map((f) => [f, entryOf(c.prov, `${id}.frame.${f}`)?.value]).filter(([f, v]) => v != null && Math.abs(v - b[f]) > 1e-6);
+    panel.append(h("div", { class: "mode-axis" }, [
+      h("div", { class: "axis-title" }, [
+        h("span", {}, [h("span", { text: `${AXIS_NAMES[a]}（${a.toUpperCase()}）` }), r.relation ? h("span", { class: "rel-chip", text: `${r.relation.kind === "contact" ? "贴合" : "齐平"} ${toDisplay(r.relation.ref)}` }) : null]),
+        h("span", { class: "muted", text: "● = 驱动面" }),
+      ]),
+      ...rows,
+      h("div", { class: "size-row", title: "尺寸在板件编辑里改，这里只读" }, [h("span", { text: SIZE_NAMES[`${a}Size`] }), h("span", { class: "fval", text: fmt(sz) }), h("span", { text: `= ${toDisplay(r.size)}` })]),
+      ...(sticks.length ? [h("div", { class: "mode-note", text: `轮廓伸出了定位框：${sticks.map(([f, v]) => `${FACE_NAMES[f]}实际 ${fmt(b[f])}，定位框 ${fmt(v)}`).join("；")}。公式定的是定位框，改它整块板（连同轮廓）一起移。` })] : []),
+    ]));
+  }
+  if (t.mode.error) panel.append(h("div", { class: "mode-err", text: `没有采用：${t.mode.error}` }));
+  const tied = tiedFeatures(id);
+  if (tied.length) {
+    panel.append(section("跟着别的板定位的加工", [
+      h("div", { class: "mode-note", text: "和已提交的规则比，这块板的位置或外包变了，下面这些孔槽在板上的位置也跟着变了：它们的公式指向别的板或板的另一端，按那条关系定位（§5.6）。要让它们随板走，得改它们的公式。" }),
+      ...tied.map((f) => h("div", { class: "kv" }, [h("span", { text: `${f.id} · ${f.kind}` }), h("b", { text: f.formula })])),
+    ]));
+  }
+  panel.append(modeButtons("default"));
+}
+
+/**
+ * Features on `boardId` that did not follow the board when it moved: their board-local place
+ * differs between the committed rules and the draft. Generic — the formula says what they follow.
+ */
+function tiedFeatures(boardId) {
+  const t = tab();
+  const c = cur();
+  if (!t?.draft || !isDirty(t.draft)) return [];
+  const base = generate(t.moduleId, t.params, t.draft.base);
+  const a = base.boards?.find((b) => b.id === boardId);
+  const b = c.boards.get(boardId);
+  if (!a || !b) return [];
+  const moved = ["x0", "y0", "z0"].some((f) => Math.abs(a[f] - b[f]) > 1e-6);
+  if (!moved) return [];
+  const where = (f) => [f.u0 ?? f.center?.[0], f.v0 ?? f.center?.[1]];
+  // Outline points generated from other boards (divider notches) stay with those boards too.
+  const shape = (x) => {
+    const [P, Q] = planeAxes(x.profilePlane);
+    const pv = x.profileVector || [];
+    if (!pv.length) return "";
+    const mp = Math.min(...pv.map((p) => Number(p[P])));
+    const mq = Math.min(...pv.map((p) => Number(p[Q])));
+    return pv.map((p) => `${Math.round((Number(p[P]) - mp) * 1000)},${Math.round((Number(p[Q]) - mq) * 1000)}`).join(" ");
+  };
+  const before = new Map(a.faces.flatMap((face) => face.features.map((f) => [`${face.id}.${f.id}`, where(f)])));
+  const [U] = planeAxes(b.profilePlane);
+  const out = [];
+  for (const face of b.faces || []) {
+    for (const f of face.features) {
+      const was = before.get(`${face.id}.${f.id}`);
+      if (!was) continue;
+      const now = where(f);
+      if (Math.abs((was[0] ?? 0) - (now[0] ?? 0)) < 1e-6 && Math.abs((was[1] ?? 0) - (now[1] ?? 0)) < 1e-6) continue;
+      const e = f.key ? entryOf(c.prov, `${f.key}.${U}`) || entryOf(c.prov, `${f.key}.${U}0`) : null;
+      out.push({ id: f.id, kind: f.kind, formula: e ? e.formula : "（无公式）" });
+    }
+  }
+  // A corner edit explains its own shape change; otherwise a changed outline is the notches staying put.
+  const cornerEdited = diffLayouts(t.draft.base, t.draft.layout).some((d) => d.board === boardId && d.what === "corner");
+  if (shape(a) && shape(a) !== shape(b) && !cornerEdited) {
+    out.push({ id: "轮廓缺口", kind: "outline", formula: "按分隔板位置生成，留在分隔板处" });
+  }
+  return out;
+}
+
+// Face mode: pick the face to move (on this board), then the reference face (any other board,
+// the faint ones too), then contact or flush. The result is the same axis record default mode
+// edits — `at` is the reference face — plus the relation, so contact keeps being checked.
+
+const faceName = (board, face) => `${board}.${FACE_NAMES[face]}`;
+const pickLabel = (p) => {
+  if (!p?.notch) return faceName(p.board, p.face);
+  const kind = p.pocket === "groove" ? "半槽" : p.pocket === "cutout" ? "开孔" : "台阶";
+  return `${p.board} ${kind} ${p.expr}`;
+};
+
+/** A notch plane's recorded formula, else the box face. */
+function planeExpr(c, board, f) {
+  if (!f.notch) return `${board.id}.${f.face}`;
+  let best = null;
+  for (const [k, e] of Object.entries(c.prov?.entries || {})) {
+    if (!k.startsWith(board.id)) continue;
+    if (Math.abs(e.value - f.value) > 0.05) continue;
+    const named = !/\[\d+\]/.test(k);
+    if (!best || (named && !best.named) || (named === best.named && k.length < best.k.length)) best = { k, named };
+  }
+  return best ? best.k : String(Math.round(f.value * 1000) / 1000);
+}
+
+/** Face mode looks through the faint boards: step ① takes the first hit on this board, ② the first on any other. */
+function faceHit(clientX, clientY) {
+  const t = tab();
+  const ray = rayFromClient(clientX, clientY);
+  raycaster.set(ray.origin, ray.direction);
+  const hits = raycaster.intersectObjects(Array.from(boardGroups.values()).map((g) => g.mesh), false);
+  const wantSelf = !t.mode.pick?.move || t.mode.pick.step === "kind" || t.mode.pick.step === "view";
+  return hits.find((h) => (h.object.userData.boardId === t.mode.board) === wantSelf) || hits[0] || null;
+}
+
+function facePick(hit) {
+  const t = tab();
+  const c = cur();
+  const m = t.mode;
+  m.error = null;
+  m.done = null;
+  if (!hit || hit.object.userData.kind !== "board") { renderSelection(); return; }
+  const id = hit.object.userData.boardId;
+  const b = c.boards.get(id);
+  const normal = hit.face.normal.clone().transformDirection(hit.object.matrixWorld);
+  const point = hit.point.clone().sub(boardGroups.get(id)?.group.position || new THREE.Vector3());
+  const f = faceAt(b, normal, point);
+  if (f.error) { m.error = `${id}：${f.error}`; renderSelection(); return; }
+  const picked = {
+    board: id, face: f.face, axis: f.axis, expr: planeExpr(c, b, f), notch: !!f.notch, pocket: f.pocket || null,
+    value: f.value, along: f.along, span: f.span, cross: f.cross, spanCross: f.spanCross, feature: f.feature || null,
+    delta: f.notch ? Math.round((b[f.face] - f.value) * 1000) / 1000 : 0,
+  };
+  const pick = m.pick;
+  if (id === m.board) {
+    pick.move = picked;
+    pick.ref = null;
+    pick.kind = null;
+    pick.step = "ref";
+  } else if (!pick.move) {
+    m.error = `第一个面要选在 ${m.board} 上（要移动的面）`;
+  } else if (f.axis !== pick.move.axis && f.axis !== pick.move.face[0]) {
+    m.error = `${pickLabel(pick.move)} 和 ${pickLabel(picked)} 不沿同一条轴：一条关系只管一条轴，不旋转板件`;
+  } else {
+    pick.ref = picked;
+    pick.kind = null;
+    pick.step = "kind";
+  }
+  log("bench.face.pick", { module: t.moduleId, board: id, face: f.face, notch: !!f.notch, pocket: f.pocket || null, expr: picked.expr, step: pick.step, error: m.error });
+  buildModeOverlay();
+  renderSelection();
+}
+
+function gapText(gap) {
+  const n = Number(gap) || 0;
+  return n ? `，间隙 ${n} mm` : "";
+}
+
+/** The footprint used for the contact check. A notch, half-slot or opening is that face, not the outer box. */
+function pickRegion(c, pick) {
+  const b = c.boards.get(pick.board);
+  if (!pick.notch) return faceRegion(b, pick.face);
+  const axis = pick.axis || pick.face[0];
+  const [k1, k2] = ["x", "y", "z"].filter((k) => k !== axis);
+  const spanOf = (k) => {
+    if (pick.along === k && pick.span) return pick.span;
+    if (pick.cross === k && pick.spanCross) return pick.spanCross;
+    return [b[`${k}0`], b[`${k}1`]];
+  };
+  const s1 = spanOf(k1);
+  const s2 = spanOf(k2);
+  return {
+    axis,
+    value: pick.value,
+    bounds: { [k1]: s1, [k2]: s2 },
+    contains(p) {
+      return p[k1] >= s1[0] - 0.01 && p[k1] <= s1[1] + 0.01 && p[k2] >= s2[0] - 0.01 && p[k2] <= s2[1] + 0.01;
+    },
+  };
+}
+
+/** What a relation would do, checked by generating with it. */
+function relationCandidate(kind) {
+  const t = tab();
+  const c = cur();
+  const { move, ref } = t.mode.pick;
+  const refKey = ref.expr || `${ref.board}.${ref.face}`;
+  const gap = Number(t.mode.gap) || 0;
+  if (kind === "contact" && move.face[1] === ref.face[1] && !move.notch && !ref.notch) {
+    return { ok: false, error: `接触要两个面相向：${pickLabel(move)} 和 ${pickLabel(ref)} 朝同一个方向，只能延伸` };
+  }
+  let layout = t.draft.layout;
+  if (!layout.boards?.[move.board]?.axes?.[move.face[0]]) layout = ensureBoard(layout, move.board, seedAxes(c.boards.get(move.board), c.prov));
+  let next;
+  try { next = setRelation(layout, move.board, move.face, refKey, kind, gap, move.delta || 0); } catch (err) { return { ok: false, error: err.message }; }
+  const res = generate(t.moduleId, t.params, next);
+  if (res.validation?.errors?.length) return { ok: false, error: res.validation.errors.join("；") };
+  const nb = res.boards.find((x) => x.id === move.board);
+  const rb = res.boards.find((x) => x.id === ref.board);
+  const delta = nb[move.face] - c.boards.get(move.board)[move.face];
+  let area = null;
+  if (kind === "contact") {
+    const ra = pickRegion(c, move);
+    const rb = pickRegion(c, ref);
+    ra.value = rb.value;
+    area = overlapArea(ra, rb);
+    if (area < 1) return { ok: false, error: `${pickLabel(move)} 移过去后和 ${pickLabel(ref)} 在平面内没有重叠：接触不成立（不会为此改动另外两条轴）` };
+  }
+  const old = layout.boards[move.board].axes[move.face[0]];
+  return { ok: true, next, delta, area, replaced: ruleText(move.face[0], old) };
+}
+
+function confirmRelation() {
+  const t = tab();
+  const { move, ref, kind } = t.mode.pick;
+  const cand = relationCandidate(kind);
+  if (!cand.ok) { t.mode.error = cand.error; renderSelection(); return; }
+  const label = `${pickLabel(move)} ${kind === "contact" ? "接触" : "延伸"}${gapText(t.mode.gap)} ${pickLabel(ref)}`;
+  t.mode.error = null;
+  const kept = t.nudge;
+  t.nudge = null;
+  const res = tryLayout(cand.next, label, { mode: "face", board: move.board, face: move.face, ref: `${ref.board}.${ref.face}`, relation: kind });
+  if (!res.ok) { t.nudge = kept; t.mode.error = res.error; renderSelection(); return; }
+  if (res.unchanged) applyExplode();
+  t.mode.pick = { step: "move" };
+  const axis = move.face[0];
+  t.mode.done = `已建立：${label}。${move.board} 已沿${AXIS_NAMES[axis]}移动 ${cand.delta >= 0 ? "+" : ""}${fmt(cand.delta)} mm。这是草稿，右下角「提交」才写入 layout.json。`;
+  log("bench.face.relation", { module: t.moduleId, board: move.board, face: move.face, ref: `${ref.board}.${ref.face}`, relation: kind });
+  buildModeOverlay();
+  renderSelection();
+}
+
+function renderFacePanel(panel) {
+  const t = tab();
+  const id = t.mode.board;
+  const pick = t.mode.pick || { step: "move" };
+  const N = names();
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 面的模式` }),
+    h("div", { class: "panel-sub", text: `先点 ${id} 上要移动的面，再点作为参照的面（其他板是半透明的，也能点）。一条关系只管一条轴：${id} 只沿那个面的法向整体平移，尺寸、朝向和另外两条轴不变，参照板不会被推动。` }),
+  ]));
+  const nudged = t.nudge && Object.values(t.nudge).some((v) => Math.hypot(v[0], v[1], v[2]) > 0.5);
+  panel.append(h("div", { class: "btn-row" }, [
+    h("button", { class: `tb${t.faceMove ? " primary" : ""}`, text: "移动 M", title: `只拖 ${id}，把它从叠在一起的面上挪开，再点要选的面。别的板不动。只改画面，不改规则。`, onclick: toggleFaceMove }),
+    nudged ? h("button", { class: "tb", text: "放回", title: "每块板回到规则算出的位置", onclick: clearNudge }) : null,
+  ]));
+  panel.append(
+    h("div", { class: `pick-step${pick.step === "move" ? " active" : ""}` }, [h("span", { text: "① 移动面：" }), pick.move ? h("b", { text: pickLabel(pick.move) }) : h("span", { class: "muted", text: `在 3D 里点 ${id} 的一个面，外包面和缺口里的面都可以` })]),
+    h("div", { class: `pick-step${pick.step === "ref" ? " active" : ""}` }, [h("span", { text: "② 参照面：" }), pick.ref ? h("b", { text: pickLabel(pick.ref) }) : h("span", { class: "muted", text: "点另一块板上沿同一条轴的面，包括缺口里的台阶" })]),
+  );
+  if (pick.step === "kind") {
+    const gap = h("input", { type: "number", step: "0.1", value: t.mode.gap ?? "0", title: "正数是留空隙。接触仍要求两边轮廓在这个面上重叠。" });
+    gap.addEventListener("input", () => { t.mode.gap = gap.value; });
+    panel.append(h("div", { class: "face-row" }, [h("span", { class: "fname", text: "间隙" }), gap, h("span", { class: "muted", text: "mm" })]));
+    const kinds = [["contact", "接触", "两个面相对，移过去之后轮廓要重叠。间隙让它们停在碰到之前。"], ["flush", "延伸", "两个面落到同一张延伸平面上，不必碰到，也不必相对。"]];
+    panel.append(h("div", { class: "btn-row" }, kinds.map(([k, label, tip]) => h("button", { class: `tb${pick.kind === k ? " primary" : ""}`, text: label, title: tip, onclick: () => { pick.kind = k; t.mode.error = null; buildModeOverlay(); renderSelection(); } }))));
+    if (pick.kind) {
+      const cand = relationCandidate(pick.kind);
+      if (!cand.ok) panel.append(h("div", { class: "mode-err", text: `不能建立：${cand.error}` }));
+      else {
+        const axis = pick.move.face[0];
+        panel.append(section("预览", [
+          h("div", { class: "kv" }, [h("span", { text: `${id} 沿${AXIS_NAMES[axis]}方向整体移动` }), h("b", { text: `${cand.delta >= 0 ? "+" : ""}${fmt(cand.delta)} mm（尺寸不变）` })]),
+          h("div", { class: "mode-note", text: "确认后这块板立刻移到新位置，不必先返回整体。" }),
+          h("div", { class: "kv" }, [h("span", { text: "替换这条轴原来的规则" }), h("b", { text: cand.replaced })]),
+          cand.area != null ? h("div", { class: "kv" }, [h("span", { text: "接触面积（按真实轮廓）" }), h("b", { text: `${fmt(cand.area)} mm²` })]) : h("div", { class: "mode-note", text: "齐平只表示位置一致：不是接缝，不会产生加工。" }),
+          h("div", { class: "btn-row" }, [
+            h("button", { class: "tb primary", text: "确认建立", onclick: confirmRelation }),
+            h("button", { class: "tb", text: "重选", onclick: () => { t.mode.pick = { step: "move" }; buildModeOverlay(); renderSelection(); } }),
+          ]),
+        ]));
+      }
+    }
+  }
+  if (t.mode.error) panel.append(h("div", { class: "mode-err", text: t.mode.error }));
+  if (t.mode.done) panel.append(h("div", { class: "tag ok", text: t.mode.done }));
+  // Relations already on this board: view, or turn back into a plain formula.
+  const rule = placementRule(id);
+  const rels = rule ? ["x", "y", "z"].filter((a) => rule.axes[a]?.relation) : [];
+  panel.append(section(`${id} 上的面关系`, rels.length ? rels.map((a) => {
+    const r = rule.axes[a];
+    const face = `${a}${r.from === "lo" ? "0" : "1"}`;
+    const [rb, rf] = r.relation.ref.split(".");
+    return h("div", { class: "kv" }, [
+      h("span", { text: `${AXIS_NAMES[a]}：${FACE_NAMES[face]} ${r.relation.kind === "contact" ? "接触" : "延伸"}${r.relation.offset ? `，间隙 ${r.relation.offset} mm` : ""} ${toDisplay(r.relation.ref, N)}` }),
+      h("span", { class: "btn-row" }, [
+        h("button", { class: "tb", text: "查看", onclick: () => { t.mode.pick = { step: "view", move: { board: id, face }, ref: { board: rb, face: rf }, kind: r.relation.kind }; buildModeOverlay(); renderSelection(); } }),
+        h("button", { class: "tb", text: "改成公式", title: "去掉关系标记，位置公式保留（之后在默认模式里改）", onclick: () => {
+          t.mode.error = null;
+          const res = tryLayout(setFace(t.draft.layout, id, face, r.at), `${id}.${face} relation → formula`, { mode: "face", board: id, face });
+          if (!res.ok) { t.mode.error = res.error; renderSelection(); }
+        } }),
+      ]),
+    ]);
+  }) : [h("div", { class: "empty small", text: "还没有。" })]));
+  panel.append(modeButtons("face"));
+}
+
+/** Face highlights parented on the board, so a screen nudge carries the plane with it. */
+let facePlanes = [];
+function clearFacePlanes() {
+  for (const m of facePlanes) {
+    m.parent?.remove(m);
+    m.geometry?.dispose();
+    m.material?.dispose();
+  }
+  facePlanes = [];
+}
+function buildFaceOverlay() {
+  const t = tab();
+  const c = cur();
+  const pick = t.mode.pick;
+  if (!pick || (!pick.move && !pick.ref)) return null;
+  const quad = (picked, color, grow = 0) => {
+    const b = c.boards.get(picked.board);
+    if (!b) return;
+    const face = picked.face;
+    const a = picked.axis || face[0];
+    const [k1, k2] = ["x", "y", "z"].filter((k) => k !== a);
+    const v = (picked.notch ? picked.value : b[face]) + (face[1] === "1" ? 0.6 : -0.6);
+    const range = (k) => {
+      if (!grow && picked.notch && picked.along === k && picked.span) return picked.span;
+      if (!grow && picked.notch && picked.cross === k && picked.spanCross) return picked.spanCross;
+      return [b[`${k}0`], b[`${k}1`]];
+    };
+    const [lo1, hi1] = range(k1).map((n, i) => n + (i ? grow : -grow));
+    const [lo2, hi2] = range(k2).map((n, i) => n + (i ? grow : -grow));
+    const P = (p, q) => { const o = new THREE.Vector3(); o[a] = v; o[k1] = p; o[k2] = q; return o; };
+    const geo = new THREE.BufferGeometry().setFromPoints([P(lo1, lo2), P(hi1, lo2), P(hi1, hi2), P(lo1, lo2), P(hi1, hi2), P(lo1, hi2)]);
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ color, transparent: true, opacity: grow ? 0.12 : 0.55, side: THREE.DoubleSide, depthTest: false, depthWrite: false }));
+    mesh.renderOrder = 50;
+    const host = boardGroups.get(picked.board)?.group;
+    (host || cabRoot).add(mesh);
+    facePlanes.push(mesh);
+  };
+  if (pick.move) quad(pick.move, 0xffd166);
+  if (pick.ref) {
+    quad(pick.ref, 0x5fd4e8);
+    if (pick.kind === "flush") quad(pick.ref, 0x5fd4e8, Math.max(150, bbox.getSize(new THREE.Vector3()).length() * 0.25));
+  }
+  return null;
+}
+
+// --- board edit: outline corners and feature depths (layout.json `outline` / `features`) ---------------
+// Shape only: the placement frame never moves, a corner may leave it, the box becomes the outline's extent.
+
+function boardEditable(boardId) {
+  const r = placementRule(boardId);
+  return !!(r && (r.outline || r.features));
+}
+
+/** Which corner rule an outline point is (frame-local coordinates match), or null for a generated point. */
+function cornerOf(b, p) {
+  if (p.corner) return p.corner;
+  const rule = placementRule(b.id);
+  if (!rule?.outline) return null;
+  const prov = cur().prov;
+  const [A, B] = planeAxes(b.profilePlane);
+  const fa = entryOf(prov, `${b.id}.frame.${A}0`)?.value ?? b[`${A}0`];
+  const fb = entryOf(prov, `${b.id}.frame.${B}0`)?.value ?? b[`${B}0`];
+  const u = p.local[0] + b[`${A}0`] - fa;
+  const v = p.local[1] + b[`${B}0`] - fb;
+  for (const k of Object.keys(rule.outline.corners)) {
+    const cu = entryOf(prov, `${b.id}.corner.${k}.u`)?.value;
+    const cv = entryOf(prov, `${b.id}.corner.${k}.v`)?.value;
+    if (Math.abs(cu - u) < 1e-6 && Math.abs(cv - v) < 1e-6) return k;
+  }
+  return null;
+}
+
+function applyCorner(id, k, coords, how) {
+  const t = tab();
+  let next = t.draft.layout;
+  try { for (const [coord, expr] of coords) next = setCorner(next, id, k, coord, expr); } catch (err) { t.l3Error = err.message; renderSelection(); return; }
+  t.l3Error = null;
+  t.l3Corner = k;
+  const res = tryLayout(next, `${id} ${k} ${coords.map(([c2, e]) => `${c2}=${e}`).join(" ")}`, { mode: "board", board: id, corner: k, how });
+  t.l3Error = res.ok ? null : res.error;
+  t.l3Corner = k;
+  if (!res.ok || res.unchanged) renderSelection();
+}
+
+function dragPoint(b, p, du, dv) {
+  const t = tab();
+  const k = cornerOf(b, p);
+  if (!k) { t.l3Error = "这个点由分隔板缺口生成，跟着后边走，不能单独拖动。拖四个角点。"; renderSelection(); return; }
+  const c = placementRule(b.id).outline.corners[k];
+  applyCorner(b.id, k, [["u", withOffset(c.u, du)], ["v", withOffset(c.v, dv)]], "drag");
+}
+
+function renderBoardEdit(panel) {
+  const t = tab();
+  const c = cur();
+  const id = t.l3;
+  const b = c.boards.get(id);
+  const rule = placementRule(id);
+  const N = names();
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 板件编辑` }),
+    h("div", { class: "panel-sub", text: "改轮廓点和加工深度。板件位置不变：点可以越出原来的外包，整块板不会被重新归零或挪位。位置在参数调试里改。" }),
+  ]));
+  if (rule.outline) {
+    const [A, B] = planeAxes(b.profilePlane);
+    const rows = Object.keys(rule.outline.corners).map((k) => {
+      const cr = rule.outline.corners[k];
+      const field = (coord) => {
+        const text = toDisplay(cr[coord], N);
+        const input = h("input", { type: "text", value: text, spellcheck: "false" });
+        input.dataset.corner = `${k}.${coord}`;
+        const go = () => { if (input.value !== text) applyCorner(id, k, [[coord, fromDisplay(input.value, N)]], "type"); };
+        input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") { input.value = text; input.blur(); } });
+        input.addEventListener("change", go);
+        input.addEventListener("focus", () => { t.l3Corner = k; renderL3(); });
+        return input;
+      };
+      const u = entryOf(c.prov, `${id}.corner.${k}.u`)?.value;
+      const v = entryOf(c.prov, `${id}.corner.${k}.v`)?.value;
+      return h("div", { class: `corner-row${t.l3Corner === k ? " active" : ""}` }, [
+        h("span", { class: "fname", text: CORNER_NAMES[k] || k }),
+        h("span", { class: "fval", text: `${fmt(u)}, ${fmt(v)}` }),
+        field("u"), field("v"),
+      ]);
+    });
+    panel.append(section(`轮廓控制点（${A}, ${B}，从定位框的起点量）`, [
+      h("div", { class: "corner-row head" }, [h("span", {}), h("span", { class: "fval", text: "现在" }), h("span", { text: `横向 ${A}` }), h("span", { text: `纵向 ${B}` })]),
+      ...rows,
+      h("div", { class: "mode-note", text: "也可以在板件图里直接拖角点：拖完在原公式后面加上偏移（取整到 0.5 mm），公式保留。改一个角只动这个角；同时改左边两个角才是整条左边伸出。后边的分隔板缺口由分隔板位置生成，跟着后边走。" }),
+    ]));
+  }
+  for (const [fid, feat] of Object.entries(rule.features || {})) {
+    const group = `${id}.${fid}`;
+    const segs = (b.faces || []).flatMap((f) => f.features).filter((f) => f.group === group);
+    const value = entryOf(c.prov, `${id}.feat.${fid}.depth`)?.value;
+    const text = toDisplay(feat.depth, N);
+    const input = h("input", { type: "text", value: text, spellcheck: "false" });
+    input.dataset.feature = fid;
+    const go = () => {
+      if (input.value === text) return;
+      let next;
+      try { next = setFeatureDepth(t.draft.layout, id, fid, fromDisplay(input.value, N)); } catch (err) { t.l3Error = err.message; renderSelection(); return; }
+      t.l3Error = null;
+      const res = tryLayout(next, `${group} depth = ${fromDisplay(input.value, N)}`, { mode: "board", board: id, feature: fid });
+      t.l3Error = res.ok ? null : res.error;
+      if (!res.ok || res.unchanged) renderSelection();
+    };
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") { input.value = text; input.blur(); } });
+    input.addEventListener("change", go);
+    input.addEventListener("focus", () => { t.l3Group = group; renderL3(); });
+    const warn = (c.result.validation?.warnings || []).filter((w) => w.startsWith(`${id}:`) && /groove|cuts/i.test(w));
+    panel.append(section(`加工特征 · ${feat.label || fid}`, [
+      h("div", { class: "face-row" }, [h("span", { class: "fname", text: "深度" }), h("span", { class: "fval", text: segs.length ? fmt(value) : "—" }), input]),
+      h("div", { class: "mode-note", text: segs.length
+        ? `作用范围：整个${feat.label || fid}，${segs.length} 段（${segs.map((s) => s.id.replace(`${id}_`, "")).join("、")}）共用这一条深度。槽口在加工面上不动，只有槽底跟着深度变。从板件图里点任何一段都会回到这里。`
+        : "这个生成结果里没有这个特征（例如灯槽开关关着）。规则仍保留。" }),
+      ...warn.map((w) => h("div", { class: "tag gap", text: w })),
+    ]));
+  }
+  if (t.l3Error) panel.append(h("div", { class: "mode-err", text: `没有采用：${t.l3Error}` }));
+  const sel = t.selection;
+  if (sel?.kind === "point" && sel.id === id && !cornerOf(b, { local: sel.local, cabinet: sel.cabinet, keys: sel.keys })) {
+    panel.append(pointFormulas(b, sel, c.prov));
+  }
+  panel.append(section("", [h("div", { class: "btn-row" }, [
+    h("button", { class: "tb", text: "参数调试 · 默认模式", onclick: () => enterMode("default", id) }),
+    h("button", { class: "tb", text: "面的模式", onclick: () => enterMode("face", id) }),
+    h("button", { class: "tb", text: "返回整体", onclick: exitL3 }),
+  ])]));
+}
+
+/** The two coordinates of one clicked point, each as a formula of params and rule constants. */
+function pointFormulas(b, sel, prov) {
+  const [A, B] = planeAxes(b.profilePlane);
+  const rows = sel.keys.map((key, i) => {
+    if (!key) return null;
+    const e = entryOf(prov, key);
+    const flat = flatFormula(prov, key);
+    return h("div", { class: "face-row" }, [
+      h("span", { class: "fname", text: i === 0 ? A : B }),
+      h("span", { class: "fval", text: fmt(e ? e.value : sel.cabinet[i]) }),
+      h("span", { class: "formula", text: flat ? `= ${toDisplay(flat)}` : "—" }),
+    ]);
+  });
+  return h("div", { class: "mode-axis" }, rows);
+}
+
+function modeButtons(current) {
+  const t = tab();
+  const id = t.mode.board;
+  return section("", [h("div", { class: "btn-row" }, [
+    current !== "default" ? h("button", { class: "tb", text: "默认模式", onclick: () => enterMode("default", id) }) : null,
+    current !== "face" ? h("button", { class: "tb", text: "面的模式", onclick: () => enterMode("face", id) }) : null,
+    h("button", { class: "tb", text: "板件编辑", onclick: () => { exitMode(); enterL3(id); } }),
+    h("button", { class: "tb", text: "返回整体", title: "Esc", onclick: exitMode }),
+  ])]);
+}
 
 // --- 3D --------------------------------------------------------------------------------
 
@@ -506,8 +2213,6 @@ function build3D(keepCamera) {
   bbox = cabinetBox(boards);
   explodePlan = planExplode(c.result);
   if (t.step != null) t.step = Math.min(t.step, explodePlan.order.length);
-  const span = bbox.getSize(new THREE.Vector3()).length();
-  const pr = Math.max(3, span / 260);
 
   for (const b of boards) {
     const door = doorMaterialFor(b);
@@ -524,21 +2229,12 @@ function build3D(keepCamera) {
     group.add(mesh, edges);
     const coats = [];
     const bc = new THREE.Vector3((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2);
-    if (t.showPoints) {
-      for (const p of pointsOf(b, c.prov, c.result.features || [])) {
-        const m = new THREE.Mesh(new THREE.SphereGeometry(pr, 10, 10), p.kind === "outline" ? pointOutlineMat : pointMat);
-        m.position.copy(p.pos);
-        m.userData = { kind: "point", boardId: b.id, point: p };
-        m.renderOrder = 15;
-        group.add(m);
-        pointMeshes.push(m);
-      }
-    }
     cabRoot.add(group);
     boardGroups.set(b.id, { group, mesh, edges, mat, coats, bodyHex, center: bc, board: b });
   }
   buildTrails();
   buildLabels();
+  buildModeOverlay();
   applyExplode();
   applyCut();
   paintSelection();
@@ -562,7 +2258,7 @@ function buildJoints() {
   const c = cur();
   for (const j of jointObjs) { cabRoot.remove(j.line, j.dot); j.line.geometry.dispose(); j.dot.geometry.dispose(); }
   jointObjs = [];
-  if (!t.showJoints) return;
+  if (!t.showJoints || t.mode) return;
   const decls = c.result.relationshipDeclarations || [];
   decls.forEach((d, index) => {
     const A = boardGroups.get(d.panelAId);
@@ -628,7 +2324,10 @@ function explodeTargets() {
     const o = raw.get(b.id) || [0, 0, 0];
     // Steps: boards already in sit at home; the rest wait at their exploded position.
     const home = t.step != null && stepIndex(b.id) < t.step;
-    out.set(b.id, home ? new THREE.Vector3() : new THREE.Vector3(o[0], o[1], o[2]));
+    const at = home ? new THREE.Vector3() : new THREE.Vector3(o[0], o[1], o[2]);
+    const n = t.nudge?.[b.id];
+    if (n) at.add(new THREE.Vector3(n[0], n[1], n[2]));
+    out.set(b.id, at);
   }
   return out;
 }
@@ -666,7 +2365,9 @@ function afterExplodeMove() {
 function applyOpacity() {
   const t = tab();
   for (const [id, g] of boardGroups) {
-    const o = isWaiting(id) ? Math.min(t.opacity, GHOST_OPACITY) : t.opacity;
+    // Default mode fades the other boards. Face mode keeps them solid so the mating face stays readable.
+    const inMode = t.mode?.kind === "default" && id !== t.mode.board;
+    const o = inMode ? Math.min(t.opacity, MODE_GHOST) : isWaiting(id) ? Math.min(t.opacity, GHOST_OPACITY) : t.opacity;
     g.mat.transparent = o < 1;
     g.mat.opacity = o;
     g.mat.depthWrite = o >= 1;
@@ -677,7 +2378,7 @@ function applyOpacity() {
       m.depthWrite = o >= 1;
       m.needsUpdate = true;
     }
-    g.edges.material = isWaiting(id) ? edgeMatGhost : edgeMat;
+    g.edges.material = isWaiting(id) || inMode ? edgeMatGhost : edgeMat;
   }
 }
 
@@ -892,6 +2593,7 @@ function paintSelection() {
 const raycaster = new THREE.Raycaster();
 function pickAt(clientX, clientY) {
   const t = tab();
+  if (!t) return null;
   const ray = rayFromClient(clientX, clientY);
   raycaster.set(ray.origin, ray.direction);
   const order = [];
@@ -906,23 +2608,71 @@ function pickAt(clientX, clientY) {
 }
 
 let down = null;
-canvas.addEventListener("pointerdown", (e) => { down = { x: e.clientX, y: e.clientY, b: e.button }; });
+let faceDrag = null;
+canvas.addEventListener("pointerdown", (e) => {
+  down = { x: e.clientX, y: e.clientY, b: e.button };
+  const t = tab();
+  if (t?.mode?.kind === "face" && t.faceMove && e.button === 0) {
+    const hit = pickAt(e.clientX, e.clientY);
+    if (hit?.object.userData.kind === "board" && hit.object.userData.boardId === t.mode.board) faceDrag = { id: t.mode.board, moved: false };
+  }
+});
 canvas.addEventListener("pointerup", (e) => {
   const d = down;
   down = null;
   storeCamera();
+  if (faceDrag?.moved) { faceDrag = null; return; }
+  faceDrag = null;
   if (!d || Math.hypot(e.clientX - d.x, e.clientY - d.y) > 4) return;
   const hit = pickAt(e.clientX, e.clientY);
   if (e.button === 2) { if (hit && hit.object.userData.kind === "board") boardCtx(hit.object.userData.boardId, e.clientX, e.clientY); return; }
   if (e.button !== 0) return;
+  if (tab()?.mode) { if (tab().mode.kind === "face") facePick(faceHit(e.clientX, e.clientY)); return; }
   if (!hit) { select(null); return; }
   const u = hit.object.userData;
   if (u.kind === "board") select({ kind: "board", id: u.boardId });
-  else if (u.kind === "point") select({ kind: "point", id: u.boardId, keys: u.point.keys, label: u.point.label, pkind: u.point.kind, local: u.point.local, cabinet: u.point.cabinet });
-  else if (u.kind === "joint") select({ kind: "joint", index: u.index, a: u.decl.panelAId, b: u.decl.panelBId });
+  else if (u.kind === "joint") select({ kind: "board", id: u.decl.panelAId });
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+/** Slide one board in the picture, along the screen. Display only. */
+function slideBoard(id, dx, dy) {
+  const t = tab();
+  if (!t || !dx && !dy) return;
+  const dist = Math.max(camera.position.distanceTo(controls.target), 200);
+  const worldPerPx = (2 * Math.tan((camera.fov * Math.PI) / 360) * dist) / Math.max(canvas.clientHeight, 1);
+  const right = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 0);
+  const up = new THREE.Vector3().setFromMatrixColumn(camera.matrixWorld, 1);
+  const cur = t.nudge?.[id] || [0, 0, 0];
+  t.nudge = { ...(t.nudge || {}), [id]: [
+    cur[0] + right.x * dx * worldPerPx + up.x * -dy * worldPerPx,
+    cur[1] + right.y * dx * worldPerPx + up.y * -dy * worldPerPx,
+    cur[2] + right.z * dx * worldPerPx + up.z * -dy * worldPerPx,
+  ] };
+  applyExplode();
+}
+function toggleFaceMove() {
+  const t = tab();
+  if (t?.mode?.kind !== "face") return;
+  t.faceMove = !t.faceMove;
+  log("bench.face.move", { module: t.moduleId, on: !!t.faceMove });
+  applyOpacity();
+  renderSelection();
+}
+function clearNudge() {
+  const t = tab();
+  if (!t) return;
+  t.nudge = null;
+  applyExplode();
+  renderSelection();
+}
+
 canvas.addEventListener("pointermove", (e) => {
+  if (faceDrag && down) {
+    slideBoard(faceDrag.id, e.movementX, e.movementY);
+    if (Math.hypot(e.clientX - down.x, e.clientY - down.y) > 4) faceDrag.moved = true;
+    hideTip();
+    return;
+  }
   if (down) { hideTip(); return; }
   const hit = pickAt(e.clientX, e.clientY);
   const c = cur();
@@ -945,8 +2695,8 @@ canvas.addEventListener("pointermove", (e) => {
     const isSel = tsel && tsel.kind === "point" && tsel.keys && tsel.keys.join() === u.point.keys.join();
     if (!isSel) hover.material = pointHoverMat;
     const [A, B] = planeAxes(c.boards.get(u.boardId).profilePlane);
-    const lines = [`${u.boardId} · ${u.point.label} (${u.point.kind})`, `${A} ${fmt(u.point.cabinet[0])} · ${B} ${fmt(u.point.cabinet[1])}`];
-    for (const k of u.point.keys) { const e2 = entryOf(c.prov, k); if (e2) lines.push(`${k.split(".").slice(-1)[0]} = ${e2.formula}`); }
+    const lines = [`${u.boardId}`, `${A} ${fmt(u.point.cabinet[0])} · ${B} ${fmt(u.point.cabinet[1])}`];
+    u.point.keys.forEach((k, i) => { const flat = flatFormula(c.prov, k); if (flat) lines.push(`${i === 0 ? A : B} = ${flat}`); });
     tip(e.clientX, e.clientY, lines);
   } else if (u.kind === "joint") {
     tip(e.clientX, e.clientY, [`${u.decl.panelAId} ↔ ${u.decl.panelBId}`, `${u.decl.relationshipType} · ${u.status === "ok" ? "touching" : u.status === "gap" ? `gap ${fmt(u.sep)} mm` : `overlap ${fmt(-u.sep)} mm`}`], u.status === "ok" ? "" : "warn");
@@ -975,8 +2725,12 @@ function select(sel) {
     const formula = sel.kind === "face" ? entryOf(c.prov, sel.key)?.formula : sel.kind === "point" ? sel.keys.map((k) => entryOf(c.prov, k)?.formula).join(" | ") : null;
     log("bench.select", { module: t.moduleId, what: sel.kind, id: sel.id ?? `${sel.a}↔${sel.b}`, key: sel.key || null, keys: sel.keys || null, value, formula });
   }
+  const hadError = !!t.placeError;
+  if (!sel || sel.kind === "board") t.placeError = null;
   paintSelection();
-  renderSelection();
+  // A board click only highlights it. Rebuilding the generator page would throw away the scroll position.
+  const keepPage = !t.mode && !t.l3 && !hadError && (!sel || sel.kind === "board");
+  if (!keepPage) renderSelection();
   renderBottom();
   renderL3();
   saveState();
@@ -1087,169 +2841,286 @@ function clearHighlight() {
   renderL3();
 }
 
+/** One board's placement, editable here: a face formula moves the whole board and keeps the size. */
+function placementBlock(id, b) {
+  const t = tab();
+  const c = cur();
+  const rule = placementRule(id);
+  const axes = rule ? rule.axes : seedAxes(b, c.prov);
+  const N = names();
+  const apply = (face, text, input) => {
+    const expr = fromDisplay(text, N);
+    if (!expr) return;
+    let layout = t.draft?.layout;
+    if (!layout) return;
+    if (!layout.boards?.[id]?.axes?.[face[0]]) layout = ensureBoard(layout, id, seedAxes(b, c.prov));
+    let next;
+    try { next = setFace(layout, id, face, expr); } catch (err) { t.placeError = { id, message: err.message }; renderSelection(); return; }
+    t.placeError = null;
+    const res = tryLayout(next, `${id}.${face} = ${expr}`, { mode: "overview", board: id, face });
+    if (!res.ok) { t.placeError = { id, message: res.error }; renderSelection(); if (input) input.focus(); }
+  };
+  const block = h("div", {});
+  for (const a of ["x", "y", "z"]) {
+    const r = axes[a];
+    const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
+    const rows = [`${a}0`, `${a}1`].map((f) => {
+      const isDrive = f === drive;
+      const text = isDrive ? toDisplay(nameCenterlines(r.at)) : (rule ? drivenText(a, r) : toDisplay(nameCenterlines(concreteFormula(c.prov, `${id}.${f}`))));
+      const input = h("input", { type: "text", value: text, spellcheck: "false", title: isDrive ? "这条轴的驱动面" : "输入新公式：这一面成为驱动面，对面跟着移同样的距离" });
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value !== text) apply(f, input.value, input); if (e.key === "Escape") { input.value = text; input.blur(); } });
+      input.addEventListener("change", () => { if (input.value !== text) apply(f, input.value, input); });
+      return h("div", { class: `face-row${isDrive ? " drive" : ""}` }, [h("span", { class: "fname", text: FACE_NAMES[f] }), h("span", { class: "fval", text: fmt(b[f]) }), input]);
+    });
+    const sz = b[`${a}1`] - b[`${a}0`];
+    block.append(h("div", { class: "mode-axis" }, [
+      h("div", { class: "axis-title" }, [
+        h("span", {}, [h("span", { text: `${AXIS_NAMES[a]}（${a.toUpperCase()}）` }), rule?.axes[a]?.relation ? h("span", { class: "rel-chip", text: `${rule.axes[a].relation.kind === "contact" ? "接触" : "延伸"} ${toDisplay(rule.axes[a].relation.ref, N)}` }) : null]),
+      ]),
+      ...rows,
+      h("div", { class: "size-row" }, [h("span", { text: SIZE_NAMES[`${a}Size`] }), h("span", { class: "fval", text: fmt(sz) }), h("span", { text: `= ${toDisplay(r.size)}` })]),
+    ]));
+  }
+  return block;
+}
+
+/** A face's existing formula. Read only: the number changes when a parameter on the left changes. */
+function formulaFaces(id, b) {
+  const block = h("div", {});
+  const prov = cur()?.prov;
+  for (const a of ["x", "y", "z"]) {
+    const rows = [`${a}0`, `${a}1`].map((f) => {
+      const e = entryOf(prov, `${id}.${f}`);
+      const formula = e?.formula ? toDisplay(e.formula, names()) : "—";
+      return h("div", { class: "face-row" }, [
+        h("span", { class: "fname", text: FACE_NAMES[f] }),
+        h("span", { class: "fval", text: fmt(b[f]) }),
+        h("span", { text: formula === "—" ? "" : `= ${formula}` }),
+      ]);
+    });
+    block.append(h("div", { class: "mode-axis" }, rows));
+  }
+  return block;
+}
+
+/** Regenerate the 3D view from `params` without rebuilding the right-hand page (a zone drag). */
+function liveGenerate(params) {
+  const t = tab();
+  const c = cur();
+  if (!t || !c) return;
+  t.params = params;
+  c.result = generate(t.moduleId, params, t.draft ? t.draft.layout : null);
+  c.prov = c.result.debug?.provenance || { entries: {}, rules: {} };
+  c.boards = new Map((c.result.boards || []).map((b) => [b.id, b]));
+  build3D(true);
+  const view = $("#selPanel .ohc-front");
+  const mod = MODULES[t.moduleId];
+  if (view && mod?.frontView) {
+    try { view.innerHTML = mod.frontView(c.result, { selectedZoneIndex: (t.zoneSel || [])[0] ?? -1, gaps: "clear" }) || ""; } catch (_) { /* elevation is optional */ }
+  }
+}
+
+/** Overhead: the same zone strip and front elevation as the main app, editing this tab's params. */
+function overheadEditor(mod, t) {
+  const p = t.params;
+  const zones = p.zones || [];
+  const total = p.cabinetWidth || 1;
+  const selected = (t.zoneSel || []).filter((i) => i < zones.length);
+  const setZones = (next, what) => setParams({ ...t.params, zones: next }, `zones.${what}`, null, next.map((z) => z.width));
+  const box = h("div", { class: "panel-section" });
+  const add = h("button", { class: "tb", text: "+ 分区", onclick: () => {
+    if ((zones.length + 1) * MIN_ZONE_WIDTH > total) return;
+    setZones(fitZoneWidths([...zones, { id: `zone-${Date.now().toString(36)}`, type: "up_flap", width: MIN_ZONE_WIDTH }], total), "add");
+  } });
+  const del = h("button", { class: "tb", text: "删除", disabled: !selected.length || zones.length - selected.length < 1 ? "" : null, onclick: () => {
+    t.zoneSel = [];
+    setZones(fitZoneWidths(zones.filter((_, i) => !selected.includes(i)), total), "remove");
+  } });
+  const avg = h("button", { class: "tb", text: "均分", disabled: selected.length < 2 ? "" : null, title: "选中的分区平分它们的总宽", onclick: () => {
+    const next = zones.map((z) => ({ ...z }));
+    const sum = selected.reduce((s, i) => s + next[i].width, 0);
+    const each = Math.round((sum / selected.length) * 10) / 10;
+    selected.forEach((i, k) => { next[i].width = k === selected.length - 1 ? Math.round((sum - each * (selected.length - 1)) * 10) / 10 : each; });
+    setZones(next, "average");
+  } });
+  box.append(h("div", { class: "sec-title", text: `分区 · 从左到右 · ${zones.length} · ${fmt(total)} mm` }));
+  box.append(h("div", { class: "zs-tools" }, [add, del, avg, h("span", { class: "zs-hint", text: "拖分界 · 点一个分区 · Ctrl 多选" })]));
+
+  const strip = h("div", { class: "zs-strip" });
+  const widthRow = h("div", { class: "zs-row" });
+  const cumRow = h("div", { class: "zs-row cum" });
+  const short = (type) => mod.zoneTypes?.find((z) => z.id === type)?.short || type;
+  const cells = zones.map((z, i) => {
+    const cell = h("div", { class: `zs-zone t-${z.type}${selected.includes(i) ? " sel" : ""}` }, [
+      h("span", { class: "zs-type", text: short(z.type) }),
+      h("span", { class: "zs-w", text: String(Math.round(z.width)) }),
+    ]);
+    cell.addEventListener("click", (e) => {
+      const curSel = (t.zoneSel || []).filter((k) => k < zones.length);
+      t.zoneSel = (e.ctrlKey || e.metaKey ? (curSel.includes(i) ? curSel.filter((k) => k !== i) : [...curSel, i]) : [i]).sort((a, b) => a - b);
+      renderSelection();
+    });
+    return cell;
+  });
+  const layout = (zs) => {
+    zs.forEach((z, i) => {
+      cells[i].style.flexBasis = `${(z.width / total) * 100}%`;
+      cells[i].querySelector(".zs-w").textContent = String(Math.round(z.width));
+    });
+    widthRow.replaceChildren(...zs.map((z) => h("span", { style: `flex-basis:${(z.width / total) * 100}%`, text: String(Math.round(z.width)) })));
+    let acc = 0;
+    cumRow.replaceChildren(...zs.slice(0, -1).map((z) => { acc += z.width; return h("span", { style: `left:${(acc / total) * 100}%`, text: String(Math.round(acc)) }); }));
+  };
+  for (let i = 0; i < zones.length; i += 1) {
+    strip.append(cells[i]);
+    if (i === zones.length - 1) break;
+    const grip = h("div", { class: "zs-grip", title: "拖动分界 · Shift = 1 mm" });
+    grip.addEventListener("pointerdown", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const params0 = structuredClone(t.params);
+      const result0 = cur().result;
+      const rect = strip.getBoundingClientRect();
+      const x0 = params0.zones.slice(0, i + 1).reduce((s, z) => s + z.width, 0);
+      const startX = e.clientX;
+      try { grip.setPointerCapture(e.pointerId); } catch (_) { /* synthetic */ }
+      grip.classList.add("active");
+      let latest = params0;
+      const move = (ev) => {
+        const mm = ((ev.clientX - startX) / Math.max(rect.width, 1)) * params0.cabinetWidth;
+        const step = ev.shiftKey ? 1 : 10;
+        const pos = Math.round((x0 + mm) / step) * step;
+        latest = mod.setDivider(params0, result0, i, pos);
+        layout(latest.zones);
+        liveGenerate(latest);
+      };
+      const end = (ev) => {
+        grip.removeEventListener("pointermove", move);
+        grip.removeEventListener("pointerup", end);
+        grip.removeEventListener("pointercancel", end);
+        try { grip.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+        grip.classList.remove("active");
+        const changed = latest.zones.some((z, k) => z.width !== params0.zones[k].width);
+        if (changed) setParams(latest, "zones.width", params0.zones.map((z) => z.width), latest.zones.map((z) => z.width));
+      };
+      grip.addEventListener("pointermove", move);
+      grip.addEventListener("pointerup", end);
+      grip.addEventListener("pointercancel", end);
+    });
+    strip.append(grip);
+  }
+  layout(zones);
+  box.append(strip, widthRow, cumRow);
+
+  if (selected.length === 1) {
+    const i = selected[0];
+    const z = zones[i];
+    const type = h("select", {}, (mod.zoneTypes || []).map((zt) => h("option", { value: zt.id, text: zt.label })));
+    type.value = z.type;
+    type.addEventListener("change", () => {
+      const next = zones.map((zz) => ({ ...zz }));
+      next[i].type = type.value;
+      const patch = { ...t.params, zones: next };
+      if (type.value === "rangehood_flap") {
+        patch.rangehoodPreset = p.rangehoodPreset || "NCE";
+        if (p.rangehoodClearHeight == null) patch.rangehoodClearHeight = 75;
+        if (p.rangehoodAlignment == null) patch.rangehoodAlignment = "left";
+        if (p.rangehoodEdgeOffsetX == null) patch.rangehoodEdgeOffsetX = 40;
+      }
+      setParams(patch, "zones.type", z.type, type.value);
+    });
+    const n = i < zones.length - 1 ? i + 1 : i - 1;
+    const maxW = n >= 0 ? z.width + zones[n].width - MIN_ZONE_WIDTH : total;
+    const w = h("input", { type: "number", step: "10", value: String(z.width) });
+    w.addEventListener("change", () => {
+      if (n < 0) { w.value = String(z.width); return; }
+      const v = Math.max(MIN_ZONE_WIDTH, Math.min(maxW, Math.round(Number(w.value))));
+      if (!Number.isFinite(v)) { w.value = String(z.width); return; }
+      const next = zones.map((zz) => ({ ...zz }));
+      next[n].width = Math.round((next[n].width - (v - next[i].width)) * 10) / 10;
+      next[i].width = v;
+      setZones(next, "width");
+    });
+    box.append(h("div", { class: "zone-card" }, [
+      h("label", { class: "field" }, [h("span", { text: `分区 ${i + 1}` }), type]),
+      h("label", { class: "field" }, [h("span", { text: "宽度" }), w]),
+    ]));
+  }
+
+  box.append(h("div", { class: "sec-title", text: "前视图", style: "margin-top:10px" }));
+  const front = h("div", { class: "ohc-front" });
+  let svg = null;
+  try { svg = mod.frontView(cur().result, { selectedZoneIndex: selected[0] ?? -1, gaps: "clear" }); } catch (_) { svg = null; }
+  if (svg) front.innerHTML = svg;
+  else front.append(h("div", { class: "empty small", text: "没有前视图。" }));
+  box.append(front);
+  return box;
+}
+
+/** The right-hand page on entry: this generator's own editor. Not a board inspector. */
+function renderGenerator(panel) {
+  const t = tab();
+  const c = cur();
+  const mod = MODULES[t.moduleId];
+  const env = safeEnvelope(t);
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: mod?.label || t.moduleId }),
+    h("div", { class: "panel-sub", text: env ? `${fmt(env.W)} × ${fmt(env.D)} × ${fmt(env.H)} mm · 改这里，整柜重算` : "改这里，整柜重算" }),
+  ]));
+  const errs = c.result.validation?.errors || [];
+  if (errs.length) panel.append(h("div", { class: "panel-section" }, errs.map((m) => h("div", { class: "msg err", text: m }))));
+  if (t.placeError) panel.append(h("div", { class: "mode-err", text: `${t.placeError.id}：${t.placeError.message}` }));
+  if (mod?.id === "overheadCabinet") panel.append(overheadEditor(mod, t));
+  else if (mod?.frontView) {
+    let svg = null;
+    try { svg = mod.frontView(c.result, {}); } catch (_) { svg = null; }
+    if (svg) {
+      const front = h("div", { class: "ohc-front" });
+      front.innerHTML = svg;
+      panel.append(section("前视图", [front]));
+    }
+  }
+  const form = h("div", { class: "params" });
+  renderParamsInto(form);
+  panel.append(form);
+}
+
 function renderSelection() {
   const t = tab();
   const c = cur();
   const panel = $("#selPanel");
   panel.replaceChildren();
   if (!t || !c) return;
+  if (t.mode && c.boards.get(t.mode.board)) {
+    if (t.mode.kind === "default") renderDefaultPanel(panel);
+    else renderFacePanel(panel);
+    return;
+  }
+  if (t.l3 && c.boards.get(t.l3)) {
+    if (boardEditable(t.l3)) renderBoardEdit(panel);
+    else renderCodeBoard(panel);
+    return;
+  }
+  renderGenerator(panel);
+}
+
+/** 板件编辑 for a board whose outline is still computed in the generator. The 2D view shows its points. */
+function renderCodeBoard(panel) {
+  const t = tab();
+  const c = cur();
+  const id = t.l3;
+  const b = c.boards.get(id);
+  panel.append(h("div", { class: "panel-head" }, [
+    h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 板件编辑` }),
+    h("div", { class: "panel-sub", text: "轮廓仍由生成器代码算。点在左边的板件图里，公式写在下面。位置公式在参数调试里看。" }),
+  ]));
   const sel = t.selection;
-  const prov = c.prov;
-  if (!sel) {
-    const r = c.result;
-    panel.append(
-      h("div", { class: "panel-head" }, [h("div", { class: "panel-title", text: `${MODULES[t.moduleId]?.label || t.moduleId}` }), h("div", { class: "panel-sub", text: `${t.presetId || "custom"} · ${r.boards.length} boards · ${r.boards.reduce((n, b) => n + (b.faces ? b.faces.length : 0), 0)} faces · ${(r.joints || r.relationshipDeclarations || []).length} joints · ${Object.keys(prov.entries).length} formulas` })]),
-      section("Nothing selected", [
-        h("div", { class: "empty small", text: "Click a board, a point or a joint dot. Right-click a board → Edit board." }),
-        legend(),
-      ]),
-      section("Result", [
-        h("div", { class: "kv-list" }, [
-          h("span", { text: "boardFrame" }), h("b", { text: String(r.debug?.boardFrame || "—") }),
-          h("span", { text: "errors" }), h("b", { text: String(r.validation?.errors?.length || 0) }),
-          h("span", { text: "warnings" }), h("b", { text: String(r.validation?.warnings?.length || 0) }),
-          h("span", { text: "rules used" }), h("b", { text: Object.keys(prov.rules || {}).join(", ") || "—" }),
-        ]),
-      ]),
-    );
-    return;
-  }
-
-  if (sel.kind === "board" || sel.kind === "face") {
-    const b = c.boards.get(sel.id);
-    if (!b) return;
-    const pins = presetPins();
-    const pinned = pins?.boards?.[b.id];
-    const ep = explodePlan?.plan.get(b.id);
-    const stepNo = stepIndex(b.id) + 1;
-    panel.append(h("div", { class: "panel-head" }, [
-      h("div", { class: "panel-title", text: `${b.id} · ${b.name}` }),
-      h("div", { class: "panel-sub", text: `${b.category} · ${b.boardType} · plane ${b.profilePlane} · thickness ${fmt(b.materialThickness)} along ${b.thicknessAxis} · ${fmt(b.x1 - b.x0)} × ${fmt(b.y1 - b.y0)} × ${fmt(b.z1 - b.z0)}` }),
-      ep ? h("div", { class: "panel-sub assembly-line", title: "Assembly order and pull direction (Explode ▾). Click to show this step.", onclick: () => setStep(stepNo, "panel") }, [
-        h("span", { text: `assembly step ${stepNo} of ${explodePlan.order.length} · ` }),
-        h("b", { text: ep.fixed ? "base board, stays" : `slides ${dirLabel(ep)}` }),
-        h("span", { text: ep.parent ? ` onto ${ep.parent}${ep.via.length ? ` (${ep.via.join(", ")})` : ""}` : "" }),
-      ]) : null,
-    ]));
-    const rows = FACES.map((f) => {
-      const key = `${b.id}.${f}`;
-      const e = entryOf(prov, key);
-      const diff = pinned && Math.abs(pinned[f] - b[f]) > 0.01;
-      const tr = h("tr", { class: sel.kind === "face" && sel.key === key ? "sel" : "", onclick: () => select({ kind: "face", id: b.id, key }) }, [
-        h("td", { class: "face", text: f }),
-        h("td", { class: "val", text: fmt(b[f]) }),
-        h("td", {}, e ? [h("div", { class: "formula", text: e.formula }), h("div", { class: "terms" }, Object.entries(e.terms).map(([n, tm]) => termChip(n, tm)))] : h("span", { class: "empty small", text: "—" })),
-      ]);
-      if (diff) tr.append(h("td", { class: "pin-diff", text: `pin ${fmt(pinned[f])}` }));
-      return tr;
-    });
-    panel.append(section("Faces (cabinet frame)", [h("table", { class: "faces" }, [h("tbody", {}, rows)]), legend()]));
-    if (sel.kind === "face") {
-      panel.append(section(`Dependency tree · ${sel.key}`, [treeBlock(prov, sel.key) || h("div", { class: "empty small", text: "—" })]));
-      panel.append(section("Try a formula", tryoutBlock(sel.key)));
-    }
-    // Face layer (docs/model-spec.md): A / B / E<i>, each with what is machined into it.
-    if (b.faces && b.faces.length) {
-      const fmtFeat = (f) => {
-        if (f.center) return `${f.kind} ${f.id} · ⌀${fmt(f.diameter)} at (${fmt(f.center[0])}, ${fmt(f.center[1])})${f.through ? " through" : f.depth != null ? ` depth ${fmt(f.depth)}` : ""}`;
-        if (Number.isFinite(f.u0)) return `${f.kind} ${f.id} · u ${fmt(f.u0)}..${fmt(f.u1)} · v ${fmt(f.v0)}..${fmt(f.v1)}${f.through ? " through" : f.depth != null ? ` depth ${fmt(f.depth)}` : ""}`;
-        return `${f.kind} ${f.id}${f.for ? ` → ${f.for}` : ""}`;
-      };
-      const big = b.faces.filter((f) => f.id === "A" || f.id === "B");
-      const edges = b.faces.filter((f) => f.id.startsWith("E"));
-      const tagged = edges.filter((f) => f.features.length);
-      const rows = [];
-      for (const f of big) {
-        const meta = [typeof f.normal === "string" ? f.normal : "slanted", f.semantic, f.visible === true ? "visible" : f.visible === false ? "hidden" : null, f.finish?.colour].filter(Boolean).join(" · ");
-        rows.push(h("div", { class: "kv", onclick: () => f.planeKey && select({ kind: "face", id: b.id, key: f.planeKey }) }, [h("span", { text: `${f.id}  ${meta}` }), h("b", { text: f.planeKey || "" })]));
-        for (const ft of f.features) rows.push(h("div", { class: "empty small", text: `    ${fmtFeat(ft)}` }));
-      }
-      rows.push(h("div", { class: "kv" }, [h("span", { text: `${edges.length} edge faces` }), h("b", { text: tagged.length ? `${tagged.length} tagged` : "" })]));
-      const byTag = new Map();
-      for (const f of tagged) for (const ft of f.features) {
-        const k = `${ft.kind} ${ft.id}${ft.for ? ` → ${ft.for}` : ""}`;
-        byTag.set(k, [...(byTag.get(k) || []), f.id]);
-      }
-      for (const [k, ids] of byTag) rows.push(h("div", { class: "empty small", text: `    ${k} · ${ids.join(" ")}` }));
-      panel.append(section(`Faces of ${b.id}`, rows));
-    }
-    const feats = (c.result.features || []).filter((f) => f && (f.targetBoardId === b.id || f.boardId === b.id || (b.id === "BP" && f.bp_groove)));
-    if (feats.length && !(b.faces && b.faces.length)) {
-      panel.append(section(`Features on ${b.id}`, feats.map((f) => h("div", { class: "kv", }, [h("span", { text: f.type || (f.purpose ? `${f.purpose} hole` : f.bp_groove ? `groove ${f.bp_groove.id}` : f.id) }), h("b", { text: f.id || "" })]))));
-    }
-    const joints = jointObjs.filter((j) => j.decl.panelAId === b.id || j.decl.panelBId === b.id);
-    if (joints.length) {
-      panel.append(section("Joints", joints.map((j) => h("div", { class: "kv", onclick: () => select({ kind: "joint", index: j.index, a: j.decl.panelAId, b: j.decl.panelBId }) }, [
-        h("span", { text: `${j.decl.panelAId} ↔ ${j.decl.panelBId} · ${j.decl.relationshipType}` }),
-        h("span", { class: `tag ${j.status}`, text: j.status === "ok" ? "touching" : j.status === "gap" ? `gap ${fmt(j.sep)}` : `overlap ${fmt(-j.sep)}` }),
-      ]))));
-    }
-    if (b.notes?.length) panel.append(section("Notes", b.notes.map((n) => h("div", { class: "empty small", text: n }))));
-    panel.append(section("Actions", [h("div", { class: "btn-row" }, [
-      h("button", { class: "tb", text: "Edit board →", onclick: () => enterL3(b.id) }),
-      h("button", { class: "tb", text: pinned ? "Re-pin board" : "Pin board", title: "Write this board's faces, outline and hinges into the preset", onclick: () => pinBoard(b.id) }),
-      h("button", { class: "tb", text: "Report…", onclick: () => openReport() }),
-    ])]));
-    return;
-  }
-
-  if (sel.kind === "point") {
-    const b = c.boards.get(sel.id);
-    const [A, B] = planeAxes(b.profilePlane);
-    panel.append(h("div", { class: "panel-head" }, [
-      h("div", { class: "panel-title", text: `${b.id} · ${sel.label}` }),
-      h("div", { class: "panel-sub", text: `${sel.pkind} point · ${A} ${fmt(sel.cabinet[0])} · ${B} ${fmt(sel.cabinet[1])} (cabinet) · ${A} ${fmt(sel.local[0])} · ${B} ${fmt(sel.local[1])} (local)` }),
-    ]));
-    sel.keys.forEach((key, i) => {
-      if (!key) return;
-      panel.append(section(`${i === 0 ? A : B} · ${key}`, [formulaBlock(prov, key), treeBlock(prov, key)]));
-    });
-    panel.append(section("Try a formula", tryoutBlock(sel.keys.find(Boolean))));
-    panel.append(section("Actions", [h("div", { class: "btn-row" }, [
-      h("button", { class: "tb", text: t.l3 === b.id ? "In board editor" : "Edit board →", onclick: () => enterL3(b.id) }),
-      h("button", { class: "tb", text: "Pin board", onclick: () => pinBoard(b.id) }),
-      h("button", { class: "tb", text: "Report…", onclick: () => openReport() }),
-    ]), legend()]));
-    return;
-  }
-
-  if (sel.kind === "joint") {
-    const j = jointObjs.find((x) => x.index === sel.index) || (c.result.relationshipDeclarations || [])[sel.index] && { decl: c.result.relationshipDeclarations[sel.index], sep: NaN, status: "gap" };
-    if (!j) return;
-    const d = j.decl;
-    const A = c.boards.get(d.panelAId);
-    const B = c.boards.get(d.panelBId);
-    panel.append(h("div", { class: "panel-head" }, [
-      h("div", { class: "panel-title", text: `${d.panelAId} ↔ ${d.panelBId}` }),
-      h("div", { class: "panel-sub", text: `${d.relationshipType} · ${d.geometryType} · rule ${d.ruleId}` }),
-    ]));
-    panel.append(section("Measured", [
-      h("div", { class: "kv-list" }, [
-        h("span", { text: "status" }), h("span", { class: `tag ${j.status}`, text: j.status === "ok" ? "touching" : j.status === "gap" ? `gap ${fmt(j.sep)} mm` : `overlap ${fmt(-j.sep)} mm` }),
-        h("span", { text: "host" }), h("b", { text: d.hostPanelId }),
-        h("span", { text: "target" }), h("b", { text: d.targetPanelId }),
-        h("span", { text: "hardware" }), h("b", { text: (d.allowedHardware || []).join(", ") || "—" }),
-      ]),
-    ]));
-    if (A && B) {
-      // Which faces meet: the axis with the smallest separation.
-      const axes = ["x", "y", "z"];
-      const seps = axes.map((ax) => ({ ax, s: Math.max(A[`${ax}0`] - B[`${ax}1`], B[`${ax}0`] - A[`${ax}1`]) }));
-      const best = seps.reduce((m, s) => (s.s > m.s ? s : m), seps[0]);
-      const aFace = A[`${best.ax}0`] - B[`${best.ax}1`] >= B[`${best.ax}0`] - A[`${best.ax}1`] ? [`${A.id}.${best.ax}0`, `${B.id}.${best.ax}1`] : [`${A.id}.${best.ax}1`, `${B.id}.${best.ax}0`];
-      panel.append(section(`Meeting faces along ${best.ax.toUpperCase()}`, aFace.map((k) => h("div", { class: "face-block" }, [h("div", { class: "key-link", text: k, onclick: () => selectKey(k) }), formulaBlock(prov, k)]))));
-    }
-    panel.append(section("Actions", [h("div", { class: "btn-row" }, [h("button", { class: "tb", text: "Report…", onclick: () => openReport() })])]));
-    return;
-  }
-
-  if (sel.kind === "key") {
-    panel.append(h("div", { class: "panel-head" }, [h("div", { class: "panel-title", text: sel.key }), h("div", { class: "panel-sub", text: "intermediate quantity" })]));
-    panel.append(section("Formula", [formulaBlock(prov, sel.key), treeBlock(prov, sel.key)]));
-    const deps = affectedBy(prov, [sel.key]).filter((k) => k !== sel.key);
-    panel.append(section(`Used by (${deps.length})`, [h("div", { class: "tree" }, [h("ul", {}, deps.slice(0, 40).map((k) => h("li", {}, [h("span", { class: "key", text: k, onclick: () => selectKey(k) })])))]), deps.length > 40 ? h("div", { class: "empty small", text: `… ${deps.length - 40} more` }) : null]));
-    panel.append(section("Try a formula", tryoutBlock(sel.key)));
-  }
+  if (sel?.kind === "point" && sel.id === id) panel.append(pointFormulas(b, sel, c.prov));
+  panel.append(section("", [h("div", { class: "btn-row" }, [
+    h("button", { class: "tb", text: "参数调试 · 默认模式", onclick: () => enterMode("default", id) }),
+    h("button", { class: "tb", text: "面的模式", onclick: () => enterMode("face", id) }),
+    h("button", { class: "tb", text: "返回整体", onclick: exitL3 }),
+  ])]));
 }
 
 /** Input to re-evaluate a formula with the same terms. Only this value moves (dashed marker in L3). */
@@ -1281,42 +3152,22 @@ function tryoutBlock(key) {
   ];
 }
 
-// --- bottom panes ----------------------------------------------------------------------------
+// --- status counts (errors, warnings, pins) — the footer, not a drawer -------------------
 
 function renderBottom() {
   const t = tab();
   const c = cur();
-  const boardsPane = $('[data-dpane="boards"]');
-  const auditPane = $('[data-dpane="audit"]');
-  if (!t || !c) { boardsPane.replaceChildren(); auditPane.replaceChildren(); setBadges(null); return; }
-  const sel = t.selection;
+  if (!t || !c) { setBadges(null); return; }
   const r = c.result;
-
-  boardsPane.replaceChildren(h("table", { class: "grid" }, [
-    h("thead", {}, [h("tr", {}, ["ID", "Name", "Type", "Plane", "X", "Y", "Z", "T", "pts"].map((x) => h("th", { text: x })))]),
-    h("tbody", {}, r.boards.map((b) => h("tr", { class: sel && sel.id === b.id ? "sel" : "", onclick: () => select({ kind: "board", id: b.id }), oncontextmenu: (e) => { e.preventDefault(); boardCtx(b.id, e.clientX, e.clientY); } }, [
-      h("td", { text: b.id }), h("td", { text: b.name }), h("td", { text: b.category }), h("td", { text: b.profilePlane }),
-      h("td", { class: "num", text: `${fmt(b.x0)}…${fmt(b.x1)}` }), h("td", { class: "num", text: `${fmt(b.y0)}…${fmt(b.y1)}` }), h("td", { class: "num", text: `${fmt(b.z0)}…${fmt(b.z1)}` }),
-      h("td", { class: "num", text: fmt(b.materialThickness) }), h("td", { class: "num", text: String((b.cutProfileVector || b.profileVector || []).length) }),
-    ]))),
-  ]));
-
-  // Audit: one list — validation, joints (declared vs measured), undeclared overlaps, pin diffs — worst first.
-  const items = []; // { sev: 0 err | 1 warn | 2 ok, what, msg, num, onclick }
-  for (const m of r.validation?.errors || []) items.push({ sev: 0, what: "error", msg: m });
-  for (const m of r.validation?.warnings || []) items.push({ sev: 1, what: "warning", msg: m });
+  let errN = (r.validation?.errors || []).length;
+  let warnN = (r.validation?.warnings || []).length;
 
   const declared = new Set();
   const joints = jointObjs.length ? jointObjs : (r.relationshipDeclarations || []).map((d, index) => ({ decl: d, index, sep: NaN, status: "gap" }));
   for (const j of joints) {
     declared.add([j.decl.panelAId, j.decl.panelBId].sort().join("|"));
-    items.push({
-      sev: j.status === "ok" ? 2 : j.status === "gap" ? 1 : 0,
-      what: "joint",
-      msg: `${j.decl.panelAId} ↔ ${j.decl.panelBId} · ${j.decl.relationshipType} · ${j.decl.ruleId}`,
-      tag: j.status, tagText: j.status === "ok" ? "touching" : j.status === "gap" ? `gap ${fmt(j.sep)}` : `overlap ${fmt(-j.sep)}`,
-      onclick: () => select({ kind: "joint", index: j.index, a: j.decl.panelAId, b: j.decl.panelBId }),
-    });
+    if (j.status === "gap") warnN += 1;
+    else if (j.status !== "ok") errN += 1;
   }
   const boards = r.boards;
   for (let i = 0; i < boards.length; i += 1) {
@@ -1324,13 +3175,11 @@ function renderBottom() {
       const a = boards[i], b = boards[k];
       if (declared.has([a.id, b.id].sort().join("|"))) continue;
       const sep = separation(a, b);
-      if (sep > -0.01) continue; // apart or merely touching: not a finding
-      if (a.category === "front_panel" || b.category === "front_panel") continue; // doors overlap the carcass by design (they hang in front)
-      // A board with an outline meets its neighbours through tongues and notches; its bounding box
-      // overlaps them by design. Only two plain plates overlapping is a real finding.
+      if (sep > -0.01) continue;
+      if (a.category === "front_panel" || b.category === "front_panel") continue;
       const outlined = (x) => (x.cutProfileVector && x.cutProfileVector.length) || (x.profileVector && x.profileVector.length);
       if (outlined(a) || outlined(b)) continue;
-      items.push({ sev: 1, what: "overlap", msg: `${a.id} ↔ ${b.id} undeclared overlap of two plain plates`, tag: "bad", tagText: `${fmt(-sep)} mm`, onclick: () => select({ kind: "board", id: a.id }) });
+      warnN += 1;
     }
   }
 
@@ -1338,26 +3187,10 @@ function renderBottom() {
   let pinCount = 0;
   let pinDiff = 0;
   if (pins) {
-    const mism = checkPins(r, pins);
+    pinDiff = checkPins(r, pins).length;
     pinCount = countPins(pins);
-    pinDiff = mism.length;
-    for (const m of mism.slice(0, 200)) {
-      items.push({ sev: 1, what: "pin", msg: `${m.path} pinned ${fmt(m.expected)} now ${fmt(m.actual)}`, tag: "gap", tagText: m.expected != null && m.actual != null ? `Δ ${fmt(m.actual - m.expected)}` : "missing", onclick: () => { const k = keyFromPinPath(m.path); if (k) selectKey(k); } });
-    }
+    warnN += pinDiff;
   }
-  items.sort((a, b) => a.sev - b.sev);
-  const errN = items.filter((i) => i.sev === 0).length;
-  const warnN = items.filter((i) => i.sev === 1).length;
-  auditPane.replaceChildren(
-    h("table", { class: "audit" }, [h("tbody", {}, items.map((it) => h("tr", { onclick: it.onclick || null }, [
-      h("td", { class: "what" }, [h("span", { class: `tag ${it.sev === 0 ? "bad" : it.sev === 1 ? "gap" : "ok"}`, text: it.what })]),
-      h("td", { class: "msg", text: it.msg }),
-      h("td", { class: "num" }, it.tagText ? [h("span", { class: `tag ${it.tag}`, text: it.tagText })] : []),
-    ])))]),
-    h("div", { class: "empty small", text: pins ? `${pinCount} pinned values in this preset${pinDiff ? `, ${pinDiff} differ` : ", all reproduced"} · joints measured on bounding boxes; outlined boards (tongues, notches) are not reported as overlaps` : "Custom params: pins belong to a preset (Preset ▾ → Save as new preset)." }),
-  );
-  $("#auditBadge").textContent = errN ? String(errN) : warnN ? String(warnN) : "";
-  $("#auditBadge").className = `badge${errN ? " err" : warnN ? " warn" : ""}`;
   setBadges({ errN, warnN, pins: pins ? { count: pinCount, diff: pinDiff } : null });
 }
 
@@ -1369,22 +3202,6 @@ function setBadges(s) {
   row.append(h("span", { class: `badge${s.errN ? " err" : " ok"}`, text: s.errN ? `${s.errN} error${s.errN > 1 ? "s" : ""}` : "no errors" }));
   if (s.warnN) row.append(h("span", { class: "badge warn", text: `${s.warnN} to check` }));
   if (s.pins) row.append(h("span", { class: `badge${s.pins.diff ? " warn" : " ok"}`, text: s.pins.diff ? `${s.pins.diff} / ${s.pins.count} pins differ` : `${s.pins.count} pins ok` }));
-}
-
-/** Pin mismatch path → provenance key: `D1.cut[3][1]` → `D1.cut[3].z`, `FP0.HINGE_1.x` → `FP0.feat.HINGE_1.x`, `T3.z1` → itself. */
-function keyFromPinPath(path) {
-  const c = cur();
-  let m = /^([A-Za-z][\w-]*)\.(cut|pv)\[(\d+)\]\[(\d)\]$/.exec(path);
-  if (m) {
-    const b = c.boards.get(m[1]);
-    if (!b) return null;
-    const axes = m[2] === "cut" ? ["y", "z"] : planeAxes(b.profilePlane);
-    return `${m[1]}.${m[2]}[${m[3]}].${axes[Number(m[4])]}`;
-  }
-  m = /^([A-Za-z][\w-]*)\.(HINGE_\d+)\.([xz])$/.exec(path);
-  if (m) return `${m[1]}.feat.${m[2]}.${m[3]}`;
-  if (/^[A-Za-z][\w-]*\.[xyz][01]$/.test(path)) return path;
-  return null;
 }
 
 function presetPins() {
@@ -1420,24 +3237,14 @@ async function pinAll() {
   }
 }
 
-$$("#bottom .dtab").forEach((tabBtn) => {
-  tabBtn.addEventListener("click", () => {
-    $$("#bottom .dtab").forEach((x) => x.classList.toggle("active", x === tabBtn));
-    $$("#bottom .dpane").forEach((p) => p.classList.toggle("active", p.dataset.dpane === tabBtn.dataset.dtab));
-  });
-});
-
-// --- panes: [ hides parameters / rules, ] hides the bottom drawer; remembered ------------------
+// --- panes: [ hides parameters / rules; remembered ------------------------------------------
 const PANES_KEY = "cablab.bench.panes";
-let panes = { left: true, bottom: true };
-try { panes = { ...panes, ...JSON.parse(localStorage.getItem(PANES_KEY) || "{}") }; } catch (_) { /* defaults */ }
+let panes = { left: true };
+try { panes = { left: JSON.parse(localStorage.getItem(PANES_KEY) || "{}").left !== false }; } catch (_) { /* defaults */ }
 function applyPanes() {
   $("#bench").classList.toggle("no-left", !panes.left);
   $("#leftToggle").classList.toggle("active", panes.left);
-  $("#bottom").classList.toggle("collapsed", !panes.bottom);
-  $("#bcenter").classList.toggle("bottom-collapsed", !panes.bottom);
-  $("#bottomToggle").textContent = panes.bottom ? "▾" : "▴";
-  try { localStorage.setItem(PANES_KEY, JSON.stringify(panes)); } catch (_) { /* not persisted */ }
+  try { localStorage.setItem(PANES_KEY, JSON.stringify({ left: panes.left })); } catch (_) { /* not persisted */ }
   if (tab()?.l3) renderL3();
 }
 function togglePane(which) {
@@ -1446,7 +3253,6 @@ function togglePane(which) {
   applyPanes();
 }
 $("#leftToggle").addEventListener("click", () => togglePane("left"));
-$("#bottomToggle").addEventListener("click", () => togglePane("bottom"));
 applyPanes();
 
 // Popovers: "⋯" (opacity, section planes, what is drawn) and "Explode ▾" (mode, trails, labels, order).
@@ -1471,6 +3277,7 @@ bindPop("#explodeToggle", "#explodePop");
 
 function enterL3(boardId) {
   const t = tab();
+  if (t.mode) exitMode();
   t.l3 = boardId;
   if (!t.selection || t.selection.id !== boardId) t.selection = { kind: "board", id: boardId };
   log("bench.board.open", { module: t.moduleId, id: boardId });
@@ -1487,6 +3294,9 @@ function exitL3() {
   if (!t) return;
   t.l3 = null;
   t.tryout = null;
+  t.l3Error = null;
+  t.l3Group = null;
+  t.l3Corner = null;
   $("#bcenter").classList.remove("l3");
   $("#board2d").classList.add("hidden");
   paintSelection();
@@ -1508,12 +3318,47 @@ function renderL3() {
   const selKey = t.selection && t.selection.id === b.id
     ? (t.selection.kind === "face" ? t.selection.key : t.selection.kind === "point" ? t.selection.keys[0] : null)
     : null;
+  const editable = boardEditable(b.id);
+  const marked = new Set();
+  const extraPoints = [];
+  const rule = placementRule(b.id);
+  if (editable && rule?.outline) {
+    const found = new Set();
+    for (const p of boardPoints(b, c.prov, c.result.features || [])) {
+      if (p.kind !== "outline") continue;
+      const k = cornerOf(b, p);
+      if (k) { found.add(k); p.keys.forEach((key) => key && marked.add(key)); }
+    }
+    // A corner a notch cut away is still a control point: its own handle at the corner's place.
+    const [A, B] = planeAxes(b.profilePlane);
+    const fa = entryOf(c.prov, `${b.id}.frame.${A}0`)?.value ?? b[`${A}0`];
+    const fb = entryOf(c.prov, `${b.id}.frame.${B}0`)?.value ?? b[`${B}0`];
+    for (const k of Object.keys(rule.outline.corners)) {
+      if (found.has(k)) continue;
+      const u = entryOf(c.prov, `${b.id}.corner.${k}.u`)?.value;
+      const v = entryOf(c.prov, `${b.id}.corner.${k}.v`)?.value;
+      if (u == null || v == null) continue;
+      extraPoints.push({ kind: "control", corner: k, label: `${CORNER_NAMES[k] || k}（被缺口切掉）`, keys: [`${b.id}.corner.${k}.u`, `${b.id}.corner.${k}.v`], local: [fa + u - b[`${A}0`], fb + v - b[`${B}0`]], cabinet: [fa + u, fb + v] });
+    }
+  }
   renderBoard2D($("#b2dSvg"), {
     board: b, prov: c.prov, features: c.result.features || [], frame: t.frame, selectedKey: highlight ? null : selKey, labels: t.labels,
     tryout: t.tryout && t.tryout.key.startsWith(`${b.id}.`) ? t.tryout : null,
+    marked: editable ? marked : null,
+    extraPoints,
+    highlightGroup: t.l3Group || null,
+    onDrag: editable ? (p, du, dv) => dragPoint(b, p, du, dv) : null,
+    onPickRect: editable ? (rc) => {
+      if (!rc.group) return;
+      t.l3Group = rc.group;
+      renderL3();
+      const fid = rc.group.slice(b.id.length + 1);
+      $(`#selPanel input[data-feature="${fid}"]`)?.focus();
+    } : null,
     onPick: (p) => {
       if (!p) { select({ kind: "board", id: b.id }); return; }
       if (p.kind === "corner") { select({ kind: "face", id: b.id, key: p.keys[0], corner: p }); return; }
+      if (editable && (p.kind === "outline" || p.kind === "control")) t.l3Corner = cornerOf(b, p);
       select({ kind: "point", id: b.id, keys: p.keys, label: p.label, pkind: p.kind, local: p.local, cabinet: p.cabinet });
     },
   });
@@ -1537,9 +3382,10 @@ function renderCrumb() {
   const mod = h("b", { text: MODULES[t.moduleId]?.label || t.moduleId });
   el.append(mod, h("span", { text: " › " }), h("span", { text: t.presetId || "custom" }));
   if (t.l3) {
-    const back = h("a", { text: ` › ${t.l3}`, onclick: exitL3, title: "Back to the assembly" });
+    const back = h("a", { text: ` › ${t.l3} › 板件编辑`, onclick: exitL3, title: "Back to the assembly" });
     el.append(back);
   }
+  if (t.mode) el.append(h("a", { text: ` › ${t.mode.board} › ${t.mode.kind === "default" ? "默认模式" : "面的模式"}`, onclick: exitMode, title: "返回整体（Esc）" }));
   void c;
 }
 
@@ -1557,9 +3403,10 @@ window.addEventListener("pointerdown", (e) => { if (!$("#ctxMenu").contains(e.ta
 function boardCtx(boardId, x, y) {
   const menu = $("#ctxMenu");
   menu.replaceChildren(
-    h("div", { class: "ctx-title", text: boardId }),
-    h("button", { text: "Edit board…", onclick: () => { hideCtx(); enterL3(boardId); } }),
-    h("button", { text: "Select board", onclick: () => { hideCtx(); select({ kind: "board", id: boardId }); } }),
+    h("div", { class: "ctx-title", text: `${boardId} · ${boardLabel(boardId)}` }),
+    h("button", { text: "参数调试 · 默认模式", onclick: () => { hideCtx(); enterMode("default", boardId); } }),
+    h("button", { text: "参数调试 · 面的模式", onclick: () => { hideCtx(); enterMode("face", boardId); } }),
+    h("button", { text: "板件编辑", onclick: () => { hideCtx(); exitMode(); enterL3(boardId); } }),
     h("button", { text: "Pin board", onclick: () => { hideCtx(); pinBoard(boardId); } }),
     h("button", { text: "Report…", onclick: () => { hideCtx(); select({ kind: "board", id: boardId }); openReport(); } }),
   );
@@ -1695,7 +3542,6 @@ for (const ax of ["x", "y", "z"]) {
   $(`#cut${ax.toUpperCase()}`).addEventListener("input", (e) => { tab().cut[ax] = Number(e.target.value); applyCut(); saveState(); });
 }
 $("#showJoints").addEventListener("change", (e) => { tab().showJoints = e.target.checked; buildJoints(); renderBottom(); saveState(); });
-$("#showPoints").addEventListener("change", (e) => { tab().showPoints = e.target.checked; build3D(true); saveState(); });
 function syncToolbar() {
   const t = tab();
   if (!t) return;
@@ -1713,22 +3559,27 @@ function syncToolbar() {
   $("#opacity").value = String(t.opacity);
   $("#cutX").value = String(t.cut.x); $("#cutY").value = String(t.cut.y); $("#cutZ").value = String(t.cut.z);
   $("#showJoints").checked = t.showJoints;
-  $("#showPoints").checked = t.showPoints;
   $$("#viewGroup [data-view]").forEach((b) => b.classList.toggle("active", b.dataset.view === (t.view || "3d")));
 }
 
 window.addEventListener("keydown", (e) => {
   if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) { e.preventDefault(); draftStep(e.shiftKey ? "redo" : "undo"); return; }
+  if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) { e.preventDefault(); draftStep("redo"); return; }
   if (e.key === "Escape") {
     if (!$("#reportDialog").classList.contains("hidden")) { $("#reportDialog").classList.add("hidden"); return; }
     if (!$("#ruleDialog").classList.contains("hidden")) { $("#ruleDialog [data-cancel]").click(); return; }
+    if (!$("#layoutDialog").classList.contains("hidden")) { $("#layoutDialog").classList.add("hidden"); return; }
     if (highlight) { clearHighlight(); $("#stInfo").textContent = ""; return; }
+    if (tab()?.faceMove) { toggleFaceMove(); return; }
+    if (tab()?.nudge) { clearNudge(); return; }
+    if (tab()?.mode) { exitMode(); return; }
     if (tab()?.selection) { select(null); return; }
     if (tab()?.l3) exitL3();
   }
+  if ((e.key === "m" || e.key === "M") && tab()?.mode?.kind === "face") { e.preventDefault(); toggleFaceMove(); return; }
   if (e.key === "f" || e.key === "F") frameCabinet();
   if (e.key === "[") togglePane("left");
-  if (e.key === "]") togglePane("bottom");
   // Assembly steps: ← takes the last board out, → puts the next one in.
   if (e.key === "ArrowRight" && tab() && !tab().l3) { e.preventDefault(); setStep(tab().step == null ? 1 : tab().step + 1, "key"); }
   if (e.key === "ArrowLeft" && tab() && !tab().l3 && explodePlan) { e.preventDefault(); setStep(tab().step == null ? explodePlan.order.length - 1 : tab().step - 1, "key"); }
@@ -1736,8 +3587,6 @@ window.addEventListener("keydown", (e) => {
 
 function renderEmpty() {
   $("#selPanel").replaceChildren(h("div", { class: "panel-head" }, [h("div", { class: "panel-title", text: "Generator bench" }), h("div", { class: "panel-sub", text: "Open a generator with + or from the app's module rail (right-click → Generator rules…)." })]));
-  $("#paramsForm").replaceChildren();
-  $("#paramsSummary").textContent = "";
   $("#rulesList").replaceChildren();
   $("#stInfo").textContent = "—";
   setBadges(null);
@@ -1747,6 +3596,25 @@ function renderEmpty() {
 }
 
 // --- boot ------------------------------------------------------------------------------------------------
+
+// For agent / CI checks over the debugging port: the same entry points the UI uses.
+window.__bench = { tab, cur, select, tryLayout, refresh, setFace, setRelation, setCorner, setFeatureDepth, enterMode, exitMode, enterL3, boardCtx, modeGroup: () => modeGroup, boardGroups: () => boardGroups, labelRects: () => labelOverlay.rects(),
+  /** Client coordinates of a world point (to click it through the real raycast). */
+  screenOf: (x, y, z) => { const p = new THREE.Vector3(x, y, z).project(camera); const r = canvas.getBoundingClientRect(); return { x: r.left + ((p.x + 1) / 2) * r.width, y: r.top + ((1 - p.y) / 2) * r.height }; },
+  /** Face mode pick of a face's centre without a camera that sees it (bottom faces). */
+  pickFace: (boardId, face) => {
+    const g = boardGroups.get(boardId); const b = cur().boards.get(boardId);
+    const a = face[0]; const normal = new THREE.Vector3(); normal[a] = face[1] === "1" ? 1 : -1;
+    const point = new THREE.Vector3((b.x0 + b.x1) / 2, (b.y0 + b.y1) / 2, (b.z0 + b.z1) / 2); point[a] = b[face];
+    facePick({ object: g.mesh, face: { normal: normal.clone().transformDirection(new THREE.Matrix4().copy(g.mesh.matrixWorld).invert()) }, point: point.add(g.group.position) });
+  },
+  confirmRelation, setKind: (k) => { tab().mode.pick.kind = k; renderSelection(); }, view: (name) => setBenchView(name) };
+
+window.addEventListener("beforeunload", (e) => {
+  if (!state.tabs.some((t) => isDirty(t.draft))) return;
+  e.preventDefault();
+  e.returnValue = "";
+});
 
 loadState();
 if (bench) {

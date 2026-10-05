@@ -5,12 +5,14 @@ import {
   boardXRange,
   calculateOverheadGeometry,
   clampRange,
+  featureXRange,
+  t4TrimmedOutlinePoints,
   dividerSideTrimmedOutlinePoints,
   type OverheadCabinetInputs,
   type OverheadLegacyGeometry,
   type OutlinePoint,
 } from "./geometry.ts";
-import { alias, beginProvenance, dim, endProvenance, param, provenanceActive, ref, same, type Term } from "../_lib/dim.ts";
+import { alias, beginProvenance, dim, endProvenance, ex, Outline, param, provenanceActive, ref, same, type Term } from "../_lib/dim.ts";
 import { generateOHCSvgPreview } from "./svgPreview.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
@@ -18,7 +20,9 @@ import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
+import { CORNERS, LayoutError, placeBoards, recordExpr, validateLayout, type BoardRule, type LayoutFile } from "../_lib/layout.ts";
 import { buildOverheadFaces } from "./faces.ts";
+import { LAYOUT } from "./layout.ts";
 
 export * from "./geometry.ts";
 export * from "./svgPreview.ts";
@@ -262,10 +266,149 @@ function internalRangehoodDividerProfile(
  */
 export const OVERHEAD_BOARD_FRAME = "final" as const;
 
+/** Names a layout.json rule may use: the inputs (param when given, the rule default otherwise) and every rule constant. */
+function ruleScope(inputs: OverheadCabinetInputs): Record<string, Term> {
+  const height = inputs.cabinetHeight ?? inputs.topClearanceHeight ?? R.T1_HEIGHT_MM.value;
+  const P = param({ Cw: inputs.cabinetWidth, Cd: inputs.cabinetDepth, H: height });
+  const t = <T extends Term>(v: number | null | undefined, name: string, rule: T): Term =>
+    v == null ? rule : param({ [name]: v })[name]!;
+  return {
+    ...R,
+    Cw: P.Cw, Cd: P.Cd, H: P.H,
+    CPT: t(inputs.featureWidth, "CPT", R.DIVIDER_THICKNESS_MM),
+    FPT: t(inputs.frontPanelThickness, "FPT", R.DEFAULT_FRONT_PANEL_THICKNESS_MM),
+    TCH: t(inputs.topClearanceHeight, "TCH", R.T1_HEIGHT_MM),
+    clearance: t(inputs.clearance, "clearance", R.DEFAULT_CLEARANCE_MM),
+  };
+}
+
+/**
+ * Where the dividers cut a top board, in the board's frame (`frameX0` = the frame's left face).
+ * The notches belong to the dividers: a board moved along X keeps them where the dividers are.
+ */
+function dividerNotches(geometry: OverheadLegacyGeometry, inputs: OverheadCabinetInputs, frameX0: number, lo: number, hi: number): [number, number][] {
+  const slot = (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) + R.FEATURE_CLEARANCE_MM.value;
+  return geometry.divider_features
+    .map((f) => clampRange(featureXRange(f.XDi, slot), 0, inputs.cabinetWidth))
+    .map(([a, b]) => [Math.max(a - frameX0, lo), Math.min(b - frameX0, hi)] as [number, number])
+    .filter(([a, b]) => b - a > 1e-6);
+}
+
+/**
+ * T3's outline from its corner rules (board edit). The corners are in T3's placement frame;
+ * the default rectangle keeps geometry.ts's outline exactly. Otherwise the outline is rebuilt
+ * from the four corners with the divider notches on the rear edge, and the box becomes the
+ * outline's extent — the frame does not move, so a corner pulled out does not shift the board.
+ */
+function shapeT3(
+  rule: BoardRule,
+  frame: { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number },
+  geometry: OverheadLegacyGeometry,
+  inputs: OverheadCabinetInputs,
+  scope: Record<string, Term>,
+  warnings: string[],
+): { box: typeof frame; outline: [number, number][] } {
+  const corners = rule.outline!.corners;
+  const c: Record<string, [number, number]> = {};
+  for (const k of CORNERS) {
+    c[k] = [
+      recordExpr(`T3.corner.${k}.u`, corners[k]!.u, scope, `T3 corner ${k} u`),
+      recordExpr(`T3.corner.${k}.v`, corners[k]!.v, scope, `T3 corner ${k} v`),
+    ];
+  }
+  const W = frame.x1 - frame.x0;
+  const D = frame.y1 - frame.y0;
+  const at = (k: string, u: number, v: number) => Math.abs(c[k]![0] - u) < 1e-9 && Math.abs(c[k]![1] - v) < 1e-9;
+  // geometry.ts's outline is in cabinet coordinates: it is only this board's outline while the frame sits at the origin.
+  const legacy = geometry.trimmed_vectors.T3;
+  const legacyFits = Math.abs(frame.x0) < 1e-9 && Math.abs(frame.y0) < 1e-9
+    && Math.abs(Math.max(...legacy.map((p) => p[0])) - W) < 1e-9 && Math.abs(Math.max(...legacy.map((p) => p[1])) - D) < 1e-9;
+  if (legacyFits && at("FL", 0, 0) && at("FR", W, 0) && at("RR", W, D) && at("RL", 0, D)) return { box: frame, outline: legacy };
+
+  // Four corners FL → FR → RR → RL: a simple quadrilateral, counter-clockwise like the rectangle.
+  const quad = CORNERS.map((k) => c[k]!);
+  const cross = (o: number[], a: number[], b: number[]) => (a[0]! - o[0]!) * (b[1]! - o[1]!) - (a[1]! - o[1]!) * (b[0]! - o[0]!);
+  const crosses = (p1: number[], p2: number[], p3: number[], p4: number[]) => {
+    const d1 = cross(p3, p4, p1), d2 = cross(p3, p4, p2), d3 = cross(p1, p2, p3), d4 = cross(p1, p2, p4);
+    return ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) && ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0));
+  };
+  let area = 0;
+  for (let i = 0; i < 4; i += 1) { const p = quad[i]!; const q = quad[(i + 1) % 4]!; area += p[0] * q[1] - q[0] * p[1]; }
+  if (area <= 0 || crosses(quad[0]!, quad[1]!, quad[2]!, quad[3]!) || crosses(quad[1]!, quad[2]!, quad[3]!, quad[0]!)) {
+    throw new LayoutError("layout: T3 outline crosses itself or turns inside out: check the corner formulas");
+  }
+
+  const K = (name: string) => `T3.corner.${name}`;
+  const U = (k: string) => ex({ u: ref(K(`${k}.u`)) }, (t) => t.u, `= ${K(`${k}.u`)}`);
+  const V = (k: string) => ex({ v: ref(K(`${k}.v`)) }, (t) => t.v, `= ${K(`${k}.v`)}`);
+  dim("T3.pv.rearY", { v: ref(K("RR.v")) }, (t) => t.v, { formula: `= ${K("RR.v")}` });
+  dim("T3.pv.notchY", { rearY: ref("T3.pv.rearY"), T3_NOTCH_DEPTH: R.T3_NOTCH_DEPTH_MM }, (t) => t.rearY - t.T3_NOTCH_DEPTH);
+  const rearV = ex({ v: ref("T3.pv.rearY") }, (t) => t.v, "rearY");
+  const notchV = ex({ v: ref("T3.pv.notchY") }, (t) => t.v, "notchY");
+  const o = new Outline("T3.pv", ["x", "y"]);
+  o.add(U("FL"), V("FL"));
+  o.add(U("FR"), V("FR"));
+  const right = c.RR![0];
+  const left = c.RL![0];
+  if (Math.abs(c.RR![1] - c.RL![1]) > 1e-9) {
+    warnings.push("T3: the rear edge is not straight, so the divider notches were left out.");
+    o.add(U("RR"), V("RR"));
+    o.add(U("RL"), V("RL"));
+  } else {
+    // Divider notches on the rear edge, in frame coordinates, right to left (as geometry.ts does).
+    const ranges = dividerNotches(geometry, inputs, frame.x0, left, right).sort((p, q) => q[0] - p[0]);
+    const nx = (x: number) => ex({ notchX: x }, (t) => t.notchX, "notch edge (divider centre ± slot / 2)");
+    if (ranges.length && ranges[0]![1] >= right - 1e-9) {
+      const [x0] = ranges.shift()!;
+      o.add(U("RR"), notchV);
+      o.add(nx(x0), notchV);
+      o.add(nx(x0), rearV);
+    } else {
+      o.add(U("RR"), V("RR"));
+    }
+    let closed = false;
+    for (const [x0, x1] of ranges) {
+      if (x0 <= left + 1e-9) {
+        o.add(nx(x1), rearV);
+        o.add(nx(x1), notchV);
+        o.add(U("RL"), notchV);
+        closed = true;
+        break;
+      }
+      o.add(nx(x1), rearV);
+      o.add(nx(x1), notchV);
+      o.add(nx(x0), notchV);
+      o.add(nx(x0), rearV);
+    }
+    if (!closed) o.add(U("RL"), V("RL"));
+  }
+  o.add(U("FL"), V("FL"));
+  const pts = o.points;
+  const us = pts.map((p) => p[0]);
+  const vs = pts.map((p) => p[1]);
+  // The box is the outline's extent around the frame; keep the frame on record for the editor.
+  for (const f of ["x0", "x1", "y0", "y1"] as const) same(`T3.frame.${f}`, `T3.${f}`);
+  const minU = Math.min(...us), maxU = Math.max(...us), minV = Math.min(...vs), maxV = Math.max(...vs);
+  const box = {
+    x0: dim("T3.x0", { frame: ref("T3.frame.x0"), minU }, (t) => t.frame + t.minU, { formula: "T3.frame.x0 + leftmost corner u" }),
+    x1: dim("T3.x1", { frame: ref("T3.frame.x0"), maxU }, (t) => t.frame + t.maxU, { formula: "T3.frame.x0 + rightmost corner u" }),
+    y0: dim("T3.y0", { frame: ref("T3.frame.y0"), minV }, (t) => t.frame + t.minV, { formula: "T3.frame.y0 + frontmost corner v" }),
+    y1: dim("T3.y1", { frame: ref("T3.frame.y0"), maxV }, (t) => t.frame + t.maxV, { formula: "T3.frame.y0 + rearmost corner v" }),
+    z0: frame.z0,
+    z1: frame.z1,
+  };
+  return { box, outline: pts };
+}
+
+/** Boards whose outline is rebuilt from the box. Anything else stays in code. */
+const RULE_BOARDS = new Set(["T1", "T2", "T3", "T4"]);
+
 function legacyToBoards(
   geometry: OverheadLegacyGeometry,
   inputs: OverheadCabinetInputs,
-  rangehood: RangehoodGroup | null = null,
+  rangehood: RangehoodGroup | null,
+  layout: LayoutFile,
+  warnings: string[],
 ): Board[] {
   const { cabinetWidth, cabinetDepth, cabinetHeight, bottomThickness, featureWidth, topClearanceHeight, frontPanelThickness, clearance } = {
     cabinetWidth: inputs.cabinetWidth,
@@ -289,9 +432,6 @@ function legacyToBoards(
   const CL = t(inputs.clearance, "clearance", R.DEFAULT_CLEARANCE_MM);
   const zero = (key: string) => dim(key, {}, () => 0, { formula: "0" });
 
-  // Style-1 rear-notch seating: T1/T2 sit TCH-1 behind the carcass front face.
-  const topRailY0 = dim("T1.y0", { TCH }, (t) => t.TCH - 1);
-
   const boards: Board[] = [
     {
       id: "BP",
@@ -311,6 +451,46 @@ function legacyToBoards(
     },
   ];
 
+  // Placed after BP so a rule may refer to the bottom panel's faces; the dividers come later in code.
+  const hasT3 = geometry.trimmed_vectors.T3.length > 0;
+  const hasT4 = geometry.trimmed_vectors.T4.length > 0;
+  const scope = ruleScope(inputs);
+  // Notch planes (`D3.cut.rearY0`) have to exist before T1–T4 are placed, so a
+  // face relation can sit on a step inside a divider, not only on its outer box.
+  for (const feature of geometry.divider_features) alias("DividerSide", `${feature.id}.cut`);
+  const placed = placeBoards(
+    layout,
+    ["T1", "T2", ...(hasT3 ? ["T3"] : []), ...(hasT4 ? ["T4"] : [])],
+    scope,
+    warnings,
+  );
+  let t3Outline = geometry.trimmed_vectors.T3;
+  if (hasT3 && layout.boards.T3?.outline) {
+    const shaped = shapeT3(layout.boards.T3, placed.T3!, geometry, inputs, scope, warnings);
+    placed.T3 = shaped.box;
+    t3Outline = shaped.outline;
+  }
+  // T4's outline follows its box: geometry.ts's is in cabinet coordinates, right only while T4 spans 0..Cw at the default height.
+  let t4Outline = geometry.trimmed_vectors.T4;
+  if (hasT4) {
+    const f = placed.T4!;
+    const W = f.x1 - f.x0;
+    const legacyFits = Math.abs(f.x0) < 1e-9 && Math.abs(W - cabinetWidth) < 1e-9 && Math.abs(f.z1 - f.z0 - R.T4_HEIGHT_MM.value) < 1e-9;
+    if (!legacyFits) {
+      t4Outline = t4TrimmedOutlinePoints(ref("T4.xSize"), dividerNotches(geometry, inputs, f.x0, 0, W), ref("T4.zSize"), R.T4_NOTCH_HEIGHT_MM);
+    }
+  }
+  // The box comes from layout.json, the outline from geometry.ts: say so when they part.
+  const outlineExtent = (id: string, pts: [number, number][], axis: "y" | "z") => {
+    const box = placed[id];
+    if (!box) return;
+    const extent = Math.max(...pts.map(([, v]) => v));
+    const size = box[`${axis}1`] - box[`${axis}0`];
+    if (Math.abs(extent - size) > 0.01) warnings.push(`${id}: its ${axis} size ${size} differs from its outline (${extent}).`);
+  };
+  if (hasT3 && !layout.boards.T3?.outline) outlineExtent("T3", geometry.trimmed_vectors.T3, "y");
+  if (hasT4) outlineExtent("T4", t4Outline, "z");
+
   boards.push({
     id: "T1",
     name: "Top Front Rail T1",
@@ -319,12 +499,7 @@ function legacyToBoards(
     materialThickness: frontPanelThickness,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: zero("T1.x0"),
-    x1: dim("T1.x1", { Cw: P.Cw }, (t) => t.Cw),
-    y0: topRailY0,
-    y1: dim("T1.y1", { y0: ref("T1.y0"), FPT }, (t) => t.y0 + t.FPT),
-    z0: dim("T1.z0", { H: P.H, TCH }, (t) => t.H - t.TCH),
-    z1: dim("T1.z1", { H: P.H }, (t) => t.H),
+    ...placed.T1!,
     source: "overhead",
   });
 
@@ -336,19 +511,11 @@ function legacyToBoards(
     materialThickness: featureWidth,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: zero("T2.x0"),
-    x1: dim("T2.x1", { Cw: P.Cw }, (t) => t.Cw),
-    y0: same("T2.y0", "T1.y1"),
-    y1: dim("T2.y1", { y0: ref("T2.y0"), CPT }, (t) => t.y0 + t.CPT),
-    z0: same("T2.z0", "T1.z0"),
-    z1: same("T2.z1", "T1.z1"),
+    ...placed.T2!,
     source: "overhead",
   });
 
-  if (geometry.trimmed_vectors.T3.length > 0) {
-    const t3Depth = Math.max(...geometry.trimmed_vectors.T3.map(([, y]) => y));
-    // T3 sits in the divider front step: top 1 under the top rails.
-    const t3Top = dim("T3.z1", { H: P.H, TCH }, (t) => t.H - t.TCH - 1);
+  if (hasT3) {
     boards.push({
       id: "T3",
       name: "Top Rear Panel",
@@ -357,22 +524,15 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XY",
       thicknessAxis: "Z",
-      x0: zero("T3.x0"),
-      x1: dim("T3.x1", { Cw: P.Cw }, (t) => t.Cw),
-      y0: zero("T3.y0"),
-      y1: dim("T3.y1", { rearY: ref("T3.pv.rearY") }, () => t3Depth, { formula: "rearY" }),
-      z0: dim("T3.z0", { z1: ref("T3.z1"), CPT }, (t) => t.z1 - t.CPT),
-      z1: t3Top,
+      ...placed.T3!,
       source: "overhead",
-      profileVector: geometry.trimmed_vectors.T3.map(([x, y]) => ({ x, y })),
+      profileVector: t3Outline.map(([x, y]) => ({ x, y })),
     });
   }
 
-  if (geometry.trimmed_vectors.T4.length > 0) {
+  if (hasT4) {
     // Vertical plate on the divider rear notches; the outline's second
     // coordinate is height (Z), notches open downward.
-    const t4Height = Math.max(...geometry.trimmed_vectors.T4.map(([, z]) => z));
-    const t4Y1 = dim("T4.y1", { Cd: P.Cd, CPT, clearance: CL }, (t) => t.Cd - t.CPT - t.clearance);
     boards.push({
       id: "T4",
       name: "Top Front Panel",
@@ -381,14 +541,9 @@ function legacyToBoards(
       materialThickness: featureWidth,
       profilePlane: "XZ",
       thicknessAxis: "Y",
-      x0: zero("T4.x0"),
-      x1: dim("T4.x1", { Cw: P.Cw }, (t) => t.Cw),
-      y0: dim("T4.y0", { y1: ref("T4.y1"), CPT }, (t) => t.y1 - t.CPT),
-      y1: t4Y1,
-      z0: dim("T4.z0", { H: P.H, top: ref("T4.pv.top") }, () => height - t4Height, { formula: "H - top" }),
-      z1: dim("T4.z1", { H: P.H }, (t) => t.H),
+      ...placed.T4!,
       source: "overhead",
-      profileVector: geometry.trimmed_vectors.T4.map(([x, z]) => ({ x, z })),
+      profileVector: t4Outline.map(([x, z]) => ({ x, z })),
     });
   }
 
@@ -399,8 +554,9 @@ function legacyToBoards(
     // slot width (CPT + clearance). Groove/notch features keep the wider
     // slot range; only the divider body uses boardXRange.
     const [x0, x1] = clampRange(boardXRange(feature.XDi, featureWidth), 0, cabinetWidth);
-    dim(`${id}.x0`, { XDi: feature.XDi, CPT }, () => x0, { formula: "max(0, XDi - CPT / 2)" });
-    dim(`${id}.x1`, { XDi: feature.XDi, CPT, Cw: P.Cw }, () => x1, { formula: "min(Cw, XDi + CPT / 2)" });
+    const xd = `XD${dividerIndex}`;
+    dim(`${id}.x0`, { [xd]: ref(xd), CPT }, (t) => Math.max(0, t[xd]! - t.CPT / 2), { formula: `max(0, ${xd} - CPT / 2)` });
+    dim(`${id}.x1`, { [xd]: ref(xd), CPT, Cw: P.Cw }, (t) => Math.min(t.Cw, t[xd]! + t.CPT / 2), { formula: `min(Cw, ${xd} + CPT / 2)` });
     // Divider outline origin = BP top face (z = CPT); the tongue in the
     // cutProfileVector dips below z0 into the BP groove.
     const isInternalRangehoodDivider = Boolean(rangehood?.internalDividerIndices.includes(dividerIndex));
@@ -538,6 +694,14 @@ function legacyToBoards(
         { x: 0, z: 0 },
       ],
     });
+  }
+
+  // Only boards placed above follow their box (T3 / T4 outlines are rebuilt from it).
+  // A rule for a divider or a door would move the box and leave the tongue, notches and grooves.
+  for (const id of Object.keys(layout.boards)) {
+    const axes = layout.boards[id]?.axes;
+    if (!axes?.x || !axes?.y || !axes?.z || placed[id] || RULE_BOARDS.has(id)) continue;
+    throw new LayoutError(`layout: ${id} stays in the generator code — a box rule would move it and leave its outline behind`);
   }
 
   return boards;
@@ -697,6 +861,30 @@ function t3LedBoardExtents(board: Board): { width: number; depth: number } {
   };
 }
 
+/**
+ * The LED groove is one feature however many segments it is cut as: its depth comes from one
+ * rule (layout.json T3.features.LED) and every segment uses it. Through or deeper than the
+ * board is never cut back silently.
+ */
+function applyLedDepth(
+  ledFeatures: Array<Record<string, unknown>>,
+  layout: LayoutFile,
+  inputs: OverheadCabinetInputs,
+  boards: Board[],
+  warnings: string[],
+): void {
+  const rule = layout.boards.T3?.features?.LED;
+  const led = ledFeatures.find((f) => f.type === "t3_groove");
+  if (!rule || !led) return;
+  const depth = recordExpr("T3.feat.LED.depth", rule.depth, ruleScope(inputs), "T3 LED depth");
+  const t3 = boards.find((b) => b.id === "T3");
+  const thick = t3 ? t3.z1 - t3.z0 : Infinity;
+  if (!(depth > 0)) throw new LayoutError(`layout: the T3 LED groove depth is ${depth}; it must be above 0`);
+  if (depth > thick + 1e-9) throw new LayoutError(`layout: the T3 LED groove depth ${depth} is deeper than T3 (${thick}): check the rule`);
+  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: the LED groove depth equals the board thickness (${thick}), so it cuts right through.`);
+  led.depth = depth;
+}
+
 function generateT3LedGrooveFeatures(
   boards: Board[],
   warnings: string[],
@@ -755,17 +943,22 @@ function resolveCarcassColor(params: OverheadCabinetParams): { carcassColor: str
   return { carcassColor: tag, carcassColorName: name };
 }
 
-export function generateOverheadCabinet(rawParams: OverheadCabinetParams): OverheadCabinetResult {
+export interface OverheadGenerateOptions {
+  /** Placement rules to use instead of layout.json (the bench's unsaved draft). */
+  layout?: unknown;
+}
+
+export function generateOverheadCabinet(rawParams: OverheadCabinetParams, options: OverheadGenerateOptions = {}): OverheadCabinetResult {
   beginProvenance();
   try {
-    return generateOverheadCabinetInner(rawParams);
+    return generateOverheadCabinetInner(rawParams, options);
   } finally {
     // endProvenance() is called inside on success; this only clears after a throw.
     if (provenanceActive()) endProvenance();
   }
 }
 
-function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): OverheadCabinetResult {
+function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options: OverheadGenerateOptions): OverheadCabinetResult {
   const inputs = toInputs(rawParams);
   const carcassColor = resolveCarcassColor(rawParams);
   const validation = { errors: [] as string[], warnings: [] as string[] };
@@ -811,6 +1004,27 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
     ...carcassColor,
   });
 
+  let layout: LayoutFile = LAYOUT;
+  if (options.layout != null) {
+    try {
+      layout = validateLayout(options.layout);
+    } catch (err) {
+      validation.errors.push((err as Error).message);
+    }
+  }
+  let boards: Board[] = [];
+  let ledFeatures: Array<Record<string, unknown>> = [];
+  if (geometry && validation.errors.length === 0) {
+    try {
+      boards = legacyToBoards(geometry, inputs, rangehood, layout, validation.warnings);
+      ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
+      applyLedDepth(ledFeatures, layout, inputs, boards, validation.warnings);
+    } catch (err) {
+      if (!(err instanceof LayoutError)) throw err;
+      validation.errors.push(err.message);
+    }
+  }
+
   if (validation.errors.length > 0) {
     return {
       params: resolvedParams(),
@@ -831,9 +1045,7 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
   if (!geometry) {
     throw new Error("Overhead geometry was not resolved after validation.");
   }
-  const boards = legacyToBoards(geometry, inputs, rangehood);
   const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
-  const ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
   const rangehoodFeatures = generateRangehoodFeatures(geometry, rangehood);
   const dividerFeatures = geometry.divider_features.map((feature, index) => {
     if (!rangehood?.internalDividerIndices.includes(index)) return feature;
@@ -877,11 +1089,15 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams): Overhea
       phase: "geometry_v1",
       boardFrame: OVERHEAD_BOARD_FRAME,
       dividerCenterlines: centerlines,
+      placement: Object.fromEntries(
+        boards.filter((b) => layout.boards[b.id]).map((b) => [b.id, layout.boards[b.id]!]),
+      ),
       legacyGeometry: geometry,
       svgPreview: generateOHCSvgPreview(geometry, {
         selectedZoneIndex: Number((rawParams as { selectedZoneIndex?: number }).selectedZoneIndex ?? -1),
       }),
       provenance: endProvenance(),
+      ruleBoards: [...RULE_BOARDS],
     },
   };
 }

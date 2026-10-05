@@ -7,6 +7,7 @@ import { log } from "./log.js";
 import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
 import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
 import { applyUserGrooves } from "./gen/userGrooves.js";
+import { keepCorner } from "./pose.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
@@ -46,6 +47,12 @@ function migrate(obj) {
   obj.stock = normalizeStock(obj.stock);
   // Module-level params repair (e.g. tall zones re-fitted to cabinetHeight).
   obj.cabinets = (Array.isArray(obj.cabinets) ? obj.cabinets : []).map((cab) => {
+    // A module that was split (tall → storage / fridge) says which one a saved cabinet now is.
+    const moduleId = getModule(cab.moduleId)?.moduleIdFor?.(cab.params || {}) ?? cab.moduleId;
+    if (moduleId !== cab.moduleId) {
+      log("cabinet.migrate", { id: cab.id, from: cab.moduleId, to: moduleId });
+      cab = { ...cab, moduleId };
+    }
     const normalize = getModule(cab.moduleId)?.normalizeParams;
     const next = normalize ? { ...cab, params: normalize(cab.params || {}) } : { ...cab };
     const hidden = normalizeHidden(next.hidden);
@@ -119,6 +126,17 @@ export function isDirty() { return dirty; }
 export function getFilePath() { return filePath; }
 export function canUndo() { return undoStack.length > 0; }
 export function canRedo() { return redoStack.length > 0; }
+
+// A cabinet that grew into its neighbours (neighbour yield, renderer/yield.js): not saved with the job.
+// `{ sourceId, grow, neighbours: [{ id, face, by, ok, reason }], declined }` or null.
+let conflict = null;
+export function getConflict() { return conflict; }
+export function conflictIds() { return new Set(conflict ? conflict.neighbours.map((n) => n.id) : []); }
+export function setConflict(next) {
+  if (JSON.stringify(next) === JSON.stringify(conflict)) return;
+  conflict = next;
+  emit("conflict");
+}
 
 export function resultFor(id) {
   if (!results.has(id)) {
@@ -281,6 +299,9 @@ export function addCabinet(moduleId, pose, size, extra) {
   };
   // The corner of the local box the user clicked first when drawing it ({x,y,z} each ±1); a size change grows from it.
   if (opts.corner) cab.placeCorner = { ...opts.corner };
+  // A width the module decides (the fridge's) keeps the drawn box's anchored side face.
+  const drawn = anchoredPose(cab, mod, { ...cab.params, cabinetWidth: s.W }, cab.params);
+  if (drawn) cab.pose = drawn;
   bindToSpace(cab);
   job.cabinets.push(cab);
   bindAttached();
@@ -483,12 +504,31 @@ export function updateCabinet(id, fn) {
   emit("job");
 }
 
+/**
+ * Modules whose width follows other params (the fridge cabinet: cut-out + side panel) keep one side
+ * face where it is: `widthAnchor(params, cab)` = −1 (left, local x = 0) or +1 (right, local x = W).
+ * Returns the pose that does it, or null when the width did not change.
+ */
+function anchoredPose(cab, mod, before, after) {
+  if (!mod.widthAnchor) return null;
+  const w0 = mod.envelope(before).W;
+  const w1 = mod.envelope(after).W;
+  if (!(Math.abs(w1 - w0) > 1e-6)) return null;
+  const keep = mod.widthAnchor(after, cab);
+  const box = (W) => ({ x0: 0, x1: W, y0: 0, y1: 0, z0: 0, z1: 0 });
+  return keepCorner(cab.pose, box(w0), box(w1), { x: keep, y: -1, z: -1 });
+}
+
 export function setParams(id, params, { history = true } = {}) {
   if (history) {
     pushHistory();
     log("cabinet.params", { id, params });
   }
-  updateCabinet(id, (cab) => { cab.params = params; });
+  updateCabinet(id, (cab) => {
+    const pose = anchoredPose(cab, getModule(cab.moduleId), cab.params, params);
+    cab.params = params;
+    if (pose) cab.pose = pose;
+  });
   const cab = job.cabinets.find((c) => c.id === id);
   const mod = cab && getModule(cab.moduleId);
   if (cab && mod && mod.pair && mod.mirrorParams) {
@@ -675,6 +715,7 @@ export function getSelectedRegion() {
 export function resetJob() {
   log("file.new", { hadCabinets: job.cabinets.length, dirty });
   job = newJob();
+  conflict = null;
   selectedId = null;
   subSel = null;
   undoStack.length = 0;
@@ -690,6 +731,7 @@ export function loadJob(obj, path) {
     throw new Error("Not a Cab Lab job file");
   }
   job = migrate(obj);
+  conflict = null;
   log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space, finish: job.finish, stock: job.stock });
   selectedId = null;
   subSel = null;

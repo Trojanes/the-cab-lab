@@ -94,6 +94,11 @@ function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
 }
+function doorColourBOf(params) {
+  const raw = params ? params.doorColorNameB || params.doorColorB : "";
+  const name = String(raw || "").trim();
+  return name || doorColourOf(params);
+}
 function doorSidesOf(params) {
   return params && params.doorSides === "double" ? "double" : "single";
 }
@@ -825,8 +830,16 @@ function buildEastBoards(input) {
   }
   attachFaces(boards);
   const colour = input.doorColor;
-  for (const b of boards.filter((q) => q.category === "front_panel")) annotate(b, "B", { semantic: "front", visible: true, finish: { colour } });
-  for (const id of ["WARD_PANEL", "BS_SHOW"]) annotate(boards.find((q) => q.id === id), "A", { semantic: "side", visible: true, finish: { colour } });
+  const lower = input.doorColorB || input.doorColor;
+  for (const b of boards.filter((q) => q.category === "front_panel")) {
+    const c = b.id.startsWith("BS_") ? lower : colour;
+    if (b.stock?.kind === "door") b.stock = { ...b.stock, colour: c };
+    annotate(b, "B", { semantic: "front", visible: true, finish: { colour: c } });
+  }
+  annotate(boards.find((q) => q.id === "WARD_PANEL"), "A", { semantic: "side", visible: true, finish: { colour } });
+  const show = boards.find((q) => q.id === "BS_SHOW");
+  if (show.stock?.kind === "door") show.stock = { ...show.stock, colour: lower };
+  annotate(show, "A", { semantic: "side", visible: true, finish: { colour: lower } });
   annotate(boards.find((q) => q.id === "T1"), "B", { semantic: "front", visible: true, finish: { colour } });
   addFeature(panel, "B", { id: "WARD_PANEL_SHELF", kind: "groove", ...localRect(panel, { y: [tY0 - v(RULES2.WARDROBE_SHELF_GROOVE_END_MM), tY1 + v(RULES2.WARDROBE_SHELF_GROOVE_END_MM)], z: [shelfZ0 - gz, shelfZ1 + gz] }), depth: r1(tongue + v(RULES2.WARDROBE_SHELF_GROOVE_EXTRA_MM)), for: "WARD_SHELF", source: "bedroomEast" });
   const cup = (b, id, u, vv, dia2, depth) => addFeature(b, "A", { id, kind: "hole", center: [r1(u), r1(vv)], diameter: dia2, depth, for: "hinge", source: "bedroomEast" });
@@ -1005,12 +1018,13 @@ function generateBedroomEast(raw) {
   const floorTop = round1(bootTop + RULES2.WARDROBE_FLOOR_RAISE_MM.value);
   const carcassColor = carcassColourOf(raw);
   const doorColor = doorColourOf(raw);
+  const doorColorB = doorColourBOf(raw);
   const zones = [];
   let boards = [];
   let milling = { issues: [] };
   let top = null;
   if (!errors.length) {
-    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, led: raw.ledGroove !== false });
+    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, doorColorB, led: raw.ledGroove !== false });
     boards = built.boards;
     top = built.info;
     warnings.push(...built.warnings);

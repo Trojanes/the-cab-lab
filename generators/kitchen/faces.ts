@@ -22,6 +22,59 @@ function frontWorldY(b: Board): number | null {
   return b.y0 + (edge.from[c] + edge.to[c]) / 2;
 }
 
+/** Style 1 B3 bottom face (−Z). Omitted `on` is the caller's decision. Returns warnings. */
+export function addKitchenB3Led(boards: Board[], on: boolean): string[] {
+  if (!on) return [];
+  const b3 = boards.find((b) => b.id === "B3");
+  if (!b3) return ["B3 LED groove skipped: B3 board missing."];
+  const width = b3.x1 - b3.x0;
+  const rear = b3.y1 - b3.y0;
+  const W = R.LED_GROOVE_WIDTH_MM.value;
+  const inset = R.LED_GROOVE_BRANCH_END_INSET_MM.value;
+  const land = R.LED_GROOVE_FRONT_LAND_MM.value;
+  const depth = R.LED_GROOVE_DEPTH_MM.value;
+  if (depth >= b3.materialThickness - 1e-9) {
+    return [`B3 LED groove skipped: depth ${depth} would cut through the ${b3.materialThickness} mm board.`];
+  }
+  if (width <= inset * 2 + W) {
+    return [`B3 LED groove skipped: board width ${width.toFixed(1)} too narrow for 80 mm end insets.`];
+  }
+  const v0 = land;
+  const v1 = land + W;
+  if (v1 > rear + 1e-6) {
+    return [`B3 LED groove skipped: main channel leaves board depth ${rear.toFixed(1)}.`];
+  }
+  if (rear - v1 <= 1e-6) {
+    return ["B3 LED groove T-branches skipped: no remaining depth behind the main channel."];
+  }
+  const KM = "B3.feat.LED_MAIN";
+  dim(`${KM}.u0`, {}, () => 0);
+  dim(`${KM}.u1`, { w: ref("B3.x1"), x0: ref("B3.x0") }, (t) => t.w - t.x0);
+  dim(`${KM}.v0`, { land: R.LED_GROOVE_FRONT_LAND_MM }, (t) => t.land);
+  dim(`${KM}.v1`, { land: R.LED_GROOVE_FRONT_LAND_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.land + t.W);
+  addFeature(b3, "B", {
+    id: "B3_LED_MAIN", kind: "tgroove", u0: 0, u1: width, v0, v1, depth,
+    for: "led", key: KM, source: "kitchen", group: "B3.LED",
+  });
+  [0, 1].forEach((i) => {
+    const KB = `B3.feat.LED_BRANCH_${i + 1}`;
+    const x0 = i === 0
+      ? dim(`${KB}.u0`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET - t.W / 2)
+      : dim(`${KB}.u0`, { w: ref(`${KM}.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET - t.W / 2);
+    const x1 = i === 0
+      ? dim(`${KB}.u1`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET + t.W / 2)
+      : dim(`${KB}.u1`, { w: ref(`${KM}.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET + t.W / 2);
+    dim(`${KB}.v0`, { v: ref(`${KM}.v1`) }, (t) => t.v);
+    dim(`${KB}.v1`, { rear: ref("B3.y1"), y0: ref("B3.y0") }, (t) => t.rear - t.y0);
+    addFeature(b3, "B", {
+      id: `B3_LED_BRANCH_${i + 1}`, kind: "tgroove",
+      u0: x0, u1: x1, v0: v1, v1: rear, depth,
+      for: "led", key: KB, source: "kitchen", group: "B3.LED",
+    });
+  });
+  return [];
+}
+
 export function buildKitchenFaces(fb: {
   boards: Board[];
   slots: SlotRecord[];
@@ -30,6 +83,7 @@ export function buildKitchenFaces(fb: {
   locks: LockRecord[];
   notches: NotchRecord[];
   doorColour: string;
+  applianceTongues?: { id: string; vLeft: string; vRight: string; y0: number; y1: number; z0: number; z1: number; depth: number }[];
 }): Joint[] {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
@@ -72,6 +126,18 @@ export function buildKitchenFaces(fb: {
       id: sc.id, kind: "hole", center: [cy, cz], diameter: sc.diameter, through: true,
       for: sc.forBoard, key, source: "kitchen.screw",
     });
+  }
+
+  for (const tongue of fb.applianceTongues ?? []) {
+    for (const [boardId, face] of [[tongue.vLeft, "A"], [tongue.vRight, "B"]] as const) {
+      const v = B.get(boardId);
+      if (!v) continue;
+      const r = localRect(v, { y: [tongue.y0, tongue.y1], z: [tongue.z0, tongue.z1] });
+      addFeature(v, face, {
+        id: `${tongue.id}-${boardId}`, kind: "groove", ...r, depth: tongue.depth,
+        for: tongue.id, source: "kitchen.washer",
+      });
+    }
   }
 
   for (const h of fb.hinges) {

@@ -318,6 +318,11 @@ function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
 }
+function doorColourBOf(params) {
+  const raw = params ? params.doorColorNameB || params.doorColorB : "";
+  const name = String(raw || "").trim();
+  return name || doorColourOf(params);
+}
 function doorSidesOf(params) {
   return params && params.doorSides === "double" ? "double" : "single";
 }
@@ -671,6 +676,7 @@ function generateBunkBed(raw) {
   const Td = round12(num(raw.doorThickness, 16));
   const color = String(raw.carcassColorName || DEFAULT_COLOR);
   const doorColour = doorColourOf(raw);
+  const lowerColour = doorColourBOf(raw);
   const doorSides = doorSidesOf(raw);
   beginProvenance();
   const P = param({ W, D, H, deckTop: deckTopIn, upperZ: upperZIn, floorClearance, T, Tc, Td });
@@ -832,7 +838,7 @@ function generateBunkBed(raw) {
     const bunkFace = right ? ex0 : ex1;
     if (right ? bunkFace < upLadder : bunkFace > upLadder) errors.push(`the end cubby (${RULES.CUBBY_WIDTH_MM.value} wide) reaches into the upper opening`);
     const passes = (b) => b.x0 <= ex0 + 1e-6 && b.x1 >= ex1 - 1e-6;
-    const endPanel = (id, name, z0, z1, strips = []) => {
+    const endPanel = (id, name, z0, z1, strips = [], paint = doorColour) => {
       const b = boxBoard(id, name, "end_panel", "YZ", "X", door, {
         x0: F(id, "x0", { face: ref("cubby.face"), Td: P.Td }, (t) => right ? t.face - t.Td : t.face, right ? "face - Td" : "= cubby.face"),
         x1: F(id, "x1", { face: ref("cubby.face"), Td: P.Td }, (t) => right ? t.face : t.face + t.Td, right ? "= cubby.face" : "face + Td"),
@@ -866,10 +872,10 @@ function generateBunkBed(raw) {
       const v0 = F(id, "hole.v0", { v1: ref(`${id}.hole.v1`), HH: RULES.END_HOLE_HEIGHT_MM }, (t) => t.v1 - t.HH, "v1 - HH");
       if (u1 - u0 < 2 * RULES.END_HOLE_RADIUS_MM.value || v0 < RULES.END_HOLE_RADIUS_MM.value) errors.push(`${id}: no room for its hand hole`);
       else throughCutout(b, `${id}_HOLE`, flatten(roundedRect(u0, u1, v0, v1, RULES.END_HOLE_RADIUS_MM.value)), "hand_hole");
-      paintDoorStock(b, right ? "B" : "A", doorColour, color);
+      paintDoorStock(b, right ? "B" : "A", paint, color);
       return b;
     };
-    const endLower = endPanel("END_LOWER", "End panel \xB7 lower bunk", "deck.z1", "upperBase.z0", [ladderLedger, ledgerBack]);
+    const endLower = endPanel("END_LOWER", "End panel \xB7 lower bunk", "deck.z1", "upperBase.z0", [ladderLedger, ledgerBack], lowerColour);
     const endUpper = endPanel("END_UPPER", "End panel \xB7 upper bunk", "upperBase.z1", "H");
     layoutCubby = right ? { x0: round12(cubby), x1: W } : { x0: 0, x1: round12(cubby) };
     const OV = RULES.BOOT_DOOR_OVERLAP_MM;
@@ -915,7 +921,7 @@ function generateBunkBed(raw) {
         key: `BOOT_DOOR.hinge${i + 1}`
       }));
     }
-    paintDoorStock(bootDoor, "B", doorColour, color);
+    paintDoorStock(bootDoor, "B", lowerColour, color);
     layoutDoor = { x0: bootDoor.x0, x1: bootDoor.x1, y0: bootDoor.y0, y1: bootDoor.y1, z0: bootDoor.z0, z1: bootDoor.z1 };
     const CL = RULES.SILL_TONGUE_CLEARANCE_MM;
     const t0 = F("SILL", "tongue.x0", { x: ref(accLo), CL }, (t) => right ? t.x : t.x + t.CL, right ? `= ${accLo}` : `${accLo} + CL`);

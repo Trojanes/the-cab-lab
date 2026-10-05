@@ -3,8 +3,9 @@
 // cabinets copy these into their own generator params.
 //
 // Carcass and partition are always White Stipple. Doors are Acrylic or HPL.
-// One or two door colours: two-colour assignment to modules comes later —
-// until then every new cabinet uses door colour A.
+// Colour A is the upper group, colour B the lower. A one-colour job copies A
+// into B. New cabinets copy their slot (`cabinetColor`); a split module keeps
+// both names and paints each board itself.
 import { getSetting } from "./settings.js";
 
 export const MATERIALS_SETTINGS_KEY = "materials.defaults";
@@ -166,10 +167,16 @@ export function validateMaterials(finish, stock) {
   return errors;
 }
 
-/** Colours a new cabinet copies today: carcass White Stipple, door = colour A. */
-export function cabinetColor(finish) {
+/**
+ * Colours a new cabinet copies. Carcass is White Stipple.
+ * Door colour A is the upper group, B the lower. One door colour in the job:
+ * B is the same as A. `slot` is which group this cabinet belongs to.
+ */
+export function cabinetColor(finish, slot = "A") {
   const f = normalizeFinish(finish);
-  const door = f.door.colors[0];
+  const upper = f.door.colors[0];
+  const lower = f.door.mode === "two" && f.door.colors[1] ? f.door.colors[1] : upper;
+  const door = slot === "B" ? lower : upper;
   return {
     carcassColor: CARCASS_COLOR,
     carcassColorName: CARCASS_COLOR,
@@ -177,7 +184,9 @@ export function cabinetColor(finish) {
     doorSides: f.door.sides,
     doorColor: door.name,
     doorColorName: door.name,
-    colorSlot: "A",
+    doorColorB: lower.name,
+    doorColorNameB: lower.name,
+    colorSlot: slot === "B" ? "B" : "A",
   };
 }
 

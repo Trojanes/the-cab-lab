@@ -157,6 +157,8 @@ export function localBoxOf(params) {
 }
 
 const PLANE_AXES = { XY: ["x", "y", "z"], XZ: ["x", "z", "y"], YZ: ["y", "z", "x"] };
+const AXIS_OF = { XY: "z", XZ: "y", YZ: "x" };
+const NUDGE_KEYS = ["x", "y", "z", "rotX", "rotY", "rotZ"];
 
 /** In-plane size of the stored outline. */
 export function outlineSpan(params) {
@@ -256,4 +258,96 @@ export function sketchBoardFromUV(face, item, choice, holes = []) {
   box[BOX[face.axis][0]] = r3(Math.min(t0, t1));
   box[BOX[face.axis][1]] = r3(Math.max(t0, t1));
   return { pose, params, du: s.du, dv: s.dv, box };
+}
+
+function turned(pose) {
+  return ["rotX", "rotY", "rotZ"].some((k) => Math.abs(Number(pose && pose[k]) || 0) > 0.05);
+}
+
+function nudged(override) {
+  return NUDGE_KEYS.some((k) => Math.abs(Number(override && override[k]) || 0) > 0.05);
+}
+
+/** The stock row `sketchBoardFromUV` needs, copied off the board rather than the catalogue. */
+function choiceFromParams(params) {
+  const stock = params.stock || {};
+  const kind = stock.kind === "partition" || stock.kind === "door" ? stock.kind : "carcass";
+  const colour = params.doorColorName || stock.colour || "";
+  const single = kind === "door" && params.doorSides !== "double";
+  return {
+    id: kind === "door" ? `door:${colour}` : kind,
+    kind,
+    thickness: Number(stock.thickness) || 0,
+    ...(colour ? { colour } : {}),
+    doorSides: params.doorSides === "double" ? "double" : "single",
+    doorSeries: params.doorSeries === "hpl" ? "hpl" : "acrylic",
+    carcassColorName: params.carcassColorName || "White Stipple",
+    single,
+    colorFace: params.colorFace === "sketch" ? "sketch" : "pull",
+    label: kind === "door" ? (colour || "Door") : kind === "partition" ? "Partition" : "Carcass",
+  };
+}
+
+/**
+ * The sketch a drawn board opens back into: one closed curve per outline and
+ * hole, points in world (u, v), bulges unchanged. Guides were never stored.
+ * `{ ok, face, items, choice }` or `{ ok: false, reason }`.
+ * A rotated pose, or a Move nudge on the board, is refused: the sketch tools
+ * only draw on a world-axis face, and a nudge would sit the curves off the board.
+ */
+export function sketchItemsFromBoard(cab) {
+  const params = cab && cab.params;
+  const pose = cab && cab.pose;
+  if (!params || !pose) return { ok: false, reason: "no outline" };
+  if (turned(pose)) return { ok: false, reason: "this board was rotated" };
+  const override = cab.overrides && cab.overrides.boards && cab.overrides.boards.BOARD;
+  if (nudged(override)) return { ok: false, reason: "this board was nudged" };
+  const outline = params.outline;
+  const axis = AXIS_OF[params.plane];
+  if (!axis || !Array.isArray(outline) || outline.length < 2) return { ok: false, reason: "no outline" };
+  const [uName, vName] = UV[axis];
+  const ring = (pts) => ({
+    closed: true,
+    pts: pts.map((p) => [r3(Number(pose[uName]) + Number(p.u)), r3(Number(pose[vName]) + Number(p.v))]),
+    b: pts.map((p) => Number(p.b) || 0),
+  });
+  const items = [ring(outline)];
+  for (const hole of params.holes || []) {
+    if (Array.isArray(hole) && hole.length >= 2) items.push(ring(hole));
+  }
+  const box = localBoxOf(params);
+  const pad = 80;
+  const value = r3(Number(pose[axis]) || 0);
+  const ext = {
+    x: [0, 0], y: [0, 0], z: [0, 0],
+    [uName]: [r3(Number(pose[uName]) + box[`${uName}0`] - pad), r3(Number(pose[uName]) + box[`${uName}1`] + pad)],
+    [vName]: [r3(Number(pose[vName]) + box[`${vName}0`] - pad), r3(Number(pose[vName]) + box[`${vName}1`] + pad)],
+    [axis]: [value, value],
+  };
+  return {
+    ok: true,
+    face: {
+      axis, value, dir: params.pull === -1 ? -1 : 1, ext,
+      label: cab.id || "Board", source: cab.id || "board", pickable: true,
+    },
+    items,
+    choice: choiceFromParams(params),
+  };
+}
+
+/** How far the in-plane origin moved, so face-local grooves stay on the same place. */
+export function originDelta(face, fromPose, toPose) {
+  const [u, v] = UV[face.axis] || [];
+  if (!u) return { du: 0, dv: 0 };
+  return { du: r3(Number(toPose[u]) - Number(fromPose[u])), dv: r3(Number(toPose[v]) - Number(fromPose[v])) };
+}
+
+/** Groove rectangles after the board origin moved by `(du, dv)` in face (u, v). */
+export function shiftGrooves(grooves, du, dv) {
+  if (!Array.isArray(grooves)) return [];
+  return grooves.map((g) => ({
+    ...g,
+    u0: r3(g.u0 - du), u1: r3(g.u1 - du),
+    v0: r3(g.v0 - dv), v1: r3(g.v1 - dv),
+  }));
 }

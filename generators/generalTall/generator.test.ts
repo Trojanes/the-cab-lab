@@ -383,14 +383,29 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.ok(Math.abs(item.z1 - item.z0 - 1470) < 0.01);
   assert.equal(synced.boards.filter((b) => b.id.startsWith("FP_fridge")).length, 0);
   assert.ok(synced.validation.warnings.some((w) => w.includes("1470")));
-  assert.equal(synced.params.cabinetWidth, 664); // 619+45
+  // Width = cut-out + sides + V1 / V2 / V5 at the real carcass thickness (16 here): the opening is exactly the cut-out.
+  assert.equal(synced.params.cabinetWidth, 667);
+  assert.equal(synced.params.fridgeOpening, 619);
+  assert.deepEqual(synced.validation.errors, []);
+  assert.equal(synced.debug.provenance.entries["tall.CW"]?.formula, "fridge cut-out + sides + 3 CPT");
 
   const none = fridge({ cabinetWidth: 500 });
-  assert.equal(none.params.cabinetWidth, 664);
-  assert.ok(none.validation.warnings.some((w) => w.includes("619+45=664")));
+  assert.equal(none.params.cabinetWidth, 667);
+  assert.ok(none.validation.warnings.some((w) => w.includes("619 + 3 × 16 + sides 0 = 667")));
 
   const left = fridge({ exteriorSide: "left", cabinetWidth: 500 });
-  assert.equal(left.params.cabinetWidth, 680); // 619+61
+  assert.equal(left.params.cabinetWidth, 683); // + a 16 carcass side panel
+  assert.equal(left.params.fridgeOpening, 619);
+
+  // A 15 carcass side instead of a 16 colour panel: the outer width follows, the opening does not.
+  const carcass15 = fridge({ exteriorSide: "left", panelThickness: 15, leftSidePanelThickness: 15, leftSidePanelFinish: "carcass" });
+  const colour16 = fridge({ exteriorSide: "left", panelThickness: 15, leftSidePanelThickness: 16, leftSidePanelFinish: "colour" });
+  assert.equal(colour16.params.cabinetWidth - carcass15.params.cabinetWidth, 1);
+  assert.equal(carcass15.params.fridgeOpening, 619);
+  assert.equal(colour16.params.fridgeOpening, 619);
+
+  const tight = fridge({ syncCabinetWidthFromFridge: false, cabinetWidth: 666 });
+  assert.ok(tight.validation.errors.some((e) => e.includes("1 short")), "a cut-out wider than the opening is an error");
   const v5Right = left.boards.find((b) => b.id === "V5")!;
   assert.ok(v5Right.x0 > 300, "V5 opposite exterior left → right half");
   assert.ok(left.boards.some((b) => b.id === "SidePanel_L"));
@@ -493,6 +508,32 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
     ],
   });
   assert.deepEqual(place(drawerOnTop, "TopStyle2FixedFrontPanel"), { x0: 19, x1: 590, y0: -16, y1: 0, z0: 1864, z1: 1965 });
+
+  // Over the fridge: an up flap or a fixed panel, one full Zi on the fridge, V5 stops under it; the slack zone takes the height.
+  for (const type of ["top_flap", "fixed_panel"] as const) {
+    const zones = [
+      { id: "zone-1", type: "bottom_flap" as const, height: 172 },
+      { id: "zone-2", type: "drawer" as const, height: 247 },
+      { id: "zone-3", type: "fridge" as const, height: 1344, applianceWidthMm: 532, applianceHeightMm: 1344 },
+      { id: "zone-4", type, height: 300 },
+    ];
+    const p = fitTallCabinetHeight({
+      cabinetHeight: 1965, cabinetWidth: 593, cabinetDepth: 640, panelThickness: 15, frontPanelThickness: 16, sideClearance: 3,
+      leftSidePanelThickness: 16, leftSidePanelFinish: "colour", exteriorSide: "left",
+      topSystem: { style: "style_2", height: 101 }, bottomSystem: { style: "style_1", frontRailHeight: 55 }, frontHardware: { frontClearance: 3 },
+      zones,
+    }, 2280, "zone-4");
+    assert.equal(p.zones.find((z) => z.id === "zone-3")!.height, 1344, `${type}: the fridge keeps its cut-out height`);
+    const r = generateGeneralTall(p);
+    assert.deepEqual(r.validation.errors, [], type);
+    const zi = place(r, "Zi_boundary-zone-4");
+    assert.equal(place(r, "V5").z1, zi.z0, `${type}: V5 up to the Zi on the fridge`);
+    const fp = b(r, "FP_zone-4");
+    assert.ok(fp.z0 > zi.z0 && fp.stock?.kind === "door", type);
+    assert.equal(r.hinges.filter((h) => h.panelId === "FP_zone-4").length, type === "top_flap" ? 2 : 0, `${type} hinges`);
+    assert.equal(r.locks.filter((l) => l.panelId === "FP_zone-4").length, 0, `${type} lock`);
+    if (type === "fixed_panel") assert.equal(fp.name, "Fixed Front Panel");
+  }
 }
 
 /* ================= 柜高差额进 zone-3，H 撑按新柜高重算 ================= */

@@ -29,7 +29,10 @@
 | cabinetDepth (D) | 是 | — | 包络深（含门厚） |
 | cabinetHeight (H) | 否 | 见规则 | 包络高；从天花板向下量 |
 | style | 否 | style_1 | style_1 / style_2（顶部结构差异） |
-| zones[] | 否 | — | 分区表：`{ type: up_flap \| fixed_panel \| open, width }`，宽度和必须 = W |
+| zones[] | 否 | — | 分区表：`{ type: up_flap \| fixed_panel \| open \| rangehood_flap, width }`，宽度和必须 = W。相邻的 `rangehood_flap` 合成一组油烟机，一组里不能再夹别的类型 |
+| rangehoodClearHeight | 否 | 75 | 底板顶面到油烟机顶板底面的净高 |
+| rangehoodAlignment | 否 | left | 开孔靠这一组的左或右 |
+| rangehoodEdgeOffsetX | 否 | 40 | 开孔距所选侧，至少 40 |
 | internalDividerCenterlines[] | 否 | — | 分隔件中心线（旧式输入；无 zones 时按中心线切分区，类型交替 up_flap/fixed_panel） |
 | topClearanceHeight (TCH) | 否 | 40 | 顶部隐藏轨区域高 |
 | frontPanelThickness (FPT) | 否 | 16 | 门板厚 |

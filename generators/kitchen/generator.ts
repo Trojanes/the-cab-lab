@@ -12,7 +12,7 @@ import { applyGrain } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox, refreshBoardBox } from "../_lib/recordBox.ts";
 import { evalExpr, recordLoop } from "../_lib/trace.ts";
-import { buildKitchenFaces } from "./faces.ts";
+import { addKitchenB3Led, buildKitchenFaces } from "./faces.ts";
 import type {
   Board, HingeRecord, Joint, KitchenParams, KitchenResult, KitchenZoneType,
   LockRecord, MachiningMode, NotchRecord, ScrewRecord, SidePanelOptions, SlotRecord,
@@ -58,6 +58,7 @@ interface ZonePlan {
   lockSideCenterOffset: number;
   leftSidePanelOptions?: SidePanelOptions;
   rightSidePanelOptions?: SidePanelOptions;
+  applianceFloorEnabled: boolean;
 }
 interface ColumnPlan {
   id: string;
@@ -75,6 +76,8 @@ interface S {
   leftOpts: Required<SidePanelOptions>;
   rightOpts: Required<SidePanelOptions>;
   cd: number;
+  /** `ensuite` is the vanity rail entry. Omitted / anything else is the kitchen run. */
+  baseKind: "kitchen" | "ensuite";
   avoidances: { id: string; x0: number; x1: number; height: number; depth: number }[];
   prefs: Map<number, MachiningMode>;
 }
@@ -141,6 +144,7 @@ function normalize(input: KitchenParams): S {
         lockSideCenterOffset: asNum(zone.lockSideCenterOffset, R.LOCK_SIDE_OFFSET.value),
         leftSidePanelOptions: zone.leftSidePanelOptions,
         rightSidePanelOptions: zone.rightSidePanelOptions,
+        applianceFloorEnabled: zone.applianceFloorEnabled === true,
       });
       z = r2(z - zh);
     }
@@ -154,6 +158,7 @@ function normalize(input: KitchenParams): S {
     xBoundaries: [0, ...columns.map((c) => c.x1)],
     leftOpts: DEFAULT_SIDE, rightOpts: DEFAULT_SIDE,
     cd: r2(D - FPT),
+    baseKind: input.baseKind === "ensuite" ? "ensuite" : "kitchen",
     avoidances: (input.wheelAvoidances ?? []).map((a) => ({
       id: a.id, x0: Math.round(asNum(a.x0, 0)), x1: Math.round(asNum(a.x1, 0)),
       height: Math.round(asNum(a.height, 0)), depth: Math.round(asNum(a.depth, 0)),
@@ -181,6 +186,9 @@ function validate(s: S, errors: string[], warnings: string[]): void {
     }
     for (const z of col.zones) {
       if (z.zoneType === "unassigned") errors.push(`Zone ${z.id} in column ${col.id} has no zone type.`);
+      if (s.baseKind === "ensuite" && z.zoneType === "stove") {
+        errors.push(`Ensuite has no stove — zone ${z.id} in column ${col.id}.`);
+      }
     }
   }
   for (const a of s.avoidances) {
@@ -778,6 +786,93 @@ function recordColumns(s: S) {
   }
 }
 
+function wheelHit(col: ColumnPlan, avoidances: S["avoidances"]) {
+  return avoidances.find((a) => a.x1 > a.x0 && a.height > 0 && a.depth > 0 && a.x0 < col.x1 && a.x1 > col.x0);
+}
+
+/** Washer deck behind B3, tongues into the column's side panels, two plinth supports under it. */
+function addWasherFloor(s: S, col: ColumnPlan, zone: ZonePlan, vL: VPanel, vR: VPanel): {
+  boards: Board[];
+  tongue: { id: string; vLeft: string; vRight: string; y0: number; y1: number; z0: number; z1: number; depth: number } | null;
+  errors: string[];
+  warnings: string[];
+} {
+  const errors: string[] = [];
+  const warnings: string[] = [];
+  const id = `${col.id}-${zone.id}-appliance-floor`;
+  if (s.baseKind !== "ensuite") {
+    errors.push(`Appliance floor in ${zone.id} is only on an ensuite.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  if (zone.zoneType !== "left_door" && zone.zoneType !== "right_door") {
+    errors.push(`Appliance floor in ${zone.id} requires a left or right door (not ${zone.zoneType}).`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  if (s.style2) {
+    errors.push(`Appliance floor in ${zone.id} requires Style 1 bottom clearance.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  const hit = wheelHit(col, s.avoidances);
+  if (hit) {
+    errors.push(`Appliance floor in ${zone.id} is not allowed: column intersects wheel avoidance ${hit.id}.`);
+    return { boards: [], tongue: null, errors, warnings };
+  }
+  const clearX0 = vL.x1;
+  const clearX1 = vR.x0;
+  const clearW = clearX1 - clearX0;
+  const floorY0 = R.SUPPORT_STRIP_WIDTH.value;
+  const floorY1 = r2(s.cd - s.CPT);
+  const span = floorY1 - floorY0;
+  if (clearW < R.APPLIANCE_FLOOR_MIN_CLEAR_WIDTH_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} needs clear width >= ${R.APPLIANCE_FLOOR_MIN_CLEAR_WIDTH_MM.value} mm (got ${r2(clearW)}).`);
+  }
+  if (s.cd < R.APPLIANCE_FLOOR_MIN_DEPTH_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} needs structural depth >= ${R.APPLIANCE_FLOOR_MIN_DEPTH_MM.value} mm (got ${r2(s.cd)}).`);
+  }
+  if (span < R.APPLIANCE_FLOOR_MIN_SPAN_MM.value) {
+    errors.push(`Appliance floor in ${zone.id} has insufficient depth behind B3 (${r2(span)} mm).`);
+  }
+  if (errors.length) return { boards: [], tongue: null, errors, warnings };
+  const tongue = s.CPT / 2;
+  const tongueY0 = r2(floorY0 + span / 3);
+  const tongueY1 = r2(floorY0 + (2 * span) / 3);
+  const x0 = r2(clearX0 - tongue);
+  const x1 = r2(clearX1 + tongue);
+  const z0 = s.BCH;
+  const z1 = r2(s.BCH + s.CPT);
+  const X0 = lit(clearX0);
+  const X1 = lit(clearX1);
+  const TX0 = lit(x0);
+  const TX1 = lit(x1);
+  const Y0 = lit(floorY0);
+  const Y1 = lit(floorY1);
+  const TY0 = lit(tongueY0);
+  const TY1 = lit(tongueY1);
+  const outline = loopPts(id, ["x", "y"], [
+    [X0, Y0], [X1, Y0], [X1, TY0], [TX1, TY0], [TX1, TY1], [X1, TY1],
+    [X1, Y1], [X0, Y1], [X0, TY1], [TX0, TY1], [TX0, TY0], [X0, TY0], [X0, Y0],
+  ]);
+  const boards: Board[] = [
+    mkBoard(id, "Washer floor", "bottom", "appliance_floor", s.CPT, "carcass",
+      "XY", "Z", x0, x1, floorY0, floorY1, z0, z1, outline),
+  ];
+  [0.35, 0.75].forEach((at, index) => {
+    const center = floorY0 + span * at;
+    const y0 = r2(center - s.CPT / 2);
+    const y1 = r2(center + s.CPT / 2);
+    if (y0 < floorY0 + 1 || y1 > floorY1 - 1) return;
+    const sid = `${col.id}-${zone.id}-underside-${index + 1}`;
+    boards.push(mkBoard(sid, `Washer support ${index + 1}`, "bottom", "underside_support", s.CPT, "carcass",
+      "XZ", "Y", clearX0, clearX1, y0, y1, 0, s.BCH, rectXZ(clearX1 - clearX0, s.BCH)));
+  });
+  if (boards.length < 3) warnings.push(`Appliance floor ${id}: underside supports skipped (floor span too short).`);
+  return {
+    boards,
+    tongue: { id, vLeft: vL.id, vRight: vR.id, y0: tongueY0, y1: tongueY1, z0, z1, depth: tongue },
+    errors, warnings,
+  };
+}
+
 export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   beginProvenance();
   resetPlans();
@@ -904,6 +999,7 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     z0: number; z1: number;
   }
   const funcBoards: FuncBoard[] = [];
+  const applianceTongues: { id: string; vLeft: string; vRight: string; y0: number; y1: number; z0: number; z1: number; depth: number }[] = [];
 
   const addFuncBoard = (
     id: string, name: string, boardType: string, ci: number,
@@ -990,8 +1086,22 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     }
   });
   // 底区上方的门层板：底区自身（z0=BCH）的门板区也可能有层板（列1 情形）
+  s.columns.forEach((col) => {
+    col.zones.forEach((zone, index) => {
+      if (zone.applianceFloorEnabled && index !== col.zones.length - 1) {
+        errors.push(`Appliance floor in ${zone.id} is only allowed on the bottom zone of a column.`);
+      }
+    });
+  });
   s.columns.forEach((col, ci) => {
     const zone = col.zones[col.zones.length - 1]; // 最底区
+    if (zone?.applianceFloorEnabled) {
+      const made = addWasherFloor(s, col, zone, vPanels[ci], vPanels[ci + 1]);
+      errors.push(...made.errors);
+      warnings.push(...made.warnings);
+      boards.push(...made.boards);
+      if (made.tongue) applianceTongues.push(made.tongue);
+    }
     if (!zone || zone.z0 > BCH + EPS) return;
     if (!PANEL_ZONE_TYPES.has(zone.zoneType) || zone.zoneType === "drawer" || zone.zoneType === "down_flap") return;
     if (!zone.shelfEnabled) return;
@@ -1468,7 +1578,8 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
   for (const b of boards) refreshBoardBox(b);
   flushPlans();
   attachFaces(boards);
-  const joints: Joint[] = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input) });
+  const joints: Joint[] = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input), applianceTongues });
+  warnings.push(...addKitchenB3Led(boards, !s.style2 && input.ledGroove !== false));
   // Fronts, the kick (B1) included: one group, horizontal unless chosen otherwise.
   const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? "front" : null), input, { front: "horizontal" });
   applyDoorSides(boards, input);

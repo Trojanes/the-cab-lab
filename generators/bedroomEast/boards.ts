@@ -6,7 +6,7 @@
  * overhead) stands against the nose from y = bodyY0; the bedside cabinet and
  * the bed box stand in front of it. Fronts hang at y bodyY0 − door … bodyY0.
  */
-import { dim, ref } from "../_lib/dim.ts";
+import { dim, ref, valueOf } from "../_lib/dim.ts";
 import { addFeature, annotate, attachFaces, localRect, type Board, type ProfilePoint } from "../_lib/model.ts";
 import { roofAt } from "../bedroom/generator.ts";
 import { RULES as R } from "./rules.ts";
@@ -28,6 +28,8 @@ export interface EastBoardInput {
   dpt: number;
   carcassColor: string;
   doorColor: string;
+  /** Lower group (bedside). Missing uses doorColor. */
+  doorColorB?: string;
   /** LED channels on T3's top. */
   led: boolean;
 }
@@ -41,12 +43,24 @@ export interface EastBoards {
 
 type Stock = "carcass" | "door" | "bed";
 
+/** Keep a formula already recorded for this face. Otherwise record the millimetre the board is built at. */
+function recordFace(id: string, face: string, n: number): number {
+  const value = r1(n);
+  const key = `${id}.${face}`;
+  const have = valueOf(key);
+  if (Number.isFinite(have) && Math.abs(have - value) <= 0.051) return value;
+  return dim(key, { v: value }, (t) => t.v, { formula: String(value) });
+}
+
 function board(id: string, name: string, category: string, plane: "XY" | "XZ" | "YZ", thick: number,
   x0: number, x1: number, y0: number, y1: number, z0: number, z1: number, pv?: ProfilePoint[]): Board {
   const T = plane === "XY" ? "Z" : plane === "XZ" ? "Y" : "X";
   const b: Board = {
     id, name, category, boardType: category, materialThickness: thick, profilePlane: plane, thicknessAxis: T,
-    x0: r1(x0), x1: r1(x1), y0: r1(y0), y1: r1(y1), z0: r1(z0), z1: r1(z1), source: "bedroomEast",
+    x0: recordFace(id, "x0", x0), x1: recordFace(id, "x1", x1),
+    y0: recordFace(id, "y0", y0), y1: recordFace(id, "y1", y1),
+    z0: recordFace(id, "z0", z0), z1: recordFace(id, "z1", z1),
+    source: "bedroomEast",
   };
   if (pv) b.profileVector = pv.map((p) => Object.fromEntries(Object.entries(p).map(([k, n]) => [k, r1(n as number)])) as ProfilePoint);
   return b;
@@ -331,8 +345,16 @@ export function buildEastBoards(input: EastBoardInput): EastBoards {
   // ---- faces and features ----------------------------------------------------------------
   attachFaces(boards);
   const colour = input.doorColor;
-  for (const b of boards.filter((q) => q.category === "front_panel")) annotate(b, "B", { semantic: "front", visible: true, finish: { colour } });
-  for (const id of ["WARD_PANEL", "BS_SHOW"]) annotate(boards.find((q) => q.id === id)!, "A", { semantic: "side", visible: true, finish: { colour } });
+  const lower = input.doorColorB || input.doorColor;
+  for (const b of boards.filter((q) => q.category === "front_panel")) {
+    const c = b.id.startsWith("BS_") ? lower : colour;
+    if (b.stock?.kind === "door") b.stock = { ...b.stock, colour: c };
+    annotate(b, "B", { semantic: "front", visible: true, finish: { colour: c } });
+  }
+  annotate(boards.find((q) => q.id === "WARD_PANEL")!, "A", { semantic: "side", visible: true, finish: { colour } });
+  const show = boards.find((q) => q.id === "BS_SHOW")!;
+  if (show.stock?.kind === "door") show.stock = { ...show.stock, colour: lower };
+  annotate(show, "A", { semantic: "side", visible: true, finish: { colour: lower } });
   annotate(boards.find((q) => q.id === "T1")!, "B", { semantic: "front", visible: true, finish: { colour } });
 
   addFeature(panel, "B", { id: "WARD_PANEL_SHELF", kind: "groove", ...localRect(panel, { y: [tY0 - v(R.WARDROBE_SHELF_GROOVE_END_MM), tY1 + v(R.WARDROBE_SHELF_GROOVE_END_MM)], z: [shelfZ0 - gz, shelfZ1 + gz] }), depth: r1(tongue + v(R.WARDROBE_SHELF_GROOVE_EXTRA_MM)), for: "WARD_SHELF", source: "bedroomEast" });

@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
 import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
 import { syncWalls, statusOf } from "./walls3d.js";
 import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, boardUndoKey, overlaps } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, startMeasure, boardUndoKey, overlaps } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -14,6 +14,7 @@ import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
 import { railContext } from "./benchMenu.js";
 import { buildCnjob } from "./gen/cnjob.js";
+import { cabinetHits } from "./yield.js";
 
 attachJob(job);
 
@@ -92,6 +93,8 @@ for (const group of MODULE_GROUPS) {
     if (openFlyout && openFlyout !== fly) closeFlyout();
     const r = head.getBoundingClientRect();
     const rr = rail.getBoundingClientRect();
+    // The scrollbar (when the rail is shorter than its list) sits in this gap.
+    fly.style.setProperty("--fly-bridge", `${Math.ceil(rr.right - r.right) + 8}px`);
     fly.style.left = `${rr.right}px`;
     fly.style.top = `${r.top}px`;
     fly.classList.remove("hidden");
@@ -173,6 +176,8 @@ function refreshRail() {
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
     "groove.pick": "Groove — click the big face of any board · Esc ends",
     "groove.draw": "Groove — Line: two ends of the centreline · Rectangle: two corners · T switches Groove / T groove · Esc steps back",
+    "measure": "Measure — click a point or a face, then another · distance, or the angle between two faces · Shift continues · Esc clears",
+    "measure.anchor": "Measure — click the second point or face · a board face also shows its size · Shift on a later click continues · Esc clears",
     "board.pick": "Board — click the face to sketch on · Esc cancels",
     "board.sketch": "Sketch — pick a tool on the sketch bar, then click where it starts · Finish sketch turns the closed shapes into boards",
     "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc back to the sketch",
@@ -289,6 +294,8 @@ function refreshStatus() {
   $('[data-action="board"]').classList.toggle("active", getMode().startsWith("board"));
   $('[data-action="groove"]').disabled = !job.getJob().cabinets.length;
   $('[data-action="groove"]').classList.toggle("active", getMode().startsWith("groove"));
+  $('[data-action="measure"]').disabled = !job.hasSpace() && !job.getJob().cabinets.length;
+  $('[data-action="measure"]').classList.toggle("active", getMode().startsWith("measure"));
   const pl = job.getSelectedPlane();
   if (pl) $("#stSelection").textContent = `Selection: ${pl.id} (Plane)`;
   const wall = job.getSelectedWall();
@@ -332,8 +339,10 @@ function exportFitIssues() {
     const hits = overlaps(cab, cab.pose);
     const walls = hits.filter((id) => wallIds.has(id));
     if (walls.length) issues.push(`${cab.id} overlaps partition ${walls.join(", ")}.`);
-    const doors = hits.filter((id) => !wallIds.has(id) && !cabIds.has(id));
+    const doors = hits.filter((id) => !wallIds.has(id) && !cabIds.has(id.split(":")[0]));
     if (doors.length) issues.push(`${cab.id} overlaps the sliding door ${doors.join(", ")}.`);
+    const cabs = cabinetHits(cab).filter((id) => id > cab.id);
+    if (cabs.length) issues.push(`${cab.id} overlaps cabinet ${cabs.join(", ")}.`);
   }
   for (const wall of job.getWalls()) {
     const st = statusOf(wall);
@@ -386,6 +395,7 @@ const ACTIONS = {
   resize: () => startResize(),
   board: () => startBoard(),
   groove: () => startGroove(),
+  measure: () => startMeasure(),
 };
 $$("[data-action]").forEach((btn) => {
   btn.addEventListener("click", () => ACTIONS[btn.dataset.action]?.());

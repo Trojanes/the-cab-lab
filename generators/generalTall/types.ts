@@ -17,7 +17,9 @@ export type { Board, Joint } from "../_lib/model.ts";
 export type GTZoneType =
   | "side_door" | "left_side_door" | "right_side_door" | "double_door"
   | "drawer" | "open_space" | "open_appliance" | "fridge"
-  | "top_flap" | "bottom_flap" | "blank_panel";
+  | "top_flap" | "bottom_flap" | "blank_panel"
+  /** A front that does not open (door stock, no hinges, no lock): today over a fridge, later a microwave. */
+  | "fixed_panel";
 
 export interface GTHingeSettings {
   cupDiameter?: number;
@@ -38,6 +40,7 @@ export interface GTZone {
   hingeSettings?: GTHingeSettings;
   verticalDivider?: boolean;
   dividerCenterX?: number;
+  /** Fridge: the maker's cut-out (opening) size, not the appliance body. */
   applianceWidthMm?: number;
   applianceDepthMm?: number;
   applianceHeightMm?: number;
@@ -174,6 +177,10 @@ export interface GTResult {
     panelThickness: number;
     frontPanelThickness: number;
     ziThickness: number;
+    leftSidePanelThickness: number;
+    rightSidePanelThickness: number;
+    /** Width between the stiles either side of the fridge (V1 / V2 and V5); null without a fridge. */
+    fridgeOpening: number | null;
   };
   boards: ModelBoard[];
   /** Grain direction per group and the HPL sheet-size issues (_lib/grain.ts). */

@@ -1848,7 +1848,8 @@ function generateBedroom(raw) {
         }
       }
       for (const b of [panelL, panelR]) b.stock = { kind: "door", thickness: b.materialThickness, colour: p.doorColor };
-      for (const b of [stripL, stripR, ...shelfBoards, ...nookBoards, t3L, t3R, T2, T1]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
+      for (const b of [stripL, stripR, ...shelfBoards, ...nookBoards, t3L, t3R, T2]) b.stock = { kind: "carcass", thickness: b.materialThickness, colour: p.carcassColor };
+      T1.stock = { kind: "door", thickness: T1.materialThickness, colour: p.doorColor };
       for (const b of shelfBoards) annotate(b, "A", { semantic: "top", visible: true, finish: { colour: p.carcassColor } });
       for (const b of nookBoards) {
         b.source = "bedroom.nook";
@@ -1875,7 +1876,7 @@ function generateBedroom(raw) {
         annotate(b, "A", { semantic: "top", visible: false });
         annotate(b, "B", { semantic: "inside", visible: false });
       }
-      annotate(T1, "B", { semantic: "front", visible: true, finish: { colour: p.carcassColor } });
+      annotate(T1, "B", { semantic: "front", visible: true, finish: { colour: p.doorColor } });
       annotate(T1, "A", { semantic: "inside", visible: false });
       annotate(T2, "B", { semantic: "front", visible: false });
       annotate(T2, "A", { semantic: "back", visible: false });

@@ -84,6 +84,11 @@ Stocks: carcass (`carcassThickness`), partition (`partitionThickness`) and door
 | `BOOT_DOOR` | door 16 | down flap on the room face (y −16 → 0), over the access by 10 each side, 3.5 off the floor, 8.5 over the deck underside; colour to the room. Catch (门扣): lock slot 55 × 16 round-ended (the STEP's straight 39 + ends), centred, centre 30.75 under the deck underside. Hinges: two Ø35 × 12 cups on the inside face, 22.5 up from the bottom edge, 100 from each side; the plates fix to the sill |
 | `SILL` | partition 18 | on the floor, the flap hinges' fixed side; tongue (access − 0.5, flush on the side away from the ladder) through partition + inner side (y 0 → 33); body 45 deep behind the inner sides, 55 past the tongue each side; Ø11 half-circle reliefs cut into the body beside the tongue corners |
 
+The end panels (and the boot flap) are door panels: always the job's door stock — same thickness
+and sides as the doors (`doorThickness`, 16 on 21 Bunk). `END_UPPER` takes colour A
+(`doorColorName`); `END_LOWER` and `BOOT_DOOR` take colour B (`doorColorNameB`, or A when the
+job has one colour). Never give them a thickness of their own.
+
 `END_LOWER` stands up to the upper base, so every strip that passes it goes through a notch
 in its top corner (strip thickness × 100): for 21 Bunk the rear strip and the ladder-side front strip.
 
