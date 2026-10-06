@@ -1,21 +1,22 @@
 // Right panel: shows the space when nothing is selected, otherwise the
 // selected cabinet's params. Every edit writes into job.js and regenerates.
 import * as job from "./job.js";
-import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, BEDROOM_LAYOUT_LABEL, BEDROOM_WARDROBE_STYLE } from "./modules.js";
+import { getModule, fitZones, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, BEDROOM_LAYOUT_LABEL, BEDROOM_WARDROBE_STYLE, fridgeParts, fridgeFix, fridgeRuleIssues, FRIDGE_BELOW_TYPES, FRIDGE_ABOVE_TYPES, FRIDGE_ZONE_LABEL } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
 import { openSpaceDialog } from "./spaceDialog.js";
 import { poseFits, armHandle, armedHandleFor } from "./cabinets3d.js";
 import { describeMaterials, thickness, partitionClearance } from "./materials.js";
-import { sideOfRotZ, sideLabel, overlaps, startGroove, removeGroove } from "./interact.js";
+import { sideOfRotZ, sideLabel, overlaps, startGroove, removeGroove, startBoardEdit } from "./interact.js";
 import { wallLength, wallOrientation, wallBoards, cabinetBlocksOpening, pelmetCover, DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SLIDING_GAP, SLIDING_FLOOR_GAP, SHEET_SHORT_MM, SHEET_LONG_MM } from "./walls.js";
 import { envelopeFootprint, envelopeBox } from "./cabinets3d.js";
-import { keepCorner } from "./pose.js";
+import { keepCorner, localAxes } from "./pose.js";
 import { statusOf } from "./walls3d.js";
 import { openFloorPlan } from "./floorplan.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "./boardModel.js";
 import { log } from "./log.js";
 import { outlineSpan } from "./sketchBoard.js";
 import { swatchChipStyle } from "./doorSwatches.js";
+import { cabinetHits, noteGrowth, applyYield, declineYield, conflictLines } from "./yield.js";
 
 const panel = document.getElementById("rightpanel");
 const drawerChecks = document.querySelector('[data-dpane="checks"]');
@@ -52,7 +53,9 @@ function doorLine(p, fpt) {
 const GRAIN_DIRS = [["horizontal", "Horizontal ═"], ["vertical", "Vertical ‖"]];
 const GRAIN_GROUP_LABEL = {
   generalTallCabinet: { front: "Fronts · T1 / B1", side: "Side panels" },
+  tallFridgeCabinet: { front: "Fronts · T1 / B1", side: "Side panel" },
   kitchenCabinet: { front: "Fronts · kick" },
+  ensuiteCabinet: { front: "Fronts · kick" },
   overheadCabinet: { front: "Flaps · T1" },
   smallCabinet: { front: "Fronts", side: "Door-panel sides" },
   bedroom: { front: "Doors · overhead", side: "Colour panels" },
@@ -243,8 +246,10 @@ export function spaceFitIssues() {
     const all = overlaps(cab, cab.pose);
     const hits = all.filter((id) => wallIds.has(id));
     if (hits.length) issues.push(`${cab.id} overlaps partition ${hits.join(", ")}.`);
-    const parts = all.filter((id) => !wallIds.has(id) && !cabIds.has(id)); // "op-1 leaf" / "op-1 pelmet"
+    const parts = all.filter((id) => !wallIds.has(id) && !cabIds.has(id.split(":")[0])); // "op-1 leaf" / "op-1 pelmet"
     if (parts.length) issues.push(`${cab.id} overlaps the sliding door ${parts.join(", ")}.`);
+    const cabs = cabinetHits(cab).filter((id) => id > cab.id);
+    if (cabs.length) issues.push(`${cab.id} overlaps cabinet ${cabs.join(", ")}.`);
     issues.push(...grainIssueLines(job.resultFor(cab.id)).map((m) => `${cab.id}: ${m}`));
   }
   for (const w of job.getWalls()) {
@@ -419,6 +424,79 @@ function zoneStrip(cab, mod) {
   return { strip, widthRow, cumRow, refresh: layout };
 }
 
+function renderUShape(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const fitted = result?.params?.zones || p.zones || {};
+  const set = (patch, key, from, to) => {
+    job.setParams(cab.id, { ...p, ...patch });
+    log("uohc.set", { id: cab.id, key, from, to });
+  };
+  const setHeightDown = (v) => {
+    const H = Math.max(mod.minSize.H, v);
+    const before = job.snapshot();
+    job.updateCabinet(cab.id, (c) => {
+      c.params = mod.setEnvelope(c.params, { H });
+      c.pose = { ...c.pose, z: c.pose.z + (env.H - H) };
+    });
+    job.commitSnapshot(before);
+    log("uohc.set", { id: cab.id, key: "cabinetHeight", from: env.H, to: H });
+  };
+  const runCard = (run, label) => {
+    const types = run === "BACK" ? mod.zoneTypes : mod.sideZoneTypes;
+    const zones = (p.zones && p.zones[run]) || [{ id: `${run}-1`, type: "up_flap", width: 1 }];
+    const shown = fitted[run] || zones;
+    return section(label, [
+      ...shown.map((z, i) => el("label", { class: "field" }, [
+        el("span", { text: `Zone ${i + 1} · ${Math.round(z.width)} mm` }),
+        el("select", { onchange: (e) => {
+          const next = zones.map((zz) => ({ ...zz }));
+          if (next[i]) next[i].type = e.target.value;
+          e.target.blur();
+          set({ zones: { ...p.zones, [run]: next } }, "zone", zones[i]?.type, e.target.value);
+        } }, types.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === (zones[i]?.type || z.type) }))),
+      ])),
+    ]);
+  };
+  const hood = ["LEFT", "RIGHT"].some((run) => (fitted[run] || []).some((z) => z.type === "rangehood_flap"));
+  const hoodCard = hood ? section("Range hood · NCE", [
+    numField("Clear height (mm)", p.rangehoodClearHeight ?? 75, (v) => set({ rangehoodClearHeight: Math.max(1, Math.round(v)) }, "rangehoodClearHeight", p.rangehoodClearHeight ?? 75, Math.max(1, Math.round(v))), { step: 5, min: 1 }),
+    el("label", { class: "field" }, [
+      el("span", { text: "Opening from" }),
+      el("div", { class: "seg-group" }, [["left", "Left"], ["right", "Right"]].map(([id, text]) => el("button", {
+        type: "button",
+        class: `tb seg${(p.rangehoodAlignment === "right" ? "right" : "left") === id ? " active" : ""}`,
+        text,
+        onclick: () => { if ((p.rangehoodAlignment === "right" ? "right" : "left") !== id) set({ rangehoodAlignment: id }, "rangehoodAlignment", p.rangehoodAlignment || "left", id); },
+      }))),
+    ]),
+    numField("Offset from that side (mm)", p.rangehoodEdgeOffsetX ?? 40, (v) => set({ rangehoodEdgeOffsetX: Math.max(40, Math.round(v)) }, "rangehoodEdgeOffsetX", p.rangehoodEdgeOffsetX ?? 40, Math.max(40, Math.round(v))), { step: 1, min: 40 }),
+    el("div", { class: "empty small", text: "A hood on the back run is turned into an up flap. On a side arm the hood stays outside the corner." }),
+  ]) : null;
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: "U overhead" }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · back on the wall` }),
+    ]),
+    shared.board,
+    section("Runs", [
+      numField("Width along the wall (mm)", p.totalWidth, (v) => set({ totalWidth: Math.max(mod.minSize.W, v) }, "totalWidth", p.totalWidth, v)),
+      numField("Left arm (mm)", p.leftArmLength, (v) => set({ leftArmLength: Math.max(0, v) }, "leftArmLength", p.leftArmLength, v), { step: 10, min: 0 }),
+      numField("Right arm (mm)", p.rightArmLength, (v) => set({ rightArmLength: Math.max(0, v) }, "rightArmLength", p.rightArmLength, v), { step: 10, min: 0 }),
+      numField("Run depth (mm)", p.cabinetDepth, (v) => set({ cabinetDepth: Math.max(150, v) }, "cabinetDepth", p.cabinetDepth, v), { step: 10, min: 150 }),
+      numField("Height (mm)", env.H, setHeightDown),
+      el("div", { class: "empty small", text: "The back run owns both corners. Each arm is only the part past that corner. Drawing the box sets both arms to the box depth; change an arm here afterwards." }),
+    ]),
+    runCard("LEFT", "Left arm"),
+    runCard("BACK", "Back"),
+    runCard("RIGHT", "Right arm"),
+    hoodCard,
+    shared.grain,
+    shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
 function renderOverhead(cab, mod, result, shared) {
   const p = cab.params;
   const env = mod.envelope(p);
@@ -479,7 +557,16 @@ function renderOverhead(cab, mod, result, shared) {
       const next = zones.map((zz) => ({ ...zz }));
       next[i].type = e.target.value;
       e.target.blur();
-      setZones(next, "type", { zone: i, type: e.target.value });
+      const patch = { ...p, zones: next };
+      // The NCE insert is cabinet-wide. Seed its numbers the first time a zone becomes a hood.
+      if (e.target.value === "rangehood_flap") {
+        patch.rangehoodPreset = p.rangehoodPreset || "NCE";
+        if (p.rangehoodClearHeight == null) patch.rangehoodClearHeight = 75;
+        if (p.rangehoodAlignment == null) patch.rangehoodAlignment = "left";
+        if (p.rangehoodEdgeOffsetX == null) patch.rangehoodEdgeOffsetX = 40;
+      }
+      job.setParams(cab.id, patch);
+      log("ohc.zone.type", { id: cab.id, widths: next.map((zz) => zz.width), types: next.map((zz) => zz.type), zone: i, type: e.target.value });
     } }, mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
     const neighbour = i < zones.length - 1 ? i + 1 : i - 1;
     const maxW = neighbour >= 0 ? z.width + zones[neighbour].width - MIN_ZONE_WIDTH : total;
@@ -503,6 +590,35 @@ function renderOverhead(cab, mod, result, shared) {
     ]);
   }
 
+  // NCE range hood: one insert for every adjacent rangehood_flap. The numbers belong to the cabinet.
+  const hoodZones = zones.some((z) => z.type === "rangehood_flap");
+  const hoodAlign = p.rangehoodAlignment === "right" ? "right" : "left";
+  const setHood = (key, value) => {
+    const from = p[key];
+    job.setParams(cab.id, {
+      ...p,
+      rangehoodPreset: "NCE",
+      rangehoodClearHeight: p.rangehoodClearHeight ?? 75,
+      rangehoodAlignment: hoodAlign,
+      rangehoodEdgeOffsetX: p.rangehoodEdgeOffsetX ?? 40,
+      [key]: value,
+    });
+    log("ohc.rangehood", { id: cab.id, key, from: from ?? (key === "rangehoodClearHeight" ? 75 : key === "rangehoodEdgeOffsetX" ? 40 : hoodAlign), to: value });
+  };
+  const hoodSeg = (now, onPick) => el("div", { class: "seg-group" }, [["left", "Left"], ["right", "Right"]].map(([id, text]) => el("button", {
+    type: "button", class: `tb seg${now === id ? " active" : ""}`, text, onclick: () => onPick(id),
+  })));
+  const hoodCard = hoodZones ? section("Range hood · NCE", [
+    numField("Clear height (mm)", p.rangehoodClearHeight ?? 75, (v) => setHood("rangehoodClearHeight", Math.max(1, Math.round(v))), { step: 5, min: 1 }),
+    el("label", { class: "field" }, [
+      el("span", { text: "Opening from" }),
+      hoodSeg(hoodAlign, (side) => { if (side !== hoodAlign) setHood("rangehoodAlignment", side); }),
+    ]),
+    numField("Offset from that side (mm)", p.rangehoodEdgeOffsetX ?? 40, (v) => setHood("rangehoodEdgeOffsetX", Math.max(40, Math.round(v))), { step: 1, min: 40 }),
+    kv("Opening", "555 × 285 mm, through the bottom panel"),
+    el("div", { class: "empty small", text: "A top, a front and a back in carcass stock. The top tongues into the dividers on each side of the group, and any divider inside the group stands on that top. Clear height is the gap from the bottom panel's top face up to the insert. The carcass needs 365 mm of depth, and 635 mm clear between those outer dividers. Hood zones that touch are one insert; a flap or a fixed panel between two hoods is refused." }),
+  ]) : null;
+
   // Cabinet-level fields, folded.
   const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
   const setHeightDown = (v) => {
@@ -525,6 +641,52 @@ function renderOverhead(cab, mod, result, shared) {
       doorLine(p, fpt),
       el("div", { class: "empty small", text: "Every board except the doors is carcass stock; the doors are door stock. Thicknesses come from the space's catalogue." }),
     ]),
+    section("Top", [
+      el("label", { class: "field" }, [
+        el("span", { text: "Style" }),
+        el("div", { class: "seg-group" }, [["style_1", "Style 1"], ["style_2", "Style 2"]].map(([id, text]) => el("button", {
+          type: "button",
+          class: `tb seg${(p.style || "style_1") === id ? " active" : ""}`,
+          text,
+          onclick: () => {
+            if ((p.style || "style_1") === id) return;
+            job.setParams(cab.id, { ...p, style: id });
+            log("ohc.option", { id: cab.id, key: "style", from: p.style || "style_1", to: id });
+          },
+        }))),
+      ]),
+      el("label", { class: "field check", title: "T3 top face, opening upward. A new overhead starts off. A cabinet with no stored value still has the groove." }, [
+        el("span", { text: "T3 LED groove" }),
+        el("input", { type: "checkbox", checked: p.ledGroove !== false, onchange: (e) => {
+          const to = e.target.checked;
+          if ((p.ledGroove !== false) === to && p.ledGroove != null) return;
+          job.setParams(cab.id, { ...p, ledGroove: to });
+          log("ohc.option", { id: cab.id, key: "ledGroove", from: p.ledGroove !== false, to });
+        } }),
+      ]),
+      numField("Top clearance (mm)", p.topClearanceHeight ?? 40, (v) => {
+        const to = Math.max(0, v);
+        job.setParams(cab.id, { ...p, topClearanceHeight: to });
+        log("ohc.option", { id: cab.id, key: "topClearanceHeight", from: p.topClearanceHeight ?? 40, to });
+      }, { step: 5, min: 0 }),
+      numField("Hinge cup diameter (mm)", p.hingeHoleDiameter ?? 35, (v) => {
+        job.setParams(cab.id, { ...p, hingeHoleDiameter: Math.max(0, v) });
+        log("ohc.option", { id: cab.id, key: "hingeHoleDiameter", from: p.hingeHoleDiameter ?? 35, to: Math.max(0, v) });
+      }, { step: 0.5, min: 0 }),
+      numField("Hinge cup depth (mm)", p.hingeHoleDepth ?? 12, (v) => {
+        job.setParams(cab.id, { ...p, hingeHoleDepth: Math.max(0, v) });
+        log("ohc.option", { id: cab.id, key: "hingeHoleDepth", from: p.hingeHoleDepth ?? 12, to: Math.max(0, v) });
+      }, { step: 0.5, min: 0 }),
+      numField("Cup from top (mm)", p.hingeHoleFromTop ?? 22.5, (v) => {
+        job.setParams(cab.id, { ...p, hingeHoleFromTop: Math.max(0, v) });
+        log("ohc.option", { id: cab.id, key: "hingeHoleFromTop", from: p.hingeHoleFromTop ?? 22.5, to: Math.max(0, v) });
+      }, { step: 0.5, min: 0 }),
+      numField("Cup from side (mm)", p.hingeHoleFromSide ?? 100, (v) => {
+        job.setParams(cab.id, { ...p, hingeHoleFromSide: Math.max(0, v) });
+        log("ohc.option", { id: cab.id, key: "hingeHoleFromSide", from: p.hingeHoleFromSide ?? 100, to: Math.max(0, v) });
+      }, { step: 1, min: 0 }),
+      el("div", { class: "empty small", text: "Style 2 sets the divider's front notch behind the door and the carcass rail (door thickness plus carcass thickness). Style 1 starts that notch 70 mm back from the carcass front. The LED groove is on top of T3 either way. A new overhead stores the groove as off." }),
+    ]),
   ]);
 
   panel.replaceChildren(...[
@@ -540,6 +702,7 @@ function renderOverhead(cab, mod, result, shared) {
       cumRow,
     ]),
     zoneCard,
+    hoodCard,
     frontSection("Front view", [front]),
     fold,
     shared.grain,
@@ -593,16 +756,22 @@ function renderTall(cab, mod, result, shared) {
     job.setParams(cab.id, { ...p, [`${side}SidePanelThickness`]: t, [`${side}SidePanelFinish`]: mode === "colour" ? "colour" : "carcass" });
     log("tall.side", { id: cab.id, side, from, to: mode, thickness: t });
   };
-  const tallSides = section("Side panels", ["left", "right"].map((side) => el("label", { class: "field" }, [
-    el("span", { text: side === "left" ? "Left" : "Right" }),
-    el("div", { class: "seg-group" }, [["none", "None"], ["carcass", "Carcass"], ["colour", "Colour panel"]].map(([mode, text]) => el("button", {
-      type: "button",
-      class: `tb seg${sideMode(side) === mode ? " active" : ""}`,
-      text,
-      title: mode === "colour" ? `Door stock ${fpt} mm, door colour outside` : mode === "carcass" ? `Carcass stock ${cpt} mm` : "No side panel",
-      onclick: () => setSide(side, mode),
-    }))),
-  ])));
+  const lt = p.leftSidePanelThickness ?? 0;
+  const rt = p.rightSidePanelThickness ?? 0;
+  const tallSides = section("Side panels", [
+    ...["left", "right"].map((side) => el("label", { class: "field" }, [
+      el("span", { text: side === "left" ? "Left" : "Right" }),
+      el("div", { class: "seg-group" }, [["none", "None"], ["carcass", "Carcass"], ["colour", "Colour panel"]].map(([mode, text]) => el("button", {
+        type: "button",
+        class: `tb seg${sideMode(side) === mode ? " active" : ""}`,
+        text,
+        title: mode === "colour" ? `Door stock ${fpt} mm, door colour outside` : mode === "carcass" ? `Carcass stock ${cpt} mm` : "No side panel",
+        onclick: () => setSide(side, mode),
+      }))),
+    ])),
+    kv("Inside the side panels", `${Math.round((env.W - lt - rt) * 10) / 10} = ${env.W} − ${lt} − ${rt}`),
+    el("div", { class: "empty small", text: "The outer width stays: a side panel takes its thickness from the inside. The front edge is always banded in the door colour." }),
+  ]);
 
   // Preset: a named cabinet from the generator's presets.json; applying it replaces every param but the colours.
   const presetNow = mod.presetOf(p);
@@ -758,32 +927,19 @@ function renderTall(cab, mod, result, shared) {
     const fields = [
       el("label", { class: "field wide-value" }, [el("span", { text: "Type" }), type]),
       row ? kv("From floor", `${Math.round(row.z0)} – ${Math.round(row.z1)} mm`) : null,
-      z.type === "fridge"
-        ? numField("Appliance height (mm)", z.applianceHeightMm ?? z.height, (v) => {
-            const next = zones.map((zz) => ({ ...zz }));
-            next[zi].applianceHeightMm = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
-            setZones(next, "height", { zone: z.id, appliance: true });
-          }, { step: 10, min: MIN_ZONE_HEIGHT })
-        : numField("Height (mm)", z.height, (v) => {
-            // The neighbour above (or below for the last zone) absorbs the difference.
-            const val = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
-            if (neighbour < 0) return;
-            const next = zones.map((zz) => ({ ...zz }));
-            const delta = val - next[zi].height;
-            if (next[neighbour].height - delta >= MIN_ZONE_HEIGHT) {
-              next[zi].height = val;
-              next[neighbour].height = Math.round((next[neighbour].height - delta) * 10) / 10;
-              setZones(next, "height", { zone: z.id, height: val });
-            }
-          }, { step: 10, min: MIN_ZONE_HEIGHT }),
-    ];
-    if (z.type === "fridge") {
-      fields.push(numField("Appliance width (mm)", z.applianceWidthMm ?? 0, (v) => {
+      numField("Height (mm)", z.height, (v) => {
+        // The neighbour above (or below for the last zone) absorbs the difference.
+        const val = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
+        if (neighbour < 0) return;
         const next = zones.map((zz) => ({ ...zz }));
-        next[zi].applianceWidthMm = Math.max(0, Math.round(v));
-        setZones(next, "appliance", { zone: z.id });
-      }, { step: 10, min: 0 }));
-    }
+        const delta = val - next[zi].height;
+        if (next[neighbour].height - delta >= MIN_ZONE_HEIGHT) {
+          next[zi].height = val;
+          next[neighbour].height = Math.round((next[neighbour].height - delta) * 10) / 10;
+          setZones(next, "height", { zone: z.id, height: val });
+        }
+      }, { step: 10, min: MIN_ZONE_HEIGHT }),
+    ];
     if (z.type === "double_door") {
       fields.push(check("Vertical divider", z.verticalDivider === true, (on) => {
         const next = zones.map((zz) => ({ ...zz }));
@@ -800,7 +956,7 @@ function renderTall(cab, mod, result, shared) {
         fields.push(field);
       }
     }
-    if (z.type !== "drawer" && z.type !== "fridge" && z.type !== "blank_panel") {
+    if (z.type !== "drawer" && z.type !== "blank_panel") {
       fields.push(check("Shelf", z.shelfEnabled === true, (on) => {
         const next = zones.map((zz) => ({ ...zz }));
         next[zi].shelfEnabled = on;
@@ -861,6 +1017,327 @@ function renderTall(cab, mod, result, shared) {
     fold,
     shared.grain,
     shared.checks,
+    el("div", { class: "panel-foot" }, [shared.remove]),
+  ].filter(Boolean));
+}
+
+// --- tall fridge cabinet editor -----------------------------------------------------------
+//
+// The fridge's cut-out is fixed and everything follows it: the outer width is
+// cut-out + side panel + three stiles (read-only here), and a side panel's
+// stock moves the outer width, never the opening — on the side that shows, the
+// other face stays (job.setParams → widthAnchor). Bottom → top: drawers and
+// down flaps, the fridge, then nothing, an up flap or a fixed panel. Growing
+// into a neighbour asks whether it should give way (renderer/yield.js).
+
+const fridgeSel = { cabId: null, zoneId: null };
+let fridgeDrag = null; // { cabId, refresh } while a front-view boundary is dragged
+
+function fridgeSelected(cabId) {
+  if (fridgeSel.cabId !== cabId) { fridgeSel.cabId = cabId; fridgeSel.zoneId = null; }
+  return fridgeSel.zoneId;
+}
+
+function renderTallFridge(cab, mod, result, shared) {
+  const p = cab.params;
+  const env = mod.envelope(p);
+  const zones = p.zones || [];
+  const { below, fridge, above } = fridgeParts(zones);
+  const aboveZone = above[0] || null;
+  const cpt = p.panelThickness ?? thickness(job.getStock(), "carcass");
+  const fpt = p.frontPanelThickness ?? thickness(job.getStock(), "door");
+  const ziT = p.ziThickness ?? 15;
+  const lt = p.leftSidePanelThickness ?? 0;
+  const rt = p.rightSidePanelThickness ?? 0;
+  const selectedZoneId = fridgeSelected(cab.id);
+  const clone = () => zones.map((z) => ({ ...z }));
+  const freshZoneId = () => {
+    let n = zones.length + 1;
+    while (zones.some((z) => z.id === `zone-${n}`)) n += 1;
+    return `zone-${n}`;
+  };
+
+  // One edit = one undo step. The width may follow (side panel, cut-out); growing into a neighbour asks it to give way.
+  const commit = (next, kind, extra = {}) => {
+    const fromPose = { ...cab.pose };
+    const before = cabinetHits(cab);
+    job.setParams(cab.id, next);
+    const now = job.getJob().cabinets.find((c) => c.id === cab.id);
+    if (!now) return;
+    const to = mod.envelope(now.params);
+    const moved = JSON.stringify(now.pose) !== JSON.stringify(fromPose);
+    log(`tallFridge.${kind}`, { id: cab.id, ...extra, from: env, to, ...(moved ? { fromPose, toPose: now.pose } : {}) });
+    const axes = localAxes(now.pose);
+    const grow = to.W > env.W + 1e-6
+      ? axes[mod.widthAnchor(now.params, now) > 0 ? 1 : 0] // the free side face moved out
+      : to.H > env.H + 1e-6 ? axes[4] : null;
+    if (grow) noteGrowth(now, before, grow.map((v) => Math.round(v)), kind);
+  };
+
+  // --- neighbour yield prompt ---
+  const conflict = job.getConflict();
+  const mine = conflict && conflict.sourceId === cab.id ? conflict : null;
+  const canYield = mine ? mine.neighbours.filter((n) => n.ok) : [];
+  const yieldCard = mine && !mine.declined ? el("div", { class: "panel-section" }, [
+    el("div", { class: "sec-title", text: "Neighbours in the way" }),
+    ...mine.neighbours.map((n) => el("div", { class: "msg err", text: n.ok
+      ? `This fridge cabinet changed size and now runs ${n.by} mm into ${n.id} (${getModule(n.moduleId).label}). Pull its ${n.label} back ${n.by} mm?`
+      : `It runs ${n.by} mm into ${n.id} (${getModule(n.moduleId).label}), which cannot give way: ${n.reason}. Move or resize it by hand.` })),
+    el("div", { class: "zs-tools" }, [
+      canYield.length ? el("button", { class: "tb primary", text: canYield.length > 1 ? `Yes, adjust all ${canYield.length}` : `Yes, adjust ${canYield[0].id}`, onclick: () => applyYield() }) : null,
+      el("button", { class: "tb", text: canYield.length ? "No" : "OK", onclick: () => declineYield() }),
+    ].filter(Boolean)),
+  ]) : null;
+
+  // --- front view (same drawing as the storage tall; the fridge's own edges do not move) ---
+  if (fridgeDrag && fridgeDrag.cabId === cab.id && panel.querySelector(".bedroom-front")) {
+    fridgeDrag.refresh();
+    return;
+  }
+  const front = el("div", { class: "bedroom-front" });
+  const drawFront = () => {
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: fridgeSelected(cab.id), gaps: gapMode }) || "";
+    if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+  };
+  drawFront();
+  front.addEventListener("click", (e) => {
+    if (fridgeDrag) return;
+    const zoneEl = e.target.closest?.("[data-zone]");
+    if (!zoneEl) return;
+    const id = zoneEl.getAttribute("data-zone");
+    fridgeSel.cabId = cab.id;
+    fridgeSel.zoneId = fridgeSel.zoneId === id ? null : id;
+    log("tallFridge.zone.select", { id: cab.id, zone: fridgeSel.zoneId });
+    renderPanel();
+  });
+  front.addEventListener("pointerdown", (e) => {
+    const g = e.target.closest?.("[data-boundary]");
+    const svg = front.querySelector("svg");
+    if (!g || !svg || e.button !== 0 || g.getAttribute("data-boundary") !== "zone") return;
+    e.preventDefault();
+    e.stopPropagation();
+    const index = Number(g.getAttribute("data-index") || 0);
+    const params0 = cab.params;
+    const result0 = job.resultFor(cab.id);
+    const from = params0.zones.map((z) => z.height);
+    const before = job.snapshot();
+    const toMm = (clientY) => {
+      const s = front.querySelector("svg");
+      const rect = s.getBoundingClientRect();
+      const k = Number(s.getAttribute("width")) / rect.width;
+      return Number(s.dataset.h) - ((clientY - rect.top) * k - Number(s.dataset.oy)) / Number(s.dataset.scale);
+    };
+    try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+    front.classList.add("dragging");
+    g.classList.add("active");
+    fridgeDrag = { cabId: cab.id, refresh: drawFront };
+    const move = (ev) => {
+      const step = ev.shiftKey ? 1 : 10;
+      const v = Math.round(toMm(ev.clientY) / step) * step;
+      job.setParams(cab.id, mod.setDivider(params0, result0, index, v), { history: false });
+    };
+    const end = (ev) => {
+      front.removeEventListener("pointermove", move);
+      front.removeEventListener("pointerup", end);
+      front.removeEventListener("pointercancel", end);
+      try { front.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+      front.classList.remove("dragging");
+      fridgeDrag = null;
+      const changed = job.commitSnapshot(before);
+      const now = job.getSelected();
+      log("tallFridge.zone.drag", { id: cab.id, boundary: "zone", index, from, to: now ? now.params.zones.map((z) => z.height) : null, changed, where: "front view" });
+      renderPanel();
+    };
+    front.addEventListener("pointermove", move);
+    front.addEventListener("pointerup", end);
+    front.addEventListener("pointercancel", end);
+  });
+
+  // --- the fridge: cut-out, the width it gives ---
+  const setCutOut = (key, v) => {
+    const next = clone();
+    const f = next.find((z) => z.type === "fridge");
+    if (!f) return;
+    f[key] = Math.max(key === "applianceHeightMm" ? MIN_ZONE_HEIGHT : 0, Math.round(v));
+    commit(fridgeFix({ ...p, zones: next }), "cutout", { key, value: f[key] });
+  };
+  const opening = result?.params?.fridgeOpening;
+  const fridgeSec = fridge ? section("Fridge cut-out", [
+    numField("Width (mm)", fridge.applianceWidthMm ?? 0, (v) => setCutOut("applianceWidthMm", v), { step: 1, min: 0 }),
+    numField("Height (mm)", fridge.applianceHeightMm ?? fridge.height, (v) => setCutOut("applianceHeightMm", v), { step: 1, min: MIN_ZONE_HEIGHT }),
+    numField("Depth (mm)", fridge.applianceDepthMm ?? 0, (v) => setCutOut("applianceDepthMm", v), { step: 1, min: 0 }),
+    kv("Outer width", `${env.W} = ${fridge.applianceWidthMm ?? "?"} cut-out + 3 × ${cpt} stiles + ${lt + rt} side panel`),
+    opening != null ? kv("Opening", `${opening} between the stiles`) : null,
+    el("div", { class: "empty small", text: "The maker's cut-out, not the fridge body. The opening is exactly this wide; the cabinet width follows." }),
+  ].filter(Boolean)) : null;
+
+  // --- side panel: one side, carcass or door stock ---
+  const sideNow = lt > 0 ? "left" : rt > 0 ? "right" : "none";
+  const matNow = (sideNow === "left" ? p.leftSidePanelFinish : p.rightSidePanelFinish) === "colour" ? "colour" : "carcass";
+  const setSide = (side, mat) => {
+    if (side === sideNow && (side === "none" || mat === matNow)) return;
+    const t = side === "none" ? 0 : mat === "colour" ? fpt : cpt;
+    const next = {
+      ...p,
+      leftSidePanelThickness: side === "left" ? t : 0,
+      rightSidePanelThickness: side === "right" ? t : 0,
+      leftSidePanelFinish: side === "left" ? mat : "carcass",
+      rightSidePanelFinish: side === "right" ? mat : "carcass",
+    };
+    commit(fridgeFix(next), "side", { from: { side: sideNow, finish: matNow, thickness: lt + rt }, to: { side, finish: mat, thickness: t } });
+  };
+  const seg = (options, now, onPick, disabled = false) => el("div", { class: "seg-group" }, options.map(([id, text, title]) => el("button", {
+    type: "button", class: `tb seg${now === id ? " active" : ""}`, text, title, disabled,
+    onclick: () => onPick(id),
+  })));
+  const sideSec = section("Side panel", [
+    el("label", { class: "field" }, [el("span", { text: "Side" }), seg([["none", "None"], ["left", "Left"], ["right", "Right"]], sideNow, (s) => setSide(s, matNow))]),
+    el("label", { class: "field" }, [el("span", { text: "Stock" }), seg([
+      ["carcass", "Carcass", `Carcass stock ${cpt} mm, White Stipple outside`],
+      ["colour", "Door", `Door stock ${fpt} mm, door colour outside`],
+    ], sideNow === "none" ? null : matNow, (m) => setSide(sideNow, m), sideNow === "none")]),
+    el("div", { class: "empty small", text: `Carcass ${cpt} or door ${fpt} mm, on the side that shows. Its front edge is banded in the door colour either way. Changing the stock moves that side face; the other face stays.` }),
+  ]);
+
+  // --- above the fridge: nothing, an up flap or a fixed panel (later: microwave) ---
+  const setAbove = (type) => {
+    const now = aboveZone ? aboveZone.type : "none";
+    if (type === now) return;
+    let next;
+    if (type === "none") {
+      next = fridgeFix({ ...p, zones: zones.filter((z) => z !== aboveZone) }, { H: env.H - aboveZone.height - ziT });
+    } else if (aboveZone) {
+      next = { ...p, zones: zones.map((z) => (z === aboveZone ? { ...z, type } : z)) };
+    } else {
+      const zone = { id: freshZoneId(), type, height: 300, ...(type === "top_flap" ? { lockPosition: "bottom" } : {}) };
+      next = fridgeFix({ ...p, zones: [...zones, zone] }, { H: env.H + zone.height + ziT });
+    }
+    commit(next, "above", { from: now, to: type });
+  };
+  const setAboveHeight = (v) => {
+    const h = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
+    const next = zones.map((z) => (z === aboveZone ? { ...z, height: h } : z));
+    commit(fridgeFix({ ...p, zones: next }, { H: env.H + h - aboveZone.height }), "above", { zone: aboveZone.id, height: h });
+  };
+  const aboveSec = section("Above the fridge", [
+    seg([["none", "None", "The fridge runs up to the top system"], ["top_flap", "Up flap"], ["fixed_panel", "Fixed panel", "A front that does not open (later: a microwave)"]], aboveZone ? aboveZone.type : "none", setAbove),
+    aboveZone ? numField("Height (mm)", aboveZone.height, setAboveHeight, { step: 10, min: MIN_ZONE_HEIGHT }) : null,
+    el("div", { class: "empty small", text: "Only an up flap or a fixed panel: nobody reaches a drawer above a fridge. Adding one makes the cabinet taller by its height and the board on the fridge." }),
+  ].filter(Boolean));
+
+  // --- below the fridge: drawers and down flaps, listed from the fridge down ---
+  const setBelow = (id, patch, kind, extra = {}) => {
+    const next = zones.map((z) => (z.id === id ? { ...z, ...patch } : z));
+    commit(fridgeFix({ ...p, zones: next }, patch.height != null ? { except: id } : {}), kind, { zone: id, ...extra, ...patch });
+  };
+  const belowRows = below.slice().reverse().map((z) => el("div", { class: `zone-row${z.id === selectedZoneId ? " sel" : ""}` }, [
+    el("span", { class: "zone-idx", text: String(below.indexOf(z) + 1), title: "Zone number from the floor" }),
+    el("select", { onchange: (e) => { e.target.blur(); setBelow(z.id, { type: e.target.value }, "below.type"); } },
+      FRIDGE_BELOW_TYPES.map((t) => el("option", { value: t, text: FRIDGE_ZONE_LABEL[t], selected: t === z.type }))
+        .concat(FRIDGE_BELOW_TYPES.includes(z.type) ? [] : [el("option", { value: z.type, text: `${z.type} (not allowed here)`, selected: true, disabled: true })])),
+    (() => {
+      const input = el("input", { type: "number", value: z.height, step: 1, min: MIN_ZONE_HEIGHT });
+      input.addEventListener("change", () => {
+        const v = Number(input.value);
+        if (!Number.isFinite(v) || v < MIN_ZONE_HEIGHT) { input.value = z.height; return; }
+        setBelow(z.id, { height: Math.round(v) }, "below.height");
+      });
+      return input;
+    })(),
+    el("button", { class: "icon", title: "Remove this zone", text: "×", onclick: () => {
+      commit(fridgeFix({ ...p, zones: zones.filter((zz) => zz.id !== z.id) }), "below.remove", { zone: z.id });
+    } }),
+  ]));
+  const addBelow = el("button", { class: "tb", text: "+ Add drawer", title: "A drawer on the floor; the zone that takes height changes gives the room", onclick: () => {
+    const zone = { id: freshZoneId(), type: "drawer", height: 200, lockPosition: "top" };
+    commit(fridgeFix({ ...p, zones: [zone, ...zones] }), "below.add", { zone: zone.id });
+  } });
+  const belowSec = section("Below the fridge · from the fridge down", [
+    ...belowRows,
+    addBelow,
+    el("div", { class: "empty small", text: "Drawers and down flaps. A drawer right under the fridge carries the fridge base." }),
+  ]);
+
+  // --- preset ---
+  const presetNow = mod.presetOf(p);
+  const presetSec = (mod.presets || []).length ? section("Preset", [el("label", { class: "field wide-value" }, [
+    el("span", { text: "Cabinet" }),
+    el("select", {
+      onchange: (e) => {
+        const id = e.target.value;
+        e.target.blur();
+        if (!id) return;
+        commit(mod.applyPreset(p, id), "preset", { preset: id });
+      },
+    }, [
+      el("option", { value: "", text: "Custom", selected: !presetNow }),
+      ...mod.presets.map((pr) => el("option", { value: pr.id, text: pr.label, selected: pr.id === presetNow })),
+    ]),
+  ])]) : null;
+
+  // --- checks: generator, the fridge-cabinet rules (a tall saved before the split may break them), neighbours ---
+  const errors = [...(result?.validation?.errors || []), ...grainIssueLines(result), ...(mine && mine.declined ? conflictLines() : [])];
+  const warnings = [...fridgeRuleIssues(p), ...(result?.validation?.warnings || [])];
+  const checks = errors.length || warnings.length ? el("div", { class: "panel-section" }, [
+    el("div", { class: "sec-title", text: "Checks" }),
+    ...errors.map((m) => el("div", { class: "msg err", text: m })),
+    mine && mine.declined && canYield.length ? el("button", { class: "tb", text: "Auto-fix the neighbours", onclick: () => applyYield() }) : null,
+    ...warnings.map((m) => el("div", { class: "msg warn", text: m })),
+  ].filter(Boolean)) : null;
+
+  // --- cabinet-level fields, folded ---
+  const top = p.topSystem || {};
+  const setTop = (style) => {
+    if (style === (top.style || "style_1")) return;
+    const topSystem = style === "style_2" ? { style: "style_2", height: 101 } : { style: "style_1", frontRailHeight: 40 };
+    commit(fridgeFix({ ...p, topSystem }), "top", { from: top.style, to: style });
+  };
+  const setNested = (group, key) => (v) => commit(fridgeFix({ ...p, [group]: { ...(p[group] || {}), [key]: v } }), "system", { group, key, value: v });
+  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const fold = el("details", { class: "panel-fold" }, [
+    el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
+    section("Outer size (= box)", [
+      numField("Width (mm)", env.W, () => {}, { readOnly: "From the fridge cut-out and the side panel" }),
+      numField("Depth (mm)", env.D, (v) => commit(mod.setEnvelope(p, { D: Math.max(mod.minSize.D, v) }), "size", { key: "D", value: v })),
+      numField("Height (mm)", env.H, (v) => commit(mod.setEnvelope(p, { H: Math.max(mod.minSize.H, v) }), "size", { key: "H", value: v })),
+    ]),
+    section("Systems", [
+      el("label", { class: "field" }, [el("span", { text: "Top" }), seg([["style_1", "Style 1 · rail"], ["style_2", "Style 2 · fixed panel"]], top.style || "style_1", setTop)]),
+      top.style === "style_2"
+        ? numField("Top height TCH (mm)", top.height ?? 101, setNested("topSystem", "height"), { step: 1, min: 60 })
+        : numField("Top rail (mm)", top.frontRailHeight ?? 40, setNested("topSystem", "frontRailHeight"), { step: 5, min: 0 }),
+      numField("Bottom rail (mm)", p.bottomSystem?.frontRailHeight ?? 53, setNested("bottomSystem", "frontRailHeight"), { step: 5, min: 0 }),
+      numField("Front clearance (mm)", p.frontHardware?.frontClearance ?? 2.5, setNested("frontHardware", "frontClearance"), { step: 0.5, min: 0 }),
+    ]),
+    section("Position", [
+      numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
+      numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
+    ]),
+    section("Material (job stock)", [
+      el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
+      doorLine(p, fpt),
+    ]),
+  ]);
+
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: "Fridge cabinet" }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · cut-out ${fridge ? `${fridge.applianceWidthMm} × ${fridge.applianceHeightMm}` : "—"} · ${result?.boards?.length || 0} boards` }),
+    ]),
+    yieldCard,
+    shared.board,
+    frontSection(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [
+      front,
+      el("div", { class: "zs-hint", text: "Click a zone to select it · drag an orange line between two zones under the fridge · Shift = 1 mm" }),
+    ]),
+    fridgeSec,
+    sideSec,
+    aboveSec,
+    belowSec,
+    presetSec,
+    fold,
+    shared.grain,
+    checks,
     el("div", { class: "panel-foot" }, [shared.remove]),
   ].filter(Boolean));
 }
@@ -1052,8 +1529,11 @@ function renderKitchen(cab, mod, result, shared) {
       el("span", { text }),
       el("input", { type: "checkbox", checked: on, onchange: (e) => onChange(e.target.checked) }),
     ]);
+    const zoneChoices = mod.zoneTypes.some((t) => t.id === z.zoneType)
+      ? mod.zoneTypes
+      : [...mod.zoneTypes, { id: z.zoneType, label: z.zoneType === "stove" ? "Stove (not on an ensuite)" : z.zoneType }];
     const type = el("select", { onchange: (e) => { e.target.blur(); setZone({ zoneType: e.target.value }, "type", { type: e.target.value }); } },
-      mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.zoneType })));
+      zoneChoices.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.zoneType })));
 
     const neighbour = zi < col.zones.length - 1 ? zi + 1 : zi - 1;
     const colNeighbour = ci < columns.length - 1 ? ci + 1 : ci - 1;
@@ -1071,6 +1551,9 @@ function renderKitchen(cab, mod, result, shared) {
       }, { step: 10, min: MIN_ZONE_HEIGHT, readOnly: col.zones.length <= 1 ? "The only zone fills the column (height − kick)" : null }),
       zoneAllowsShelf(z.zoneType) ? check("Shelf", z.shelfEnabled !== false, (on) => setZone({ shelfEnabled: on }, "shelf", { on })) : null,
       zoneAllowsLock(z.zoneType) ? check("Lock", z.lockEnabled !== false, (on) => setZone({ lockEnabled: on }, "lock", { on }), p.lockEnabled === false ? "Locks are off for the whole cabinet" : undefined) : null,
+      cab.moduleId === "ensuiteCabinet" && zi === col.zones.length - 1 && (z.zoneType === "left_door" || z.zoneType === "right_door")
+        ? check("Washer floor", z.applianceFloorEnabled === true, (on) => setZone({ applianceFloorEnabled: on }, "washer", { on }), "A deck behind B3 and two supports in the kick. Style 1 only. Refused when this column meets a wheel arch, or the carcass is under 450 deep, or the clear width is under 500.")
+        : null,
     ];
     const colFields = [
       numField("Width (mm)", col.width, (v) => {
@@ -1084,9 +1567,67 @@ function renderKitchen(cab, mod, result, shared) {
       resCols[ci] ? kv("From left", `${Math.round(resCols[ci].x0)} – ${Math.round(resCols[ci].x1)} mm`) : null,
       kv("Zones", `${col.zones.length} · top → bottom`),
     ];
+    const SIDE_DEFAULT = {
+      panelType: "carcass", frontVisible: false, bchNotchEnabled: true,
+      grooveVisible: true, extendT2T3B4ToOuterFace: true, strengtheningStripEnabled: false,
+    };
+    const isPanelZone = (t) => ["left_door", "right_door", "double_door", "drawer", "down_flap"].includes(t);
+    const sideKey = (side) => (side === "left" ? "leftSidePanelOptions" : "rightSidePanelOptions");
+    const sideHost = (zones, side) => {
+      const key = sideKey(side);
+      const indexed = zones.map((zone, index) => ({ zone, index }));
+      const withKey = indexed.filter(({ zone }) => zone[key]);
+      return withKey.find(({ zone }) => isPanelZone(zone.zoneType))
+        || withKey.find(({ zone }) => zone.zoneType === "open" || zone.zoneType === "custom")
+        || withKey[0]
+        || indexed.find(({ zone }) => isPanelZone(zone.zoneType))
+        || indexed.find(({ zone }) => zone.zoneType === "open" || zone.zoneType === "custom")
+        || indexed[0];
+    };
+    const writeSide = (side, patch) => {
+      const next = cloneCols();
+      const host = sideHost(next[ci].zones, side);
+      if (!host) return;
+      const key = sideKey(side);
+      const from = { ...SIDE_DEFAULT, ...(host.zone[key] || {}) };
+      const field = Object.keys(patch)[0];
+      next[ci].zones[host.index][key] = { ...from, ...patch };
+      setParams({ ...p, columns: next }, "side", { column: col.id, side, key: field, from: from[field], to: patch[field] });
+    };
+    const sideSection = (side) => {
+      const host = sideHost(col.zones, side);
+      const opts = { ...SIDE_DEFAULT, ...(host ? host.zone[sideKey(side)] : {}) };
+      const hasPanel = col.zones.some((zone) => isPanelZone(zone.zoneType));
+      const tick = (text, on, key, title, disabled) => el("label", { class: "field check", title }, [
+        el("span", { text }),
+        el("input", { type: "checkbox", checked: on, disabled: !!disabled, onchange: (e) => writeSide(side, { [key]: e.target.checked }) }),
+      ]);
+      return section(side === "left" ? "Left end" : "Right end", [
+        el("label", { class: "field" }, [
+          el("span", { text: "Stock" }),
+          el("div", { class: "seg-group" }, [["carcass", "Carcass"], ["door", "Door"]].map(([id, text]) => el("button", {
+            type: "button",
+            class: `tb seg${opts.panelType === id ? " active" : ""}`,
+            text,
+            title: id === "door" ? `Door stock ${fpt} mm, door colour outside` : `Carcass stock ${cpt} mm`,
+            onclick: () => { if (opts.panelType !== id) writeSide(side, { panelType: id }); },
+          }))),
+        ]),
+        tick("Front visible", opts.frontVisible, "frontVisible"),
+        tick("Groove visible", opts.grooveVisible, "grooveVisible"),
+        tick("Kick notch", opts.bchNotchEnabled, "bchNotchEnabled"),
+        tick("T2 / T3 / B4 reach the outer face", opts.extendT2T3B4ToOuterFace, "extendT2T3B4ToOuterFace"),
+        tick("Strengthening strip", opts.strengtheningStripEnabled, "strengtheningStripEnabled", "Needs a visible front and a door, drawer, or flap in this column", !opts.frontVisible || !hasPanel),
+        el("div", { class: "empty small", text: "This end of the run. The strip is cut only when the front is visible and this column has a door, a drawer, or a flap." }),
+      ]);
+    };
+    const sideCards = [];
+    if (ci === 0) sideCards.push(sideSection("left"));
+    if (ci === columns.length - 1) sideCards.push(sideSection("right"));
     cellCard = [
       section(`Zone ${zi + 1} of ${col.zones.length} · from the top`, fields.filter(Boolean)),
       section(`Column ${ci + 1} of ${columns.length}`, colFields.filter(Boolean)),
+      ...sideCards,
     ];
   }
 
@@ -1101,6 +1642,21 @@ function renderKitchen(cab, mod, result, shared) {
       numField("Height (mm)", env.H, setEnv("H")),
     ]),
     section("Kick & fronts", [
+      el("label", { class: "field" }, [
+        el("span", { text: "Kick" }),
+        el("div", { class: "seg-group" }, [["style_1", "Style 1 · recessed"], ["style_2", "Style 2 · flush"]].map(([id, text]) => el("button", {
+          type: "button",
+          class: `tb seg${(p.bottomClearanceStyle === "style_2" ? "style_2" : "style_1") === id ? " active" : ""}`,
+          text,
+          title: id === "style_2" ? "Kick face flush with the carcass front" : "Kick face set back from the door",
+          onclick: () => {
+            const from = p.bottomClearanceStyle === "style_2" ? "style_2" : "style_1";
+            if (from === id) return;
+            job.setParams(cab.id, { ...p, bottomClearanceStyle: id });
+            log("kitchen.cell.kickStyle", { id: cab.id, from, to: id });
+          },
+        }))),
+      ]),
       // A new kick re-fits every column's zones to height − kick (same rule as a height change).
       numField("Kick height (mm)", bch, (v) => job.setParams(cab.id, mod.setEnvelope({ ...p, bottomClearanceHeight: Math.max(0, Math.round(v)) }, { H: env.H })), { step: 5, min: 0 }),
       numField("Front clearance (mm)", p.frontClearance ?? 2.5, (v) => job.setParams(cab.id, { ...p, frontClearance: Math.max(0, v) }), { step: 0.5, min: 0 }),
@@ -1108,6 +1664,40 @@ function renderKitchen(cab, mod, result, shared) {
         el("span", { text: "Locks" }),
         el("input", { type: "checkbox", checked: p.lockEnabled !== false, onchange: (e) => job.setParams(cab.id, { ...p, lockEnabled: e.target.checked }) }),
       ]),
+      p.bottomClearanceStyle === "style_2" ? null : el("label", { class: "field check", title: "On the underside of B3, opening downward. Style 2 has no groove." }, [
+        el("span", { text: "B3 LED groove" }),
+        el("input", { type: "checkbox", checked: p.ledGroove !== false, onchange: (e) => {
+          job.setParams(cab.id, { ...p, ledGroove: e.target.checked });
+          log("kitchen.cell.led", { id: cab.id, from: p.ledGroove !== false, to: e.target.checked });
+        } }),
+      ]),
+    ].filter(Boolean)),
+    section("Wheel arches", [
+      ...((p.wheelAvoidances || []).map((w, wi) => {
+        const setWheel = (patch) => {
+          const next = (p.wheelAvoidances || []).map((item, i) => (i === wi ? { ...item, ...patch } : item));
+          job.setParams(cab.id, { ...p, wheelAvoidances: next });
+          log("kitchen.wheel", { id: cab.id, wheel: w.id, ...patch });
+        };
+        return el("div", { class: "zone-row" }, [
+          el("span", { class: "zone-idx", text: w.id }),
+          numField("From", w.x0, (v) => setWheel({ x0: Math.round(v) }), { step: 10, min: -1e6 }),
+          numField("To", w.x1, (v) => setWheel({ x1: Math.round(v) }), { step: 10, min: -1e6 }),
+          numField("Height", w.height, (v) => setWheel({ height: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+          numField("Depth", w.depth, (v) => setWheel({ depth: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+          el("button", { class: "icon", title: "Remove this wheel arch", text: "×", onclick: () => {
+            const next = (p.wheelAvoidances || []).filter((_, i) => i !== wi);
+            job.setParams(cab.id, { ...p, wheelAvoidances: next });
+            log("kitchen.wheel", { id: cab.id, removed: w.id });
+          } }),
+        ]);
+      })),
+      el("button", { class: "tb", text: "+ Wheel arch", onclick: () => {
+        const next = [...(p.wheelAvoidances || []), { id: `w${Date.now().toString(36)}`, x0: 0, x1: 400, height: Math.max(bch, 200), depth: 200 }];
+        job.setParams(cab.id, { ...p, wheelAvoidances: next });
+        log("kitchen.wheel", { id: cab.id, added: next[next.length - 1] });
+      } }),
+      el("div", { class: "empty small", text: "From and To are along the cabinet width. Height is from the floor, depth is from the back. The kick and the boards it meets are cut around it. The dashed block in the front view is the arch, not a board." }),
     ]),
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
@@ -1317,7 +1907,6 @@ function renderLounge(cab, mod, result, shared) {
       mcField("Cabinet width (mm)", "width", 100),
       mcField("Cabinet depth (mm)", "depth", 100),
       mcField("Cabinet height (mm)", "height", 100),
-      mcField("Cabinet from floor (mm)", "startHeight", 0),
     ] : []),
     style !== "U_SHAPE" && !frame ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
     ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
@@ -1770,6 +2359,7 @@ function renderSketchPanel(cab) {
       ...warnings.map((m) => el("div", { class: "msg warn", text: m })),
     ])
     : null;
+  const edit = el("button", { class: "tb", text: "Edit sketch", title: "Open this board's outline on the sketch", onclick: () => startBoardEdit(cab.id) });
   const remove = el("button", { class: "tb danger", text: "Remove board", onclick: () => job.removeCabinet(cab.id) });
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
@@ -1783,7 +2373,7 @@ function renderSketchPanel(cab) {
       face ? kv("Colour", face) : null,
     ].filter(Boolean)),
     checks,
-    el("div", { class: "panel-foot" }, [remove]),
+    el("div", { class: "panel-foot" }, [edit, remove]),
   ].filter(Boolean));
   fillDrawer(result, errors, warnings);
 }
@@ -1916,6 +2506,11 @@ function renderCabinet(cab) {
     checks,
     el("div", { class: "panel-foot" }, [remove]),
   ];
+  if (mod.panel === "uShape") {
+    renderUShape(cab, mod, result, { checks, remove, board, grain });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
   if (mod.panel === "ohc") {
     renderOverhead(cab, mod, result, { checks, remove, board, grain });
     fillDrawer(result, errors, warnings);
@@ -1923,6 +2518,11 @@ function renderCabinet(cab) {
   }
   if (mod.panel === "tall") {
     renderTall(cab, mod, result, { checks, remove, board, grain });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
+  if (mod.panel === "tallFridge") {
+    renderTallFridge(cab, mod, result, { remove, board, grain });
     fillDrawer(result, errors, warnings);
     return;
   }
@@ -2396,7 +2996,7 @@ let panelLeaving = false;
 function paintPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
-  const wide = !!sel && ["ohc", "bedroom", "bedroomEast", "bedSide", "tall", "kitchen", "lounge"].includes(getModule(sel.moduleId).panel);
+  const wide = !!sel && ["ohc", "bedroom", "bedroomEast", "bedSide", "tall", "tallFridge", "kitchen", "lounge"].includes(getModule(sel.moduleId).panel);
   panel.classList.toggle("wide", wide);
   if (sel) renderCabinet(sel);
   else {

@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { generateSketchBoard } from "../generators/sketchBoard/generator.ts";
 import {
-  BOARD_MIN, colourFaceValue, faceViewFrame, localBoxOf, onSketchFace, onSketchPlane, outlineSpan, remembered,
-  sketchBoardFromPoints, sketchBoardFromUV, sketchBoardPlacement, stockChoices,
+  BOARD_MIN, colourFaceValue, faceViewFrame, localBoxOf, onSketchFace, onSketchPlane, originDelta, outlineSpan, remembered,
+  shiftGrooves, sketchBoardFromPoints, sketchBoardFromUV, sketchBoardPlacement, sketchItemsFromBoard, stockChoices,
 } from "./sketchBoard.js";
 import { fromUV } from "./sketch2d.js";
 
@@ -177,6 +177,49 @@ const carcass = { id: "carcass", kind: "carcass", thickness: 16, carcassColorNam
   assert.equal(onSketchFace({ x: 1000, y: 0, z: 0 }, wall), true);
   assert.equal(onSketchPlane({ x: 1000, y: 4000, z: 900 }, wall), true);
   assert.equal(onSketchPlane({ x: 1100, y: 0, z: 0 }, wall), false);
+}
+
+/* ---- edit sketch: the stored outline opens back to the same board ---- */
+{
+  const face = { axis: "z", value: 0, dir: 1 };
+  const placed = sketchBoardPlacement(face, { x: 100, y: 200, z: 0 }, { x: 500, y: 800, z: 0 }, carcass);
+  const hole = { pts: [[200, 300], [350, 300], [350, 450], [200, 450]], b: [0, 0, 0, 0] };
+  const withHole = sketchBoardFromUV(face, { pts: [[100, 200], [500, 200], [500, 800], [100, 800]], b: [0, 0, 0, 0] }, carcass, [hole]);
+  const cab = { id: "cab-1", pose: withHole.pose, params: { ...withHole.params, grain: { front: "horizontal" } } };
+  const opened = sketchItemsFromBoard(cab);
+  assert.equal(opened.ok, true);
+  assert.equal(opened.items.length, 2);
+  assert.equal(opened.face.axis, "z");
+  assert.equal(opened.face.value, 0);
+  assert.equal(opened.face.dir, 1);
+  const again = sketchBoardFromUV(opened.face, opened.items[0], opened.choice, opened.items.slice(1));
+  assert.deepEqual(again.pose, withHole.pose);
+  assert.deepEqual(again.params.outline, withHole.params.outline);
+  assert.deepEqual(again.params.holes, withHole.params.holes);
+  assert.equal(sketchItemsFromBoard({ ...cab, pose: { ...cab.pose, rotZ: 90 } }).reason, "this board was rotated");
+  assert.equal(sketchItemsFromBoard({ ...cab, overrides: { boards: { BOARD: { x: 12 } } } }).reason, "this board was nudged");
+  const q = Math.tan(Math.PI / 8);
+  const round = sketchBoardFromUV(face, { pts: [[0, 0], [500, 0], [500, 350], [450, 400], [0, 400]], b: [0, 0, q, 0, 0] }, carcass);
+  const roundOpen = sketchItemsFromBoard({ id: "cab-2", pose: round.pose, params: round.params });
+  const roundAgain = sketchBoardFromUV(roundOpen.face, roundOpen.items[0], roundOpen.choice);
+  assert.equal(roundAgain.params.outline[2].b, q);
+  assert.ok(Math.abs(roundAgain.pose.x - round.pose.x) < 0.001 && Math.abs(roundAgain.pose.y - round.pose.y) < 0.001);
+  const disc = sketchBoardFromUV(face, { pts: [[600, 300], [400, 300]], b: [1, 1] }, carcass);
+  const discOpen = sketchItemsFromBoard({ id: "cab-3", pose: disc.pose, params: disc.params });
+  const discAgain = sketchBoardFromUV(discOpen.face, discOpen.items[0], discOpen.choice);
+  for (const k of ["x", "y", "z"]) assert.ok(Math.abs(discAgain.pose[k] - disc.pose[k]) < 0.001, `disc pose ${k}`);
+  assert.deepEqual(discAgain.params.outline.map((p) => p.b), [1, 1]);
+  const moved = sketchItemsFromBoard(cab);
+  moved.items[0].pts[0][0] -= 30;
+  moved.items[0].pts[3][0] -= 30;
+  const shifted = sketchBoardFromUV(moved.face, moved.items[0], moved.choice, moved.items.slice(1));
+  const delta = originDelta(moved.face, cab.pose, shifted.pose);
+  assert.equal(delta.du, -30);
+  assert.deepEqual(
+    shiftGrooves([{ id: "G1", face: "A", kind: "groove", u0: 10, u1: 40, v0: 5, v1: 8, depth: 4 }], delta.du, delta.dv),
+    [{ id: "G1", face: "A", kind: "groove", u0: 40, u1: 70, v0: 5, v1: 8, depth: 4 }],
+  );
+  assert.equal(placed.params.plane, "XY");
 }
 
 console.log("sketchBoard placement: rectangle on a face, one board");

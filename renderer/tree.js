@@ -6,7 +6,7 @@
 // stored. Selecting a board or a face narrows the 3D highlight. Move uses that
 // choice: a cabinet row moves the module, a board row moves that board.
 import * as job from "./job.js";
-import { showContextMenu } from "./benchMenu.js";
+import { doorColorMenuItem, showContextMenu } from "./benchMenu.js";
 import { getModule } from "./modules.js";
 import { getSpaceKind } from "./spaces.js";
 import { bigFaces, edgeFaces, faceLabel, featureSummary, boardDims } from "./boardModel.js";
@@ -162,9 +162,10 @@ function cabinetRows(cab, selectedId, sub) {
       const allShown = boards.every((b) => !hiddenIds.has(b.id));
       showContextMenu(e.clientX, e.clientY, [
         { title: mod.label },
+        doorColorMenuItem(cab),
         { label: "Show all boards", disabled: !boards.length || allShown, run: () => job.setBoardsVisible(cab.id, true) },
         { label: "Hide all boards", disabled: !boards.length || allHidden, run: () => job.setBoardsVisible(cab.id, false) },
-      ]);
+      ].filter(Boolean));
     },
   })];
   if (!open.has(path)) return out;

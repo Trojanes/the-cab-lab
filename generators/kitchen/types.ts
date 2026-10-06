@@ -46,6 +46,8 @@ export interface KitchenZone {
   hingeSettings?: HingeSettings;
   lockEnabled?: boolean;
   lockSideCenterOffset?: number;
+  /** Ensuite only: washer deck behind B3 on this column's bottom side-door zone. */
+  applianceFloorEnabled?: boolean;
 }
 
 export interface KitchenColumn {
@@ -88,9 +90,17 @@ export interface KitchenParams {
   bottomClearanceStyle?: string;
   frontClearance?: number;
   lockEnabled?: boolean;
+  /** Style 1 B3 bottom-face LED. Omitted means on. Style 2 never cuts it. */
+  ledGroove?: boolean;
   /** Door colour name on the fronts' room face. Default Gloss White. */
   doorColor?: string;
   doorColorName?: string;
+  /**
+   * Bench top colour (an HPL decor). Copied from the job catalogue when the
+   * cabinet is created. Absent: no bench board — a job saved before bench tops.
+   */
+  benchTopColor?: string;
+  benchTopColorName?: string;
   /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
   doorSeries?: string;
   /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
@@ -100,6 +110,11 @@ export interface KitchenParams {
   columns: KitchenColumn[];
   wheelAvoidances?: WheelAvoidance[];
   vPanelMachiningPreferences?: MachiningPreference[];
+  /**
+   * Which rail entry called this generator. Omitted means kitchen, so a job
+   * saved before the split still builds a stove. `ensuite` refuses a stove zone.
+   */
+  baseKind?: "kitchen" | "ensuite";
 }
 
 /* ---------- 生成期派生记录 ---------- */

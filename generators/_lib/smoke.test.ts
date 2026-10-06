@@ -167,7 +167,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   for (const id of ["overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "bunkBed"]) {
     assert.ok(benchable.includes(id), `bench lists ${id}`);
   }
-  const bundles = ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "bunkBed", "sketchBoard", "pins"];
+  const bundles = ["smallCabinet", "overheadCabinet", "uShapeOverhead", "bedroom", "bedBox", "kitchen", "generalTall", "lounge", "bunkBed", "sketchBoard", "pins"];
   for (const name of bundles) {
     assert.ok(existsSync(join(root, "renderer", "gen", `${name}.js`)), `bundle ${name}.js`);
   }
@@ -187,7 +187,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   const { trimToFaces, wallBoxes } = await import("../../renderer/walls.js");
   const { readFileSync } = await import("node:fs");
 
-  for (const id of ["smallCabinet", "overheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "generalTallCabinet", "loungeGenerator", "bunkBed"]) {
+  for (const id of ["smallCabinet", "overheadCabinet", "uShapeOverheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "ensuiteCabinet", "generalTallCabinet", "tallFridgeCabinet", "loungeGenerator", "bunkBed"]) {
     const m = MODULES[id];
     assert.ok(m, `MODULES.${id}`);
     const { W, D, H } = m.defaultSize;
@@ -236,6 +236,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   assert.equal(moduleIdForGenerator("generalTall"), "generalTallCabinet");
   assert.equal(moduleIdForGenerator("lounge"), "loungeGenerator");
   assert.equal(generatorDir("kitchenCabinet"), "kitchen");
+  assert.equal(generatorDir("ensuiteCabinet"), "kitchen");
   for (const id of Object.keys(MODULES)) {
     assert.ok(existsSync(join(root, "generators", generatorDir(id), "presets.json")) || id === "smallCabinet" || MODULES[id].command, `${id} presets or smallCabinet`);
   }

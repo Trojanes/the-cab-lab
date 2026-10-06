@@ -39,6 +39,9 @@ function ref(key) {
   if (!entry) throw new Error(`dim ref: unknown key "${key}" (record it before referencing it)`);
   return { __ref: true, key, value: entry.value };
 }
+function valueOf(key) {
+  return active.entries[key]?.value ?? NaN;
+}
 function formulaOf(fn, override) {
   if (override) return override;
   const src = fn.toString();
@@ -93,6 +96,11 @@ var DEFAULT_CARCASS_COLOUR = "White Stipple";
 function doorColourOf(params) {
   const raw = params ? params.doorColorName || params.doorColor : "";
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
+}
+function doorColourBOf(params) {
+  const raw = params ? params.doorColorNameB || params.doorColorB : "";
+  const name = String(raw || "").trim();
+  return name || doorColourOf(params);
 }
 function doorSidesOf(params) {
   return params && params.doorSides === "double" ? "double" : "single";
@@ -481,6 +489,13 @@ var RULES2 = defineRules("bedroomEast", rules_default2);
 var EPS2 = 0.05;
 var r1 = (v2) => Math.round(v2 * 10) / 10;
 var v = (rule) => rule.value;
+function recordFace(id, face, n) {
+  const value = r1(n);
+  const key = `${id}.${face}`;
+  const have = valueOf(key);
+  if (Number.isFinite(have) && Math.abs(have - value) <= 0.051) return value;
+  return dim(key, { v: value }, (t) => t.v, { formula: String(value) });
+}
 function board(id, name, category, plane, thick, x0, x1, y0, y1, z0, z1, pv) {
   const T = plane === "XY" ? "Z" : plane === "XZ" ? "Y" : "X";
   const b = {
@@ -491,12 +506,12 @@ function board(id, name, category, plane, thick, x0, x1, y0, y1, z0, z1, pv) {
     materialThickness: thick,
     profilePlane: plane,
     thicknessAxis: T,
-    x0: r1(x0),
-    x1: r1(x1),
-    y0: r1(y0),
-    y1: r1(y1),
-    z0: r1(z0),
-    z1: r1(z1),
+    x0: recordFace(id, "x0", x0),
+    x1: recordFace(id, "x1", x1),
+    y0: recordFace(id, "y0", y0),
+    y1: recordFace(id, "y1", y1),
+    z0: recordFace(id, "z0", z0),
+    z1: recordFace(id, "z1", z1),
     source: "bedroomEast"
   };
   if (pv) b.profileVector = pv.map((p) => Object.fromEntries(Object.entries(p).map(([k, n]) => [k, r1(n)])));
@@ -825,8 +840,16 @@ function buildEastBoards(input) {
   }
   attachFaces(boards);
   const colour = input.doorColor;
-  for (const b of boards.filter((q) => q.category === "front_panel")) annotate(b, "B", { semantic: "front", visible: true, finish: { colour } });
-  for (const id of ["WARD_PANEL", "BS_SHOW"]) annotate(boards.find((q) => q.id === id), "A", { semantic: "side", visible: true, finish: { colour } });
+  const lower = input.doorColorB || input.doorColor;
+  for (const b of boards.filter((q) => q.category === "front_panel")) {
+    const c = b.id.startsWith("BS_") ? lower : colour;
+    if (b.stock?.kind === "door") b.stock = { ...b.stock, colour: c };
+    annotate(b, "B", { semantic: "front", visible: true, finish: { colour: c } });
+  }
+  annotate(boards.find((q) => q.id === "WARD_PANEL"), "A", { semantic: "side", visible: true, finish: { colour } });
+  const show = boards.find((q) => q.id === "BS_SHOW");
+  if (show.stock?.kind === "door") show.stock = { ...show.stock, colour: lower };
+  annotate(show, "A", { semantic: "side", visible: true, finish: { colour: lower } });
   annotate(boards.find((q) => q.id === "T1"), "B", { semantic: "front", visible: true, finish: { colour } });
   addFeature(panel, "B", { id: "WARD_PANEL_SHELF", kind: "groove", ...localRect(panel, { y: [tY0 - v(RULES2.WARDROBE_SHELF_GROOVE_END_MM), tY1 + v(RULES2.WARDROBE_SHELF_GROOVE_END_MM)], z: [shelfZ0 - gz, shelfZ1 + gz] }), depth: r1(tongue + v(RULES2.WARDROBE_SHELF_GROOVE_EXTRA_MM)), for: "WARD_SHELF", source: "bedroomEast" });
   const cup = (b, id, u, vv, dia2, depth) => addFeature(b, "A", { id, kind: "hole", center: [r1(u), r1(vv)], diameter: dia2, depth, for: "hinge", source: "bedroomEast" });
@@ -1005,12 +1028,13 @@ function generateBedroomEast(raw) {
   const floorTop = round1(bootTop + RULES2.WARDROBE_FLOOR_RAISE_MM.value);
   const carcassColor = carcassColourOf(raw);
   const doorColor = doorColourOf(raw);
+  const doorColorB = doorColourBOf(raw);
   const zones = [];
   let boards = [];
   let milling = { issues: [] };
   let top = null;
   if (!errors.length) {
-    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, led: raw.ledGroove !== false });
+    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, doorColorB, led: raw.ledGroove !== false });
     boards = built.boards;
     top = built.info;
     warnings.push(...built.warnings);

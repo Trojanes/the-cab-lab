@@ -6,6 +6,7 @@ import {
 } from "./generator.ts";
 import { checkPins, countPins, type PresetsFile } from "../_lib/pins.ts";
 import presetsRaw from "./presets.json" with { type: "json" };
+import layoutRaw from "./layout.json" with { type: "json" };
 
 const presets = presetsRaw as PresetsFile;
 
@@ -622,6 +623,27 @@ function testRangehoodValidation() {
   assert.ok(nonContiguous.validation.errors.some((error) => error.includes("one contiguous rangehood group")));
 }
 
+function testPlacementRuleRefusesADivider() {
+  const preset = presets.presets.find((p) => p.id === "golden-2000-3")!;
+  const base = generateOverheadCabinet(preset.params as never);
+  const d2 = base.boards.find((b) => b.id === "D2")!;
+  const layout = structuredClone(layoutRaw) as typeof layoutRaw & { boards: Record<string, unknown> };
+  layout.boards.D2 = {
+    axes: {
+      x: { from: "lo", at: String(d2.x0 + 20), size: String(d2.x1 - d2.x0) },
+      y: { from: "lo", at: String(d2.y0), size: String(d2.y1 - d2.y0) },
+      z: { from: "lo", at: String(d2.z0), size: String(d2.z1 - d2.z0) },
+    },
+  };
+  const moved = generateOverheadCabinet(preset.params as never, { layout });
+  assert.ok(moved.validation.errors.some((error) => error.includes("D2 的缺口和槽由代码算")), moved.validation.errors.join("; "));
+  assert.equal(moved.boards.length, 0);
+  const plain = generateOverheadCabinet(preset.params as never);
+  const again = plain.boards.find((b) => b.id === "D2")!;
+  assert.ok(Math.abs(again.x0 - d2.x0) < 0.05, "without the rule the divider stays where the generator put it");
+  assert.deepEqual(plain.debug.ruleBoards, ["T1", "T2", "T3", "T4"]);
+}
+
 const tests = [
   testV7DividerCenterlinesFromZoneBoundaries,
   testV7ManufacturingRules,
@@ -633,6 +655,7 @@ const tests = [
   testOpenZoneDoesNotShiftFollowingPanelDividerIndices,
   testDividerZBaseSitsOnBottomPanelTop,
   testPresetPinsHold,
+  testPlacementRuleRefusesADivider,
   testBoardsAreEmittedInFinalAssembledPose,
   testProvenanceCoversEveryFaceAndPoint,
   testFaceLayer,

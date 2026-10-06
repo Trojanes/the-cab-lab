@@ -216,18 +216,21 @@ function addParallelRun(
 /**
  * The middle cabinet in the gap between the two parallel runs, against the wall. An unset width is the
  * rule width, or the gap when that is narrower. `fit` takes the "wider than the gap" message (an error on
- * the frame parallel: the cabinet would stand in the seats). Returns the sizes it was built with.
+ * the frame parallel: the cabinet would stand in the seats). `standOn` non-null = the cabinet stands
+ * there (frame parallel: the wheel-arch cover's top, else the floor) and `startHeight` is not used.
+ * Returns the sizes it was built with.
  */
 function addMiddleCabinet(
   raw: LoungeParams, totalW: number, D: number,
   boards: Board[], hinges: LoungeHinge[], locks: LoungeLock[], grooves: LoungeGroove[], warnings: string[], fit: string[],
+  standOn: number | null = null,
 ) {
   const mc = raw.middleCabinet ?? {};
   const gap0 = totalW - asNum(raw.singleLoungeWidth, 1500) * 2;
   const CW = asNum(mc.width, Math.min(R.MIDDLE_CABINET_WIDTH.value, Math.max(0, gap0)));
   const CD = asNum(mc.depth, R.MIDDLE_CABINET_DEPTH.value);
   const CH = asNum(mc.height, R.MIDDLE_CABINET_HEIGHT.value);
-  const CSH = asNum(mc.startHeight, R.MIDDLE_CABINET_START_HEIGHT.value);
+  const CSH = standOn ?? asNum(mc.startHeight, R.MIDDLE_CABINET_START_HEIGHT.value);
   const dpt = Math.max(1, asNum(mc.doorPanelThickness, R.MIDDLE_CABINET_DOOR_THICKNESS.value));
   const dc = Math.max(0, asNum(mc.doorClearance, R.MIDDLE_CABINET_DOOR_CLEARANCE.value));
   const lockStyle = mc.doorLockStyle === "NONE" ? "NONE" : "RAZOR_ROUNDED";
@@ -237,7 +240,7 @@ function addMiddleCabinet(
   const cupD = asNum(mc.hingeCupDiameter, R.MIDDLE_CABINET_HINGE_DIAMETER.value);
   const cupDepth = Math.min(Math.max(0.5, asNum(mc.hingeCupDepth, R.MIDDLE_CABINET_HINGE_DEPTH.value)), dpt);
   const gap = totalW - asNum(raw.singleLoungeWidth, 1500) * 2;
-  if (raw.wheelAvoidanceEnabled && !(CSH > asNum(raw.avoidanceHeight, R.DEFAULT_AVOIDANCE_HEIGHT.value))) {
+  if (standOn == null && raw.wheelAvoidanceEnabled && !(CSH > asNum(raw.avoidanceHeight, R.DEFAULT_AVOIDANCE_HEIGHT.value))) {
     warnings.push("Middle cabinet start height must be greater than avoidance height.");
   }
   if (CW > Math.max(0, gap)) fit.push(`Middle cabinet width ${CW} exceeds the middle gap ${Math.max(0, gap)}.`);
@@ -699,7 +702,9 @@ export function generateLounge(raw: LoungeParams): LoungeResult {
     const mcOn = frameP
       ? raw.hasMiddleCabinet ?? (totalW - 2 * SW >= R.MIDDLE_CABINET_MIN_WIDTH.value)
       : raw.hasMiddleCabinet === true;
-    if (mcOn && !errors.length) middleCabinet = addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, frameP ? errors : warnings);
+    // Frame parallel: the cabinet stands on the wheel-arch cover, or on the floor without one.
+    const standOn = frameP ? (wheelOn ? AH : 0) : null;
+    if (mcOn && !errors.length) middleCabinet = addMiddleCabinet(raw, totalW, D, boards, hinges, locks, grooves, warnings, frameP ? errors : warnings, standOn);
   } else {
     const mainW = asNum(raw.mainWidth, 2000);
     const mainD = asNum(raw.mainDepth, 600);

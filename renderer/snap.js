@@ -4,10 +4,10 @@
 // Rebuilt lazily whenever the job changes.
 import * as THREE from "three";
 import { activeCamera, canvasClientRect, closestTOnLine, rayFromClient } from "./space.js";
-import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap } from "./job.js";
+import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap, resultFor, isBoardHidden } from "./job.js";
 import { cabinetFootprints, envelopeFootprint } from "./cabinets3d.js";
 import { partitionClearance } from "./materials.js";
-import { localAxes } from "./pose.js";
+import { localAxes, boardCornerLocals, worldOf } from "./pose.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";
 import { wallSolid, wallParts, wallBoxes, settleClearanceZ } from "./walls.js";
 
@@ -15,7 +15,8 @@ export const SNAP_RADIUS_PX = 14;
 
 let points = null;
 let planes = null;
-onChange(() => { points = null; planes = null; });
+let corners = null;
+onChange(() => { points = null; planes = null; corners = null; });
 
 /** Pixel thresholds scale a little with the viewport so a 4K window feels like a laptop. */
 export function uiScale() {
@@ -141,6 +142,33 @@ function build() {
 export function snapPoints() {
   if (!points) points = build();
   return points;
+}
+
+// Outline corners of every board, both sides of the thickness, in world space.
+// Built once per job change: a pointer move only projects this list.
+function buildBoardCorners() {
+  const out = [];
+  for (const cab of getJob().cabinets) {
+    for (const b of resultFor(cab.id)?.boards || []) {
+      const locals = boardCornerLocals(b, cab.overrides?.boards?.[b.id]);
+      for (const local of locals) {
+        const w = worldOf(cab.pose, local);
+        if (!Number.isFinite(w[0]) || !Number.isFinite(w[1]) || !Number.isFinite(w[2])) continue;
+        out.push({
+          x: w[0], y: w[1], z: w[2],
+          cabId: cab.id, boardId: b.id,
+          label: `${b.name || b.id} corner`,
+          hidden: isBoardHidden(cab, b.id),
+        });
+      }
+    }
+  }
+  return out;
+}
+
+export function boardCorners() {
+  if (!corners) corners = buildBoardCorners();
+  return corners;
 }
 
 export const AXES = ["x", "y", "z"];

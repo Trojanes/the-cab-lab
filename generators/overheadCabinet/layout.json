@@ -1,0 +1,49 @@
+{
+  "module": "overheadCabinet",
+  "version": 1,
+  "boards": {
+    "T1": {
+      "label": "顶部前轨 T1",
+      "axes": {
+        "x": { "from": "lo", "at": "0", "size": "Cw" },
+        "y": { "from": "lo", "at": "TCH - 1", "size": "FPT" },
+        "z": { "from": "hi", "at": "H", "size": "TCH" }
+      }
+    },
+    "T2": {
+      "label": "顶部后轨 T2",
+      "axes": {
+        "x": { "from": "lo", "at": "0", "size": "Cw" },
+        "y": { "from": "lo", "at": "T1.y1", "size": "CPT" },
+        "z": { "from": "hi", "at": "T1.z1", "size": "T1.z1 - T1.z0" }
+      }
+    },
+    "T3": {
+      "label": "顶部横板 T3",
+      "axes": {
+        "x": { "from": "lo", "at": "0", "size": "Cw" },
+        "y": { "from": "lo", "at": "0", "size": "T3_DEPTH_MM" },
+        "z": { "from": "hi", "at": "H - TCH - 1", "size": "CPT" }
+      },
+      "outline": {
+        "corners": {
+          "FL": { "u": "0", "v": "0" },
+          "FR": { "u": "T3.xSize", "v": "0" },
+          "RR": { "u": "T3.xSize", "v": "T3.ySize" },
+          "RL": { "u": "0", "v": "T3.ySize" }
+        }
+      },
+      "features": {
+        "LED": { "label": "LED 灯槽", "depth": "LED_GROOVE_DEPTH_MM" }
+      }
+    },
+    "T4": {
+      "label": "顶部竖板 T4",
+      "axes": {
+        "x": { "from": "lo", "at": "0", "size": "Cw" },
+        "y": { "from": "hi", "at": "Cd - CPT - clearance", "size": "CPT" },
+        "z": { "from": "hi", "at": "H", "size": "T4_HEIGHT_MM" }
+      }
+    }
+  }
+}

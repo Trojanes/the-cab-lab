@@ -2222,7 +2222,7 @@
     },
     {
       "id": "rear-door-parallel",
-      "label": "Parallel frame · 1880×900×420 · wheel arch + middle cabinet（19'6 Rear Door）",
+      "label": "Parallel frame Â· 1880Ã—900Ã—420 Â· wheel arch + middle cabinetï¼ˆ19'6 Rear Doorï¼‰",
       "params": {
         "style": "PARALLEL",
         "height": 420,
@@ -2237,8 +2237,7 @@
         "middleCabinet": {
           "width": 502,
           "depth": 270,
-          "height": 457,
-          "startHeight": 319
+          "height": 457
         }
       },
       "pins": {
@@ -2360,56 +2359,56 @@
             "x1": 1191,
             "y0": 630,
             "y1": 900,
-            "z0": 319,
-            "z1": 335
+            "z0": 270,
+            "z1": 286
           },
           "middle_cabinet_top": {
             "x0": 689,
             "x1": 1191,
             "y0": 630,
             "y1": 900,
-            "z0": 760,
-            "z1": 776
+            "z0": 711,
+            "z1": 727
           },
           "middle_cabinet_left": {
             "x0": 689,
             "x1": 705,
             "y0": 630,
             "y1": 900,
-            "z0": 335,
-            "z1": 760
+            "z0": 286,
+            "z1": 711
           },
           "middle_cabinet_right": {
             "x0": 1175,
             "x1": 1191,
             "y0": 630,
             "y1": 900,
-            "z0": 335,
-            "z1": 760
+            "z0": 286,
+            "z1": 711
           },
           "middle_cabinet_mid_divider": {
             "x0": 705,
             "x1": 1175,
             "y0": 646,
             "y1": 900,
-            "z0": 540,
-            "z1": 555
+            "z0": 491,
+            "z1": 506
           },
           "middle_cabinet_left_door": {
             "x0": 707,
             "x1": 939,
             "y0": 630,
             "y1": 646,
-            "z0": 337,
-            "z1": 758
+            "z0": 288,
+            "z1": 709
           },
           "middle_cabinet_right_door": {
             "x0": 941,
             "x1": 1173,
             "y0": 630,
             "y1": 646,
-            "z0": 337,
-            "z1": 758
+            "z0": 288,
+            "z1": 709
           }
         },
         "points": {

@@ -22,7 +22,7 @@
 import { clearHeightAt, minClearHeight, pointInsideOrOn } from "./spaces.js";
 import { thickness, partitionClearance } from "./materials.js";
 import { worldOf } from "./pose.js";
-import { getModule } from "./modules.js";
+import { getModule, isBaseCabinet } from "./modules.js";
 
 export const WALL_MIN_LENGTH = 50;
 export const WALL_MIN_HEIGHT = 50;
@@ -176,7 +176,7 @@ function frontThicknessOf(cab) {
 export function cabinetOuter(cab) {
   const env = getModule(cab.moduleId).envelope(cab.params);
   const fpt = frontThicknessOf(cab);
-  const kitchen = cab.moduleId === "kitchenCabinet";
+  const kitchen = isBaseCabinet(cab.moduleId);
   // Kitchen depth already includes the door. Overhead depth is the carcass; the door hangs in front.
   const frontY = -fpt;
   const backY = kitchen ? env.D - fpt : env.D;
@@ -316,7 +316,7 @@ export function readFit(wall) {
   const ohc = list.find((c) => c.id === wall.fit.overheadId);
   const kit = list.find((c) => c.id === wall.fit.kitchenId);
   if (!ohc || ohc.moduleId !== "overheadCabinet") warnings.push(`${wall.fit.overheadId}: overhead is missing`);
-  if (!kit || kit.moduleId !== "kitchenCabinet") warnings.push(`${wall.fit.kitchenId}: base is missing`);
+  if (!kit || !isBaseCabinet(kit.moduleId)) warnings.push(`${wall.fit.kitchenId}: base is missing`);
   if (warnings.length) return { warnings, outline: null, steps: null };
   const o = cabinetOuter(ohc);
   const k = cabinetOuter(kit);

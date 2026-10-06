@@ -9,7 +9,7 @@
 
 ## 1. 模块定位
 
-- 房车厨房落地底柜：列×区两级布局。columns 沿 x 切宽，zones 在列内**自顶向下**切高（区和 = H − BCH）。
+- 房车落地底柜：列×区两级布局。columns 沿 x 切宽，zones 在列内**自顶向下**切高（区和 = H − BCH）。同一生成器两个入口：Kitchen 可以有灶台；Ensuite（`baseKind: "ensuite"`）带灶台是校验错误，分区不改写成门。不传 `baseKind` 时按 Kitchen。
 - 结构深 cd = depth − frontThickness（**depth 参数含门厚**，门板挂 y∈[−FPT,0]）。
 - 竖板体系 V0..Vn：V0 = 左外侧板、Vn = 右外侧板（可用门板料加厚）、中间 V = 列分隔板（柜身料）。
 - 底部系统：B1/B2（前竖板，style_1 趾踢内缩）、B3（底板/deck）、B4（后下竖条）；顶部系统：T1（前条）、T2（后条）、T3（后竖条）；V 板与各条以缺口互锁。

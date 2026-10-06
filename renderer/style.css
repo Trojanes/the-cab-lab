@@ -173,8 +173,6 @@ button:disabled { cursor: default; opacity: 0.45; }
   position: fixed;
   z-index: 40;
   min-width: 180px;
-  /* Bridge the rail padding so the pointer can cross to the flyout without leaving the group. */
-  margin-left: -8px;
   padding: 4px 6px 6px 14px;
   background: var(--bg-panel);
   border: 1px solid var(--line);
@@ -184,6 +182,17 @@ button:disabled { cursor: default; opacity: 0.45; }
   display: flex;
   flex-direction: column;
   gap: 2px;
+}
+/* The rail's scrollbar sits between the group button and this panel. The strip
+   covers that gutter (and a few pixels of the button) so the pointer can cross
+   without the group seeing a leave. */
+.rail-flyout::before {
+  content: "";
+  position: absolute;
+  top: -6px;
+  bottom: -6px;
+  right: 100%;
+  width: var(--fly-bridge, 16px);
 }
 .rail-flyout .rail-title { padding: 6px 8px 2px; }
 .rail-foot {
@@ -290,7 +299,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 #browser.fp-open { display: none; }
 
 /* Move: module or one board. Sits beside the browser so the triad stays in view. */
-#moveCard, #alignCard, #pointCard, #fitCard, #boardCard, #grooveCard {
+#moveCard, #alignCard, #pointCard, #fitCard, #boardCard, #grooveCard, #measureCard {
   position: absolute;
   top: 36px;
   left: 292px;
@@ -720,6 +729,7 @@ button:disabled { cursor: default; opacity: 0.45; }
 .field select:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
 /* A wider value column for a type list (zone / run cards). */
 .field.wide-value { grid-template-columns: 1fr 150px; }
+.field:has(.seg-group) { grid-template-columns: 1fr auto; }
 .field input:disabled { color: var(--text-2); }
 .field.readonly input { color: var(--text-2); border-style: dashed; cursor: default; }
 .field input:focus { outline: 1px solid var(--accent); border-color: var(--accent); }
@@ -822,6 +832,25 @@ button:disabled { cursor: default; opacity: 0.45; }
 }
 #cursorTip.lock { border-left-color: #f0c070; }
 #cursorTip div + div { color: var(--text-3); }
+
+#measureCard { width: 280px; }
+#measureCard .measure-body { display: flex; flex-direction: column; gap: 2px; max-height: 240px; overflow: auto; font-size: 12px; line-height: 1.35; }
+#measureCard .sub { color: var(--text-3); font-size: 11px; }
+#measureCard .live { color: var(--accent); }
+.measure-label {
+  position: absolute;
+  transform: translate(-50%, -140%);
+  pointer-events: none;
+  padding: 1px 5px;
+  background: rgba(32, 35, 42, 0.92);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: 11px;
+  color: var(--text);
+  z-index: 6;
+  white-space: nowrap;
+}
+.measure-label.live { color: var(--accent); border-color: var(--accent); }
 
 /* empty state in the viewport */
 #emptyState {
@@ -1090,6 +1119,7 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .zs-zone.t-up_flap { border-top-color: #9ec5d8; }
 .zs-zone.t-fixed_panel { border-top-color: #a8c9a0; }
 .zs-zone.t-open { border-top-color: #e0c48a; }
+.zs-zone.t-rangehood_flap { border-top-color: #d7b8f2; }
 .zs-zone.sel { border-top-color: var(--accent); }
 .zs-type { font-size: 11px; }
 .zs-w { font-size: 12px; font-weight: 500; font-variant-numeric: tabular-nums; }

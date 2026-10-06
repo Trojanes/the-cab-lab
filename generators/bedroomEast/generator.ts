@@ -15,7 +15,7 @@
  * profile comes from the space in the same local Y.
  */
 import { beginProvenance, dim, endProvenance, param, ref } from "../_lib/dim.ts";
-import { applyDoorSides, carcassColourOf, doorColourOf } from "../_lib/finish.ts";
+import { applyDoorSides, carcassColourOf, doorColourBOf, doorColourOf } from "../_lib/finish.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { roofAt } from "../bedroom/generator.ts";
 import { buildEastBoards } from "./boards.ts";
@@ -197,13 +197,14 @@ export function generateBedroomEast(raw: EastParams) {
   const floorTop = round1(bootTop + R.WARDROBE_FLOOR_RAISE_MM.value);
   const carcassColor = carcassColourOf(raw);
   const doorColor = doorColourOf(raw);
+  const doorColorB = doorColourBOf(raw);
 
   const zones: Array<Record<string, unknown>> = [];
   let boards: ReturnType<typeof buildEastBoards>["boards"] = [];
   let milling = { issues: [] as unknown[] };
   let top = null as null | { t3Top: number; seat: number; uprightBack: number; doors: Array<{ x0: number; x1: number }> };
   if (!errors.length) {
-    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, led: raw.ledGroove !== false });
+    const built = buildEastBoards({ W, H, profile, wardrobe, bedX0, ohcBottom: ohcZ0, bays, fixedPanelTop, cpt, dpt, carcassColor, doorColor, doorColorB, led: raw.ledGroove !== false });
     boards = built.boards;
     top = built.info;
     warnings.push(...built.warnings);

@@ -9,6 +9,7 @@
 //              Module moves the cabinet, Panel moves one board. Enter confirms.
 //   orient     (O / Face) click a side of a cabinet → its doors face that way (pending, orange);
 //              click elsewhere or Enter confirms · Esc restores
+//   measure    (I) click a point or a face, then another: distance or angle. Nothing is stored.
 //
 // At every step of drawing a box, Tab / a digit opens the type-ins (W D H). Values may
 // be expressions: 1110 · +50 · -20 · *2 · /2 · max · 1110,560,720 (comma fills the next fields).
@@ -17,7 +18,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine, floorPointAt, frame, beginFaceView, endFaceView } from "./space.js";
 import * as job from "./job.js";
-import { getModule, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, DIM_OF_AXIS } from "./modules.js";
+import { getModule, isBaseCabinet, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, DIM_OF_AXIS } from "./modules.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { RULES as BUNK_RULES, bunkUpperLimits } from "./gen/bunkBed.js";
 import { getPreset } from "./presets.js";
@@ -31,22 +32,27 @@ import {
 import {
   nearestSnap, nearestInference, pointOnLine, toClient, nearestFaceAlign, nearestAxisAlign, overheadWidthFaces, describePoint, faceGuide,
   pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, drawableOn, extrudeRoom, inPlaneAxes, axisVector, AXES,
-  INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX,
+  INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX, boardCorners,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
 import { wallPickables, solidBoxes } from "./walls3d.js";
 import { wallBoards } from "./walls.js";
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
-import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, boardCornerLocals, localOf, cornerOf } from "./pose.js";
+import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, localOf, cornerOf } from "./pose.js";
 import { faceLabel } from "./boardModel.js";
 import {
   initBoardSketch, boardActive, boardMode, startBoard, cancelBoard, boardPointerDown, boardPointerMove, boardPointerUp, boardKeydown,
 } from "./boardSketch.js";
 
-export { startBoard, boardRightClick, boardUndoKey } from "./boardSketch.js";
+export { startBoard, startBoardEdit, boardRightClick, boardUndoKey } from "./boardSketch.js";
 import { initGrooveTool, grooveActive, grooveMode, startGroove, endGroove, groovePointerDown, groovePointerMove, grooveKeydown } from "./grooveTool.js";
 export { startGroove, removeGroove } from "./grooveTool.js";
+import {
+  initMeasure, measureActive, measureMode, startMeasure, cancelMeasure, measureEscape, measureDelete,
+  measurePointerDown, measurePointerMove, measureLeave, measureTick,
+} from "./measureTool.js";
+export { startMeasure };
 
 const FRONT_THICKNESS_DEFAULT = 16;
 const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
@@ -103,6 +109,7 @@ export function getMode() {
   if (fitPick) return "fit";
   if (boardActive()) return boardMode();
   if (grooveActive()) return grooveMode();
+  if (measureActive()) return measureMode();
   if (rb) return rb.step;
   if (placing) return "armed";
   return "idle";
@@ -187,6 +194,7 @@ export function isFitPicking() { return !!fitPick; }
 
 export function startFitPick(wallId) {
   cancelBoard("tool off");
+  cancelMeasure("tool off");
   if (placing) disarm();
   const existing = job.getWall(wallId);
   const remembered = existing && existing.fit && Number(existing.fit.radius);
@@ -226,7 +234,7 @@ function onFitClick(e) {
     return;
   }
   if (cab.moduleId === "overheadCabinet") fitPick.overheadId = cab.id;
-  else if (cab.moduleId === "kitchenCabinet") fitPick.kitchenId = cab.id;
+  else if (isBaseCabinet(cab.moduleId)) fitPick.kitchenId = cab.id;
   else {
     showTip(e.clientX, e.clientY, ["Fit uses an overhead and a base"]);
     log("wall.fit.pick", { id: fitPick.wallId, cabinetId: cab.id, moduleId: cab.moduleId, accepted: false });
@@ -250,6 +258,7 @@ export function armPlacement(moduleId) {
   cancelBoard("tool off");
   endResize("tool off");
   endGroove("tool off");
+  cancelMeasure("tool off");
   if (getModule(moduleId).placement === "nose") { startNose(moduleId); return; }
   if (getModule(moduleId).placement === "bedBox" || getModule(moduleId).placement === "bedSide") { startBedBox(moduleId); return; }
   cancelMove();
@@ -273,6 +282,7 @@ export function armPlacement(moduleId) {
   emitMode();
 }
 export function disarm() {
+  cancelMeasure("tool off");
   if (nose) { cancelNose(); return; }
   if (bed) { cancelBedBox(); return; }
   if (lounge) { cancelLounge(); return; }
@@ -396,7 +406,7 @@ function cursorPoint(clientX, clientY, { exclude = null } = {}) {
   const pinned = new Set();
   // Kitchen under an overhead: the first click on the floor or the back wall
   // snaps to the overhead's width sides when the cursor is close, and lets go past them.
-  if (placing === "kitchenCabinet" && face) {
+  if (isBaseCabinet(placing) && face) {
     const al = nearestFaceAlign(clientX, clientY, face, { exclude, extendOverheadWidth: true });
     for (const a of inPlaneAxes(face.axis)) {
       if (!al[a]) continue;
@@ -446,7 +456,7 @@ function resolveCursor(e, ctx) {
 
   const finishOnLine = (from, dir, pt, extraTip) => {
     // A face crossing the line can still pin the free coordinate.
-    const al = nearestFaceAlign(cx, cy, plane, { exclude: ctx.exclude, extendOverheadWidth: placing === "kitchenCabinet" });
+    const al = nearestFaceAlign(cx, cy, plane, { exclude: ctx.exclude, extendOverheadWidth: isBaseCabinet(placing) });
     const segs = [];
     const tip = [`On edge ${axisName(dir)} from ${describePoint(from)}`];
     for (const a of AXES) {
@@ -498,7 +508,7 @@ function resolveCursor(e, ctx) {
   // Free cursor on the working plane, with face alignment.
   const g = planePointAt(cx, cy, threePlane(plane.axis, plane.value));
   if (!g) return null;
-  const al = nearestFaceAlign(cx, cy, plane, { exclude: ctx.exclude, extendOverheadWidth: placing === "kitchenCabinet" });
+  const al = nearestFaceAlign(cx, cy, plane, { exclude: ctx.exclude, extendOverheadWidth: isBaseCabinet(placing) });
   const pt = { x: g.x, y: g.y, z: g.z };
   const segs = [];
   const tip = [];
@@ -1164,6 +1174,7 @@ export function startNose(moduleId) {
   cancelBedBox();
   cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   if (placing) { placing = null; rb = null; lshape = null; bunk = null; lastCreated = null; clearPreview(); }
   // One per vehicle: picking the module again edits the existing slab's depth.
@@ -1321,6 +1332,7 @@ export function startPlane() {
   cancelBoard("tool off");
   endResize("tool off");
   endGroove("tool off");
+  cancelMeasure("tool off");
   cancelMove();
   cancelAlign();
   cancelPointAlign();
@@ -1471,6 +1483,7 @@ export function startBedBox(moduleId) {
   cancelBedBox();
   cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   if (placing) { placing = null; rb = null; lshape = null; bunk = null; lastCreated = null; clearPreview(); }
   const existing = (mod.single || pair) ? job.getJob().cabinets.find((c) => c.moduleId === moduleId) : null;
@@ -1691,6 +1704,7 @@ export function startLounge(style) {
   cancelBedBox();
   if (lounge) cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   if (placing) { placing = null; rb = null; lshape = null; bunk = null; lastCreated = null; }
   lounge = freshLounge(style);
@@ -3035,6 +3049,7 @@ export function startMove(id = job.getSelectedId()) {
   cancelBedBox();
   cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   const sub = job.getSubSelection();
   const boardId = sub && sub.cabId === id ? sub.boardId : null;
@@ -3555,22 +3570,15 @@ function nearestOwnedPoint(clientX, clientY) {
   const max = SNAP_RADIUS_PX * uiScale();
   let best = null;
   let bestD = max;
-  for (const cab of job.getJob().cabinets) {
-    for (const b of job.resultFor(cab.id)?.boards || []) {
-      const locals = boardCornerLocals(b, cab.overrides?.boards?.[b.id]);
-      for (const local of locals) {
-        const w = worldOf(cab.pose, local);
-        const c = toClient(w[0], w[1], w[2]);
-        if (c.behind) continue;
-        const d = Math.hypot(c.x - clientX, c.y - clientY);
-        if (d < bestD) {
-          bestD = d;
-          best = { x: w[0], y: w[1], z: w[2], cabId: cab.id, boardId: b.id, label: `${b.name || b.id} corner`, kind: "board" };
-        }
-      }
-    }
+  for (const p of boardCorners()) {
+    const c = toClient(p.x, p.y, p.z);
+    if (c.behind) continue;
+    const d = Math.hypot(c.x - clientX, c.y - clientY);
+    if (d < bestD) { bestD = d; best = p; }
   }
-  return best ? { ...best, dist: bestD } : null;
+  return best
+    ? { x: best.x, y: best.y, z: best.z, cabId: best.cabId, boardId: best.boardId, label: best.label, kind: "board", dist: bestD }
+    : null;
 }
 
 /** The point under the cursor: a board corner, or (for the target) a space / cabinet snap point. */
@@ -3868,6 +3876,7 @@ export function startOrient(id = job.getSelectedId()) {
   cancelBedBox();
   cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   const cab = id && job.getJob().cabinets.find((c) => c.id === id);
   if (!cab && !job.getJob().cabinets.length) return;
@@ -4006,6 +4015,7 @@ export function startResize() {
   cancelBedBox();
   cancelLounge();
   cancelPlane();
+  cancelMeasure("tool off");
   endRetype(false);
   resize = { face: null, drag: null };
   setResizeState(true, null);
@@ -4114,7 +4124,7 @@ function beginResizeDrag(e, hit, ud) {
 
 /** Pulling a kitchen's width face: snap onto an overhead's width side when the cursor is close. */
 function kitchenWidthSnap(e, d, cab) {
-  if (cab.moduleId !== "kitchenCabinet" || d.face.axis !== "x") return null;
+  if (!isBaseCabinet(cab.moduleId) || d.face.axis !== "x") return null;
   const base = { ...cab, params: d.params0, pose: d.pose0 };
   const w0 = envelopeFaceWorld(base, d.face.axis, d.face.dir);
   const perMm = (d.face.dir > 0 ? 1 : -1) * (d.axisWorld[w0.axis] || 0);
@@ -4184,7 +4194,7 @@ function blockingErrors(errs) {
 }
 
 /** What stops a drag: blocking generator errors plus HPL boards past the sheet limit for their grain. */
-function blockingIssues(result) {
+export function blockingIssues(result) {
   return [...blockingErrors(result?.validation?.errors), ...(result?.grain?.issues || []).map((i) => i.message)];
 }
 
@@ -4279,6 +4289,7 @@ initBoardSketch({
     cancelBedBox();
     cancelLounge();
     cancelPlane();
+    cancelMeasure("tool off");
     cancelFitPick("tool off");
     endRetype(false);
     if (placing) { placing = null; rb = null; lshape = null; bunk = null; lastCreated = null; clearPreview(); }
@@ -4289,6 +4300,26 @@ initBoardSketch({
 initGrooveTool({
   stopOthers() {
     endResize("tool off");
+    cancelBoard("tool off");
+    cancelMove();
+    cancelAlign();
+    cancelPointAlign();
+    cancelOrient();
+    cancelNose();
+    cancelBedBox();
+    cancelLounge();
+    cancelPlane();
+    cancelMeasure("tool off");
+    cancelFitPick("tool off");
+    endRetype(false);
+    if (placing) { placing = null; rb = null; lshape = null; bunk = null; lastCreated = null; clearPreview(); }
+  },
+  emitMode,
+});
+initMeasure({
+  stopOthers() {
+    endResize("tool off");
+    endGroove("tool off");
     cancelBoard("tool off");
     cancelMove();
     cancelAlign();
@@ -4326,6 +4357,7 @@ canvas.addEventListener("pointerdown", (e) => {
 
   if (boardActive()) { boardPointerDown(e); return; }
   if (grooveActive()) { groovePointerDown(e); return; }
+  if (measureActive()) { measurePointerDown(e); return; }
 
   if (nose) {
     if (nose.step === "ready") noseBegin(e);
@@ -4449,6 +4481,7 @@ canvas.addEventListener("pointermove", (e) => {
   if (cplane) return cplane.step === "pick" ? planeHoverPick(e) : updatePlane(e);
   if (boardActive()) return boardPointerMove(e);
   if (grooveActive()) return groovePointerMove(e);
+  if (measureActive()) return measurePointerMove(e);
 
   if (nose) return nose.step === "ready" ? noseHover(e) : updateNose(e);
   if (bed) return updateBedBox(e);
@@ -4656,6 +4689,7 @@ canvas.addEventListener("pointercancel", (e) => { endDrag(e); endMoveDrag(e); en
 canvas.addEventListener("pointerleave", () => {
   if (placing && !rb) { hideSnapMarker(); hideFaceHint(); hideTip(); }
   if (orient) { const pend = pendingFace(); if (pend) showFaceHint(pend, { tone: "pending" }); else hideFaceHint(); hideTip(); }
+  if (measureActive()) measureLeave();
   if (nose || bed || cplane || lounge || bunk || (lshape && lshape.step !== "box")) hideTip();
   if (bunk || rb) hideBunkNotes();
 });
@@ -4686,6 +4720,7 @@ function cursorFor(handle) {
   else if (cplane && cplane.step === "offset") positionDimInputs(planeBox());
   else if (retype) updateRetype();
   else if (move) layoutMoveTriad();
+  measureTick();
   requestAnimationFrame(tickDims);
 })();
 
@@ -4913,6 +4948,12 @@ window.addEventListener("keydown", (e) => {
     if (e.key === "Escape") { e.preventDefault(); cancelFitPick("esc"); return; }
     return;
   }
+  if (measureActive()) {
+    const plain = !e.ctrlKey && !e.metaKey && !e.altKey;
+    if (e.key === "Escape") { e.preventDefault(); measureEscape(); return; }
+    if (plain && (e.key === "i" || e.key === "I")) { cancelMeasure("key"); return; }
+    if (e.key === "Delete" || e.key === "Backspace") { e.preventDefault(); measureDelete(); return; }
+  }
   if (resize) {
     if (e.key === "Escape" || e.key === "Enter") { e.preventDefault(); if (!resize.drag) endResize(e.key === "Enter" ? "enter" : "esc"); return; }
     if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) { endResize("key"); return; }
@@ -5016,6 +5057,7 @@ window.addEventListener("keydown", (e) => {
 
   if ((e.key === "b" || e.key === "B") && !e.ctrlKey && !e.metaKey && !e.altKey) { startBoard(); return; }
   if ((e.key === "g" || e.key === "G") && !e.ctrlKey && !e.metaKey && !e.altKey) { startGroove(); return; }
+  if ((e.key === "i" || e.key === "I") && !e.ctrlKey && !e.metaKey && !e.altKey) { startMeasure(); return; }
   if ((e.key === "p" || e.key === "P") && !e.ctrlKey) { startPlane(); return; }
   if ((e.key === "s" || e.key === "S") && !e.ctrlKey && !e.metaKey && !e.altKey) { startResize(); return; }
 

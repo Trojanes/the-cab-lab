@@ -87,6 +87,16 @@
           <path d="M2 5 H6.5 V9.5 H9.5 V5 H14 V12 H2 Z"/>
         </svg>
       </button>
+      <button class="tb icon" data-action="measure" title="Measure (I) — click a point or a face, then another · distance, or the angle between two faces · a board face also shows its size · Shift continues · Esc clears" aria-label="Measure">
+        <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round" stroke-linecap="round" aria-hidden="true">
+          <path d="M2.5 12 H13.5"/>
+          <path d="M2.5 9 V12 M13.5 9 V12"/>
+          <path d="M2.5 12 L4.2 10.6 M2.5 12 L4.2 13.4"/>
+          <path d="M13.5 12 L11.8 10.6 M13.5 12 L11.8 13.4"/>
+          <path d="M8 3.2 V7.2"/>
+          <circle cx="8" cy="2.4" r="1" fill="currentColor" stroke="none"/>
+        </svg>
+      </button>
     </div>
 
     <aside id="leftrail">
@@ -97,7 +107,7 @@
       </button>
       <div class="rail-title">Modules</div>
       <div id="moduleList"></div>
-      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face. Overhead starts on a ceiling edge.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · O face · R rotate 90° · F frame · Del remove · Esc cancel</div>
+      <div class="rail-foot">Pick a module: click a point on a face, draw the rectangle, pull it off the face. Overhead starts on a ceiling edge.<br>Tab / digits type sizes · Enter keeps the preset · Shift+click repeats the last size<br>M move · O face · I measure · R rotate 90° · F frame · Del remove · Esc cancel</div>
     </aside>
 
     <main id="center">

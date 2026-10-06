@@ -7,8 +7,8 @@
  *   - Through work (outline, through holes / slots) is cut from any side; when
  *     the milling face is fixed it is listed there (A and B share one (u, v)
  *     frame, so the numbers do not change when a through feature moves face).
- *   - Single-sided door stock (`stock.sides` 1): the colour face lies on the
- *     table, so the milling face is the back.
+ *   - Single-sided door or bench stock (`stock.sides` 1): the colour face lies
+ *     on the table, so the milling face is the back.
  *   - Double-sided / carcass stock: the face that carries the partial-depth
  *     work; with none, "either" — the board may be milled from either face, so
  *     nesting is free to flip it to fit more boards on a sheet. Its through
@@ -55,9 +55,10 @@ function slabRebateFace(b: Board): FaceId | null {
   return null;
 }
 
-/** The colour face of single-sided door stock (it lies on the table), or null. */
+/** The colour face of single-sided door or bench stock (it lies on the table), or null. */
 function colourFaceOf(b: Board, A: Face, B: Face): Face | null {
-  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  const coloured = b.stock?.kind === "door" || b.stock?.kind === "bench";
+  if (!coloured || b.stock?.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
 

@@ -71,6 +71,7 @@ export interface RelationshipDeclaration {
 }
 
 import type { Provenance } from "../_lib/dim.ts";
+import type { BoardRule } from "../_lib/layout.ts";
 
 export interface OverheadCabinetResult {
   params: Required<
@@ -114,6 +115,10 @@ export interface OverheadCabinetResult {
     /** Boards are already in their assembled pose; consumers must not move them. */
     boardFrame: "final";
     dividerCenterlines: number[];
+    /** Placement rules (layout.json, or the draft passed in) of the boards they placed; the other boards are placed in code. */
+    placement?: Record<string, BoardRule>;
+    /** Boards whose outline follows the box, so the bench may edit their placement. */
+    ruleBoards?: string[];
     legacyGeometry?: unknown;
     svgPreview?: string;
     /** Every board face / outline point / feature coordinate with its formula and named terms (see docs/bench-spec.md). */

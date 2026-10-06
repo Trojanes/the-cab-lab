@@ -42,7 +42,7 @@ export function boardPoints(board, prov, features = []) {
     board.cutProfileVector.forEach((p, i) => {
       pts.push({
         kind: "outline",
-        label: `P${i}`,
+        label: "",
         keys: [`${id}.cut[${i}].y`, `${id}.cut[${i}].z`],
         local: [p.y, p.z],
         cabinet: [board.y0 + p.y, board.z0 + p.z],
@@ -54,7 +54,7 @@ export function boardPoints(board, prov, features = []) {
       const q = aligned[i] || {};
       pts.push({
         kind: "outline",
-        label: `P${i}`,
+        label: "",
         keys: [`${id}.pv[${i}].${A}`, `${id}.pv[${i}].${B}`],
         local: [Number(p[A]), Number(p[B])],
         cabinet: [q[A] != null ? q[A] : a0 + Number(p[A]), q[B] != null ? q[B] : b0 + Number(p[B])],
@@ -128,7 +128,7 @@ function featureRects(board, features) {
       if (face.id !== "A" && face.id !== "B") continue;
       for (const f of face.features) {
         if (!Number.isFinite(f.u0) || !Number.isFinite(f.v0)) continue;
-        rects.push({ label: `${face.id} · ${f.id.replace(`${id}_`, "")}`, a0: f.u0, a1: f.u1, b0: f.v0, b1: f.v1 });
+        rects.push({ label: `${face.id} · ${f.id.replace(`${id}_`, "")}`, a0: f.u0, a1: f.u1, b0: f.v0, b1: f.v1, group: f.group || null, depthKey: f.depthKey || null, depth: f.depth, face: face.id });
       }
     }
     return rects;
@@ -158,13 +158,19 @@ function featureRects(board, features) {
  *   labels: show point labels
  *   tryout: { key, value } → dashed marker where the point would move
  *   onPick(point)
+ *   onDrag(point, du, dv)  outline points can be dragged; du / dv in mm along the board's (u, v)
+ *   onPickRect(rect)       a machined rectangle was clicked (rect.group = its logical feature)
+ *   highlightGroup         logical feature to highlight (every segment of it)
+ *   marked                 provenance keys of points to ring (editable control points)
  */
-export function renderBoard2D(container, { board, prov, features = [], frame = "local", selectedKey = null, labels = true, tryout = null, onPick }) {
+export function renderBoard2D(container, { board, prov, features = [], frame = "local", selectedKey = null, labels = true, tryout = null, onPick, onDrag = null, onPickRect = null, highlightGroup = null, marked = null, extraPoints = [] }) {
   container.replaceChildren();
   if (!board) return;
   const [A, B, T] = planeAxes(board.profilePlane);
   const pts = boardPoints(board, prov, features);
   const outline = pts.filter((p) => p.kind === "outline");
+  // Control points that are not outline vertices (a corner a notch cut away): drawn and draggable, not part of the path.
+  pts.push(...extraPoints);
   const use = (p) => (frame === "cabinet" ? p.cabinet : p.local);
 
   // Extent from everything we draw.
@@ -206,9 +212,13 @@ export function renderBoard2D(container, { board, prov, features = [], frame = "
   const offA = frame === "cabinet" ? a0 : 0;
   const offB = frame === "cabinet" ? b0 : 0;
   for (const rc of featureRects(board, features)) {
-    svg.append(el("rect", {
-      class: "b2d-bbox", x: X(rc.a0 + offA), y: Y(rc.b1 + offB), width: (rc.a1 - rc.a0) * scale, height: (rc.b1 - rc.b0) * scale,
-    }));
+    const hl = highlightGroup && rc.group === highlightGroup;
+    const r = el("rect", {
+      class: `b2d-bbox${rc.group ? " b2d-feat" : ""}${hl ? " hl" : ""}`, x: X(rc.a0 + offA), y: Y(rc.b1 + offB), width: (rc.a1 - rc.a0) * scale, height: (rc.b1 - rc.b0) * scale,
+    });
+    if (rc.group) r.dataset.group = rc.group;
+    if (onPickRect) r.addEventListener("click", (e) => { e.stopPropagation(); onPickRect(rc); });
+    svg.append(r);
     svg.append(el("text", { class: "b2d-lbl", x: X(rc.a0 + offA) + 3, y: Y(rc.b1 + offB) + 10, text: rc.label }));
   }
 
@@ -231,11 +241,35 @@ export function renderBoard2D(container, { board, prov, features = [], frame = "
     if (p.kind === "feature" && p.radius) {
       g.append(el("circle", { class: "b2d-bbox", cx: X(pa), cy: Y(pb), r: p.radius * scale }));
     }
-    const c = el("circle", { class: `b2d-pt ${p.kind}${sel ? " sel" : ""}`, cx: X(pa), cy: Y(pb), r: sel ? r + 1.5 : r });
-    c.addEventListener("click", (e) => { e.stopPropagation(); onPick && onPick(p); });
-    c.append(el("title", { text: `${p.label}  ${A} ${fmt(pa)} · ${B} ${fmt(pb)}` }));
+    const isMarked = p.kind === "control" || (marked && p.keys.some((k) => k && marked.has(k)));
+    const c = el("circle", { class: `b2d-pt ${p.kind}${sel ? " sel" : ""}${isMarked ? " ctrl" : ""}`, cx: X(pa), cy: Y(pb), r: sel ? r + 1.5 : isMarked ? r + 1 : r });
+    if (onDrag && (p.kind === "outline" || p.kind === "control")) {
+      // Drag in the board's plane; a press without movement is a pick.
+      c.addEventListener("pointerdown", (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+        const sx = e.clientX, sy = e.clientY;
+        const bx = Number(c.getAttribute("cx")), by = Number(c.getAttribute("cy"));
+        const rect = svg.getBoundingClientRect();
+        const k = rect.width ? w / rect.width : 1; // client px → viewBox units
+        const move = (ev) => { c.setAttribute("cx", String(bx + (ev.clientX - sx) * k)); c.setAttribute("cy", String(by + (ev.clientY - sy) * k)); };
+        const up = (ev) => {
+          window.removeEventListener("pointermove", move);
+          window.removeEventListener("pointerup", up);
+          const dx = (ev.clientX - sx) * k, dy = (ev.clientY - sy) * k;
+          if (Math.hypot(dx, dy) < 3) { onPick && onPick(p); return; }
+          onDrag(p, dx / scale, -dy / scale);
+        };
+        window.addEventListener("pointermove", move);
+        window.addEventListener("pointerup", up);
+      });
+      c.addEventListener("click", (e) => e.stopPropagation());
+    } else {
+      c.addEventListener("click", (e) => { e.stopPropagation(); onPick && onPick(p); });
+    }
+    c.append(el("title", { text: p.label ? `${p.label}  ${A} ${fmt(pa)} · ${B} ${fmt(pb)}` : `${A} ${fmt(pa)} · ${B} ${fmt(pb)}` }));
     g.append(c);
-    if (labels && (p.kind !== "corner" || sel)) {
+    if (labels && p.label && (p.kind !== "corner" || sel)) {
       g.append(el("text", { class: `b2d-lbl${sel ? " sel" : ""}`, x: X(pa) + r + 3, y: Y(pb) - r - 1, text: p.label }));
     }
     svg.append(g);

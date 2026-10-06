@@ -31,6 +31,8 @@ contextBridge.exposeInMainWorld("cablab", {
     writePresets: (moduleId, text) => ipcRenderer.invoke("bench:presets:write", moduleId, text),
     readRules: (moduleId) => ipcRenderer.invoke("bench:rules:read", moduleId),
     writeRule: (moduleId, name, value) => ipcRenderer.invoke("bench:rules:write", moduleId, name, value),
+    readLayout: (moduleId) => ipcRenderer.invoke("bench:layout:read", moduleId),
+    writeLayout: (moduleId, text) => ipcRenderer.invoke("bench:layout:write", moduleId, text),
     rebuild: (moduleId) => ipcRenderer.invoke("bench:rebuild", moduleId),
     writeReport: (moduleId, markdown) => ipcRenderer.invoke("bench:report:write", moduleId, markdown),
     openReports: () => ipcRenderer.invoke("bench:report:open"),

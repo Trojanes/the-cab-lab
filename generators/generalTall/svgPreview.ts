@@ -36,6 +36,7 @@ export const GT_ZONE_LABELS: Record<string, string> = {
   top_flap: "Top flap",
   bottom_flap: "Bottom flap",
   blank_panel: "Blank panel",
+  fixed_panel: "Fixed panel",
 };
 
 

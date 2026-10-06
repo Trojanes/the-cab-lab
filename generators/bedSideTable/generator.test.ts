@@ -102,8 +102,17 @@ function testProvenance() {
       assert.equal(round1(e.value), b[f], `${b.id}.${f}`);
     }
   }
-  assert.ok(L.debug.provenance.entries["SIDE_BED.pv[2].z"]);
-  assert.ok(L.debug.provenance.entries["SHELF_MID.pv[3].x"]);
+  for (const b of L.boards) {
+    const pv = b.profileVector as Array<Record<string, number>> | undefined;
+    if (!pv) continue;
+    pv.forEach((p, i) => {
+      for (const axis of Object.keys(p)) {
+        const e = L.debug.provenance.entries[`${b.id}.pv[${i}].${axis}`];
+        assert.ok(e, `${b.id}.pv[${i}].${axis}`);
+        assert.equal(round1(e.value), round1(p[axis]!), `${b.id}.pv[${i}].${axis}`);
+      }
+    });
+  }
 }
 
 function testShelfClamps() {

@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { scene, camera, activeCamera, canvas } from "./space.js";
 import { doorBodyMaterial, grainAxisOf } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
-import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden } from "./job.js";
+import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden, conflictIds } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
 import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry } from "./boardGeom.js";
@@ -147,6 +147,13 @@ export function applyPose(group, pose) {
 }
 
 function buildGroup(cab) {
+  if (cab.id === sketchEditingId) {
+    const group = new THREE.Group();
+    group.name = cab.id;
+    group.userData = { cabId: cab.id };
+    applyPose(group, cab.pose);
+    return group;
+  }
   const result = resultFor(cab.id);
   const env = envelopeBox(cab, result);
   const selected = cab.id === getSelectedId();
@@ -244,7 +251,8 @@ function buildGroup(cab) {
     group.add(ghost);
   }
 
-  const fits = poseFits(cab, cab.pose);
+  // A neighbour another cabinet grew into (renderer/yield.js) is red until it yields or the other one goes back.
+  const fits = poseFits(cab, cab.pose) && !conflictIds().has(cab.id);
   const mod = getModule(cab.moduleId);
   // The blue envelope is only there while this box is being dragged. A box that
   // does not fit keeps its red frame so the error stays visible.
@@ -480,6 +488,12 @@ function refId(o) {
   if (!id) { id = nextRefId++; refIds.set(o, id); }
   return id;
 }
+let sketchEditingId = null;
+/** Hide one drawn board while its sketch is open. Not stored on the cabinet. */
+export function setSketchEditing(id) {
+  sketchEditingId = id || null;
+}
+
 function buildKey(cab) {
   const selected = cab.id === getSelectedId();
   const sub = selected ? getSubSelection() : null;
@@ -494,6 +508,8 @@ function buildKey(cab) {
     resizeFace && resizeFace.cabId === cab.id ? `${resizeFace.axis}${resizeFace.dir}` : "",
     armedHandle && armedHandle.cabId === cab.id ? armedHandle.type : "",
     envelopeDragId === cab.id ? "drag" : "",
+    conflictIds().has(cab.id) ? "conflict" : "",
+    sketchEditingId === cab.id ? "sketch-edit" : "",
   ].join("|");
 }
 const builtKeys = new Map();

@@ -20,6 +20,13 @@ export function doorColourOf(params: { doorColorName?: unknown; doorColor?: unkn
   return String(raw || "").trim() || DEFAULT_DOOR_COLOUR;
 }
 
+/** Lower door colour (job colour B). Missing, or a one-colour job, uses the upper colour. */
+export function doorColourBOf(params: { doorColorNameB?: unknown; doorColorB?: unknown; doorColorName?: unknown; doorColor?: unknown } | null | undefined): string {
+  const raw = params ? params.doorColorNameB || params.doorColorB : "";
+  const name = String(raw || "").trim();
+  return name || doorColourOf(params);
+}
+
 export function doorSidesOf(params: { doorSides?: unknown } | null | undefined): DoorSides {
   return params && params.doorSides === "double" ? "double" : "single";
 }

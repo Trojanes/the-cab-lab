@@ -12,6 +12,8 @@
  *   door → params.doorSeries (acrylic | hpl), the colour face's name, sides
  *     acrylic-gloss-white-1s-16
  *     hpl-chestnut-1s-16
+ *   bench → hpl, the colour face's name, single-sided, its own thickness
+ *     hpl-chestnut-1s-25
  *
  * `colorName` is the display name. `grained` is true for textured HPL; Felt
  * Grey is the HPL decor with no grain direction (renderer/doorSwatches.js).
@@ -54,6 +56,7 @@ function thicknessToken(mm: number): string {
 }
 
 function seriesOf(board: Board, params: SheetParams | null | undefined): SheetSeries {
+  if (board.stock?.kind === "bench") return "hpl";
   if (board.stock?.kind === "door") return params && params.doorSeries === "hpl" ? "hpl" : "acrylic";
   return "pvc";
 }

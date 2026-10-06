@@ -669,6 +669,20 @@ function resolveZones(inputs: OverheadCabinetInputs): FunctionZone[] {
  * (full at the cabinet edges, half between two fronts); Z from 30 below the
  * carcass to 1 under the top rails. Faces recorded as `FP<i>.x0` … `.z1`.
  */
+/**
+ * Divider centre lines, named XD0…XDn. The two ends are CPT / 2 and Cw − CPT / 2.
+ * Each internal one is the zone boundary it stands on; its formula is its own name,
+ * so a front can say `XD1 + clearance / 2` instead of a bare millimetre value.
+ */
+function recordCenterlines(centers: number[], Cw: Term, CPT: Term): void {
+  centers.forEach((at, i) => {
+    const key = `XD${i}`;
+    if (i === 0) dim(key, { CPT }, (t) => t.CPT / 2);
+    else if (i === centers.length - 1) dim(key, { Cw, CPT }, (t) => t.Cw - t.CPT / 2);
+    else dim(key, { at }, (t) => t.at, { formula: key });
+  });
+}
+
 function frontPanels(inputs: OverheadCabinetInputs, zones: FunctionZone[], centers: number[]): FrontPanelFeature[] {
   const fgWidth = inputs.featureWidth ?? DIVIDER_THICKNESS_MM;
   const clearance = inputs.clearance ?? R.DEFAULT_CLEARANCE_MM.value;
@@ -688,12 +702,14 @@ function frontPanels(inputs: OverheadCabinetInputs, zones: FunctionZone[], cente
       // Full clearance at the cabinet edges, half between two fronts.
       const leftEdge = zone.x0 <= 0;
       const rightEdge = zone.x1 >= inputs.cabinetWidth;
+      const leftXd = `XD${index}`;
+      const rightXd = `XD${index + 1}`;
       const x0 = leftEdge
-        ? dim(K("x0"), { zoneX0: zone.x0, clearance: CL }, (t) => t.zoneX0 + t.clearance)
-        : dim(K("x0"), { zoneX0: zone.x0, clearance: CL }, (t) => t.zoneX0 + t.clearance / 2);
+        ? dim(K("x0"), { clearance: CL }, (t) => t.clearance)
+        : dim(K("x0"), { [leftXd]: ref(leftXd), clearance: CL }, (t) => t[leftXd]! + t.clearance / 2, { formula: `${leftXd} + clearance / 2` });
       const x1 = rightEdge
-        ? dim(K("x1"), { zoneX1: zone.x1, clearance: CL }, (t) => t.zoneX1 - t.clearance)
-        : dim(K("x1"), { zoneX1: zone.x1, clearance: CL }, (t) => t.zoneX1 - t.clearance / 2);
+        ? dim(K("x1"), { Cw: param({ Cw: inputs.cabinetWidth }).Cw, clearance: CL }, (t) => t.Cw - t.clearance)
+        : dim(K("x1"), { [rightXd]: ref(rightXd), clearance: CL }, (t) => t[rightXd]! - t.clearance / 2, { formula: `${rightXd} - clearance / 2` });
       const y0 = dim(K("y0"), { FPT }, (t) => -t.FPT);
       const y1 = dim(K("y1"), {}, () => 0, { formula: "0" });
       const z0 = dim(K("z0"), {}, () => -30, { formula: "-30" });
@@ -761,6 +777,9 @@ function buildLegacyGeometry(inputs: OverheadCabinetInputs, centers: number[]): 
   const frontPanelThickness = inputs.frontPanelThickness ?? R.DEFAULT_FRONT_PANEL_THICKNESS_MM.value;
   const dntgH = inputs.dividerTongueHeight ?? fgWidth / 2 - 0.5;
   const zones = resolveZones(inputs);
+  const P0 = paramTerms(inputs);
+  const CPT0 = orRule(inputs.featureWidth, "CPT", R.DIVIDER_THICKNESS_MM);
+  recordCenterlines(centers, P0.Cw, CPT0);
   const panels = frontPanels(inputs, zones, centers);
   const dividerIds = centers.map((_, index) => `D${index}`);
 

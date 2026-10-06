@@ -117,8 +117,17 @@ function testLedChannels() {
 }
 
 function testProvenance() {
-  const entries = (gen().debug.provenance as { entries: Record<string, unknown> }).entries;
+  const r = gen();
+  const entries = r.debug.provenance.entries as Record<string, { value: number; formula?: string }>;
   for (const k of ["body.y0", "bed.x0", "mattress.length", "top.T3.z1", "OHC_BP.z0", "BB_SIDE_IN.x0"]) assert.ok(entries[k], `${k} recorded`);
+  for (const b of r.boards) {
+    for (const f of ["x0", "x1", "y0", "y1", "z0", "z1"] as const) {
+      const e = entries[`${b.id}.${f}`];
+      assert.ok(e, `${b.id}.${f} has no provenance`);
+      assert.ok(Math.abs(e.value - b[f]) <= 0.051, `${b.id}.${f} ${e?.value} vs ${b[f]}`);
+    }
+  }
+  assert.equal(entries["BOOT_DECK.z0"]!.formula, "BH - deck");
 }
 
 const tests = { testPresetsPinned, testMatchesBedroom1, testLayout, testWardrobeAndMattress, testShortMattressWarns, testUnderTheRoof, testOverhead, testLockSlots, testLedChannels, testProvenance };

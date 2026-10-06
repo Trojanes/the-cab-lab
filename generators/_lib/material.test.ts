@@ -71,6 +71,20 @@ assert.equal(decorSlug("White Stipple"), "white-stipple");
   const felt = sheetMaterial(hpl, { doorSeries: "hpl", doorColorName: "Felt Grey" });
   assert.equal(felt.materialId, "hpl-felt-grey-1s-16");
   assert.equal(felt.grained, false);
+
+  const bench = board({
+    materialThickness: 25, profilePlane: "XY", thicknessAxis: "Z",
+    x0: 0, x1: 887, y0: -36, y1: 254, z0: 880, z1: 905,
+    stock: { kind: "bench", thickness: 25, sides: 1, colour: "Chestnut" },
+  });
+  attachFaces([bench]);
+  const face = bench.faces!.find((f) => f.id === "A")!;
+  face.visible = true;
+  face.finish = { colour: "Chestnut" };
+  const sheet = sheetMaterial(bench, { doorSeries: "acrylic", doorColorName: "Gloss White" });
+  assert.equal(sheet.materialId, "hpl-chestnut-1s-25");
+  assert.equal(sheet.series, "hpl");
+  assert.equal(sheet.grained, true);
 }
 
 {

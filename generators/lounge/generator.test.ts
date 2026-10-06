@@ -232,7 +232,7 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   const f = generateLounge({
     style: "PARALLEL", height: 420, partitionPanelThickness: 18, totalWidth: 1880, singleLoungeWidth: 560, depth: 900,
     wheelAvoidanceEnabled: true, avoidanceDepth: 380, avoidanceHeight: 270,
-    hasMiddleCabinet: true, middleCabinet: { width: 502, depth: 270, height: 457, startHeight: 319 },
+    hasMiddleCabinet: true, middleCabinet: { width: 502, depth: 270, height: 457, startHeight: 319 /* ignored: on the cover */ },
   });
   const fb = (id: string) => { const x = f.boards.find((q) => q.id === id); assert.ok(x, `missing ${id}`); return x!; };
   const fp = (id: string) => { const x = fb(id); const q = (v: number) => Math.round(v * 100) / 100; return { x0: q(x.x0), x1: q(x.x1), y0: q(x.y0), y1: q(x.y1), z0: q(x.z0), z1: q(x.z1) }; };
@@ -260,9 +260,12 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.ok(pts("left_inner_support").includes("520,270") && pts("left_outer_support").includes("881,270"), "supports cut round the cover");
   assert.deepEqual(fp("parallel_avoidance_top"), { x0: 0, x1: 1880, y0: 520, y1: 900, z0: 252, z1: 270 });
   // Middle cabinet: centred, 16 stock, divider 15 carcass, lock 30.5 under the divider and 30 + 35 from the meeting edge.
-  assert.deepEqual(fp("middle_cabinet_bottom"), { x0: 689, x1: 1191, y0: 630, y1: 900, z0: 319, z1: 335 });
-  assert.deepEqual(fp("middle_cabinet_mid_divider"), { x0: 705, x1: 1175, y0: 646, y1: 900, z0: 540, z1: 555 });
-  assert.deepEqual(f.locks.map((l) => [l.panelId, l.centerX, l.centerZ]), [["middle_cabinet_left_door", 874, 509.5], ["middle_cabinet_right_door", 1006, 509.5]]);
+  // It stands on the wheel-arch cover's top (270): width, depth and height are all it takes.
+  assert.deepEqual(fp("middle_cabinet_bottom"), { x0: 689, x1: 1191, y0: 630, y1: 900, z0: 270, z1: 286 });
+  assert.deepEqual(fp("middle_cabinet_top"), { x0: 689, x1: 1191, y0: 630, y1: 900, z0: 711, z1: 727 });
+  assert.deepEqual(fp("middle_cabinet_mid_divider"), { x0: 705, x1: 1175, y0: 646, y1: 900, z0: 491, z1: 506 });
+  assert.deepEqual(f.locks.map((l) => [l.panelId, l.centerX, l.centerZ]), [["middle_cabinet_left_door", 874, 460.5], ["middle_cabinet_right_door", 1006, 460.5]]);
+  assert.deepEqual(f.params.middleCabinet, { width: 502, depth: 270, height: 457, startHeight: 270 });
   const groove = f.grooves.find((g) => g.boardId === "middle_cabinet_left")!;
   assert.deepEqual([groove.v0, groove.v1, groove.depth], [204.5, 220.5, 7.5]);
   // Bands.
@@ -282,7 +285,7 @@ assert.equal(par.boards.find((x) => x.id === "right_front")?.category, "front_pa
   assert.equal(bare.boards.find((q) => q.id === "left_rear_rail")!.z0, 302);
   assert.ok(bare.boards.find((q) => q.id === "left_rear_rail")!.faces!.some((q) => q.normal === "-Z" && q.finish?.edgeBand));
   // Middle cabinet on by default when the gap takes 300: rule width 600, or the gap when narrower.
-  assert.deepEqual(bare.params.middleCabinet, { width: 600, depth: 350, height: 500, startHeight: 300 });
+  assert.deepEqual(bare.params.middleCabinet, { width: 600, depth: 350, height: 500, startHeight: 0 }, "no cover: on the floor");
   const narrow = generateLounge({ style: "PARALLEL", totalWidth: 1600, singleLoungeWidth: 560, depth: 900 });
   assert.equal(narrow.params.middleCabinet!.width, 480);
   assert.equal(generateLounge({ style: "PARALLEL", totalWidth: 1300, singleLoungeWidth: 560, depth: 900 }).params.middleCabinet, null);

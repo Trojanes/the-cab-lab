@@ -52,6 +52,21 @@ const ok = (mod, params, what) => {
   const left = mod.resizeFace(p, { axis: "x", dir: -1 }, 1100);
   assert(left.zones.at(-1).width === w0.at(-1) && sum(left.zones.map((z) => z.width)) === 1100, "ohc: left push trims the left bay only");
   ok(mod, left, "ohc left");
+  assert(mod.zoneTypes.some((t) => t.id === "rangehood_flap"), "ohc: range hood is a zone type");
+  const hood = {
+    ...mod.defaults(1000, 400, 400),
+    rangehoodPreset: "NCE",
+    rangehoodClearHeight: 75,
+    rangehoodAlignment: "left",
+    rangehoodEdgeOffsetX: 40,
+    zones: [{ id: "rangehood", type: "rangehood_flap", width: 1000 }],
+  };
+  const hoodResult = mod.generate(hood);
+  assert(hoodResult.validation.errors.length === 0, `ohc hood: ${JSON.stringify(hoodResult.validation.errors)}`);
+  assert(hoodResult.boards.some((b) => b.id === "RGHD_TOP"), "ohc hood: top board");
+  assert(hoodResult.boards.some((b) => b.id === "RGHD_FRONT") && hoodResult.boards.some((b) => b.id === "RGHD_BACK"), "ohc hood: front and back");
+  const cut = hoodResult.features.find((f) => f && f.type === "rangehood_bp_cutout");
+  assert(cut && cut.x[0] === 55 && cut.x[1] === 610 && cut.y[0] === 57.5 && cut.y[1] === 342.5, "ohc hood: NCE opening");
 }
 
 // Kitchen: a side face adds a door column (hinge on the pulled side); the top face adds a zone on each column.
@@ -68,9 +83,42 @@ const ok = (mod, params, what) => {
   const narrow = mod.resizeFace(wide, { axis: "x", dir: 1 }, 1000);
   assert(narrow.columns.length === 1 && narrow.columns[0].width === 1000, "kitchen: a 113 column merges into its neighbour");
   ok(mod, narrow, "kitchen narrow");
+  assert(mod.zoneTypes.some((t) => t.id === "stove") && !mod.zoneTypes.some((t) => t.id === "unassigned"), "kitchen lists a stove and not an unassigned zone");
+  const ensuite = MODULES.ensuiteCabinet;
+  assert(ensuite && !ensuite.zoneTypes.some((t) => t.id === "stove"), "ensuite has no stove type");
+  ok(ensuite, ensuite.defaults(887, 270, 880), "ensuite defaults");
+  const refused = ensuite.generate({
+    ...ensuite.defaults(900, 400, 880),
+    columns: [
+      { id: "c1", width: 900, zones: [{ id: "st", height: 810, zoneType: "stove" }] },
+    ],
+  });
+  assert(refused.validation.errors.some((e) => e.includes("Ensuite has no stove")), `ensuite stove: ${JSON.stringify(refused.validation.errors)}`);
   const tall = mod.resizeFace(p, { axis: "z", dir: 1 }, 1080);
   assert(tall.columns[0].zones.length === 2 && tall.columns[0].zones[0].height === 200, "kitchen: new top zone");
   ok(mod, tall, "kitchen tall");
+  const s1 = mod.generate(mod.defaults(887, 270, 880));
+  const s2 = mod.generate({ ...mod.defaults(887, 270, 880), bottomClearanceStyle: "style_2" });
+  const b1 = (r) => r.boards.find((b) => b.id === "B1");
+  assert(b1(s1) && b1(s2) && b1(s1).y0 !== b1(s2).y0, "kick style 2 moves the kick face");
+  const sided = mod.defaults(887, 270, 880);
+  sided.columns[0].zones[0].leftSidePanelOptions = {
+    panelType: "door", frontVisible: true, bchNotchEnabled: true,
+    grooveVisible: true, extendT2T3B4ToOuterFace: true, strengtheningStripEnabled: true,
+  };
+  const strip = mod.generate(sided);
+  assert(strip.boards.some((b) => b.id.startsWith("left-side-strengthening-strip")), "end strip when the front is visible");
+}
+
+{
+  const mod = MODULES.overheadCabinet;
+  const off = mod.defaults(1200, 400, 400);
+  assert(off.ledGroove === false, "a new overhead stores the LED groove off");
+  assert(!mod.generate(off).features.some((f) => f && f.type === "t3_groove"), "stored off cuts no T3 groove");
+  assert(mod.generate({ ...off, ledGroove: true }).features.some((f) => f && f.type === "t3_groove"), "turning the groove on cuts T3");
+  const legacy = { ...off };
+  delete legacy.ledGroove;
+  assert(mod.generate(legacy).features.some((f) => f && f.type === "t3_groove"), "a missing flag still cuts the groove");
 }
 
 // General tall: top face scales the zones.

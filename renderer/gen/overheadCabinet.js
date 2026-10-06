@@ -42,6 +42,9 @@ function ref(key) {
   if (!entry) throw new Error(`dim ref: unknown key "${key}" (record it before referencing it)`);
   return { __ref: true, key, value: entry.value };
 }
+function valueOf(key) {
+  return active.entries[key]?.value ?? NaN;
+}
 function formulaOf(fn, override) {
   if (override) return override;
   const src = fn.toString();
@@ -144,38 +147,38 @@ function defineRules(module, raw) {
 
 // generators/overheadCabinet/rules.json
 var rules_default = {
-  DIVIDER_THICKNESS_MM: { value: 15, doc: "Carcass / divider board thickness (CPT) when the params give none." },
-  FEATURE_CLEARANCE_MM: { value: 1, doc: "Extra width added to CPT for grooves and notches a board slides into (slot = CPT + this)." },
-  DEFAULT_ROUTER_DIAMETER_MM: { value: 10, doc: "Router bit diameter assumed for grooves." },
-  BOTTOM_THICKNESS_MM: { value: 15, doc: "Bottom panel thickness for the legacy XD-based entry points." },
-  T1_HEIGHT_MM: { value: 40, doc: "Top clearance height (TCH) when the params give none: height of the hidden top rails T1/T2." },
-  T3_DEPTH_MM: { value: 90, doc: "Top rear panel T3: depth from the carcass front, mm. Sits in the divider front step." },
-  T3_THICKNESS_MM: { value: 15, doc: "T3 thickness (legacy preview only)." },
-  T3_NOTCH_DEPTH_MM: { value: 20, doc: "Depth of the T3 notch that clears each divider." },
-  T4_THICKNESS_MM: { value: 15, doc: "T4 thickness (legacy preview only)." },
-  T4_HEIGHT_MM: { value: 50, doc: "Height of the vertical top plate T4 on the divider rear notches." },
-  T4_NOTCH_HEIGHT_MM: { value: 20, doc: "Height of the T4 notch that clears each divider." },
-  T4_SCREW_HOLE_NOTCH_CLEARANCE_MM: { value: 8, doc: "T4 screw hole: clearance above the notch." },
-  T4_SCREW_HOLE_UP_SHIFT_MM: { value: 10, doc: "T4 screw hole: additional upward shift." },
-  FRONT_TOP_NOTCH_Y_OFFSET_MM: { value: 70, doc: "Divider front top notch: start Y from the carcass front (style 1)." },
-  FRONT_TOP_STEP_Y_MM: { value: 10, doc: "Divider front step: run in Y past the notch offset." },
-  SCREW_HOLE_DIAMETER_MM: { value: 3, doc: "Panel screw pilot hole diameter." },
-  SCREW_HOLE_DEPTH_MM: { value: 15, doc: "Panel screw pilot hole depth." },
-  DEFAULT_FRONT_PANEL_THICKNESS_MM: { value: 16, doc: "Door / front panel thickness (FPT) when the params give none." },
-  DEFAULT_CLEARANCE_MM: { value: 2.5, doc: "Gap between neighbouring fronts and at the cabinet edges when the params give none." },
-  DEFAULT_HINGE_HOLE_DIAMETER_MM: { value: 35, doc: "Hinge cup hole diameter." },
-  DEFAULT_HINGE_HOLE_DEPTH_MM: { value: 12, doc: "Hinge cup hole depth." },
-  DEFAULT_HINGE_HOLE_FROM_TOP_MM: { value: 22.5, doc: "Hinge cup centre from the top edge of an up flap." },
-  DEFAULT_HINGE_HOLE_FROM_SIDE_MM: { value: 100, doc: "Hinge cup centre from each side edge of an up flap." },
-  LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED insert groove width (shared with General Tall / Kitchen / Fridge)." },
-  LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED insert groove depth." },
-  LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "Clear strip from the T3 front edge to the near wall of the main LED channel." },
-  LED_GROOVE_BRANCH_END_INSET_MM: { value: 80, doc: "LED T-branch centres inset from each X end of T3." },
-  RANGEHOOD_CUTOUT_WIDTH_MM: { value: 555, doc: "NCE rangehood: BP cutout width." },
-  RANGEHOOD_CUTOUT_DEPTH_MM: { value: 285, doc: "NCE rangehood: BP cutout depth." },
-  RANGEHOOD_MIN_EDGE_MM: { value: 40, doc: "NCE rangehood: minimum material left around the cutout." },
-  RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM: { value: 75, doc: "NCE rangehood: clear height from BP top to the insert top when the params give none." },
-  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges." }
+  DIVIDER_THICKNESS_MM: { value: 15, doc: "Carcass / divider board thickness (CPT) when the params give none.", label: "\u9ED8\u8BA4\u67DC\u8EAB\u677F\u539A" },
+  FEATURE_CLEARANCE_MM: { value: 1, doc: "Extra width added to CPT for grooves and notches a board slides into (slot = CPT + this).", label: "\u69FD\u53E3\u5BBD\u5EA6\u4F59\u91CF" },
+  DEFAULT_ROUTER_DIAMETER_MM: { value: 10, doc: "Router bit diameter assumed for grooves.", label: "\u94E3\u5200\u76F4\u5F84" },
+  BOTTOM_THICKNESS_MM: { value: 15, doc: "Bottom panel thickness for the legacy XD-based entry points.", label: "\u5E95\u677F\u539A\uFF08\u65E7\u63A5\u53E3\uFF09" },
+  T1_HEIGHT_MM: { value: 40, doc: "Top clearance height (TCH) when the params give none: height of the hidden top rails T1/T2.", label: "\u9ED8\u8BA4\u9876\u90E8\u9884\u7559" },
+  T3_DEPTH_MM: { value: 90, doc: "Top rear panel T3: depth from the carcass front, mm. Sits in the divider front step.", label: "T3 \u6DF1\u5EA6" },
+  T3_THICKNESS_MM: { value: 15, doc: "T3 thickness (legacy preview only).", label: "T3 \u539A\uFF08\u65E7\u9884\u89C8\uFF09" },
+  T3_NOTCH_DEPTH_MM: { value: 20, doc: "Depth of the T3 notch that clears each divider.", label: "T3 \u7F3A\u53E3\u6DF1\u5EA6" },
+  T4_THICKNESS_MM: { value: 15, doc: "T4 thickness (legacy preview only).", label: "T4 \u539A\uFF08\u65E7\u9884\u89C8\uFF09" },
+  T4_HEIGHT_MM: { value: 50, doc: "Height of the vertical top plate T4 on the divider rear notches.", label: "T4 \u9AD8\u5EA6" },
+  T4_NOTCH_HEIGHT_MM: { value: 20, doc: "Height of the T4 notch that clears each divider.", label: "T4 \u7F3A\u53E3\u9AD8\u5EA6" },
+  T4_SCREW_HOLE_NOTCH_CLEARANCE_MM: { value: 8, doc: "T4 screw hole: clearance above the notch.", label: "T4 \u87BA\u4E1D\u5B54\u79BB\u7F3A\u53E3" },
+  T4_SCREW_HOLE_UP_SHIFT_MM: { value: 10, doc: "T4 screw hole: additional upward shift.", label: "T4 \u87BA\u4E1D\u5B54\u4E0A\u79FB" },
+  FRONT_TOP_NOTCH_Y_OFFSET_MM: { value: 70, doc: "Divider front top notch: start Y from the carcass front (style 1).", label: "\u5206\u9694\u677F\u524D\u9876\u7F3A\u53E3\u8D77\u70B9" },
+  FRONT_TOP_STEP_Y_MM: { value: 10, doc: "Divider front step: run in Y past the notch offset.", label: "\u5206\u9694\u677F\u524D\u53F0\u9636\u5EF6\u4F38" },
+  SCREW_HOLE_DIAMETER_MM: { value: 3, doc: "Panel screw pilot hole diameter.", label: "\u87BA\u4E1D\u5BFC\u5B54\u76F4\u5F84" },
+  SCREW_HOLE_DEPTH_MM: { value: 15, doc: "Panel screw pilot hole depth.", label: "\u87BA\u4E1D\u5BFC\u5B54\u6DF1" },
+  DEFAULT_FRONT_PANEL_THICKNESS_MM: { value: 16, doc: "Door / front panel thickness (FPT) when the params give none.", label: "\u9ED8\u8BA4\u95E8\u677F\u539A" },
+  DEFAULT_CLEARANCE_MM: { value: 2.5, doc: "Gap between neighbouring fronts and at the cabinet edges when the params give none.", label: "\u9ED8\u8BA4\u95E8\u7F1D" },
+  DEFAULT_HINGE_HOLE_DIAMETER_MM: { value: 35, doc: "Hinge cup hole diameter.", label: "\u94F0\u94FE\u676F\u5B54\u76F4\u5F84" },
+  DEFAULT_HINGE_HOLE_DEPTH_MM: { value: 12, doc: "Hinge cup hole depth.", label: "\u94F0\u94FE\u676F\u5B54\u6DF1" },
+  DEFAULT_HINGE_HOLE_FROM_TOP_MM: { value: 22.5, doc: "Hinge cup centre from the top edge of an up flap.", label: "\u94F0\u94FE\u676F\u8DDD\u9876" },
+  DEFAULT_HINGE_HOLE_FROM_SIDE_MM: { value: 100, doc: "Hinge cup centre from each side edge of an up flap.", label: "\u94F0\u94FE\u676F\u8DDD\u4FA7" },
+  LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED insert groove width (shared with General Tall / Kitchen / Fridge).", label: "LED \u69FD\u5BBD" },
+  LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED insert groove depth.", label: "LED \u69FD\u6DF1" },
+  LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "Clear strip from the T3 front edge to the near wall of the main LED channel.", label: "LED \u4E3B\u69FD\u524D\u4FA7\u7559\u6599" },
+  LED_GROOVE_BRANCH_END_INSET_MM: { value: 80, doc: "LED T-branch centres inset from each X end of T3.", label: "LED \u652F\u69FD\u8DDD\u677F\u7AEF" },
+  RANGEHOOD_CUTOUT_WIDTH_MM: { value: 555, doc: "NCE rangehood: BP cutout width.", label: "\u6CB9\u70DF\u673A\u5F00\u5B54\u5BBD" },
+  RANGEHOOD_CUTOUT_DEPTH_MM: { value: 285, doc: "NCE rangehood: BP cutout depth.", label: "\u6CB9\u70DF\u673A\u5F00\u5B54\u6DF1" },
+  RANGEHOOD_MIN_EDGE_MM: { value: 40, doc: "NCE rangehood: minimum material left around the cutout.", label: "\u6CB9\u70DF\u673A\u6700\u5C0F\u8FB9\u7F18\u7559\u6599" },
+  RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM: { value: 75, doc: "NCE rangehood: clear height from BP top to the insert top when the params give none.", label: "\u6CB9\u70DF\u673A\u9ED8\u8BA4\u51C0\u7A7A\u9AD8\u5EA6" },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges.", label: "\u5C01\u8FB9\u539A" }
 };
 
 // generators/overheadCabinet/rules.ts
@@ -534,6 +537,14 @@ function resolveZones(inputs) {
     x1: boundaries[index + 1]
   }));
 }
+function recordCenterlines(centers, Cw, CPT) {
+  centers.forEach((at, i) => {
+    const key = `XD${i}`;
+    if (i === 0) dim(key, { CPT }, (t) => t.CPT / 2);
+    else if (i === centers.length - 1) dim(key, { Cw, CPT }, (t) => t.Cw - t.CPT / 2);
+    else dim(key, { at }, (t) => t.at, { formula: key });
+  });
+}
 function frontPanels(inputs, zones, centers) {
   const fgWidth = inputs.featureWidth ?? DIVIDER_THICKNESS_MM;
   const clearance = inputs.clearance ?? RULES.DEFAULT_CLEARANCE_MM.value;
@@ -551,8 +562,10 @@ function frontPanels(inputs, zones, centers) {
     const openingX1 = centers[index + 1] - fgWidth / 2;
     const leftEdge = zone.x0 <= 0;
     const rightEdge = zone.x1 >= inputs.cabinetWidth;
-    const x0 = leftEdge ? dim(K("x0"), { zoneX0: zone.x0, clearance: CL }, (t) => t.zoneX0 + t.clearance) : dim(K("x0"), { zoneX0: zone.x0, clearance: CL }, (t) => t.zoneX0 + t.clearance / 2);
-    const x1 = rightEdge ? dim(K("x1"), { zoneX1: zone.x1, clearance: CL }, (t) => t.zoneX1 - t.clearance) : dim(K("x1"), { zoneX1: zone.x1, clearance: CL }, (t) => t.zoneX1 - t.clearance / 2);
+    const leftXd = `XD${index}`;
+    const rightXd = `XD${index + 1}`;
+    const x0 = leftEdge ? dim(K("x0"), { clearance: CL }, (t) => t.clearance) : dim(K("x0"), { [leftXd]: ref(leftXd), clearance: CL }, (t) => t[leftXd] + t.clearance / 2, { formula: `${leftXd} + clearance / 2` });
+    const x1 = rightEdge ? dim(K("x1"), { Cw: param({ Cw: inputs.cabinetWidth }).Cw, clearance: CL }, (t) => t.Cw - t.clearance) : dim(K("x1"), { [rightXd]: ref(rightXd), clearance: CL }, (t) => t[rightXd] - t.clearance / 2, { formula: `${rightXd} - clearance / 2` });
     const y0 = dim(K("y0"), { FPT }, (t) => -t.FPT);
     const y1 = dim(K("y1"), {}, () => 0, { formula: "0" });
     const z0 = dim(K("z0"), {}, () => -30, { formula: "-30" });
@@ -609,6 +622,9 @@ function buildLegacyGeometry(inputs, centers) {
   const frontPanelThickness = inputs.frontPanelThickness ?? RULES.DEFAULT_FRONT_PANEL_THICKNESS_MM.value;
   const dntgH = inputs.dividerTongueHeight ?? fgWidth / 2 - 0.5;
   const zones = resolveZones(inputs);
+  const P0 = paramTerms(inputs);
+  const CPT0 = orRule(inputs.featureWidth, "CPT", RULES.DIVIDER_THICKNESS_MM);
+  recordCenterlines(centers, P0.Cw, CPT0);
   const panels = frontPanels(inputs, zones, centers);
   const dividerIds = centers.map((_, index) => `D${index}`);
   const P = paramTerms(inputs);
@@ -1228,6 +1244,338 @@ function applyMilling(boards) {
   return { issues };
 }
 
+// generators/_lib/expr.ts
+var FUNCS = {
+  min: Math.min,
+  max: Math.max,
+  abs: Math.abs,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  round: Math.round,
+  sqrt: Math.sqrt
+};
+function tokenize(src) {
+  const out = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) {
+      i += 1;
+      continue;
+    }
+    if (/[0-9.]/.test(c)) {
+      const m = /^[0-9]*\.?[0-9]+(?:e[+-]?[0-9]+)?/i.exec(src.slice(i));
+      if (!m) throw new Error(`bad number at ${i} in "${src}"`);
+      out.push({ t: "num", v: Number(m[0]) });
+      i += m[0].length;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      const m = /^[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*/.exec(src.slice(i));
+      out.push({ t: "id", v: m[0] });
+      i += m[0].length;
+      continue;
+    }
+    if ("+-*/%^(),".includes(c)) {
+      out.push({ t: c });
+      i += 1;
+      continue;
+    }
+    throw new Error(`unexpected "${c}" in "${src}"`);
+  }
+  return out;
+}
+function parse(src) {
+  const toks = tokenize(src);
+  let p = 0;
+  const peek = () => toks[p];
+  const take = (t) => {
+    const k = toks[p];
+    if (!k || t && k.t !== t) throw new Error(`expected ${t || "a value"} in "${src}"`);
+    p += 1;
+    return k;
+  };
+  const primary = () => {
+    const k = peek();
+    if (!k) throw new Error(`unexpected end of "${src}"`);
+    if (k.t === "num") {
+      p += 1;
+      return { k: "num", v: k.v };
+    }
+    if (k.t === "(") {
+      p += 1;
+      const v = sum();
+      take(")");
+      return v;
+    }
+    if (k.t === "-") {
+      p += 1;
+      return { k: "neg", a: primary() };
+    }
+    if (k.t === "+") {
+      p += 1;
+      return primary();
+    }
+    if (k.t === "id") {
+      p += 1;
+      const name = k.v;
+      if (peek()?.t === "(") {
+        p += 1;
+        if (!(name in FUNCS)) throw new Error(`unknown function ${name} in "${src}"`);
+        const args = [];
+        if (peek()?.t !== ")") {
+          args.push(sum());
+          while (peek()?.t === ",") {
+            p += 1;
+            args.push(sum());
+          }
+        }
+        take(")");
+        return { k: "call", f: name, args };
+      }
+      return { k: "id", v: name };
+    }
+    throw new Error(`unexpected ${k.t} in "${src}"`);
+  };
+  const power = () => {
+    let a = primary();
+    while (peek()?.t === "^") {
+      p += 1;
+      a = { k: "bin", op: "^", a, b: primary() };
+    }
+    return a;
+  };
+  const product = () => {
+    let a = power();
+    while (peek() && ["*", "/", "%"].includes(peek().t)) {
+      const op = take().t;
+      a = { k: "bin", op, a, b: power() };
+    }
+    return a;
+  };
+  const sum = () => {
+    let a = product();
+    while (peek() && ["+", "-"].includes(peek().t)) {
+      const op = take().t;
+      a = { k: "bin", op, a, b: product() };
+    }
+    return a;
+  };
+  if (!toks.length) throw new Error("empty expression");
+  const node = sum();
+  if (p !== toks.length) throw new Error(`trailing input in "${src}"`);
+  return node;
+}
+function namesOf(n, out) {
+  if (n.k === "id") out.add(n.v);
+  else if (n.k === "neg") namesOf(n.a, out);
+  else if (n.k === "bin") {
+    namesOf(n.a, out);
+    namesOf(n.b, out);
+  } else if (n.k === "call") for (const a of n.args) namesOf(a, out);
+}
+function run(n, lookup) {
+  switch (n.k) {
+    case "num":
+      return n.v;
+    case "id":
+      return lookup(n.v);
+    case "neg":
+      return -run(n.a, lookup);
+    case "call":
+      return FUNCS[n.f](...n.args.map((a) => run(a, lookup)));
+    case "bin": {
+      const a = run(n.a, lookup);
+      const b = run(n.b, lookup);
+      switch (n.op) {
+        case "+":
+          return a + b;
+        case "-":
+          return a - b;
+        case "*":
+          return a * b;
+        case "/":
+          return a / b;
+        case "%":
+          return a % b;
+        default:
+          return a ** b;
+      }
+    }
+  }
+}
+var cache = /* @__PURE__ */ new Map();
+function compile(src) {
+  const key = String(src).trim();
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const node = parse(key);
+  const names = /* @__PURE__ */ new Set();
+  namesOf(node, names);
+  const compiled = { src: key, names: [...names], run: (lookup) => run(node, lookup) };
+  cache.set(key, compiled);
+  return compiled;
+}
+
+// generators/_lib/layout.ts
+var AXES = ["x", "y", "z"];
+var CORNERS = ["FL", "FR", "RR", "RL"];
+var LayoutError = class extends Error {
+};
+var FACE_REF = /^([A-Za-z][\w-]*)\.([xyz])([01])$/;
+function planeOf(ref2) {
+  const face = FACE_REF.exec(ref2);
+  if (face) return { board: face[1], axis: face[2] };
+  const m = /^([A-Za-z][\w-]*)\.(.+)$/.exec(ref2);
+  if (!m) return null;
+  const ax = /([xyz])\d*$/i.exec(m[2]);
+  if (!ax) return null;
+  return { board: m[1], axis: ax[1].toLowerCase() };
+}
+function atHonours(at, ref2, from, offset = 0, extra = 0) {
+  const shift = (from === "lo" ? 1 : -1) * (Number(offset) || 0) + (Number(extra) || 0);
+  let expected = ref2;
+  if (shift) {
+    const mag = Math.round(Math.abs(shift) * 1e3) / 1e3;
+    expected = `${ref2} ${shift > 0 ? "+" : "-"} ${mag}`;
+  }
+  return at.trim() === expected;
+}
+function validateLayout(raw) {
+  const f = raw;
+  if (!f || typeof f !== "object") throw new LayoutError("layout: not an object");
+  if (typeof f.module !== "string") throw new LayoutError("layout: module missing");
+  if (!Number.isFinite(f.version)) throw new LayoutError("layout: version missing");
+  if (!f.boards || typeof f.boards !== "object") throw new LayoutError("layout: boards missing");
+  for (const [id, b] of Object.entries(f.boards)) {
+    if (!b || typeof b.axes !== "object") throw new LayoutError(`layout: ${id} has no axes`);
+    for (const [axis, r] of Object.entries(b.axes)) {
+      if (!AXES.includes(axis)) throw new LayoutError(`layout: ${id} has an unknown axis ${axis}`);
+      if (!r || r.from !== "lo" && r.from !== "hi") throw new LayoutError(`layout: ${id}.${axis} from must be lo or hi`);
+      for (const k of ["at", "size"]) {
+        if (typeof r[k] !== "string" || !r[k].trim()) throw new LayoutError(`layout: ${id}.${axis} ${k} missing`);
+        try {
+          compile(r[k]);
+        } catch (err) {
+          throw new LayoutError(`layout: ${id}.${axis} ${k}: ${err.message}`);
+        }
+      }
+      if (r.relation != null) {
+        const rel = r.relation;
+        if (rel.kind !== "contact" && rel.kind !== "flush") throw new LayoutError(`layout: ${id}.${axis} relation must be contact or flush`);
+        const plane = planeOf(String(rel.ref));
+        if (!plane) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} is not a board face`);
+        if (plane.axis !== axis) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} is on another axis`);
+        if (plane.board === id) throw new LayoutError(`layout: ${id}.${axis} relation refers to its own face`);
+        if (!atHonours(r.at, String(rel.ref), r.from, rel.offset || 0, rel.delta || 0)) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} differs from at (${r.at})`);
+      }
+    }
+    const check = (what, src) => {
+      if (typeof src !== "string" || !src.trim()) throw new LayoutError(`layout: ${id} ${what} missing`);
+      try {
+        compile(src);
+      } catch (err) {
+        throw new LayoutError(`layout: ${id} ${what}: ${err.message}`);
+      }
+    };
+    if (b.outline != null) {
+      for (const c of CORNERS) {
+        const p = b.outline.corners?.[c];
+        if (!p) throw new LayoutError(`layout: ${id} outline has no corner ${c}`);
+        check(`corner ${c} u`, p.u);
+        check(`corner ${c} v`, p.v);
+      }
+    }
+    for (const [fid, feat] of Object.entries(b.features ?? {})) check(`feature ${fid} depth`, feat?.depth);
+  }
+  return f;
+}
+function recordExpr(key, src, scope, from) {
+  const c = compile(src);
+  const terms = {};
+  for (const n of c.names) {
+    if (n in scope) terms[n] = scope[n];
+    else if (Number.isFinite(valueOf(n))) terms[n] = ref(n);
+    else throw new LayoutError(`layout: ${from} uses ${n}, which is not an input, a rule or a value recorded before it`);
+  }
+  return dim(key, terms, (t) => c.run((n) => t[n]), { formula: c.src });
+}
+function placeBoards(file, ids, scope, warnings = []) {
+  const placing = new Set(ids);
+  for (const id of ids) {
+    const rule = file.boards[id];
+    if (!rule) throw new LayoutError(`layout: no rule for ${id}`);
+    for (const axis of AXES) if (!rule.axes[axis]) throw new LayoutError(`layout: ${id} has no ${axis} rule`);
+  }
+  const done = /* @__PURE__ */ new Map();
+  const visiting = [];
+  const termOf = (name, from) => {
+    if (name in scope) return scope[name];
+    const m = FACE_REF.exec(name);
+    if (m && placing.has(m[1])) {
+      placeAxis(m[1], m[2]);
+      return ref(name);
+    }
+    if (Number.isFinite(valueOf(name))) return ref(name);
+    if (m) throw new LayoutError(`layout: ${from} uses ${name}: ${m[1]} is placed in code after these boards, so its faces cannot be referenced yet`);
+    throw new LayoutError(`layout: ${from} uses ${name}, which is not an input, a rule or a placed face`);
+  };
+  const record = (key, c, from) => {
+    const terms = {};
+    for (const n of c.names) terms[n] = termOf(n, from);
+    return dim(key, terms, (t) => c.run((n) => t[n]), { formula: c.src });
+  };
+  function placeAxis(id, axis) {
+    const key = `${id}.${axis}`;
+    const hit = done.get(key);
+    if (hit) return hit;
+    if (visiting.includes(key)) {
+      throw new LayoutError(`layout: ${[...visiting.slice(visiting.indexOf(key)), key].join(" \u2192 ")} goes round in a circle`);
+    }
+    visiting.push(key);
+    const r = file.boards[id].axes[axis];
+    const lo = `${id}.${axis}0`;
+    const hi = `${id}.${axis}1`;
+    const sizeKey = `${id}.${axis}Size`;
+    const drive = r.from === "lo" ? lo : hi;
+    const other = r.from === "lo" ? hi : lo;
+    record(drive, compile(r.at), `${id} ${axis} position`);
+    const size = record(sizeKey, compile(r.size), `${id} ${axis} size`);
+    if (!(size > 0)) throw new LayoutError(`layout: ${id} ${axis} size is ${size}, it must be above 0`);
+    if (r.from === "lo") dim(other, { [drive]: ref(drive), [sizeKey]: ref(sizeKey) }, (t) => t[drive] + t[sizeKey], { formula: `${drive} + ${sizeKey}` });
+    else dim(other, { [drive]: ref(drive), [sizeKey]: ref(sizeKey) }, (t) => t[drive] - t[sizeKey], { formula: `${drive} - ${sizeKey}` });
+    visiting.pop();
+    const pair = [valueOf(lo), valueOf(hi)];
+    done.set(key, pair);
+    return pair;
+  }
+  const out = {};
+  for (const id of ids) {
+    const [x0, x1] = placeAxis(id, "x");
+    const [y0, y1] = placeAxis(id, "y");
+    const [z0, z1] = placeAxis(id, "z");
+    out[id] = { x0, x1, y0, y1, z0, z1 };
+  }
+  for (const id of ids) {
+    for (const axis of AXES) {
+      const rel = file.boards[id].axes[axis].relation;
+      if (rel?.kind !== "contact" || rel.offset) continue;
+      const otherId = planeOf(rel.ref)?.board;
+      if (!otherId || !out[otherId]) continue;
+      const other = otherId;
+      const ok = AXES.filter((k) => k !== axis).every((k) => {
+        const a0 = out[id][`${k}0`];
+        const a1 = out[id][`${k}1`];
+        const b0 = valueOf(`${other}.${k}0`);
+        const b1 = valueOf(`${other}.${k}1`);
+        return Number.isFinite(b0) && Number.isFinite(b1) && Math.min(a1, b1) - Math.max(a0, b0) > 0.01;
+      });
+      if (!ok) warnings.push(`${id}: its ${axis} contact with ${rel.ref} no longer touches (the two faces do not overlap).`);
+    }
+  }
+  return out;
+}
+
 // generators/_lib/edgeBand.ts
 function outlineOf(b) {
   return localOutline(b) ?? rectOutline(b);
@@ -1419,6 +1767,7 @@ function buildOverheadFaces(fb) {
     dim(`${KM}.x1`, { x1: ref("T3.x1"), x0: ref("T3.x0") }, (t) => t.x1 - t.x0);
     dim(`${KM}.y0`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM }, (t) => t.LAND);
     dim(`${KM}.y1`, { LAND: RULES.LED_GROOVE_FRONT_LAND_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.LAND + t.W);
+    const shared = { group: "T3.LED", depthKey: "T3.feat.LED.depth" };
     addFeature(t3, "A", {
       id: "T3_LED_MAIN",
       kind: "tgroove",
@@ -1429,7 +1778,8 @@ function buildOverheadFaces(fb) {
       depth,
       for: "led",
       key: KM,
-      source: "T3"
+      source: "T3",
+      ...shared
     });
     branches.forEach((br, i) => {
       const KB = `T3.feat.LED_BRANCH_${i + 1}`;
@@ -1448,7 +1798,8 @@ function buildOverheadFaces(fb) {
         depth,
         for: "led",
         key: KB,
-        source: "T3"
+        source: "T3",
+        ...shared
       });
     });
   }
@@ -1511,6 +1862,60 @@ function buildOverheadFaces(fb) {
   void CPT;
   return joints;
 }
+
+// generators/overheadCabinet/layout.json
+var layout_default = {
+  module: "overheadCabinet",
+  version: 1,
+  boards: {
+    T1: {
+      label: "\u9876\u90E8\u524D\u8F68 T1",
+      axes: {
+        x: { from: "lo", at: "0", size: "Cw" },
+        y: { from: "lo", at: "TCH - 1", size: "FPT" },
+        z: { from: "hi", at: "H", size: "TCH" }
+      }
+    },
+    T2: {
+      label: "\u9876\u90E8\u540E\u8F68 T2",
+      axes: {
+        x: { from: "lo", at: "0", size: "Cw" },
+        y: { from: "lo", at: "T1.y1", size: "CPT" },
+        z: { from: "hi", at: "T1.z1", size: "T1.z1 - T1.z0" }
+      }
+    },
+    T3: {
+      label: "\u9876\u90E8\u6A2A\u677F T3",
+      axes: {
+        x: { from: "lo", at: "0", size: "Cw" },
+        y: { from: "lo", at: "0", size: "T3_DEPTH_MM" },
+        z: { from: "hi", at: "H - TCH - 1", size: "CPT" }
+      },
+      outline: {
+        corners: {
+          FL: { u: "0", v: "0" },
+          FR: { u: "T3.xSize", v: "0" },
+          RR: { u: "T3.xSize", v: "T3.ySize" },
+          RL: { u: "0", v: "T3.ySize" }
+        }
+      },
+      features: {
+        LED: { label: "LED \u706F\u69FD", depth: "LED_GROOVE_DEPTH_MM" }
+      }
+    },
+    T4: {
+      label: "\u9876\u90E8\u7AD6\u677F T4",
+      axes: {
+        x: { from: "lo", at: "0", size: "Cw" },
+        y: { from: "hi", at: "Cd - CPT - clearance", size: "CPT" },
+        z: { from: "hi", at: "H", size: "T4_HEIGHT_MM" }
+      }
+    }
+  }
+};
+
+// generators/overheadCabinet/layout.ts
+var LAYOUT = validateLayout(layout_default);
 
 // generators/overheadCabinet/generator.ts
 var LED_GROOVE_WIDTH = RULES.LED_GROOVE_WIDTH_MM.value;
@@ -1677,7 +2082,114 @@ function internalRangehoodDividerProfile(inputs, clearHeight) {
   );
 }
 var OVERHEAD_BOARD_FRAME = "final";
-function legacyToBoards(geometry, inputs, rangehood = null) {
+function ruleScope(inputs) {
+  const height = inputs.cabinetHeight ?? inputs.topClearanceHeight ?? RULES.T1_HEIGHT_MM.value;
+  const P = param({ Cw: inputs.cabinetWidth, Cd: inputs.cabinetDepth, H: height });
+  const t = (v, name, rule) => v == null ? rule : param({ [name]: v })[name];
+  return {
+    ...RULES,
+    Cw: P.Cw,
+    Cd: P.Cd,
+    H: P.H,
+    CPT: t(inputs.featureWidth, "CPT", RULES.DIVIDER_THICKNESS_MM),
+    FPT: t(inputs.frontPanelThickness, "FPT", RULES.DEFAULT_FRONT_PANEL_THICKNESS_MM),
+    TCH: t(inputs.topClearanceHeight, "TCH", RULES.T1_HEIGHT_MM),
+    clearance: t(inputs.clearance, "clearance", RULES.DEFAULT_CLEARANCE_MM)
+  };
+}
+function dividerNotches(geometry, inputs, frameX0, lo, hi) {
+  const slot = (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) + RULES.FEATURE_CLEARANCE_MM.value;
+  return geometry.divider_features.map((f) => clampRange(featureXRange(f.XDi, slot), 0, inputs.cabinetWidth)).map(([a, b]) => [Math.max(a - frameX0, lo), Math.min(b - frameX0, hi)]).filter(([a, b]) => b - a > 1e-6);
+}
+function shapeT3(rule, frame, geometry, inputs, scope, _warnings) {
+  const corners = rule.outline.corners;
+  const c = {};
+  for (const k of CORNERS) {
+    c[k] = [
+      recordExpr(`T3.corner.${k}.u`, corners[k].u, scope, `T3 corner ${k} u`),
+      recordExpr(`T3.corner.${k}.v`, corners[k].v, scope, `T3 corner ${k} v`)
+    ];
+  }
+  const W = frame.x1 - frame.x0;
+  const D = frame.y1 - frame.y0;
+  const at = (k, u, v) => Math.abs(c[k][0] - u) < 1e-9 && Math.abs(c[k][1] - v) < 1e-9;
+  const legacy = geometry.trimmed_vectors.T3;
+  const legacyFits = Math.abs(frame.x0) < 1e-9 && Math.abs(frame.y0) < 1e-9 && Math.abs(Math.max(...legacy.map((p) => p[0])) - W) < 1e-9 && Math.abs(Math.max(...legacy.map((p) => p[1])) - D) < 1e-9;
+  if (legacyFits && at("FL", 0, 0) && at("FR", W, 0) && at("RR", W, D) && at("RL", 0, D)) return { box: frame, outline: legacy };
+  const quad = CORNERS.map((k) => c[k]);
+  const cross = (o2, a, b) => (a[0] - o2[0]) * (b[1] - o2[1]) - (a[1] - o2[1]) * (b[0] - o2[0]);
+  const crosses = (p1, p2, p3, p4) => {
+    const d1 = cross(p3, p4, p1), d2 = cross(p3, p4, p2), d3 = cross(p1, p2, p3), d4 = cross(p1, p2, p4);
+    return (d1 > 0 && d2 < 0 || d1 < 0 && d2 > 0) && (d3 > 0 && d4 < 0 || d3 < 0 && d4 > 0);
+  };
+  let area = 0;
+  for (let i = 0; i < 4; i += 1) {
+    const p = quad[i];
+    const q = quad[(i + 1) % 4];
+    area += p[0] * q[1] - q[0] * p[1];
+  }
+  if (area <= 0 || crosses(quad[0], quad[1], quad[2], quad[3]) || crosses(quad[1], quad[2], quad[3], quad[0])) {
+    throw new LayoutError("layout: T3 outline crosses itself or turns inside out: check the corner formulas");
+  }
+  const K = (name) => `T3.corner.${name}`;
+  const U = (k) => ex({ u: ref(K(`${k}.u`)) }, (t) => t.u, `= ${K(`${k}.u`)}`);
+  const V = (k) => ex({ v: ref(K(`${k}.v`)) }, (t) => t.v, `= ${K(`${k}.v`)}`);
+  dim("T3.pv.rearY", { v: ref(K("RR.v")) }, (t) => t.v, { formula: `= ${K("RR.v")}` });
+  dim("T3.pv.notchY", { rearY: ref("T3.pv.rearY"), T3_NOTCH_DEPTH: RULES.T3_NOTCH_DEPTH_MM }, (t) => t.rearY - t.T3_NOTCH_DEPTH);
+  const rearV = ex({ v: ref("T3.pv.rearY") }, (t) => t.v, "rearY");
+  const notchV = ex({ v: ref("T3.pv.notchY") }, (t) => t.v, "notchY");
+  const o = new Outline("T3.pv", ["x", "y"]);
+  o.add(U("FL"), V("FL"));
+  o.add(U("FR"), V("FR"));
+  const right = c.RR[0];
+  const left = c.RL[0];
+  if (Math.abs(c.RR[1] - c.RL[1]) > 1e-9) {
+    throw new LayoutError("layout: T3 \u7684\u540E\u8FB9\u4E0D\u76F4\uFF0C\u5206\u9694\u677F\u7F3A\u53E3\u6CA1\u6CD5\u7559\u5728\u8FD9\u6761\u8FB9\u4E0A");
+  } else {
+    const ranges = dividerNotches(geometry, inputs, frame.x0, left, right).sort((p, q) => q[0] - p[0]);
+    const nx = (x) => ex({ notchX: x }, (t) => t.notchX, "notch edge (divider centre \xB1 slot / 2)");
+    if (ranges.length && ranges[0][1] >= right - 1e-9) {
+      const [x0] = ranges.shift();
+      o.add(U("RR"), notchV);
+      o.add(nx(x0), notchV);
+      o.add(nx(x0), rearV);
+    } else {
+      o.add(U("RR"), V("RR"));
+    }
+    let closed = false;
+    for (const [x0, x1] of ranges) {
+      if (x0 <= left + 1e-9) {
+        o.add(nx(x1), rearV);
+        o.add(nx(x1), notchV);
+        o.add(U("RL"), notchV);
+        closed = true;
+        break;
+      }
+      o.add(nx(x1), rearV);
+      o.add(nx(x1), notchV);
+      o.add(nx(x0), notchV);
+      o.add(nx(x0), rearV);
+    }
+    if (!closed) o.add(U("RL"), V("RL"));
+  }
+  o.add(U("FL"), V("FL"));
+  const pts = o.points;
+  const us = pts.map((p) => p[0]);
+  const vs = pts.map((p) => p[1]);
+  for (const f of ["x0", "x1", "y0", "y1"]) same(`T3.frame.${f}`, `T3.${f}`);
+  const minU = Math.min(...us), maxU = Math.max(...us), minV = Math.min(...vs), maxV = Math.max(...vs);
+  const box = {
+    x0: dim("T3.x0", { frame: ref("T3.frame.x0"), minU }, (t) => t.frame + t.minU, { formula: "T3.frame.x0 + leftmost corner u" }),
+    x1: dim("T3.x1", { frame: ref("T3.frame.x0"), maxU }, (t) => t.frame + t.maxU, { formula: "T3.frame.x0 + rightmost corner u" }),
+    y0: dim("T3.y0", { frame: ref("T3.frame.y0"), minV }, (t) => t.frame + t.minV, { formula: "T3.frame.y0 + frontmost corner v" }),
+    y1: dim("T3.y1", { frame: ref("T3.frame.y0"), maxV }, (t) => t.frame + t.maxV, { formula: "T3.frame.y0 + rearmost corner v" }),
+    z0: frame.z0,
+    z1: frame.z1
+  };
+  return { box, outline: pts };
+}
+var RULE_BOARDS = /* @__PURE__ */ new Set(["T1", "T2", "T3", "T4"]);
+function legacyToBoards(geometry, inputs, rangehood, layout, warnings) {
   const { cabinetWidth, cabinetDepth, cabinetHeight, bottomThickness, featureWidth, topClearanceHeight, frontPanelThickness, clearance } = {
     cabinetWidth: inputs.cabinetWidth,
     cabinetDepth: inputs.cabinetDepth,
@@ -1696,7 +2208,6 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
   const FPT = t(inputs.frontPanelThickness, "FPT", RULES.DEFAULT_FRONT_PANEL_THICKNESS_MM);
   const CL = t(inputs.clearance, "clearance", RULES.DEFAULT_CLEARANCE_MM);
   const zero = (key) => dim(key, {}, () => 0, { formula: "0" });
-  const topRailY0 = dim("T1.y0", { TCH }, (t2) => t2.TCH - 1);
   const boards = [
     {
       id: "BP",
@@ -1715,6 +2226,40 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       source: "overhead"
     }
   ];
+  const hasT3 = geometry.trimmed_vectors.T3.length > 0;
+  const hasT4 = geometry.trimmed_vectors.T4.length > 0;
+  const scope = ruleScope(inputs);
+  for (const feature of geometry.divider_features) alias("DividerSide", `${feature.id}.cut`);
+  const placed = placeBoards(
+    layout,
+    ["T1", "T2", ...hasT3 ? ["T3"] : [], ...hasT4 ? ["T4"] : []],
+    scope,
+    warnings
+  );
+  let t3Outline = geometry.trimmed_vectors.T3;
+  if (hasT3 && layout.boards.T3?.outline) {
+    const shaped = shapeT3(layout.boards.T3, placed.T3, geometry, inputs, scope, warnings);
+    placed.T3 = shaped.box;
+    t3Outline = shaped.outline;
+  }
+  let t4Outline = geometry.trimmed_vectors.T4;
+  if (hasT4) {
+    const f = placed.T4;
+    const W = f.x1 - f.x0;
+    const legacyFits = Math.abs(f.x0) < 1e-9 && Math.abs(W - cabinetWidth) < 1e-9 && Math.abs(f.z1 - f.z0 - RULES.T4_HEIGHT_MM.value) < 1e-9;
+    if (!legacyFits) {
+      t4Outline = t4TrimmedOutlinePoints(ref("T4.xSize"), dividerNotches(geometry, inputs, f.x0, 0, W), ref("T4.zSize"), RULES.T4_NOTCH_HEIGHT_MM);
+    }
+  }
+  const outlineExtent = (id, pts, axis) => {
+    const box = placed[id];
+    if (!box) return;
+    const extent = Math.max(...pts.map(([, v]) => v));
+    const size = box[`${axis}1`] - box[`${axis}0`];
+    if (Math.abs(extent - size) > 0.01) warnings.push(`${id}: its ${axis} size ${size} differs from its outline (${extent}).`);
+  };
+  if (hasT3 && !layout.boards.T3?.outline) outlineExtent("T3", geometry.trimmed_vectors.T3, "y");
+  if (hasT4) outlineExtent("T4", t4Outline, "z");
   boards.push({
     id: "T1",
     name: "Top Front Rail T1",
@@ -1723,12 +2268,7 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
     materialThickness: frontPanelThickness,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: zero("T1.x0"),
-    x1: dim("T1.x1", { Cw: P.Cw }, (t2) => t2.Cw),
-    y0: topRailY0,
-    y1: dim("T1.y1", { y0: ref("T1.y0"), FPT }, (t2) => t2.y0 + t2.FPT),
-    z0: dim("T1.z0", { H: P.H, TCH }, (t2) => t2.H - t2.TCH),
-    z1: dim("T1.z1", { H: P.H }, (t2) => t2.H),
+    ...placed.T1,
     source: "overhead"
   });
   boards.push({
@@ -1739,17 +2279,10 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
     materialThickness: featureWidth,
     profilePlane: "XZ",
     thicknessAxis: "Y",
-    x0: zero("T2.x0"),
-    x1: dim("T2.x1", { Cw: P.Cw }, (t2) => t2.Cw),
-    y0: same("T2.y0", "T1.y1"),
-    y1: dim("T2.y1", { y0: ref("T2.y0"), CPT }, (t2) => t2.y0 + t2.CPT),
-    z0: same("T2.z0", "T1.z0"),
-    z1: same("T2.z1", "T1.z1"),
+    ...placed.T2,
     source: "overhead"
   });
-  if (geometry.trimmed_vectors.T3.length > 0) {
-    const t3Depth = Math.max(...geometry.trimmed_vectors.T3.map(([, y]) => y));
-    const t3Top = dim("T3.z1", { H: P.H, TCH }, (t2) => t2.H - t2.TCH - 1);
+  if (hasT3) {
     boards.push({
       id: "T3",
       name: "Top Rear Panel",
@@ -1758,19 +2291,12 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       materialThickness: featureWidth,
       profilePlane: "XY",
       thicknessAxis: "Z",
-      x0: zero("T3.x0"),
-      x1: dim("T3.x1", { Cw: P.Cw }, (t2) => t2.Cw),
-      y0: zero("T3.y0"),
-      y1: dim("T3.y1", { rearY: ref("T3.pv.rearY") }, () => t3Depth, { formula: "rearY" }),
-      z0: dim("T3.z0", { z1: ref("T3.z1"), CPT }, (t2) => t2.z1 - t2.CPT),
-      z1: t3Top,
+      ...placed.T3,
       source: "overhead",
-      profileVector: geometry.trimmed_vectors.T3.map(([x, y]) => ({ x, y }))
+      profileVector: t3Outline.map(([x, y]) => ({ x, y }))
     });
   }
-  if (geometry.trimmed_vectors.T4.length > 0) {
-    const t4Height = Math.max(...geometry.trimmed_vectors.T4.map(([, z]) => z));
-    const t4Y1 = dim("T4.y1", { Cd: P.Cd, CPT, clearance: CL }, (t2) => t2.Cd - t2.CPT - t2.clearance);
+  if (hasT4) {
     boards.push({
       id: "T4",
       name: "Top Front Panel",
@@ -1779,22 +2305,18 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
       materialThickness: featureWidth,
       profilePlane: "XZ",
       thicknessAxis: "Y",
-      x0: zero("T4.x0"),
-      x1: dim("T4.x1", { Cw: P.Cw }, (t2) => t2.Cw),
-      y0: dim("T4.y0", { y1: ref("T4.y1"), CPT }, (t2) => t2.y1 - t2.CPT),
-      y1: t4Y1,
-      z0: dim("T4.z0", { H: P.H, top: ref("T4.pv.top") }, () => height - t4Height, { formula: "H - top" }),
-      z1: dim("T4.z1", { H: P.H }, (t2) => t2.H),
+      ...placed.T4,
       source: "overhead",
-      profileVector: geometry.trimmed_vectors.T4.map(([x, z]) => ({ x, z }))
+      profileVector: t4Outline.map(([x, z]) => ({ x, z }))
     });
   }
   for (let dividerIndex = 0; dividerIndex < geometry.divider_features.length; dividerIndex += 1) {
     const feature = geometry.divider_features[dividerIndex];
     const id = feature.id;
     const [x0, x1] = clampRange(boardXRange(feature.XDi, featureWidth), 0, cabinetWidth);
-    dim(`${id}.x0`, { XDi: feature.XDi, CPT }, () => x0, { formula: "max(0, XDi - CPT / 2)" });
-    dim(`${id}.x1`, { XDi: feature.XDi, CPT, Cw: P.Cw }, () => x1, { formula: "min(Cw, XDi + CPT / 2)" });
+    const xd = `XD${dividerIndex}`;
+    dim(`${id}.x0`, { [xd]: ref(xd), CPT }, (t2) => Math.max(0, t2[xd] - t2.CPT / 2), { formula: `max(0, ${xd} - CPT / 2)` });
+    dim(`${id}.x1`, { [xd]: ref(xd), CPT, Cw: P.Cw }, (t2) => Math.min(t2.Cw, t2[xd] + t2.CPT / 2), { formula: `min(Cw, ${xd} + CPT / 2)` });
     const isInternalRangehoodDivider = Boolean(rangehood?.internalDividerIndices.includes(dividerIndex));
     const dividerZ0 = isInternalRangehoodDivider ? dim(`${id}.z0`, { CPT, clearHeight: rangehood?.clearHeight ?? 0 }, (t2) => t2.CPT * 2 + t2.clearHeight) : dim(`${id}.z0`, { CPT }, (t2) => t2.CPT);
     const dividerTopZ = cabinetHeight == null ? dim(`${id}.z1`, { CPT }, (t2) => t2.CPT + 1) : dim(`${id}.z1`, { H: P.H }, (t2) => t2.H);
@@ -1917,6 +2439,11 @@ function legacyToBoards(geometry, inputs, rangehood = null) {
         { x: 0, z: 0 }
       ]
     });
+  }
+  for (const id of Object.keys(layout.boards)) {
+    const axes = layout.boards[id]?.axes;
+    if (!axes?.x || !axes?.y || !axes?.z || placed[id] || RULE_BOARDS.has(id)) continue;
+    throw new LayoutError(`layout: ${id} \u7684\u7F3A\u53E3\u548C\u69FD\u7531\u4EE3\u7801\u7B97\uFF0C\u8FD9\u6761\u4F4D\u7F6E\u6CA1\u6709\u5199\u4E0A`);
   }
   return boards;
 }
@@ -2051,6 +2578,18 @@ function t3LedBoardExtents(board) {
     depth: Math.min(T3_LED_BOARD_DEPTH_FALLBACK, Math.max(0, board.y1 - board.y0))
   };
 }
+function applyLedDepth(ledFeatures, layout, inputs, boards, warnings) {
+  const rule = layout.boards.T3?.features?.LED;
+  const led = ledFeatures.find((f) => f.type === "t3_groove");
+  if (!rule || !led) return;
+  const depth = recordExpr("T3.feat.LED.depth", rule.depth, ruleScope(inputs), "T3 LED depth");
+  const t3 = boards.find((b) => b.id === "T3");
+  const thick = t3 ? t3.z1 - t3.z0 : Infinity;
+  if (!(depth > 0)) throw new LayoutError(`layout: the T3 LED groove depth is ${depth}; it must be above 0`);
+  if (depth > thick + 1e-9) throw new LayoutError(`layout: T3 \u706F\u69FD\u6DF1\u5EA6 ${depth} \u6DF1\u8FC7\u677F\u539A ${thick}`);
+  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: \u706F\u69FD\u6DF1\u5EA6\u7B49\u4E8E\u677F\u539A ${thick}\uFF0C\u8FD9\u4E00\u5200\u5207\u7A7F\u4E86`);
+  led.depth = depth;
+}
 function generateT3LedGrooveFeatures(boards, warnings, params) {
   if (params.ledGroove === false) return [];
   const t3 = boards.find((board) => board.id === "T3" && board.boardType === "T3");
@@ -2097,15 +2636,15 @@ function resolveCarcassColor(params) {
   const name = String(params.carcassColorName || (tag === "white_stipple" ? "White Stipple" : raw)).trim() || "White Stipple";
   return { carcassColor: tag, carcassColorName: name };
 }
-function generateOverheadCabinet(rawParams) {
+function generateOverheadCabinet(rawParams, options = {}) {
   beginProvenance();
   try {
-    return generateOverheadCabinetInner(rawParams);
+    return generateOverheadCabinetInner(rawParams, options);
   } finally {
     if (provenanceActive()) endProvenance();
   }
 }
-function generateOverheadCabinetInner(rawParams) {
+function generateOverheadCabinetInner(rawParams, options) {
   const inputs = toInputs(rawParams);
   const carcassColor = resolveCarcassColor(rawParams);
   const validation = { errors: [], warnings: [] };
@@ -2144,6 +2683,26 @@ function generateOverheadCabinetInner(rawParams) {
     rangehoodEdgeOffsetX: Number(rawParams.rangehoodEdgeOffsetX ?? RANGEHOOD_MIN_EDGE_MM),
     ...carcassColor
   });
+  let layout = LAYOUT;
+  if (options.layout != null) {
+    try {
+      layout = validateLayout(options.layout);
+    } catch (err) {
+      validation.errors.push(err.message);
+    }
+  }
+  let boards = [];
+  let ledFeatures = [];
+  if (geometry && validation.errors.length === 0) {
+    try {
+      boards = legacyToBoards(geometry, inputs, rangehood, layout, validation.warnings);
+      ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
+      applyLedDepth(ledFeatures, layout, inputs, boards, validation.warnings);
+    } catch (err) {
+      if (!(err instanceof LayoutError)) throw err;
+      validation.errors.push(err.message);
+    }
+  }
   if (validation.errors.length > 0) {
     return {
       params: resolvedParams(),
@@ -2163,9 +2722,7 @@ function generateOverheadCabinetInner(rawParams) {
   if (!geometry) {
     throw new Error("Overhead geometry was not resolved after validation.");
   }
-  const boards = legacyToBoards(geometry, inputs, rangehood);
   const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
-  const ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
   const rangehoodFeatures = generateRangehoodFeatures(geometry, rangehood);
   const dividerFeatures = geometry.divider_features.map((feature, index) => {
     if (!rangehood?.internalDividerIndices.includes(index)) return feature;
@@ -2205,11 +2762,15 @@ function generateOverheadCabinetInner(rawParams) {
       phase: "geometry_v1",
       boardFrame: OVERHEAD_BOARD_FRAME,
       dividerCenterlines: centerlines,
+      placement: Object.fromEntries(
+        boards.filter((b) => layout.boards[b.id]).map((b) => [b.id, layout.boards[b.id]])
+      ),
       legacyGeometry: geometry,
       svgPreview: generateOHCSvgPreview(geometry, {
         selectedZoneIndex: Number(rawParams.selectedZoneIndex ?? -1)
       }),
-      provenance: endProvenance()
+      provenance: endProvenance(),
+      ruleBoards: [...RULE_BOARDS]
     }
   };
 }

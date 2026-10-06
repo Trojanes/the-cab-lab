@@ -3,8 +3,11 @@
 // cabinets copy these into their own generator params.
 //
 // Carcass and partition are always White Stipple. Doors are Acrylic or HPL.
-// One or two door colours: two-colour assignment to modules comes later —
-// until then every new cabinet uses door colour A.
+// Colour A is the upper group, colour B the lower. A one-colour job copies A
+// into B. New cabinets copy their slot (`cabinetColor`); a split module keeps
+// both names and paints each board itself.
+// Bench tops are one HPL decor (`finish.benchTop`), never acrylic. A new base
+// cabinet copies the name; a cabinet saved without it has no bench board.
 import { getSetting } from "./settings.js";
 
 export const MATERIALS_SETTINGS_KEY = "materials.defaults";
@@ -48,6 +51,7 @@ export const DOOR_SERIES = {
 
 const DEFAULT_DOOR_SERIES = "acrylic";
 const DEFAULT_DOOR_NAME = "Gloss White";
+export const DEFAULT_BENCH_TOP = "Pale Driftwood";
 
 export function builtInStock() {
   return {
@@ -83,6 +87,13 @@ function isLegacyFinish(raw) {
   return !!(raw && !raw.door && (raw.mode || raw.colors));
 }
 
+/** An HPL decor. Anything else falls back to the built-in bench top. */
+export function benchTopName(name) {
+  const list = doorColorList("hpl");
+  const n = String(name || "").trim();
+  return list.includes(n) ? n : (list.includes(DEFAULT_BENCH_TOP) ? DEFAULT_BENCH_TOP : list[0]);
+}
+
 export function builtInFinish() {
   return {
     carcass: { name: CARCASS_COLOR },
@@ -92,6 +103,7 @@ export function builtInFinish() {
       sides: "single",
       colors: [{ id: "A", series: DEFAULT_DOOR_SERIES, name: DEFAULT_DOOR_NAME }],
     },
+    benchTop: { name: DEFAULT_BENCH_TOP },
   };
 }
 
@@ -115,7 +127,14 @@ export function normalizeFinish(raw) {
   return {
     carcass: { name: CARCASS_COLOR },
     door: { series, mode, sides: doorSidesOf(raw.door && raw.door.sides), colors },
+    benchTop: { name: benchTopName(raw.benchTop && raw.benchTop.name) },
   };
+}
+
+/** The bench top colour a new base cabinet copies. */
+export function benchTopColor(finish) {
+  const name = benchTopName(normalizeFinish(finish).benchTop.name);
+  return { name, benchTopColor: name, benchTopColorName: name };
 }
 
 function stockThickness(raw, key, fallback) {
@@ -166,10 +185,23 @@ export function validateMaterials(finish, stock) {
   return errors;
 }
 
-/** Colours a new cabinet copies today: carcass White Stipple, door = colour A. */
-export function cabinetColor(finish) {
+/**
+ * Colours a new cabinet copies. Carcass is White Stipple.
+ * Door colour A is the upper group, B the lower. One door colour in the job:
+ * B is the same as A. `slot` is which group this cabinet belongs to.
+ */
+/** Colour A and colour B. A one-colour job, or two names that match: `two` is false and B is A. */
+export function doorColors(finish) {
   const f = normalizeFinish(finish);
-  const door = f.door.colors[0];
+  const a = f.door.colors[0];
+  const b = f.door.mode === "two" && f.door.colors[1] ? f.door.colors[1] : a;
+  return { a, b, two: f.door.mode === "two" && a.name !== b.name };
+}
+
+export function cabinetColor(finish, slot = "A") {
+  const { a, b } = doorColors(finish);
+  const f = normalizeFinish(finish);
+  const door = slot === "B" ? b : a;
   return {
     carcassColor: CARCASS_COLOR,
     carcassColorName: CARCASS_COLOR,
@@ -177,7 +209,42 @@ export function cabinetColor(finish) {
     doorSides: f.door.sides,
     doorColor: door.name,
     doorColorName: door.name,
-    colorSlot: "A",
+    doorColorB: b.name,
+    doorColorNameB: b.name,
+    colorSlot: slot === "B" ? "B" : "A",
+  };
+}
+
+/** Which group this cabinet is using. Missing slot: the stored door name, else A. */
+export function colorSlotOf(params, finish) {
+  if (params && (params.colorSlot === "A" || params.colorSlot === "B")) return params.colorSlot;
+  const name = String((params && (params.doorColorName || params.doorColor)) || "").trim();
+  const { a, b, two } = doorColors(finish);
+  if (two && name === b.name && name !== a.name) return "B";
+  return "A";
+}
+
+/**
+ * The other door colour for a right-click. `enabled` is false when the job has
+ * one door colour. Boards that are colour B by rule (`doorColorNameB`) stay B.
+ */
+export function otherDoorColor(params, finish) {
+  const colors = doorColors(finish);
+  const slot = colorSlotOf(params, finish);
+  const other = slot === "B" ? "A" : "B";
+  return { slot, other, name: other === "A" ? colors.a.name : colors.b.name, enabled: colors.two };
+}
+
+/** Copy of `params` whose door colour is the job's colour A or B. Series and sides stay. */
+export function withColorSlot(params, finish, slot) {
+  const color = cabinetColor(finish, slot);
+  return {
+    ...params,
+    doorColor: color.doorColor,
+    doorColorName: color.doorColorName,
+    doorColorB: color.doorColorB,
+    doorColorNameB: color.doorColorNameB,
+    colorSlot: color.colorSlot,
   };
 }
 
@@ -206,6 +273,7 @@ export function describeMaterials(finish, stock) {
   return [
     ["Carcass / partition", f.carcass.name],
     ["Door", door],
+    ["Bench top", f.benchTop.name],
     ["Carcass", `${s.carcass.thickness} mm`],
     ["Partition", `${s.partition.thickness} mm`],
     ["Partition clearance", `floor ${s.partition.floorClearance} · ceiling ${s.partition.ceilingClearance}`],
