@@ -7,6 +7,7 @@ import { canvas, rayFromClient } from "./space.js";
 import { pickables } from "./cabinets3d.js";
 import { wallPickables } from "./walls3d.js";
 import { MODULES } from "./modules.js";
+import { otherDoorColor } from "./materials.js";
 import * as job from "./job.js";
 import { log } from "./log.js";
 import { startFitPick, cancelFitPick, isFitPicking, boardRightClick } from "./interact.js";
@@ -49,6 +50,16 @@ export function openBench(moduleId, { params = null, cabinetId = null, from = "r
   if (!bridge || !bridge.openBench) { console.warn("[bench] bridge unavailable"); return; }
   log("bench.open.request", { module: moduleId, cabinetId, from });
   bridge.openBench({ moduleId, params, cabinetId, from });
+}
+
+/** "Use the other door colour", or null when the job has only one. */
+export function doorColorMenuItem(cab) {
+  const choice = otherDoorColor(cab.params, job.getFinish());
+  if (!choice.enabled) return null;
+  return {
+    label: `Door colour ${choice.other} · ${choice.name}`,
+    run: () => job.setColorSlot(cab.id, choice.other),
+  };
 }
 
 /** Attach the right-click menu to a rail module button. */
@@ -100,7 +111,8 @@ canvas.addEventListener("contextmenu", (e) => {
   const mod = MODULES[cab.moduleId];
   showContextMenu(e.clientX, e.clientY, [
     { title: `${cab.id} · ${mod ? mod.label : cab.moduleId}` },
+    doorColorMenuItem(cab),
     { label: "Open in bench with these params", run: () => openBench(cab.moduleId, { params: cab.params, cabinetId: cab.id, from: "cabinet" }) },
     { label: "Generator rules…", run: () => openBench(cab.moduleId, { from: "cabinet" }) },
-  ]);
+  ].filter(Boolean));
 });

@@ -412,4 +412,53 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.ok(!blocked.boards.some((b) => b.boardType === "appliance_floor"));
 }
 
+/* ---------- bench top: full width, 25 thick, 20 past the door face, front edge only ---------- */
+{
+  const plain = generateKitchenCabinet({
+    globalSettings: { length: 887, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70,
+    columns: [{ id: "c1", width: 887, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const }] }],
+  });
+  assert.equal(plain.boards.some((b) => b.id === "BENCH"), false, "no colour, no bench top");
+
+  const topped = generateKitchenCabinet({
+    ...plain.params,
+    globalSettings: { length: 887, depth: 270, height: 880 },
+    columns: [{ id: "c1", width: 887, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const }] }],
+    benchTopColorName: "Chestnut",
+    doorSeries: "acrylic",
+  });
+  const bench = topped.boards.find((b) => b.id === "BENCH");
+  assert.ok(bench, "bench board");
+  assert.equal(bench!.x0, 0);
+  assert.equal(bench!.x1, 887);
+  assert.equal(bench!.y0, -36, "16 mm door + 20 mm past its face");
+  assert.equal(bench!.y1, 254, "carcass back, depth 270 − door 16");
+  assert.equal(bench!.z0, 880);
+  assert.equal(bench!.z1, 905);
+  assert.equal(bench!.materialThickness, 25);
+  assert.equal(bench!.stock?.kind, "bench");
+  assert.equal(bench!.stock?.sides, 1);
+  assert.equal(bench!.milling, "B", "colour face stays up");
+  const top = bench!.faces?.find((f) => f.id === "A");
+  const underside = bench!.faces?.find((f) => f.id === "B");
+  assert.equal(top?.finish?.colour, "Chestnut");
+  assert.equal(top?.finish?.grain, "u");
+  assert.equal(underside?.finish?.colour, "White Stipple");
+  const bands = (bench!.faces ?? []).filter((f) => f.finish?.edgeBand);
+  assert.equal(bands.length, 1, "front edge only");
+  assert.equal(bands[0].normal, "-Y");
+  assert.equal(bands[0].finish?.edgeBand?.colour, "Chestnut");
+  assert.equal(bands[0].finish?.edgeBand?.thickness, 1);
+  assert.equal(topped.grain?.issues.length ?? 0, 0);
+
+  const long = generateKitchenCabinet({
+    globalSettings: { length: 2500, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70,
+    columns: [{ id: "c1", width: 2500, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const }] }],
+    benchTopColorName: "Chestnut",
+  });
+  assert.ok(long.grain?.issues.some((i) => i.board === "BENCH" && i.side === "along"), JSON.stringify(long.grain?.issues));
+}
+
 console.log("kitchen: all golden tests passed");

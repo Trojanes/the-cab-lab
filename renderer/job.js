@@ -4,7 +4,7 @@
 import { getModule } from "./modules.js";
 import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
-import { defaultMaterials, normalizeFinish, normalizeStock } from "./materials.js";
+import { colorSlotOf, defaultMaterials, doorColors, normalizeFinish, normalizeStock, withColorSlot } from "./materials.js";
 import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
 import { applyUserGrooves } from "./gen/userGrooves.js";
 import { keepCorner } from "./pose.js";
@@ -517,6 +517,20 @@ function anchoredPose(cab, mod, before, after) {
   const keep = mod.widthAnchor(after, cab);
   const box = (W) => ({ x0: 0, x1: W, y0: 0, y1: 0, z0: 0, z1: 0 });
   return keepCorner(cab.pose, box(w0), box(w1), { x: keep, y: -1, z: -1 });
+}
+
+/** Right-click a placed cabinet: use the job's other door colour. One undo step. */
+export function setColorSlot(id, slot) {
+  const cab = job.cabinets.find((c) => c.id === id);
+  if (!cab) return false;
+  const colors = doorColors(job.finish);
+  if (!colors.two) return false;
+  const to = slot === "B" ? "B" : "A";
+  const from = colorSlotOf(cab.params, job.finish);
+  if (from === to) return false;
+  setParams(id, withColorSlot(cab.params, job.finish, to));
+  log("cabinet.color", { id, from, to, name: to === "B" ? colors.b.name : colors.a.name });
+  return true;
 }
 
 export function setParams(id, params, { history = true } = {}) {

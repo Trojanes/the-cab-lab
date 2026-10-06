@@ -59,6 +59,7 @@ function thicknessToken(mm) {
   return Number.isInteger(r) ? String(r) : String(r);
 }
 function seriesOf(board, params) {
+  if (board.stock?.kind === "bench") return "hpl";
   if (board.stock?.kind === "door") return params && params.doorSeries === "hpl" ? "hpl" : "acrylic";
   return "pvc";
 }

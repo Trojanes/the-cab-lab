@@ -10,11 +10,11 @@ import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLi
 import { generateBunkBed, bunkUpperLimits, bunkMinSize, RULES as BUNK_RULES } from "./gen/bunkBed.js";
 import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
 import { generateUShapeOverhead } from "./gen/uShapeOverhead.js";
-import { generateKitchenCabinet, generateKitchenSvgPreview } from "./gen/kitchen.js";
+import { generateKitchenCabinet, generateKitchenSvgPreview, RULES as KITCHEN_RULES } from "./gen/kitchen.js";
 import { fitTallCabinetHeight, fridgeCabinetWidth, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
 import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
-import { builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
+import { benchTopColor, builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
 import { generateSketchBoard } from "./gen/sketchBoard.js";
 import { localBoxOf } from "./sketchBoard.js";
 
@@ -660,10 +660,14 @@ const bedSideTable = {
   /** Copy the shared shelf, depth and clearance onto the other table, flipping door hands. */
   mirrorParams(source, twin) {
     const zones = (source.zones || []).map((z) => ({ id: z.id, type: mirrorBedSideZone(z.type) }));
+    const colourKeys = ["doorColor", "doorColorName", "doorColorB", "doorColorNameB", "colorSlot"];
+    const colourSame = colourKeys.every((k) => twin[k] === source[k]);
     const same = twin.shelfCenter === source.shelfCenter && twin.depth === source.depth && twin.height === source.height && twin.clearance === source.clearance
-      && JSON.stringify(twin.zones) === JSON.stringify(zones);
+      && JSON.stringify(twin.zones) === JSON.stringify(zones) && colourSame;
     if (same) return twin;
-    return { ...twin, shelfCenter: source.shelfCenter, depth: source.depth, height: source.height, clearance: source.clearance, zones };
+    const colour = {};
+    for (const k of colourKeys) if (source[k] !== undefined) colour[k] = source[k];
+    return { ...twin, ...colour, shelfCenter: source.shelfCenter, depth: source.depth, height: source.height, clearance: source.clearance, zones };
   },
   dividers(params, result) {
     if (!result || result.validation?.errors?.length) return [];
@@ -967,9 +971,12 @@ const kitchenCabinet = {
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
     const color = cabinetColor(finish, "B");
+    const bench = benchTopColor(finish);
     const bch = 70;
     return {
       globalSettings: { length: round1(W), depth: round1(D), height: round1(H) },
+      benchTopColor: bench.name,
+      benchTopColorName: bench.name,
       materialThickness: thickness(stock, "carcass"),
       frontThickness: thickness(stock, "door"),
       doorSeries: color.doorSeries,
@@ -1005,6 +1012,28 @@ const kitchenCabinet = {
   envelope(params) {
     const gs = params.globalSettings || {};
     return { W: gs.length, D: gs.depth, H: gs.height };
+  },
+
+  /**
+   * The drawn box. Without a bench top it matches the default envelope
+   * (doors hang at −16 unless the cabinet stored frontPanelThickness).
+   * With one, the front grows by the overhang and the top by the slab.
+   */
+  localBox(params) {
+    const env = this.envelope(params);
+    const fpt = params.frontPanelThickness ?? 16;
+    const door = Number(params.frontThickness);
+    const doorT = Number.isFinite(door) && door > 0 ? door : fpt;
+    const bench = !!(params && (params.benchTopColorName || params.benchTopColor));
+    const over = bench ? KITCHEN_RULES.BENCH_FRONT_OVERHANG_MM.value : 0;
+    const rise = bench ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
+    return {
+      x0: 0, x1: env.W,
+      y0: bench ? -(doorT + over) : -fpt,
+      y1: env.D,
+      z0: 0, z1: env.H + rise,
+      W: env.W, D: env.D, H: env.H + rise, fpt,
+    };
   },
 
   setEnvelope(params, { W, D, H }) {

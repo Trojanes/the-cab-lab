@@ -186,9 +186,14 @@ const flat = { y: rect("0", "100"), z: rect("0", "CPT") };
   // B09: through, and deeper than the board.
   const b09 = structuredClone(LAYOUT);
   b09.boards.T3!.features!.LED!.depth = "CPT";
-  assert.ok(generateOverheadCabinet(ledOn, { layout: b09 }).validation.warnings.some((w) => /cuts right through/.test(w)));
+  assert.ok(generateOverheadCabinet(ledOn, { layout: b09 }).validation.warnings.some((w) => /切穿/.test(w)));
   b09.boards.T3!.features!.LED!.depth = "CPT + 1";
-  assert.ok(generateOverheadCabinet(ledOn, { layout: b09 }).validation.errors.some((e) => /deeper than T3/.test(e)));
+  assert.ok(generateOverheadCabinet(ledOn, { layout: b09 }).validation.errors.some((e) => /深过板厚/.test(e)));
+  const slant = structuredClone(LAYOUT);
+  slant.boards.T3!.outline!.corners.RR = { u: "T3.xSize", v: "T3.ySize - 10" };
+  const slanted = generateOverheadCabinet(golden, { layout: slant });
+  assert.ok(slanted.validation.errors.some((e) => /后边不直/.test(e)), slanted.validation.errors.join("; "));
+  assert.equal(slanted.boards.length, 0);
 
   // Face relations: contact must keep touching; the record must be consistent.
   const contact = structuredClone(LAYOUT);

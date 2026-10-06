@@ -93,13 +93,25 @@ and the fixed strip above them), general tall and fridge. The bunk lower end
 panel and boot flap use B; the upper end panel uses A. East-west bedside boards
 (`BS_SHOW`, `BS_FRONT_HI`, `BS_FRONT_LO`) use B; `T1`, `WARD_PANEL`,
 `WARD_FIXED`, `WARD_DOOR`, `OHC_FP*` and `OHC_FILLER` use A. Lounge seat fronts
-stay carcass. Existing cabinets keep the colour they copied at creation.
+stay carcass. Existing cabinets keep the colour they copied at creation. Right-click a
+placed cabinet to use the other group (`colorSlot`; boards that belong to colour B
+keep `doorColorNameB`).
+
+**Bench top.** `job.finish.benchTop.name` is one HPL decor. Acrylic is not a
+choice. A new kitchen or ensuite copies it as `benchTopColorName`. The generator
+emits board `BENCH` only when that name is present, so a cabinet saved before
+this stays without one. The slab is 25 mm thick, the full cabinet width, its
+back on the carcass back and its front 20 mm past the door face, sitting on the
+carcass top. Face A (the top) carries the colour and grain along the width; the
+underside is the carcass colour. The front edge is banded 1 mm in the same
+colour. The other edges are not banded. Bedside and lounge are not covered yet.
 
 **Sheet id.** Not stored. `sheetMaterial(board, params)` (`_lib/material.ts`) builds
 `{series}-{decor}-{1s|2s}-{thickness}` for the nest: carcass and partition are
 `pvc` (White Stipple, always `2s` — `pvc-white-stipple-2s-15`); door stock takes
 `params.doorSeries` (`acrylic` | `hpl`), the colour face's name, and `stock.sides`
-(`acrylic-gloss-white-1s-16`, `hpl-chestnut-1s-16`). `grained` is true for
+(`acrylic-gloss-white-1s-16`, `hpl-chestnut-1s-16`). A bench top is always
+`hpl`, single-sided, at its own thickness (`hpl-chestnut-1s-25`). `grained` is true for
 textured HPL except Felt Grey. The role stays `board.id`.
 
 **Export** (`.cnjob`, `generators/_lib/cnjob.ts`). One workpiece per board, id

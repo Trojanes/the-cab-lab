@@ -351,7 +351,8 @@ function slabRebateFace(b) {
   return null;
 }
 function colourFaceOf(b, A, B) {
-  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  const coloured = b.stock?.kind === "door" || b.stock?.kind === "bench";
+  if (!coloured || b.stock?.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
 function reportFace(A, B, colour) {
@@ -643,7 +644,9 @@ var rules_default = {
   STOVE_CUT_FRONT_EXTRA: { value: 100, doc: "\u7076\u53F0\u5207\u5272\u533A y \u2208 [0, FPT+100]\u3002" },
   SLOT_Z_CLEARANCE: { value: 0.5, doc: "\u69FD z = \u677F z \xB1 0.5\u3002" },
   TONGUE_FALLBACK_SLACK: { value: 0.5, doc: "\u69FD\u4FE1\u606F\u7F3A\u5931\u65F6\u820C\u957F = CPT/2 \u2212 0.5\u3002" },
-  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges." },
+  EDGE_BAND_THICKNESS_MM: { value: 1, doc: "Edge-tape thickness on each banded outline edge. Door colour on fronts and on a V front that meets the door face; carcass colour on the other visible edges. The bench top's front edge takes the bench colour." },
+  BENCH_THICKNESS_MM: { value: 25, doc: "Bench top thickness. It sits on the carcass top (z = H .. H + this). Kitchen and ensuite only." },
+  BENCH_FRONT_OVERHANG_MM: { value: 20, doc: "How far the bench top projects past the door's front face. The back edge stays on the carcass back (y = depth \u2212 door thickness)." },
   LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "B3 bottom-face LED groove width, the same channel as an overhead T3." },
   LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "B3 bottom-face LED groove depth. It is not cut through the board." },
   LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "Clear strip from B3's front edge to the near wall of the main LED channel." },
@@ -850,6 +853,14 @@ function buildKitchenFaces(fb) {
     for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
   };
   for (const b of fb.boards) {
+    if (b.boardType === "bench_top") {
+      if (fb.benchColour) {
+        annotate(b, "A", { semantic: "top", visible: true, finish: { colour: fb.benchColour, grain: "u" } });
+        annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: carcass } });
+        band(b, "-Y", fb.benchColour);
+      }
+      continue;
+    }
     if (b.boardType === "front_panel") {
       for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
       continue;
@@ -1077,7 +1088,14 @@ function generateKitchenSvgPreview(result, options = {}) {
   const showDimensions = options.showDimensions ?? true;
   const selZone = options.selectedZoneId ?? null;
   const selCol = options.selectedCol ?? -1;
-  const { scale, ox, oy, height } = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  const bench = result.boards.find((b) => b.id === "BENCH");
+  const rise = bench ? Math.max(0, bench.z1 - H) : 0;
+  const fitted = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  const extra = rise > 0 ? Math.ceil(rise * fitted.scale) + 6 : 0;
+  const scale = fitted.scale;
+  const ox = fitted.ox;
+  const oy = fitted.oy + extra;
+  const height = fitted.height + extra;
   const toX = (x) => ox + x * scale;
   const toY = (z) => oy + (H - z) * scale;
   const rect = (x0, x1, z0, z1) => `x="${px(toX(x0))}" y="${px(toY(z1))}" width="${px(Math.max((x1 - x0) * scale, 0.8))}" height="${px(Math.max((z1 - z0) * scale, 0.8))}"`;
@@ -1176,7 +1194,37 @@ var asNum = (v, fb) => {
   return Number.isFinite(n) ? n : fb;
 };
 var r2 = (v) => Math.round(v * 1e3) / 1e3;
+var round12 = (v) => Math.round(v * 10) / 10;
 var EPS3 = 1e-3;
+function noteBenchSheet(issues, board) {
+  if (!board) return;
+  const along = round12(board.x1 - board.x0);
+  const across = round12(board.y1 - board.y0);
+  if (across > SHEET_CROSS_MAX_MM) {
+    issues.push({
+      board: board.id,
+      group: "front",
+      dir: "horizontal",
+      side: "across",
+      length: across,
+      word: "deep",
+      limit: SHEET_CROSS_MAX_MM,
+      message: `${board.id} is ${across} deep: horizontal grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 \xD7 2400)`
+    });
+  }
+  if (along > SHEET_ALONG_MAX_MM) {
+    issues.push({
+      board: board.id,
+      group: "front",
+      dir: "horizontal",
+      side: "along",
+      length: along,
+      word: "wide",
+      limit: SHEET_ALONG_MAX_MM,
+      message: `${board.id} is ${along} wide: horizontal grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 \xD7 2400)`
+    });
+  }
+}
 var DEFAULT_SIDE = {
   panelType: "carcass",
   frontVisible: false,
@@ -2851,12 +2899,66 @@ function generateKitchenCabinet(input) {
       }
     }
   });
+  const benchColour = String(input.benchTopColorName || input.benchTopColor || "").trim();
+  if (benchColour) {
+    const y0e = ex(
+      { FPT: ref("kitchen.FPT"), over: RULES.BENCH_FRONT_OVERHANG_MM },
+      (t) => -(t.FPT + t.over),
+      "-(FPT + overhang)"
+    );
+    const z1e = ex(
+      { H: ref("kitchen.H"), t: RULES.BENCH_THICKNESS_MM },
+      (t) => t.H + t.t,
+      "H + thickness"
+    );
+    plan("BENCH", {
+      x0: lit(0),
+      x1: link("kitchen.W"),
+      y0: y0e,
+      y1: link("kitchen.cd"),
+      z0: link("kitchen.H"),
+      z1: z1e
+    });
+    const depth = ex({ y1: ref("BENCH.y1"), y0: ref("BENCH.y0") }, (t) => t.y1 - t.y0, "y1 - y0");
+    const thick = RULES.BENCH_THICKNESS_MM.value;
+    const over = RULES.BENCH_FRONT_OVERHANG_MM.value;
+    const bench = mkBoard(
+      "BENCH",
+      "Bench top",
+      "top",
+      "bench_top",
+      thick,
+      "bench",
+      "XY",
+      "Z",
+      0,
+      s.W,
+      r2(-FPT - over),
+      cd,
+      H,
+      r2(H + thick),
+      traceLocalRect("BENCH", ["x", "y"], localW("BENCH"), depth)
+    );
+    bench.stock = { kind: "bench", thickness: thick, sides: 1, colour: benchColour };
+    boards.push(bench);
+  }
   for (const b of boards) refreshBoardBox(b);
   flushPlans();
   attachFaces(boards);
-  const joints = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input), applianceTongues });
+  const joints = buildKitchenFaces({
+    boards,
+    slots,
+    screws,
+    hinges,
+    locks,
+    notches,
+    doorColour: doorColourOf(input),
+    applianceTongues,
+    benchColour: benchColour || void 0
+  });
   warnings.push(...addKitchenB3Led(boards, !s.style2 && input.ledGroove !== false));
   const grain = applyGrain(boards, (b) => b.stock?.kind === "door" ? "front" : null, input, { front: "horizontal" });
+  noteBenchSheet(grain.issues, boards.find((b) => b.id === "BENCH"));
   applyDoorSides(boards, input);
   const milling = applyMilling(boards);
   const result = {
@@ -2899,6 +3001,7 @@ function generateKitchenCabinet(input) {
   return result;
 }
 export {
+  RULES,
   generateKitchenCabinet,
   generateKitchenSvgPreview,
   screwPositions

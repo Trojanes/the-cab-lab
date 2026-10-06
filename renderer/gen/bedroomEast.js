@@ -39,6 +39,9 @@ function ref(key) {
   if (!entry) throw new Error(`dim ref: unknown key "${key}" (record it before referencing it)`);
   return { __ref: true, key, value: entry.value };
 }
+function valueOf(key) {
+  return active.entries[key]?.value ?? NaN;
+}
 function formulaOf(fn, override) {
   if (override) return override;
   const src = fn.toString();
@@ -486,6 +489,13 @@ var RULES2 = defineRules("bedroomEast", rules_default2);
 var EPS2 = 0.05;
 var r1 = (v2) => Math.round(v2 * 10) / 10;
 var v = (rule) => rule.value;
+function recordFace(id, face, n) {
+  const value = r1(n);
+  const key = `${id}.${face}`;
+  const have = valueOf(key);
+  if (Number.isFinite(have) && Math.abs(have - value) <= 0.051) return value;
+  return dim(key, { v: value }, (t) => t.v, { formula: String(value) });
+}
 function board(id, name, category, plane, thick, x0, x1, y0, y1, z0, z1, pv) {
   const T = plane === "XY" ? "Z" : plane === "XZ" ? "Y" : "X";
   const b = {
@@ -496,12 +506,12 @@ function board(id, name, category, plane, thick, x0, x1, y0, y1, z0, z1, pv) {
     materialThickness: thick,
     profilePlane: plane,
     thicknessAxis: T,
-    x0: r1(x0),
-    x1: r1(x1),
-    y0: r1(y0),
-    y1: r1(y1),
-    z0: r1(z0),
-    z1: r1(z1),
+    x0: recordFace(id, "x0", x0),
+    x1: recordFace(id, "x1", x1),
+    y0: recordFace(id, "y0", y0),
+    y1: recordFace(id, "y1", y1),
+    z0: recordFace(id, "z0", z0),
+    z1: recordFace(id, "z1", z1),
     source: "bedroomEast"
   };
   if (pv) b.profileVector = pv.map((p) => Object.fromEntries(Object.entries(p).map(([k, n]) => [k, r1(n)])));

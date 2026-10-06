@@ -306,7 +306,7 @@ function shapeT3(
   geometry: OverheadLegacyGeometry,
   inputs: OverheadCabinetInputs,
   scope: Record<string, Term>,
-  warnings: string[],
+  _warnings: string[],
 ): { box: typeof frame; outline: [number, number][] } {
   const corners = rule.outline!.corners;
   const c: Record<string, [number, number]> = {};
@@ -351,9 +351,7 @@ function shapeT3(
   const right = c.RR![0];
   const left = c.RL![0];
   if (Math.abs(c.RR![1] - c.RL![1]) > 1e-9) {
-    warnings.push("T3: the rear edge is not straight, so the divider notches were left out.");
-    o.add(U("RR"), V("RR"));
-    o.add(U("RL"), V("RL"));
+    throw new LayoutError("layout: T3 的后边不直，分隔板缺口没法留在这条边上");
   } else {
     // Divider notches on the rear edge, in frame coordinates, right to left (as geometry.ts does).
     const ranges = dividerNotches(geometry, inputs, frame.x0, left, right).sort((p, q) => q[0] - p[0]);
@@ -701,7 +699,7 @@ function legacyToBoards(
   for (const id of Object.keys(layout.boards)) {
     const axes = layout.boards[id]?.axes;
     if (!axes?.x || !axes?.y || !axes?.z || placed[id] || RULE_BOARDS.has(id)) continue;
-    throw new LayoutError(`layout: ${id} stays in the generator code — a box rule would move it and leave its outline behind`);
+    throw new LayoutError(`layout: ${id} 的缺口和槽由代码算，这条位置没有写上`);
   }
 
   return boards;
@@ -880,8 +878,8 @@ function applyLedDepth(
   const t3 = boards.find((b) => b.id === "T3");
   const thick = t3 ? t3.z1 - t3.z0 : Infinity;
   if (!(depth > 0)) throw new LayoutError(`layout: the T3 LED groove depth is ${depth}; it must be above 0`);
-  if (depth > thick + 1e-9) throw new LayoutError(`layout: the T3 LED groove depth ${depth} is deeper than T3 (${thick}): check the rule`);
-  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: the LED groove depth equals the board thickness (${thick}), so it cuts right through.`);
+  if (depth > thick + 1e-9) throw new LayoutError(`layout: T3 灯槽深度 ${depth} 深过板厚 ${thick}`);
+  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: 灯槽深度等于板厚 ${thick}，这一刀切穿了`);
   led.depth = depth;
 }
 

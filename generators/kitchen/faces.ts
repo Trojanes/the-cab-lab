@@ -83,6 +83,8 @@ export function buildKitchenFaces(fb: {
   locks: LockRecord[];
   notches: NotchRecord[];
   doorColour: string;
+  /** HPL decor on the bench top. Absent when the cabinet has no bench board. */
+  benchColour?: string;
   applianceTongues?: { id: string; vLeft: string; vRight: string; y0: number; y1: number; z0: number; z1: number; depth: number }[];
 }): Joint[] {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
@@ -185,6 +187,14 @@ export function buildKitchenFaces(fb: {
     for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
   };
   for (const b of fb.boards) {
+    if (b.boardType === "bench_top") {
+      if (fb.benchColour) {
+        annotate(b, "A", { semantic: "top", visible: true, finish: { colour: fb.benchColour, grain: "u" } });
+        annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: carcass } });
+        band(b, "-Y", fb.benchColour);
+      }
+      continue;
+    }
     if (b.boardType === "front_panel") {
       for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
       continue;

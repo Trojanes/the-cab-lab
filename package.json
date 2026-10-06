@@ -15,7 +15,7 @@
     "test:fridge": "node renderer/tallFridge.test.js",
     "test:groove": "node --experimental-strip-types generators/_lib/userGrooves.test.ts && node renderer/groove.test.js",
     "test:measure": "node renderer/measure.test.js",
-    "test:swatches": "node renderer/doorSwatches.test.js",
+    "test:swatches": "node renderer/doorSwatches.test.js && node renderer/colorSlot.test.js",
     "test:walls": "node renderer/walls.test.js",
     "test:bench": "node renderer/bench/rules.test.js",
     "test:sketch": "node renderer/sketch2d.test.js && node renderer/sketchCurves.test.js && node --experimental-strip-types renderer/sketchBoard.test.js && node renderer/boardGeom.test.js",

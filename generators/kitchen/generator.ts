@@ -8,7 +8,7 @@
 import { beginProvenance, dim, endProvenance, ex, lit, param, ref, type Expr } from "../_lib/dim.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
-import { applyGrain } from "../_lib/grain.ts";
+import { applyGrain, SHEET_ALONG_MAX_MM, SHEET_CROSS_MAX_MM, type GrainIssue } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { recordBoardBox, refreshBoardBox } from "../_lib/recordBox.ts";
 import { evalExpr, recordLoop } from "../_lib/trace.ts";
@@ -20,13 +20,36 @@ import type {
 import { RULES as R } from "./rules.ts";
 
 export { generateKitchenSvgPreview } from "./svgPreview.ts";
+export { RULES } from "./rules.ts";
 
 const asNum = (v: unknown, fb: number) => {
   const n = Number(v);
   return Number.isFinite(n) ? n : fb;
 };
 const r2 = (v: number) => Math.round(v * 1000) / 1000;
+const round1 = (v: number) => Math.round(v * 10) / 10;
 const EPS = 0.001;
+
+/** Bench top grain runs along the cabinet width. The sheet check does not follow the door series. */
+function noteBenchSheet(issues: GrainIssue[], board: Board | undefined) {
+  if (!board) return;
+  const along = round1(board.x1 - board.x0);
+  const across = round1(board.y1 - board.y0);
+  if (across > SHEET_CROSS_MAX_MM) {
+    issues.push({
+      board: board.id, group: "front", dir: "horizontal", side: "across",
+      length: across, word: "deep", limit: SHEET_CROSS_MAX_MM,
+      message: `${board.id} is ${across} deep: horizontal grain allows ${SHEET_CROSS_MAX_MM} across the grain (sheet 1200 × 2400)`,
+    });
+  }
+  if (along > SHEET_ALONG_MAX_MM) {
+    issues.push({
+      board: board.id, group: "front", dir: "horizontal", side: "along",
+      length: along, word: "wide", limit: SHEET_ALONG_MAX_MM,
+      message: `${board.id} is ${along} wide: horizontal grain allows ${SHEET_ALONG_MAX_MM} along the grain (sheet 1200 × 2400)`,
+    });
+  }
+}
 
 /**
  * A closed XY loop (last point = first) without repeated or collinear points:
@@ -246,7 +269,7 @@ function rectYZ(w: number, h: number): P2[] {
 
 function mkBoard(
   id: string, name: string, category: string, boardType: string, thickness: number,
-  kind: "carcass" | "door",
+  kind: "carcass" | "door" | "bench",
   plane: "XY" | "XZ" | "YZ", axis: "X" | "Y" | "Z",
   x0: number, x1: number, y0: number, y1: number, z0: number, z1: number,
   profileVector: P2[],
@@ -1574,14 +1597,47 @@ export function generateKitchenCabinet(input: KitchenParams): KitchenResult {
     }
   });
 
+  /* ---- Bench top: one slab on the carcass. Only when the cabinet copied a colour. ---- */
+  const benchColour = String(input.benchTopColorName || input.benchTopColor || "").trim();
+  if (benchColour) {
+    const y0e = ex(
+      { FPT: ref("kitchen.FPT"), over: R.BENCH_FRONT_OVERHANG_MM },
+      (t) => -(t.FPT + t.over),
+      "-(FPT + overhang)",
+    );
+    const z1e = ex(
+      { H: ref("kitchen.H"), t: R.BENCH_THICKNESS_MM },
+      (t) => t.H + t.t,
+      "H + thickness",
+    );
+    plan("BENCH", {
+      x0: lit(0), x1: link("kitchen.W"),
+      y0: y0e, y1: link("kitchen.cd"),
+      z0: link("kitchen.H"), z1: z1e,
+    });
+    const depth = ex({ y1: ref("BENCH.y1"), y0: ref("BENCH.y0") }, (t) => t.y1 - t.y0, "y1 - y0");
+    const thick = R.BENCH_THICKNESS_MM.value;
+    const over = R.BENCH_FRONT_OVERHANG_MM.value;
+    const bench = mkBoard("BENCH", "Bench top", "top", "bench_top", thick, "bench",
+      "XY", "Z", 0, s.W, r2(-FPT - over), cd, H, r2(H + thick),
+      traceLocalRect("BENCH", ["x", "y"], localW("BENCH"), depth));
+    bench.stock = { kind: "bench", thickness: thick, sides: 1, colour: benchColour };
+    boards.push(bench);
+  }
+
   /* ---- 组装结果 ---- */
   for (const b of boards) refreshBoardBox(b);
   flushPlans();
   attachFaces(boards);
-  const joints: Joint[] = buildKitchenFaces({ boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input), applianceTongues });
+  const joints: Joint[] = buildKitchenFaces({
+    boards, slots, screws, hinges, locks, notches, doorColour: doorColourOf(input), applianceTongues,
+    benchColour: benchColour || undefined,
+  });
   warnings.push(...addKitchenB3Led(boards, !s.style2 && input.ledGroove !== false));
   // Fronts, the kick (B1) included: one group, horizontal unless chosen otherwise.
+  // The bench top is HPL even when the doors are acrylic, so its sheet check is separate.
   const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? "front" : null), input, { front: "horizontal" });
+  noteBenchSheet(grain.issues, boards.find((b) => b.id === "BENCH"));
   applyDoorSides(boards, input);
   const milling = applyMilling(boards);
 

@@ -2101,7 +2101,7 @@ function dividerNotches(geometry, inputs, frameX0, lo, hi) {
   const slot = (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) + RULES.FEATURE_CLEARANCE_MM.value;
   return geometry.divider_features.map((f) => clampRange(featureXRange(f.XDi, slot), 0, inputs.cabinetWidth)).map(([a, b]) => [Math.max(a - frameX0, lo), Math.min(b - frameX0, hi)]).filter(([a, b]) => b - a > 1e-6);
 }
-function shapeT3(rule, frame, geometry, inputs, scope, warnings) {
+function shapeT3(rule, frame, geometry, inputs, scope, _warnings) {
   const corners = rule.outline.corners;
   const c = {};
   for (const k of CORNERS) {
@@ -2144,9 +2144,7 @@ function shapeT3(rule, frame, geometry, inputs, scope, warnings) {
   const right = c.RR[0];
   const left = c.RL[0];
   if (Math.abs(c.RR[1] - c.RL[1]) > 1e-9) {
-    warnings.push("T3: the rear edge is not straight, so the divider notches were left out.");
-    o.add(U("RR"), V("RR"));
-    o.add(U("RL"), V("RL"));
+    throw new LayoutError("layout: T3 \u7684\u540E\u8FB9\u4E0D\u76F4\uFF0C\u5206\u9694\u677F\u7F3A\u53E3\u6CA1\u6CD5\u7559\u5728\u8FD9\u6761\u8FB9\u4E0A");
   } else {
     const ranges = dividerNotches(geometry, inputs, frame.x0, left, right).sort((p, q) => q[0] - p[0]);
     const nx = (x) => ex({ notchX: x }, (t) => t.notchX, "notch edge (divider centre \xB1 slot / 2)");
@@ -2445,7 +2443,7 @@ function legacyToBoards(geometry, inputs, rangehood, layout, warnings) {
   for (const id of Object.keys(layout.boards)) {
     const axes = layout.boards[id]?.axes;
     if (!axes?.x || !axes?.y || !axes?.z || placed[id] || RULE_BOARDS.has(id)) continue;
-    throw new LayoutError(`layout: ${id} stays in the generator code \u2014 a box rule would move it and leave its outline behind`);
+    throw new LayoutError(`layout: ${id} \u7684\u7F3A\u53E3\u548C\u69FD\u7531\u4EE3\u7801\u7B97\uFF0C\u8FD9\u6761\u4F4D\u7F6E\u6CA1\u6709\u5199\u4E0A`);
   }
   return boards;
 }
@@ -2588,8 +2586,8 @@ function applyLedDepth(ledFeatures, layout, inputs, boards, warnings) {
   const t3 = boards.find((b) => b.id === "T3");
   const thick = t3 ? t3.z1 - t3.z0 : Infinity;
   if (!(depth > 0)) throw new LayoutError(`layout: the T3 LED groove depth is ${depth}; it must be above 0`);
-  if (depth > thick + 1e-9) throw new LayoutError(`layout: the T3 LED groove depth ${depth} is deeper than T3 (${thick}): check the rule`);
-  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: the LED groove depth equals the board thickness (${thick}), so it cuts right through.`);
+  if (depth > thick + 1e-9) throw new LayoutError(`layout: T3 \u706F\u69FD\u6DF1\u5EA6 ${depth} \u6DF1\u8FC7\u677F\u539A ${thick}`);
+  if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: \u706F\u69FD\u6DF1\u5EA6\u7B49\u4E8E\u677F\u539A ${thick}\uFF0C\u8FD9\u4E00\u5200\u5207\u7A7F\u4E86`);
   led.depth = depth;
 }
 function generateT3LedGrooveFeatures(boards, warnings, params) {

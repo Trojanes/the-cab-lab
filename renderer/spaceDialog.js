@@ -7,7 +7,7 @@
 //            "Set current as default" (persisted in settings.json)
 // Below the kind fields: job-level catalogue — carcass/partition colour
 // (White Stipple), door series (Acrylic / HPL) and one or two door colours,
-// plus the three board stocks (carcass / partition / door).
+// one HPL bench-top colour, plus the three board stocks (carcass / partition / door).
 import * as job from "./job.js";
 import { SPACE_KINDS, PLANNED_SPACE_KINDS, getSpaceKind, nosePoints, graftNose } from "./spaces.js";
 import { noseFromDxf } from "./dxf.js";
@@ -472,8 +472,17 @@ function renderMaterials() {
       refresh();
     });
     block.append(el("label", { class: "field" }, [el("span", { text: "Door B" }), colorB]));
-    block.append(el("div", { class: "materials-hint", text: "Which modules use which door colour is set later. New cabinets use door A for now." }));
+    block.append(el("div", { class: "materials-hint", text: "New cabinets take their group. Right-click a placed cabinet to use the other colour." }));
   }
+
+  const benchName = finish.benchTop && finish.benchTop.name;
+  const benchSelect = doorColorSelect("hpl", benchName, (name) => {
+    finish.benchTop = { name };
+    log("space.dialog.choice", { spaceKind: currentKind, key: "finish.benchTop", value: name });
+    refresh();
+  });
+  block.append(el("label", { class: "field" }, [el("span", { text: "Bench top" }), benchSelect]));
+  block.append(el("div", { class: "materials-hint", text: "HPL only. New base cabinets copy it; the front edge is banded in the same colour." }));
 
   const stockRow = el("div", { class: "stock-grid" });
   for (const [key, label] of [["carcass", "Carcass"], ["partition", "Partition"], ["door", "Door"]]) {

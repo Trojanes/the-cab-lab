@@ -65,7 +65,15 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
   const showDimensions = options.showDimensions ?? true;
   const selZone = options.selectedZoneId ?? null;
   const selCol = options.selectedCol ?? -1;
-  const { scale, ox, oy, height } = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  // data-h stays the carcass height: zone drags read it. The bench sits above that, in extra top padding.
+  const bench = result.boards.find((b) => b.id === "BENCH");
+  const rise = bench ? Math.max(0, bench.z1 - H) : 0;
+  const fitted = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  const extra = rise > 0 ? Math.ceil(rise * fitted.scale) + 6 : 0;
+  const scale = fitted.scale;
+  const ox = fitted.ox;
+  const oy = fitted.oy + extra;
+  const height = fitted.height + extra;
   const toX = (x: number) => ox + x * scale;
   const toY = (z: number) => oy + (H - z) * scale;
   const rect = (x0: number, x1: number, z0: number, z1: number) =>

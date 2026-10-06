@@ -636,7 +636,7 @@ function testPlacementRuleRefusesADivider() {
     },
   };
   const moved = generateOverheadCabinet(preset.params as never, { layout });
-  assert.ok(moved.validation.errors.some((error) => error.includes("D2 stays in the generator code")), moved.validation.errors.join("; "));
+  assert.ok(moved.validation.errors.some((error) => error.includes("D2 的缺口和槽由代码算")), moved.validation.errors.join("; "));
   assert.equal(moved.boards.length, 0);
   const plain = generateOverheadCabinet(preset.params as never);
   const again = plain.boards.find((b) => b.id === "D2")!;

@@ -201,7 +201,7 @@ Decided 2026‑10‑03 (phases 2–5). Right-click a module → *Generator rules
   until 返回整体. A board in `layout.json` (OHC `T1`–`T4`) edits its placement
   rule: a face formula moves that board and keeps its size. Any other board is
   placed in code and the mode shows the formulas it already has. Confirming a new
-  box rule for it is refused (`layout: D2 stays in the generator code`) because
+  box rule for it is refused (`D2 的缺口和槽由代码算，这条位置没有写上`) because
   the outline would stay behind. It can still be picked as a reference face,
   including a notch or a half-slot.
 - Right-click a board: 参数调试 · 默认模式 and 面的模式. Orange dimensions

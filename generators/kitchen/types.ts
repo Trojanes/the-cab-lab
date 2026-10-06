@@ -95,6 +95,12 @@ export interface KitchenParams {
   /** Door colour name on the fronts' room face. Default Gloss White. */
   doorColor?: string;
   doorColorName?: string;
+  /**
+   * Bench top colour (an HPL decor). Copied from the job catalogue when the
+   * cabinet is created. Absent: no bench board — a job saved before bench tops.
+   */
+  benchTopColor?: string;
+  benchTopColorName?: string;
   /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
   doorSeries?: string;
   /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */

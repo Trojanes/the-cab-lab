@@ -1466,7 +1466,14 @@ function seedAxes(board, prov) {
   return axes;
 }
 
-/** Six faces of a board that is still placed in generator code: editable formulas, size as a formula. */
+/** A board whose outline follows its box, so a placement rule can be saved. */
+function ruleBoard(boardId) {
+  const listed = cur()?.result?.debug?.ruleBoards;
+  if (Array.isArray(listed)) return listed.includes(boardId);
+  return !!placementRule(boardId)?.axes;
+}
+
+/** Six faces of a board that is still placed in generator code. Shown, not edited: a box rule would not be saved. */
 function provenanceLabels(b) {
   const prov = cur().prov;
   const faces = {};
@@ -1476,7 +1483,7 @@ function provenanceLabels(b) {
     const hi = concreteFormula(prov, `${b.id}.${a}1`);
     for (const f of [`${a}0`, `${a}1`]) {
       const formula = toDisplay(f.endsWith("0") ? lo : hi);
-      faces[f] = { drive: false, editable: true, formula, pieces: formulaPieces(formula, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
+      faces[f] = { drive: false, editable: false, formula, pieces: formulaPieces(formula, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
     }
     const sz = toDisplay(sizeFormula(lo, hi));
     sizes[a] = { formula: sz, lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(b[`${a}1`] - b[`${a}0`])}`, `= ${sz}`] };
@@ -1597,21 +1604,17 @@ function renderProvenancePanel(panel, id, b) {
   const t = tab();
   panel.append(h("div", { class: "panel-head" }, [
     h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 默认模式` }),
-    h("div", { class: "panel-sub", text: "蓝色的面可以改公式，整块板跟着平移，尺寸不变。橘黄色的尺寸是两个面的差，不能单独改。" }),
+    h("div", { class: "panel-sub", text: "这是现在的位置公式，只能看。缺口和槽由代码算，改一条位置不会存上，板还在原来的地方。要挪分隔板，去改分区宽度。" }),
   ]));
   for (const a of ["x", "y", "z"]) {
     const lo = concreteFormula(prov, `${id}.${a}0`);
     const hi = concreteFormula(prov, `${id}.${a}1`);
     const rows = [`${a}0`, `${a}1`].map((f) => {
       const text = toDisplay(f.endsWith("0") ? lo : hi);
-      const input = h("input", { type: "text", value: text, spellcheck: "false" });
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value !== text) applyFaceFormula(id, f, input.value); if (e.key === "Escape") { input.value = text; input.blur(); } });
-      input.addEventListener("change", () => { if (input.value !== text) applyFaceFormula(id, f, input.value); });
-      bindFormulaDrop(input, f, () => input.value);
       return h("div", { class: "face-row" }, [
         h("span", { class: "fname", text: FACE_NAMES[f] }),
         h("span", { class: "fval", text: fmt(b[f]) }),
-        input,
+        h("span", { class: "formula", text: `= ${text}` }),
       ]);
     });
     const sz = toDisplay(sizeFormula(lo, hi));
@@ -1892,7 +1895,9 @@ function renderFacePanel(panel) {
   const N = names();
   panel.append(h("div", { class: "panel-head" }, [
     h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 面的模式` }),
-    h("div", { class: "panel-sub", text: `先点 ${id} 上要移动的面，再点作为参照的面（其他板是半透明的，也能点）。一条关系只管一条轴：${id} 只沿那个面的法向整体平移，尺寸、朝向和另外两条轴不变，参照板不会被推动。` }),
+    h("div", { class: "panel-sub", text: ruleBoard(id)
+      ? `先点 ${id} 上要移动的面，再点作为参照的面（其他板是半透明的，也能点）。一条关系只管一条轴：${id} 只沿那个面的法向整体平移，尺寸、朝向和另外两条轴不变，参照板不会被推动。`
+      : `${id} 的缺口和槽由代码算。可以点它的面当别的板的参照。给 ${id} 自己建一条位置不会存上，板还在原来的地方。` }),
   ]));
   const nudged = t.nudge && Object.values(t.nudge).some((v) => Math.hypot(v[0], v[1], v[2]) > 0.5);
   panel.append(h("div", { class: "btn-row" }, [
@@ -2101,7 +2106,7 @@ function renderBoardEdit(panel) {
     input.addEventListener("keydown", (e) => { if (e.key === "Enter") go(); if (e.key === "Escape") { input.value = text; input.blur(); } });
     input.addEventListener("change", go);
     input.addEventListener("focus", () => { t.l3Group = group; renderL3(); });
-    const warn = (c.result.validation?.warnings || []).filter((w) => w.startsWith(`${id}:`) && /groove|cuts/i.test(w));
+    const warn = (c.result.validation?.warnings || []).filter((w) => w.startsWith(`${id}:`) && /groove|cuts|灯槽|切穿/i.test(w));
     panel.append(section(`加工特征 · ${feat.label || fid}`, [
       h("div", { class: "face-row" }, [h("span", { class: "fname", text: "深度" }), h("span", { class: "fval", text: segs.length ? fmt(value) : "—" }), input]),
       h("div", { class: "mode-note", text: segs.length
