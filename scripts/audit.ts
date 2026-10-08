@@ -39,7 +39,12 @@ for (const d of readdirSync(genDir, { withFileTypes: true })) {
   const presets = JSON.parse(readFileSync(presetsFile, "utf8")).presets ?? [];
   if (!presets.length) continue;
   const mod = await import(pathToFileURL(genFile).href);
-  const fn = Object.entries(mod).find(([k, v]) => /^generate[A-Z]/.test(k) && typeof v === "function" && !/Svg|Preview/.test(k))?.[1] as Gen | undefined;
+  // The entry point is generate<Pascal(dir)> (optionally + "Cabinet"); a blind /^generate[A-Z]/
+  // pick grabs view helpers re-exported through `export *` (e.g. generateOHCFrontView sorts first
+  // alphabetically) and feeds them params, which read as null results.
+  const wanted = `generate${d.name[0]!.toUpperCase()}${d.name.slice(1)}`;
+  const fn = ((mod as Record<string, unknown>)[wanted] ?? (mod as Record<string, unknown>)[`${wanted}Cabinet`]) as Gen | undefined
+    ?? Object.entries(mod).find(([k, v]) => /^generate[A-Z]/.test(k) && typeof v === "function" && !/Svg|Preview|FrontView/.test(k))?.[1] as Gen | undefined;
   if (!fn) continue;
   for (const p of presets) cases.push({ name: `${d.name}/${p.id}`, moduleId: d.name, run: () => fn(p.params) });
 }
@@ -119,6 +124,11 @@ for (const c of cases) {
     result = c.run() as { boards?: unknown[] };
   } catch (e) {
     report.push({ case: c.name, boards: 0, ms: 0, findings: [], crashed: String((e as Error)?.stack ?? e).split("\n").slice(0, 3).join(" | ") });
+    newErrors += 1;
+    continue;
+  }
+  if (result == null) {
+    report.push({ case: c.name, boards: 0, ms: performance.now() - t0, findings: [], crashed: "generator returned null" });
     newErrors += 1;
     continue;
   }
