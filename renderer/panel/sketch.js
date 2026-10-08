@@ -1,7 +1,8 @@
+// @module panel @owns renderSketch — sketchBoard card, Edit sketch button
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { outlineSpan } from "../sketchBoard.js";
-import { startBoardEdit } from "../interact.js";
+import { startBoardEdit } from "../boardSketch.js";
 import { el, section, kv, boardSection, fillDrawer, panel } from "./widgets.js";
 export function renderSketchPanel(cab) {
   const result = job.resultFor(cab.id);

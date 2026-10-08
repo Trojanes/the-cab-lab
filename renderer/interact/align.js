@@ -1,3 +1,4 @@
+// @module interact @owns align.* — face-to-face flush (a Move page)
 // Face align — a page of Move (M), not its own command.
 // Inventor flush (对齐): the first face moves onto the second face's plane.
 // Normals must already point the same way. Module slides the whole cabinet;

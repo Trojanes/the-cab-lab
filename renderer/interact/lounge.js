@@ -1,3 +1,4 @@
+// @module interact @owns lounge run placement (I/L/U/parallel), wing, midCab
 // Lounge placement family: floor-drawn runs (I / L / U), the L wing and the
 // Parallel seat drawn on top of a placed box. The box step rides generic
 // placement — it intercepts the box's completion through place.js's finish hook

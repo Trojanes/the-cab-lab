@@ -1,3 +1,4 @@
+// @module interact @owns pointalign.* — point-to-point translate (a Move page)
 // Point align — a page of Move (M).
 // Fusion point-to-point: translate, never rotate, so the first point lands on
 // the second. Module slides the whole cabinet; Panel slides only that board.

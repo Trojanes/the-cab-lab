@@ -1,3 +1,4 @@
+// @module panel @owns renderLounge — lounge.run.* plan view, back panels, wheel arch
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";

@@ -23,6 +23,7 @@ Cab Lab 是木工设计端软件，目标是将空间和家具设计转换为可
 | 文件 | 内容 |
 |---|---|
 | `STATUS.md` | 当前进度 |
+| `READING-GUIDE.md` | **先读这个**——路由索引 + AI/开发者检索规范（含 MODULE-MAP） |
 | `ARCHITECTURE.md` | 系统结构 |
 | `CNJOB.md` | Cab Lab → OmniCam 接口 |
 | `TESTING.md` | 测试原则 |
@@ -33,6 +34,7 @@ Cab Lab 是木工设计端软件，目标是将空间和家具设计转换为可
 
 ```text
 README
+→ READING-GUIDE   (定位东西)
 → STATUS
 → ARCHITECTURE
 → 按需要阅读其他文档

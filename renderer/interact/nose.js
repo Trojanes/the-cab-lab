@@ -1,3 +1,4 @@
+// @module interact @owns nose.* — bedroom nose fill placement
 // Nose placement (Bedroom). The module fills the vehicle's nose: front = nose
 // cross-section, width = van width, height = roof; only the depth from the
 // nose is chosen.

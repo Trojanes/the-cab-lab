@@ -1,3 +1,4 @@
+// @module panel @owns renderPlane — construction plane card
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { el, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";

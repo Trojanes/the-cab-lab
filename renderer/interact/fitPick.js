@@ -1,3 +1,4 @@
+// @module interact @owns wall fit pick — partition to overhead+base
 // Fit a partition to an overhead and a base: pick the two cabinets (either
 // order), Enter fits the wall. The wall is the job selection while picking.
 import * as job from "../job.js";

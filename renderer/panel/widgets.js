@@ -1,3 +1,4 @@
+// @module panel @owns shared widgets — el/numField/section/frontSection, board drawer, cabinetBox, outerSizeFields, controlPanelRows, gapMode
 // Panel widget toolkit + shared DOM anchors, extracted from renderer/panel.js.
 // Editors import widgets from here; the shell wires repaint() to its renderPanel.
 import * as job from "../job.js";

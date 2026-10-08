@@ -263,6 +263,23 @@ export function defaultSide(b, excludeId = null) {
   return pool.slice().sort((a, c) => score(c) - score(a))[0];
 }
 
+/** Whether the left/right end of a kitchen base run is against a wall or a neighbour cabinet. */
+export function kitchenEndBlocked(cab, end) {
+  if (!cab) return false;
+  const fp = envelopeFootprint(cab, cab.pose || {});
+  const b = {
+    x0: fp.minX, y0: fp.minY, z0: fp.z0,
+    W: Math.max(fp.maxX - fp.minX, 0.1), D: Math.max(fp.maxY - fp.minY, 0.1), H: Math.max(fp.z1 - fp.z0, 0.1),
+  };
+  const turns = (((cab.pose?.rotZ || 0) % 360) + 360) % 360;
+  const localDir = end === "right" ? 1 : -1;
+  const side = turns === 90 ? { axis: "y", dir: localDir }
+    : turns === 180 ? { axis: "x", dir: -localDir }
+    : turns === 270 ? { axis: "y", dir: -localDir }
+    : { axis: "x", dir: localDir };
+  return sideBlocked(b, side, cab.id);
+}
+
 /** Pose turned `rotZ - current` degrees about world Z through the envelope centre, so R stays a 90° yaw. */
 export function poseRotatedTo(cab, rotZ, snap = (v) => v) {
   const env = envelopeBox(cab, resultFor(cab.id));

@@ -1,3 +1,4 @@
+// @module interact @owns bedbox — attached bed box in the mattress opening
 // Bed box placement — attached to the Bedroom body: it stands in the mattress
 // opening and runs into the room. Width (the body's bed frame) and height
 // (boot height) are read from the body — never typed or dragged here. Only the

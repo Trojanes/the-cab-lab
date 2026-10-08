@@ -1,3 +1,4 @@
+// @module interact @owns orient.* — Face command (O), pending side flip
 // Face command (O): click a side of a cabinet; its doors move to that side
 // (pending, orange) until confirmed — click elsewhere or Enter. Esc restores.
 // The box never moves: W/D swap and the origin lands on the corner the doors

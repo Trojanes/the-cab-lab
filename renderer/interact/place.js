@@ -1,3 +1,4 @@
+// @module interact @owns place.* — arm→face→extrude box placement, kitchen edge/sweep, overhead roof edge
 // Generic box placement: armed → face → extrude → create, plus the bunk-bed
 // overlay (a placement variant — it drives the same rb/face/extrude machinery).
 // Companion flows that need to intercept the box's completion (lounge box step)

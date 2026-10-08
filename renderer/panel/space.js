@@ -1,3 +1,4 @@
+// @module panel @owns renderSpace — room/space dialog, catalogueFields
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { getSpaceKind } from "../spaces.js";

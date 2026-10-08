@@ -1,3 +1,4 @@
+// @module interact @owns mode bus, S slot bag, typed dims, envelope handle drags, askKitchenColumn
 // Shared interaction machinery — every mode file in ./interact/ builds on this
 // and nothing here depends on a single mode. The mode bus (registerMode /
 // activeMode / emitMode), the cursor resolver, the dimension type-ins, and the
@@ -28,7 +29,7 @@ import {
 import { showTip, hideTip } from "../hud.js";
 import { wallPickables } from "../walls3d.js";
 import { wallBoards } from "../walls.js";
-import { poseFits, overlaps, envelopeFootprint, sideBlocked, FRONT_THICKNESS_DEFAULT } from "../fit.js";
+import { poseFits, overlaps, FRONT_THICKNESS_DEFAULT } from "../fit.js";
 import { clearHeightAt } from "../spaces.js";
 import { log } from "../log.js";
 
@@ -454,23 +455,6 @@ export function endWallSplit(e) {
 }
 
 // --- envelope handle drag ---------------------------------------------------------
-
-/** Kitchen left / right end, in the cabinet frame, flush against a wall or another solid. */
-export function kitchenEndBlocked(cab, end) {
-  if (!cab) return false;
-  const fp = envelopeFootprint(cab, cab.pose || {});
-  const b = {
-    x0: fp.minX, y0: fp.minY, z0: fp.z0,
-    W: Math.max(fp.maxX - fp.minX, 0.1), D: Math.max(fp.maxY - fp.minY, 0.1), H: Math.max(fp.z1 - fp.z0, 0.1),
-  };
-  const turns = (((cab.pose?.rotZ || 0) % 360) + 360) % 360;
-  const localDir = end === "right" ? 1 : -1;
-  const side = turns === 90 ? { axis: "y", dir: localDir }
-    : turns === 180 ? { axis: "x", dir: -localDir }
-    : turns === 270 ? { axis: "y", dir: -localDir }
-    : { axis: "x", dir: localDir };
-  return sideBlocked(b, side, cab.id);
-}
 
 /** Which column a kitchen width change uses. Asks once, then remembers it. */
 export function askKitchenColumn(client, columns, onPick) {

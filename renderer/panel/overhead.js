@@ -1,8 +1,9 @@
+// @module panel @owns renderOverhead/renderUShape — ohc.* zones/rangehood/split/control panels @reads result.debug.zones
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";
 import { MIN_ZONE_WIDTH, fitZoneWidths, overheadEndPanel } from "../modules.js";
-import { sideLabel, sideOfRotZ } from "../interact.js";
+import { sideLabel, sideOfRotZ } from "../fit.js";
 import { thickness } from "../materials.js";
 import { showControlPanelForm } from "../quickCard.js";
 import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode, outerSizeFields, controlPanelRows } from "./widgets.js";

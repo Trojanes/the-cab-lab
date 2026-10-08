@@ -1,10 +1,11 @@
+// @module panel @owns renderKitchen — kitchen.cell.* events, columns/zones/stove/split/waterfall/wheelArch UI @reads result.debug.columns/stoves/split
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";
 import { MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH } from "../modules.js";
 import { thickness } from "../materials.js";
 import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode, outerSizeFields } from "./widgets.js";
-import { kitchenEndBlocked } from "../interact/shared.js";
+import { kitchenEndBlocked } from "../fit.js";
 // --- kitchen base cabinet editor -------------------------------------------------------
 //
 // Wide page while a kitchen base run is selected: the generator's 2D front

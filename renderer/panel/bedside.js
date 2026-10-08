@@ -1,3 +1,4 @@
+// @module panel @owns renderBedSide — bedside drawer, read-only W
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";

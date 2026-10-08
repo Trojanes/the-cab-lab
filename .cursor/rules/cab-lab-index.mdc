@@ -1,0 +1,46 @@
+# Reading index — route before you read
+
+Do not read files to find things. Route to them first, then read the narrow part. Whole-file reads of anything over ~400 lines are a last resort.
+
+## The three indexes
+
+1. **`docs/MODULE-MAP.md`** — generated table: every file → its `@tags` + exported symbols. Regenerate with `npm run module-map` after moving functions. A name lives in exactly one row.
+2. **`@tags` headers** — every `renderer/interact/*` and `renderer/panel/*` file starts with `// @module <area> @owns <events/features>`. `rg "@owns kitchen.cell"` finds the owner of a log event; `rg "@module panel"` lists the editors.
+3. **Log-event prefix = owner.** `kitchen.cell.drag` → `panel/kitchen.js`; `ohc.zone.drag` → `panel/overhead.js`; `place.*` → `interact/place.js`; `move.*` → `interact/move.js`; `tall.zone.*` → `panel/tall.js`; `tallFridge.*` → `panel/tallFridge.js`; `lounge.run.*` → `panel/lounge.js`; `small.zone.*` → `panel/small.js`. Full event semantics: `cab-lab-usage-log.mdc`.
+
+## Concept → file routing
+
+| You want | Start here |
+|---|---|
+| job state, selection, undo, add/update cabinet | `renderer/job.js` |
+| module registry, envelope↔params mapping, module API (`mod.*`) | `renderer/modules.js` |
+| "does it fit / what's blocked / overlaps" — pure math, headless-safe | `renderer/fit.js` |
+| space shape, walls of the room | `renderer/spaces.js`, `renderer/walls.js` |
+| 3D meshes, pickables, move triad, ghosts | `renderer/cabinets3d.js` |
+| pointer dispatch, mode registry, shared state bag `S` | `renderer/interact.js` → `interact/shared.js` |
+| place a cabinet (arm→face→extrude, kitchen edge/sweep) | `interact/place.js` |
+| drag a cabinet face to resize | `interact/resize.js` + `shared.js` |
+| move triad / face-align / point-align | `interact/move.js` `align.js` `pointAlign.js` |
+| right panel shell + wide-page detection | `renderer/panel.js` |
+| shared panel widgets (`el`, `numField`, `outerSizeFields`, `cabinetBox`) | `panel/widgets.js` |
+| one cabinet module's editor | `panel/<name>.js` (match the log prefix) |
+| generator logic for a module | `generators/<dir>/generator.ts` — **never** edit `renderer/gen/*` (built by `npm run build:generators`) |
+| provenance/rule constants, `dim()` | `generators/<dir>/rules.json` + `_lib/dim.ts`, `_lib/layout.ts` |
+| cnjob export contract | `generators/_lib/cnjob.ts`, `docs/CNJOB.md` |
+| geometry audit | `scripts/audit.ts`, `generators/_lib/audit.ts`, `audit.known.json` |
+| snapshot golden diff | `generators/_lib/snapshotDiff.ts`, `fixtures/snapshot/` |
+| driving the real app (CDP pointer/keyboard) | `scripts/e2e-drive.mjs` |
+| commands API surface | `renderer/commands.js`, `renderer/appApi.js`, `docs/APP-API.md` |
+
+## Layer rules (enforced by `npm run check:deps`)
+
+- `panel/*` never imports `interact*`; `interact/*` never imports `panel*`. Shared geometry lives in `fit.js`; shared UI lives in `panel/widgets.js`.
+- `interact/*` is owned by the `interact.js` shell — outside code imports the shell, not a module file. Same for `panel/*` / `panel.js`.
+- Neutral layer (free to import from anywhere): `job.js` `modules.js` `fit.js` `spaces.js` `walls.js` `pose.js` `snap.js` `hud.js` `materials.js` `log.js` `gen/*`.
+- interact modes share mutable state through `S` (the slot bag in `interact/shared.js`) — do not add a second mutable registry; extend `S`.
+
+## Editing etiquette that keeps the index true
+
+- A function lives in the file whose `@owns`/`@module` covers it. New file → add the `@module` header and rerun `npm run module-map`.
+- Rename → same rule. The map is regenerated, not hand-edited.
+- Adding an import that violates a layer rule = red flag; put the shared code in the neutral layer instead.

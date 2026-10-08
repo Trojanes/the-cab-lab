@@ -1,3 +1,4 @@
+// @module interact @owns move.* — triad arrows/rings, board-level move, undo step
 // Move (M): one command, three ways to choose what moves, picked on the card.
 // Free = arrows and rings; Face = two faces, same direction, the first moves
 // onto the second's plane; Point = a corner onto another point, no rotation.

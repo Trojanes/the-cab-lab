@@ -1,3 +1,4 @@
+// @module interact @owns resize.* — envelope face drag, kitchen column-aware resize
 // Resize: pull one envelope face. One command for every module — click a face
 // of a cabinet's box, drag the arrow on it. The opposite face stays; the module
 // decides which faces it offers (`resizeFaces`) and what its zones do

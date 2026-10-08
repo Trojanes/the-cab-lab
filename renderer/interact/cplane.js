@@ -1,3 +1,4 @@
+// @module interact @owns cplane.* — construction plane (P)
 // Construction plane (P). Click a wall or cabinet face, offset a parallel
 // plane into the room, click / Enter to leave it. The plane is infinite
 // (axis = value); what you see is plane ∩ space. Its outline vertices are

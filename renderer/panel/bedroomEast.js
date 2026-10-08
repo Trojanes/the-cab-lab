@@ -1,3 +1,4 @@
+// @module panel @owns renderBedroomEast — east bedroom card
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";

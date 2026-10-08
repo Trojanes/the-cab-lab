@@ -1,3 +1,4 @@
+// @module interact @owns retype — typed W/D/H on a fresh cabinet
 // Re-type the last created box: armed with a fresh cabinet, typing digits opens
 // the W/D/H type-ins against that cabinet's envelope. An overlay on the armed
 // placement — getMode has no retype token; the box stays selected.

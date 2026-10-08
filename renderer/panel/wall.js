@@ -1,3 +1,4 @@
+// @module panel @owns renderWall — partition editor, fit/explain text, control panels
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { openFloorPlan } from "../floorplan.js";
