@@ -21,11 +21,10 @@
 // height = floor + clearance … roof − clearance (walls.js).
 import * as job from "./job.js";
 import { snap } from "./job.js";
-import { cabinetFootprints } from "./cabinets3d.js";
+import { cabinetFootprints, solidBoxes } from "./fit.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { thickness } from "./materials.js";
 import { wallSolid, wallStatus, wallBoxes, wallBoards, trimToFaces, openingIssues, openingWarnings, openingParts, pelmetCover, WALL_MIN_LENGTH, OPENING_MIN_WIDTH, OPENING_DEFAULT_CLEARANCE, OPENING_TYPES, SLIDING_DEFAULT_OVERLAP, SLIDING_DEFAULT_DOOR_HEIGHT } from "./walls.js";
-import { solidBoxes } from "./walls3d.js";
 import { buildFeatures, nearestEdge, projectOnEdge, pointOnEdge, featureUsOnEdge, distToEdge } from "./features2d.js";
 import { disarm, cancelMove, cancelOrient, evalDim, sideOfRotZ } from "./interact.js";
 import { log } from "./log.js";

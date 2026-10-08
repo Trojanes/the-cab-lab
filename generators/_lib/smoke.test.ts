@@ -251,8 +251,8 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   const interact = readFileSync(join(root, "renderer", "interact.js"), "utf8");
   assert.ok(interact.includes("startLounge") && interact.includes("loungeFromDrawnRun"), "lounge draws in the 3D view");
   assert.ok(fp.includes('e.key === "g"'), "floorplan G shortcut");
-  const c3 = readFileSync(join(root, "renderer", "cabinets3d.js"), "utf8");
-  assert.ok(c3.includes("export function cabinetFootprints"), "cabinetFootprints");
+  const fit = readFileSync(join(root, "renderer", "fit.js"), "utf8");
+  assert.ok(fit.includes("export function cabinetFootprints"), "cabinetFootprints");
 }
 
 console.log("smoke: all wired generators + bench + lounge place + bedroom layout + renderer adapters OK");

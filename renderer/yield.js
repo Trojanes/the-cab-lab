@@ -8,8 +8,8 @@
 // red with the reason. One undo step for the grow, one for the yield.
 import * as job from "./job.js";
 import { getModule, DIM_OF_AXIS } from "./modules.js";
-import { overlaps, blockingIssues } from "./interact.js";
-import { envelopeFootprint, poseFits } from "./cabinets3d.js";
+import { blockingIssues } from "./interact.js";
+import { envelopeFootprint, poseFits, cabinetHits } from "./fit.js";
 import { localAxes } from "./pose.js";
 import { log } from "./log.js";
 
@@ -18,13 +18,6 @@ const round1 = (v) => Math.round(v * 10) / 10;
 
 const cabinetOf = (id) => job.getJob().cabinets.find((c) => c.id === id) || null;
 
-/** Cabinets `cab` overlaps. A module that follows another one (bed box, bed side table) is not a neighbour of it. */
-export function cabinetHits(cab) {
-  if (!cab) return [];
-  const cabIds = new Set(job.getJob().cabinets.map((c) => c.id));
-  return overlaps(cab, cab.pose).map((id) => id.split(":")[0]).filter((id, i, all) => cabIds.has(id) && all.indexOf(id) === i)
-    .filter((id) => !getModule(cab.moduleId).attach && !getModule(cabinetOf(id).moduleId).attach);
-}
 
 /** World overlap of two cabinets' boxes along each axis (0 when apart). */
 function overlapDepth(a, b) {

@@ -6,8 +6,8 @@ import * as THREE from "three";
 import { scene } from "./space.js";
 import { getJob, getWalls, getSelectedId, getSpace, getStock } from "./job.js";
 import { prismYZ, prismXZ } from "./boardGeom.js";
-import { wallStatus, wallBoxes, allWallParts, wallBoards } from "./walls.js";
-import { cabinetFootprints } from "./cabinets3d.js";
+import { wallBoards } from "./walls.js";
+import { statusOf } from "./fit.js";
 
 // White Stipple partition stock: lighter than the tan carcass so a wall reads as a wall.
 const wallMat = new THREE.MeshStandardMaterial({ color: 0xdfe4ea, roughness: 0.85 });
@@ -23,40 +23,6 @@ scene.add(root);
 
 const groups = new Map(); // wallId -> Group
 
-/**
- * Every other solid (other walls, their sliding-door leaves / pelmets, and
- * cabinets) as boxes, for legality checks. A wall's own parts leave with it.
- */
-export function solidBoxes({ excludeWall = null } = {}) {
-  const sp = getSpace();
-  const stock = getStock();
-  const walls = getWalls();
-  const boxes = wallBoxes(walls.filter((w) => w.id !== excludeWall), sp, stock);
-  boxes.push(...allWallParts(walls, sp, stock).filter((p) => p.wallId !== excludeWall));
-  for (const cab of getJob().cabinets) {
-    const fps = cabinetFootprints(cab, cab.pose);
-    fps.forEach((fp, i) => {
-      boxes.push({
-        id: fps.length === 1 ? cab.id : `${cab.id}:${fp.id || i}`,
-        kind: "cabinet", cabId: cab.id,
-        x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1],
-      });
-    });
-  }
-  return boxes;
-}
-
-/** Legality of one wall against the current job (see walls.js wallStatus). */
-export function statusOf(wall) {
-  const sp = getSpace();
-  const stock = getStock();
-  return wallStatus(wall, {
-    resolved: sp,
-    stock,
-    boxes: solidBoxes({ excludeWall: wall.id }),
-    anchorBoxes: wallBoxes(getWalls().filter((w) => w.id !== wall.id), sp, stock),
-  });
-}
 
 function boardGeo(wall, board) {
   const holes = (board.holes || []).map((h) => h.map((p) => (wall.axis === "x" ? { y: p.u, z: p.z } : { x: p.u, z: p.z })));

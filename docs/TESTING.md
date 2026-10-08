@@ -54,6 +54,22 @@ npm run test:replay       # 跨仓冒烟：重发 kitchen.cnjob → OmniCam 全�
   fixture 必须报出对应错误码。
 - `generators/_lib/boardContract.test.ts` — Board/Feature 不变量。
 - `renderer/jobContract.test.js` — 加载链校验。
+- `renderer/appApi.test.js` — Application API 无头全流程：space →
+  addCabinet → updateCabinet → validate → exportCnjob，外加 v1 回放、
+  违例拒绝、undo/redo。跑法：`npm run test:app`。
+- `generators/_lib/snapshotDiff.test.ts` — 快照语义 diff：
+  workpiece/feature/material 增删改逐字段命名。
+
+### 生成器变更的语义差异报告（T04）
+
+```bash
+node scripts/diff-snapshots.mjs --regen        # 当前生成器输出 vs golden fixture
+node scripts/diff-snapshots.mjs a.json b.json  # 任意两份快照（exit 1 = 有差异）
+```
+
+输出命名到字段级：`workpieceId / featureId / 字段路径 before→after`
+（例：`B3_LED_MAIN groove geometry.widthMm 14.5→16`）。Agent 改完
+生成器后跑 `--regen`，报告即"这次改动制造了什么差异"。
 - `scripts/emit-replay-cnjob.mjs` — 发射 `fixtures/replay/kitchen.cnjob`
   （真实 zip，manifest + snapshot）。契约变更时先 `--check` 确认漂移，
   再重新发射并同步到 `cabinetnc-cut/dotnet/tests/testdata/regression/packages/`。

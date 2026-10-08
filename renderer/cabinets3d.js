@@ -7,7 +7,8 @@ import { doorBodyMaterial, grainAxisOf } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
 import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden, conflictIds } from "./job.js";
 import { getModule } from "./modules.js";
-import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
+import { clearHeightAt, slicePlane } from "./spaces.js";
+import { envelopeBox, poseFits } from "./fit.js";
 import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry } from "./boardGeom.js";
 import { faceAtHit } from "./boardModel.js";
 import { worldOf, boardOverride, nominalBoardPoint } from "./pose.js";
@@ -58,80 +59,6 @@ export function groupFor(id) {
   return groups.get(id) || null;
 }
 
-/** Envelope in cabinet-local mm: x 0..W, y -FPT..D, z 0..H. A module with `localBox` supplies its own. */
-export function envelopeBox(cab, result) {
-  const mod = getModule(cab.moduleId);
-  if (typeof mod.localBox === "function") return mod.localBox(cab.params);
-  const env = mod.envelope(cab.params);
-  const fpt = result?.params?.frontPanelThickness ?? cab.params.frontPanelThickness ?? 16;
-  return { x0: 0, x1: env.W, y0: -fpt, y1: env.D, z0: 0, z1: env.H, W: env.W, D: env.D, H: env.H, fpt };
-}
-
-function transformBox(box, pose) {
-  const z0 = box.z0 ?? 0;
-  const z1 = box.z1 ?? 0;
-  const locals = [
-    [box.x0, box.y0, z0], [box.x1, box.y0, z0], [box.x1, box.y1, z0], [box.x0, box.y1, z0],
-    [box.x0, box.y0, z1], [box.x1, box.y0, z1], [box.x1, box.y1, z1], [box.x0, box.y1, z1],
-  ];
-  const points = locals.map((p) => worldOf(pose, p));
-  const xs = points.map((p) => p[0]);
-  const ys = points.map((p) => p[1]);
-  const zs = points.map((p) => p[2]);
-  return {
-    id: box.id,
-    points,
-    corners: [[points[0][0], points[0][1]], [points[1][0], points[1][1]], [points[2][0], points[2][1]], [points[3][0], points[3][1]]],
-    minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys),
-    z0: Math.min(...zs), z1: Math.max(...zs),
-  };
-}
-
-/** Local XY rectangles the cabinet occupies (L/U/Parallel lounge = several). */
-export function localFootprintBoxes(cab) {
-  const result = resultFor(cab.id);
-  const mod = getModule(cab.moduleId);
-  if (typeof mod.footprintBoxes === "function") {
-    const boxes = mod.footprintBoxes(cab.params, result) || [];
-    if (boxes.length) {
-      const env = envelopeBox(cab, result);
-      return boxes.map((b) => ({ ...b, z0: b.z0 ?? env.z0, z1: b.z1 ?? env.z1 }));
-    }
-  }
-  const env = envelopeBox(cab, result);
-  return [{ id: "envelope", x0: env.x0, x1: env.x1, y0: env.y0, y1: env.y1, z0: env.z0, z1: env.z1 }];
-}
-
-/** One world footprint per local rectangle (walls can sit in an L notch). */
-export function cabinetFootprints(cab, pose) {
-  return localFootprintBoxes(cab).map((box) => transformBox(box, pose));
-}
-
-/** World-space union AABB of the cabinet envelope (or all footprint boxes). */
-export function envelopeFootprint(cab, pose) {
-  const fps = cabinetFootprints(cab, pose);
-  const minX = Math.min(...fps.map((f) => f.minX));
-  const maxX = Math.max(...fps.map((f) => f.maxX));
-  const minY = Math.min(...fps.map((f) => f.minY));
-  const maxY = Math.max(...fps.map((f) => f.maxY));
-  const z0 = Math.min(...fps.map((f) => f.z0));
-  const z1 = Math.max(...fps.map((f) => f.z1));
-  return {
-    corners: [[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY]],
-    minX, maxX, minY, maxY, z0, z1,
-  };
-}
-
-/** Does the cabinet fit inside the space at this pose (floor polygon, obstacles, height)? */
-export function poseFits(cab, pose) {
-  const fps = cabinetFootprints(cab, pose);
-  const sp = getSpace();
-  const roofAware = getModule(cab.moduleId).roofAware;
-  return fps.every((fp) => {
-    const z1 = roofAware && sp ? Math.min(fp.z1, minClearHeight(sp, fp.minY, fp.maxY)) : fp.z1;
-    return footprintFits(sp, fp.corners, [fp.z0, z1]);
-  });
-}
 
 /** Closed local YZ outline of a nose slab: floor, then the roof profile back toward the room face. */
 export function slabOutline(profile, depth) {

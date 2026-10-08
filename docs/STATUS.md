@@ -10,13 +10,14 @@ main   551478f9
 
 yzhan722/the-cab-lab
 main   551478f9
-devops 4efe6229
+devops 4ad1c24
 ```
 
 `devops` 比 `main` 多：
 
-- Cloud Storage Phase 1
-- upstream 同步 merge
+- T01 数据契约（job/Board/cnjob 三层运行时校验）
+- T02 Golden + 跨仓回放
+- T03 Application API（进行中）
 
 ## 已形成
 
@@ -34,7 +35,11 @@ devops 4efe6229
 ## 当前工作
 
 - 工程文档整理
-- 核心接口固化（T01：job/Board/cnjob 三层运行时校验 + 契约文档 `docs/job.schema.json` + 正负向 fixture 回放，分支 `feature/t01-data-contract`）
+- T03 业务逻辑与 UI 解耦：`renderer/fit.js` 空间合法性几何已独立
+  （envelope/footprints/overlaps/statusOf/exportFitIssues），
+  `renderer/appApi.js` + `docs/APP-API.md` = Agent 可调用面
+- T04 语义 diff：`generators/_lib/snapshotDiff.ts` +
+  `scripts/diff-snapshots.mjs --regen`
 - 测试体系整理
 - Cab Lab / OmniCam 集成规范
 

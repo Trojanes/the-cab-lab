@@ -23,7 +23,7 @@ import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { RULES as BUNK_RULES, bunkUpperLimits } from "./gen/bunkBed.js";
 import { getPreset } from "./presets.js";
 import {
-  pickables, groupFor, envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, setHandleHover, faceUnderHit, disarmHandle,
+  pickables, groupFor, setHandleHover, faceUnderHit, disarmHandle,
   showGhost, hideGhost, showNoseGhost, showWidthRect, hideWidthRect, showLoungeGhost, hideLoungeGhost, showCPlanePreview, hideCPlanePreview, showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
   showFaceHint, hideFaceHint, flashFaceHint,
   setMoveOpen, placeMoveTriad, hideMoveTriad, layoutMoveTriad, setMoveHover,
@@ -35,8 +35,9 @@ import {
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX, boardCorners,
 } from "./snap.js";
 import { showTip, hideTip } from "./hud.js";
-import { wallPickables, solidBoxes } from "./walls3d.js";
+import { wallPickables } from "./walls3d.js";
 import { wallBoards } from "./walls.js";
+import { envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, solidBoxes, overlaps } from "./fit.js";
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, localOf, cornerOf } from "./pose.js";
@@ -3260,17 +3261,6 @@ function clampPoseToSpace(cab, pose0) {
   return { pose, clamped };
 }
 
-/** Ids of the cabinets and partition walls a cabinet at `pose` would overlap. */
-export function overlaps(cab, pose) {
-  const fps = cabinetFootprints(cab, pose);
-  return solidBoxes().filter((b) => {
-    if (b.id === cab.id || b.cabId === cab.id) return false;
-    return fps.some((a) =>
-      a.minX < b.x[1] - 0.5 && a.maxX > b.x[0] + 0.5
-      && a.minY < b.y[1] - 0.5 && a.maxY > b.y[0] + 0.5
-      && a.z0 < b.z[1] - 0.5 && a.z1 > b.z[0] + 0.5);
-  }).map((b) => b.id);
-}
 /** Only the partition walls a cabinet at `pose` would overlap (walls come first; a cabinet never enters one). */
 function wallHits(cab, pose) {
   const walls = new Set(job.getWalls().map((w) => w.id));
