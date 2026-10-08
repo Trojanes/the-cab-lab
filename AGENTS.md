@@ -20,6 +20,9 @@ developers and agents follow. Quick form:
 - Z up, mm, front-left floor origin. Never edit `renderer/gen/*` (built).
 - `panel/*` ⟂ `interact/*` no cross-imports (`npm run check:deps` enforces).
 - Editing = change `job.json`/params then regenerate; undo = snapshots.
+- **The layered architecture is frozen**: new features slot into the
+  existing layers; reorganising/splitting/renaming only happens on an
+  explicit user request. See `docs/DEV-LOOP.md`.
 
 ## Verify before done — the gate is mandatory
 

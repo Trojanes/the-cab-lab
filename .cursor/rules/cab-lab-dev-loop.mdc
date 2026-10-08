@@ -20,6 +20,30 @@ any merge / upstream port / multi-module refactor                         → np
 When unsure between two tiers, run the higher one. `verify` never asks
 you questions; a red line is a real signal — fix, don't rationalize.
 
+## The architecture is frozen — fit in, don't reshape
+
+The layered structure (shell → registered modes/editors → module dirs →
+neutral layers → `gen/*`) is a **fixed contract, not a suggestion**. New
+modules and features slot into it:
+
+- New interaction mode → new file in `renderer/interact/` + `S` slots +
+  MODE registration in the shell. It does **not** earn a new directory,
+  a new dispatch layer, or a rewrite of the shell.
+- New editor → new file in `renderer/panel/` + `@tags` header +
+  registration in the shell. Same rule.
+- New helper → the owning neutral layer (`fit.js`, `boardSketch.js`,
+  `widgets.js`/`shared.js` per the dependency rules). Never a new
+  "utils" file beside it, never a shell import.
+- New generator → `generators/<module>/` following an existing module's
+  file layout; bundled under `renderer/gen/` by `build:generators`.
+
+**Never** reorganize directories, rename layers, split or merge shells,
+add a state library / router / framework, or change the `S`-slot
+contract on your own initiative. If you believe a structural change
+would help, **stop and ask the user** — the architecture only changes
+when the user explicitly requests it. `check:deps` enforces the
+mechanical part; this rule covers the judgement part it can't see.
+
 ## Rules that prevent regressions at the source
 
 1. **Smallest diff that says it.** No drive-by refactors, no renames you
