@@ -88,7 +88,8 @@ ancestry：
 `demo_snapshot_single_side.cnjob` 同位置是 **Ø5** → 卡在 `IsDrillHole(<5)` 与最小铣刀 Ø6.35 之间 → `pocket_too_small_for_tool` → `feature_not_cut`。
 `a108c8c` 引入的 CAD-intent 验算 gate 行为正确——它暴露的是既有缺陷：该孔从未被任何刀路加工，此前无人校验。
 无头复现：`dotnet run --project dotnet/tools/VerifyJob -- --demo`。
-修复方向是**数据**而非验算器：车间若有 Ø4/Ø5 钻头则补 ToolCatalog，否则改 fixture 孔径——属 Troy 刀具语义决策。RepairPlanner 白名单救不了（不能凭空造钻头）。
+修复方向是**数据**而非验算器——属示例 fixture 缺陷，非产品规格。
+**✅ 已解决（10-08）**：两处 `H-001` 连接器盲孔均改 Ø3（T3 钻头存在），demo 孔→drill 绑定路径覆盖不变；`VerifyJob --demo` 三个示例包全绿。未加假想刀具——ToolCatalog 扩表需车间实有刀具事实。
 
 main 上没有的测试项目（sprint 新增）：`Desktop.Core.Tests`、`Verify.Tests`、`ui-smoke/`（README 测试清单超前于 main 实际内容）。
 
@@ -139,11 +140,10 @@ main 上没有的测试项目（sprint 新增）：`Desktop.Core.Tests`、`Verif
 - ✅ PoC 提取范围：仅 contract v2 方法复刻（T01/T04 时做）
 - ✅ T01 权威基线 = sprint 的 `manufacturing-snapshot-v1.schema.json` v1.1
 - ✅ Cab Lab↔OmniCam 契约字段级咬合已验证（10-08）：Cab Lab `generators/_lib/cnjob.ts` 输出 `schemaVersion "1.1.0"` + `source.producer="the-cab-lab"` + 全套 v1.1 substrate 字段；kinds（bore/groove/pocket/throughProfile）、`sourceFace` A/B/THROUGH、`workpieces`/`materials` 容器名与 `ManufacturingSnapshotImporter` 接受集一致；OmniCam `demo_manufacturing_snapshot_v1_1.json` 即 `producer=the-cab-lab@0.2.0` 契约 demo。
-- ✅ 跨仓回放已建（10-08，T02 首批）：`the-cab-lab/scripts/emit-replay-cnjob.mjs` 发射 `fixtures/replay/kitchen.cnjob`（真实 zip）→ 同步到 `cabinetnc-cut/dotnet/tests/testdata/regression/packages/cab_lab_kitchen.cnjob` → `cab_lab_kitchen` golden（`GoldenJobRunner.RunPackageReplay`，严格镜像 VerifyJob 管线：AttachToNest→ContourToolOffset→Troy bundle→ExportVerifier）pin 住 preflight/layout/16 板 2 张排样/NC/验算码；`VerifyJob <file.cnjob>` 新增单文件全管线模式；`npm run test:replay` 为 cab-lab 侧无头冒烟。**回放即时发现** `groove_width_mismatch`：`B3_LED_MAIN` LED 槽 CAD 14.5mm → 实际切 16mm（超切 1.5mm），已 pin 进 golden，待 Troy 确认语义。
+- ✅ 跨仓回放已建（10-08，T02 首批）：`the-cab-lab/scripts/emit-replay-cnjob.mjs` 发射 `fixtures/replay/kitchen.cnjob`（真实 zip）→ 同步到 `cabinetnc-cut/dotnet/tests/testdata/regression/packages/cab_lab_kitchen.cnjob` → `cab_lab_kitchen` golden（`GoldenJobRunner.RunPackageReplay`，严格镜像 VerifyJob 管线：AttachToNest→ContourToolOffset→Troy bundle→ExportVerifier）pin 住 preflight/layout/16 板 2 张排样/NC/验算码；`VerifyJob <file.cnjob>` 新增单文件全管线模式；`npm run test:replay` 为 cab-lab 侧无头冒烟。**回放即时发现并闭环** `groove_width_mismatch`：`B3_LED_MAIN` 报 14.5→16mm 实为**验算器误报**——宽度探针在 T 字接头处量到主槽+支槽的合法并集；`ExportVerifier` 已修：探针触碰兄弟槽扫略区的采样点跳过（`Groove_crossed_by_sibling_at_junction_passes` 防回归，narrower/wider 用例继续抓真超切）。`test:replay` 归零。
 
-**Troy 待确认（制造/产品，唯一剩余阻塞）**
+**Troy 待确认（制造/产品，剩余项）**
 - sprint 的 8 个新提交（CAD verify 导出、remnant recut、pocket/dado 修到 CAD 尺寸、0.5mm gate、Syntec post、60mm 标签、L-cut 单切）制造语义是否符合车间预期——不阻塞 T01，但 Golden 批准前需闭环
-- `groove_width_mismatch`（`B3_LED_MAIN` 14.5→16mm）：T 槽/LED 槽是否允许刀具超切，或槽宽应改发 16 或工具表加刀
 
 **环境差异（记录，不修改）**
 - 本机无 `E:` 盘 — `.cursor` 规则的部署目标 `E:\Work\OmniCam\dist\` 不可用

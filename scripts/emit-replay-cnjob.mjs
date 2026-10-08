@@ -46,6 +46,8 @@ mkdirSync("fixtures/replay", { recursive: true });
 const manifest = JSON.stringify({ format: "cabinetnc.manufacturing-snapshot", schemaVersion: "1.1.0", payload: "snapshot.json" });
 writeFileSync("fixtures/replay/kitchen.cnjob", zipStore([
   { name: "manifest.json", data: Buffer.from(manifest) },
-  { name: "snapshot.json", data: Buffer.from(JSON.stringify(snapshot)) },
+  // exportedAt is the only nondeterministic field — pin it so replay runs
+  // produce a byte-identical fixture and don't dirty the tree.
+  { name: "snapshot.json", data: Buffer.from(JSON.stringify({ ...snapshot, exportedAt: "2000-01-01T00:00:00.000Z" })) },
 ]));
 console.log("wrote fixtures/replay/kitchen.cnjob");
