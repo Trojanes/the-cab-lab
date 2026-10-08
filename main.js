@@ -184,6 +184,8 @@ const MODULE_TO_DIR = {
   generalTallCabinet: "generalTall",
   tallFridgeCabinet: "generalTall",
   loungeGenerator: "lounge",
+  ensuiteDrawingLower: "ensuiteDrawing",
+  ensuiteDrawingTall: "ensuiteDrawing",
 };
 
 function generatorDirOf(moduleId) {

@@ -37,6 +37,9 @@ const UI: GTParams = {
 {
   const r = generateGeneralTall(UI);
   assert.deepEqual(r.validation.errors, []);
+  const ledOff = (id: string, face: string) => b(r, id).faces!.find((f) => f.id === face)!.features.filter((f) => f.for === "led");
+  assert.equal(ledOff("T3", "A").length, 0);
+  assert.equal(ledOff("B3", "B").length, 0);
   assert.deepEqual(r.validation.warnings, []);
 
   // 堆叠链（§8.2）
@@ -270,9 +273,9 @@ const UI: GTParams = {
     assert.equal(zi.boardType, "full_zi");
     assert.equal(zi.y1, 568);
   }
-  // 侧板缺口：柜体 Y，后墙 midDepth=568
+  // 侧板缺口：柜体 Y，后墙 midDepth=568。侧板盖住两块避让支撑的端头：缺口到竖板后表面 (368+15) 和横板下表面 (400−15)
   assert.deepEqual(b(r, "SidePanel_L").profileVector, [
-    { y: -16, z: 0 }, { y: 368, z: 0 }, { y: 368, z: 400 }, { y: 568, z: 400 },
+    { y: -16, z: 0 }, { y: 383, z: 0 }, { y: 383, z: 385 }, { y: 568, z: 385 },
     { y: 568, z: 2000 }, { y: -16, z: 2000 },
   ]);
   // V3/V4 full 避让（ad=200 > 150）：底边抬到 400，后缘 y=FPT+midDepth
@@ -328,6 +331,19 @@ const UI: GTParams = {
     assert.equal(lock.width, 55);
     assert.equal(lock.height, 15.5);
     assert.equal(lock.radius, 7.75);
+  }
+  // 没写锁位的门：顶锁，心在铰链对面、距那条门边 80。side_door 铰链在左。
+  {
+    const plain = generateGeneralTall(UI);
+    const door = b(plain, "FP_zone-1");
+    const lock = plain.locks.find((l) => l.panelId === "FP_zone-1")!;
+    assert.equal(lock.centerX, r2(door.x1 - 80));
+    const left = plain.locks.find((l) => l.panelId === "FP_zone-3_L")!;
+    const right = plain.locks.find((l) => l.panelId === "FP_zone-3_R")!;
+    const leafL = b(plain, "FP_zone-3_L");
+    const leafR = b(plain, "FP_zone-3_R");
+    assert.equal(left.centerX, r2(leafL.x1 - 80), "left leaf: lock toward the meeting edge");
+    assert.equal(right.centerX, r2(leafR.x0 + 80), "right leaf: lock toward the meeting edge");
   }
   // side 锁（双门）：centerZ = zone 堆叠 z0(999) + lockHeight(500) = 1499；挂 VD
   {
@@ -645,6 +661,9 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.equal(lockZ("FP_zone-2"), 459.5); // front rail underside 490 − 30.5
   const led = b(d, "B3").faces!.find((f) => f.id === "B")!.features.filter((f) => f.for === "led");
   assert.equal(led.length, 3);
+  const branch = led.find((f) => f.id === "B3_LED_BRANCH_1")!;
+  assert.equal(branch.u0, 22.75); // centre 30 − half of 14.5, the kitchen B3 near wall
+  assert.equal(branch.u1, 37.25);
 
   // Edge bands: door colour on door stock and on carcass edges that show flush with the fronts.
   const door = "Metallic White";

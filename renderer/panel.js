@@ -1093,12 +1093,22 @@ function controlPanelRows(targetId, list, { host, canAdd }) {
 // an x-axis drag on the same view. Every edit is one undo step; a boundary drag
 // commits once on release.
 
-const tallSel = { cabId: null, zoneId: null }; // zone selection, kept across re-renders
+// zoneIds: every selected zone (Ctrl+click adds / removes); zoneId: the one zone the card edits, only while exactly one is selected.
+const tallSel = { cabId: null, zoneId: null, zoneIds: [] }; // zone selection, kept across re-renders
 let tallDrag = null; // { cabId, refresh } while a front-view boundary is dragged
 
 function tallSelected(cabId) {
-  if (tallSel.cabId !== cabId) { tallSel.cabId = cabId; tallSel.zoneId = null; }
+  if (tallSel.cabId !== cabId) { tallSel.cabId = cabId; tallSel.zoneId = null; tallSel.zoneIds = []; }
   return tallSel.zoneId;
+}
+function tallSelectedIds(cabId) {
+  tallSelected(cabId);
+  return tallSel.zoneIds;
+}
+function tallSelect(cabId, ids) {
+  tallSel.cabId = cabId;
+  tallSel.zoneIds = ids.slice();
+  tallSel.zoneId = ids.length === 1 ? ids[0] : null;
 }
 
 function renderTall(cab, mod, result, shared) {
@@ -1108,6 +1118,9 @@ function renderTall(cab, mod, result, shared) {
   const cpt = p.panelThickness ?? thickness(job.getStock(), "carcass");
   const fpt = p.frontPanelThickness ?? thickness(job.getStock(), "door");
   const selectedZoneId = tallSelected(cab.id);
+  // Drop ids of zones that no longer exist (undo, preset).
+  tallSelect(cab.id, tallSelectedIds(cab.id).filter((id) => zones.some((z) => z.id === id)));
+  const selectedIds = tallSelectedIds(cab.id);
   const zoneItems = (result?.stack || []).filter((it) => it.kind === "functional_zone");
 
   const setZones = (next, kind, extra = {}) => {
@@ -1145,6 +1158,41 @@ function renderTall(cab, mod, result, shared) {
     el("div", { class: "empty small", text: "The outer width stays: a side panel takes its thickness from the inside. The front edge is always banded in the door colour." }),
   ]);
 
+  // Wheel arch avoidance: one cut across the full width at the back bottom; the side panels follow it.
+  // Touching a wheel arch on the floor plan turns it on and sets the size (job.js syncTallArch).
+  const av = p.avoidance || {};
+  const avOn = av.enabled === true;
+  const avPlan = Array.isArray(av.fromPlan) && av.fromPlan.length > 0;
+  const setAvoid = (patch, extra = {}) => {
+    const next = { ...p, avoidance: { enabled: true, depth: av.depth > 0 ? av.depth : 200, height: av.height > 0 ? av.height : 300, ...patch }, ...extra };
+    delete next.avoidance.fromPlan;
+    job.setParams(cab.id, next);
+    log("tall.wheel", { id: cab.id, avoidance: next.avoidance, flag: next.wheelArchAvoidance });
+  };
+  const tallWheel = section("Wheel arch avoidance", [
+    el("label", { class: "field check", title: "Cut the back bottom of this cabinet around a wheel arch. The cut runs the full width; the side panels follow it." }, [
+      el("span", { text: "Wheel arch avoidance" }),
+      el("input", { type: "checkbox", checked: avOn, onchange: (e) => {
+        if (e.target.checked) setAvoid({ enabled: true }, { wheelArchAvoidance: true });
+        else {
+          job.setParams(cab.id, { ...p, wheelArchAvoidance: false, avoidance: { enabled: false, depth: av.depth, height: av.height } });
+          log("tall.wheel", { id: cab.id, on: false });
+        }
+      } }),
+    ]),
+    ...(avOn ? (avPlan ? [
+      kv("From the floor plan", av.fromPlan.join(", ")),
+      kv("Cut", `depth ${Math.round(av.depth)} from the back · height ${Math.round(av.height)} from the floor`),
+      el("div", { class: "empty small", text: "Set by the wheel arch this cabinet stands in. Move the cabinet or edit the arch on the floor plan to change it." }),
+    ] : [
+      numField("Depth from the back (mm)", av.depth ?? 200, (v) => setAvoid({ depth: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+      numField("Height from the floor (mm)", av.height ?? 300, (v) => setAvoid({ height: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+      el("div", { class: "empty small", text: "Hand-entered. When this cabinet touches a wheel arch on the floor plan, the arch sets the size instead." }),
+    ]) : [
+      el("div", { class: "empty small", text: "Off. When this cabinet touches a wheel arch on the floor plan, this turns on and the back bottom is cut where it sits in the arch." }),
+    ]),
+  ]);
+
   // Preset: a named cabinet from the generator's presets.json; applying it replaces every param but the colours.
   const presetNow = mod.presetOf(p);
   const tallPreset = (mod.presets || []).length ? section("Preset", [el("label", { class: "field wide-value" }, [
@@ -1180,18 +1228,37 @@ function renderTall(cab, mod, result, shared) {
   const drawFront = () => {
     front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: tallSelected(cab.id), gaps: gapMode }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+    // The generator highlights one zone; with several selected, lay the same highlight over each.
+    const svg = front.querySelector("svg");
+    const ids = tallSelectedIds(cab.id);
+    if (svg && ids.length > 1) {
+      const before = [...svg.children].find((n) => /^(circle|text|g|line|path)$/i.test(n.tagName)) || null;
+      for (const id of ids) {
+        const region = [...svg.querySelectorAll("rect.region[data-zone]")].find((r) => r.getAttribute("data-zone") === id);
+        if (!region) continue;
+        const hl = document.createElementNS("http://www.w3.org/2000/svg", "rect");
+        for (const a of ["x", "y", "width", "height"]) hl.setAttribute(a, region.getAttribute(a));
+        hl.setAttribute("pointer-events", "none");
+        hl.setAttribute("fill", "#0e3f8f");
+        hl.setAttribute("fill-opacity", "0.62");
+        hl.setAttribute("stroke", "#d7e6ff");
+        hl.setAttribute("stroke-width", "3");
+        svg.insertBefore(hl, before);
+      }
+    }
   };
   drawFront();
 
-  // Zone selection: one click on a zone row. Boundary drag: pointer down on a boundary group.
+  // Zone selection: click a zone; Ctrl+click adds or removes it. Boundary drag: pointer down on a boundary group.
   front.addEventListener("click", (e) => {
     if (tallDrag) return;
     const zoneEl = e.target.closest?.("[data-zone]");
     if (!zoneEl) return;
     const id = zoneEl.getAttribute("data-zone");
-    tallSel.cabId = cab.id;
-    tallSel.zoneId = tallSel.zoneId === id ? null : id;
-    log("tall.zone.select", { id: cab.id, zone: tallSel.zoneId });
+    const cur = tallSelectedIds(cab.id);
+    if (e.ctrlKey || e.metaKey) tallSelect(cab.id, cur.includes(id) ? cur.filter((k) => k !== id) : [...cur, id]);
+    else tallSelect(cab.id, cur.length === 1 && cur[0] === id ? [] : [id]);
+    log("tall.zone.select", { id: cab.id, zone: tallSel.zoneId, zones: tallSel.zoneIds });
     renderPanel();
   });
   front.addEventListener("pointerdown", (e) => {
@@ -1265,7 +1332,7 @@ function renderTall(cab, mod, result, shared) {
     tallest.height = Math.round((tallest.height - take) * 10) / 10;
     const zone = { id: `zone-${Date.now().toString(36)}`, type: "open_space", height: take };
     next.push(zone);
-    tallSel.zoneId = zone.id;
+    tallSelect(cab.id, [zone.id]);
     setZones(next, "add", { zone: zone.id, from: tallest.id });
   } });
   const removeZone = el("button", { class: "tb danger", text: "Remove", disabled: zi < 0 || zones.length <= 1, title: "The zone below (or above) takes its height", onclick: () => {
@@ -1273,9 +1340,33 @@ function renderTall(cab, mod, result, shared) {
     const next = zones.filter((_, k) => k !== zi).map((zz) => ({ ...zz }));
     const heir = next[Math.max(0, zi - 1)];
     if (heir) heir.height = Math.round((heir.height + z.height) * 10) / 10;
-    tallSel.zoneId = null;
+    tallSelect(cab.id, []);
     setZones(next, "remove", { removed: z.id, heir: heir?.id });
   } });
+  // Average selected height: the selected zones share their total equally (whole mm; the topmost one takes the
+  // rounding). Zones not selected keep their height, so the cabinet height stays.
+  const avgIdx = zones.map((z, k) => (selectedIds.includes(z.id) ? k : -1)).filter((k) => k >= 0);
+  const avgTotal = avgIdx.reduce((s, k) => s + zones[k].height, 0);
+  const averageHeight = el("button", {
+    class: "tb",
+    text: "Average selected height",
+    disabled: avgIdx.length < 2,
+    title: avgIdx.length < 2
+      ? "Ctrl+click two or more zones in the front view first"
+      : `${avgIdx.length} zones share ${Math.round(avgTotal * 10) / 10} mm equally; the other zones keep their height`,
+    onclick: () => {
+      if (avgIdx.length < 2) return;
+      const next = zones.map((z) => ({ ...z }));
+      const each = Math.floor(avgTotal / avgIdx.length);
+      const top = avgIdx[avgIdx.length - 1];
+      avgIdx.forEach((k) => { next[k].height = k === top ? Math.round((avgTotal - each * (avgIdx.length - 1)) * 10) / 10 : each; });
+      if (avgIdx.some((k) => next[k].height < MIN_ZONE_HEIGHT)) {
+        log("tall.zone.blocked", { id: cab.id, reason: `average below ${MIN_ZONE_HEIGHT} mm`, zones: avgIdx });
+        return;
+      }
+      setZones(next, "average", { zones: avgIdx.map((k) => zones[k].id), from: avgIdx.map((k) => zones[k].height), total: avgTotal });
+    },
+  });
 
   // Selected zone card.
   let zoneCard = null;
@@ -1312,6 +1403,59 @@ function renderTall(cab, mod, result, shared) {
         }
       }, { step: 10, min: MIN_ZONE_HEIGHT }),
     ];
+    if (z.type === "side_door" || z.type === "left_side_door" || z.type === "right_side_door" || z.type === "double_door") {
+      // Lock: pick the board the bolt catches (as in the Fusion plugin). The slot centre is 30.5 mm from
+      // that board's face, on the door edge opposite the hinge, 80 mm in.
+      const stack = result?.stack || [];
+      const boundaryUnder = (zoneId) => stack.find((it) => it.kind === "boundary_panel" && it.id === `boundary-${zoneId}` && it.boundaryType && it.boundaryType !== "none");
+      const boardIds = new Set((result?.boards || []).map((b) => b.id));
+      const aboveZone = zones[zi + 1];
+      const aboveB = aboveZone ? boundaryUnder(aboveZone.id) : null;
+      const belowB = boundaryUnder(z.id);
+      const aboveName = aboveB ? `Zi_${aboveB.id}` : !aboveZone ? (boardIds.has("T3") ? "T3 (top insert)" : boardIds.has("TH1") ? "TH1 (top system)" : "door top edge") : "door top edge (no board)";
+      const belowName = belowB ? `Zi_${belowB.id}` : zi === 0 ? (boardIds.has("B3") ? "B3 (bottom insert)" : boardIds.has("BH1") ? "BH1 (bottom system)" : "door bottom edge") : "door bottom edge (no board)";
+      const hasVd = z.type === "double_door" && z.verticalDivider === true;
+      const lockNow = z.lockPosition ?? "top";
+      const lockOpts = [
+        ["none", "No lock"],
+        ["top", `Board above · ${aboveName} · 30.5 under it`],
+        ["bottom", `Board below · ${belowName} · 30.5 over it`],
+        ...(z.shelfEnabled === true ? [["shelf_top", "Shelf · 30.5 over its top face"], ["shelf_bottom", "Shelf · 30.5 under it"]] : []),
+        ["side", `Side · ${hasVd ? `VD_${z.id}` : "vertical board"} face · height below`],
+      ];
+      if (!lockOpts.some(([v]) => v === lockNow)) lockOpts.push([lockNow, `${lockNow} (board not here)`]);
+      fields.push(el("label", { class: "field wide-value", title: "The board the lock bolt catches. The slot sits on the door edge opposite the hinge, 80 mm in." }, [
+        el("span", { text: "Lock on" }),
+        el("select", {
+          onchange: (e) => {
+            const to = e.target.value;
+            e.target.blur();
+            const next = zones.map((zz) => ({ ...zz }));
+            next[zi].lockPosition = to;
+            if (to === "side" && !(Number(next[zi].lockHeight) > 0)) next[zi].lockHeight = Math.round(z.height / 2);
+            setZones(next, "lock", { zone: z.id, from: lockNow, to });
+          },
+        }, lockOpts.map(([v, t]) => el("option", { value: v, text: t, selected: v === lockNow }))),
+      ]));
+      if (lockNow !== "none") {
+        fields.push(numField("Lock side distance (mm)", z.lockSideDistance ?? 80, (v) => {
+          const next = zones.map((zz) => ({ ...zz }));
+          next[zi].lockSideDistance = Math.max(0, Math.round(v * 10) / 10);
+          setZones(next, "lockSide", { zone: z.id, to: next[zi].lockSideDistance });
+        }, { step: 5, min: 0 }));
+      }
+      if (lockNow === "side") {
+        fields.push(numField("Lock height, from zone bottom (mm)", z.lockHeight ?? Math.round(z.height / 2), (v) => {
+          const next = zones.map((zz) => ({ ...zz }));
+          next[zi].lockHeight = Math.max(0, Math.min(z.height, Math.round(v)));
+          setZones(next, "lockHeight", { zone: z.id, to: next[zi].lockHeight });
+        }, { step: 10, min: 0 }));
+      }
+      const myLocks = (result?.locks || []).filter((l) => l.panelId === `FP_${z.id}` || String(l.panelId).startsWith(`FP_${z.id}_`));
+      if (myLocks.length) {
+        fields.push(kv("Lock centre", myLocks.map((l) => `${Math.round(l.centerZ * 10) / 10} from floor${l.mountingBoardId ? ` · on ${l.mountingBoardId}` : ""}`).filter((t, k, a) => a.indexOf(t) === k).join(" / ")));
+      }
+    }
     if (z.type === "double_door") {
       fields.push(check("Vertical divider", z.verticalDivider === true, (on) => {
         const next = zones.map((zz) => ({ ...zz }));
@@ -1332,6 +1476,8 @@ function renderTall(cab, mod, result, shared) {
       fields.push(check("Shelf", z.shelfEnabled === true, (on) => {
         const next = zones.map((zz) => ({ ...zz }));
         next[zi].shelfEnabled = on;
+        // No shelf, nothing for a shelf lock to catch: back to the default (board above).
+        if (!on && (next[zi].lockPosition === "shelf_top" || next[zi].lockPosition === "shelf_bottom")) delete next[zi].lockPosition;
         setZones(next, "shelf", { zone: z.id, on });
       }));
       if (z.shelfEnabled === true) {
@@ -1376,13 +1522,25 @@ function renderTall(cab, mod, result, shared) {
     ]),
     shared.board,
     frontSection(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [
-      el("div", { class: "zs-tools" }, [addZone, removeZone]),
+      el("div", { class: "zs-tools" }, [addZone, removeZone, averageHeight]),
       front,
-      el("div", { class: "zs-hint", text: "Click a zone to select it · drag an orange line (height) or the dashed one (divider) · Shift = 1 mm" }),
+      el("div", { class: "zs-hint", text: "Click a zone to select it · Ctrl+click to select several · drag an orange line (height) or the dashed one (divider) · Shift = 1 mm" }),
     ]),
     zoneCard,
     tallPreset,
     tallSides,
+    tallWheel,
+    section("LED", [
+      el("label", { class: "field check", title: "Style 1 cuts the T3 top and the B3 underside. The main channel is 14.5 × 6.5, 18 mm behind the front edge. Each branch is centred 30 mm from the board end, so its near wall is 22.75 mm from that edge — the same as a kitchen B3 — and runs back to the rear edge. Off until ticked." }, [
+        el("span", { text: "LED channels" }),
+        el("input", { type: "checkbox", checked: p.ledGroove === true, onchange: (e) => {
+          const to = e.target.checked;
+          if ((p.ledGroove === true) === to) return;
+          job.setParams(cab.id, { ...p, ledGroove: to });
+          log("tall.led", { id: cab.id, from: p.ledGroove === true, to });
+        } }),
+      ]),
+    ]),
     fold,
     shared.grain,
     shared.checks,
@@ -1790,6 +1948,16 @@ function renderTallFridge(cab, mod, result, shared) {
     aboveSec,
     belowSec,
     presetSec,
+    section("LED", [
+      el("label", { class: "field check", title: "Style 1 cuts the T3 top and the B3 underside. Style 2 has no T3, so only B3 is cut. The main channel is 14.5 × 6.5, 18 mm behind the front edge. Each branch is centred 30 mm from the board end, so its near wall is 22.75 mm from that edge — the same as a kitchen B3 — and runs back to the rear edge." }, [
+        el("span", { text: "LED channels" }),
+        el("input", { type: "checkbox", checked: p.ledGroove === true, onchange: (e) => {
+          const to = e.target.checked;
+          if ((p.ledGroove === true) === to) return;
+          commit({ ...p, ledGroove: to }, "led", { from: p.ledGroove === true, to });
+        } }),
+      ]),
+    ]),
     fold,
     shared.grain,
     checks,
@@ -2555,7 +2723,7 @@ function renderKitchen(cab, mod, result, shared) {
         el("div", { class: "empty small", text: "The cut runs the full width of this cabinet. Height is from the floor, depth is from the back. A wheel arch on the floor plan sets the width." }),
       ]
     ) : [
-      el("div", { class: "empty small", text: "Off. Turn it on to cut the back of this cabinet around a wheel arch." }),
+      el("div", { class: "empty small", text: "Off. When this cabinet touches a wheel arch on the floor plan, this turns on and the back is cut where it sits in the arch." }),
     ]),
   ]);
 
@@ -2636,13 +2804,72 @@ function renderLounge(cab, mod, result, shared) {
 
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
-    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedRun: loungeSelected(cab.id) }) || "";
+    const now = job.getJob().cabinets.find((c) => c.id === cab.id) || cab;
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), {
+      selectedRun: loungeSelected(cab.id),
+      params: now.params,
+      widthAnchor: mod.widthAnchor ? mod.widthAnchor(now.params, now) : -1,
+    }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No plan view — fix the checks first." }));
   };
   drawFront();
 
+  // A number on the plan: click to type it. The value is the param itself (lengths, depths, seat
+  // widths, the middle cabinet); the wall and the anchored end stay (job.setParams anchors the pose).
+  const LOUNGE_TYPED_MIN = { mainWidth: 800, mainDepth: 300, lWidth: 400, lDepth: 200, totalWidth: 1600, singleLoungeWidth: 400, depth: 400 };
+  const setTyped = (param, typed, shown) => {
+    if (!Number.isFinite(typed) || Math.abs(typed - shown) < 0.05) return;
+    if (param.startsWith("middleCabinet.")) {
+      const key = param.slice("middleCabinet.".length);
+      const v = Math.max(100, Math.round(typed));
+      job.setParams(cab.id, { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: v } });
+      log("lounge.run.midCab", { id: cab.id, key: param, to: v, shown, where: "plan view" });
+      return;
+    }
+    const v = Math.max(LOUNGE_TYPED_MIN[param] ?? 1, Math.round(typed * 10) / 10);
+    job.setParams(cab.id, { ...p, [param]: v });
+    log("lounge.run.size", { id: cab.id, key: param, from: p[param] ?? shown, to: v, shown, where: "plan view" });
+  };
+  const editPlanDim = (dim) => {
+    if (front.querySelector(".col-dim-input")) return;
+    const param = dim.getAttribute("data-param");
+    const shown = Number(dim.getAttribute("data-value"));
+    if (!param || !Number.isFinite(shown)) return;
+    const box = dim.getBoundingClientRect();
+    const host = front.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "col-dim-input";
+    input.step = "1";
+    input.value = String(shown);
+    input.style.left = `${box.left - host.left + box.width / 2}px`;
+    input.style.top = `${box.top - host.top}px`;
+    front.append(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply) => {
+      if (done) return;
+      done = true;
+      const typed = Number(input.value);
+      input.remove();
+      if (apply) setTyped(param, typed, shown);
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
+
   front.addEventListener("click", (e) => {
     if (loungeDrag) return;
+    const dim = e.target.closest?.(".col-dim.editable");
+    if (dim) {
+      e.stopPropagation();
+      editPlanDim(dim);
+      return;
+    }
     const runEl = e.target.closest?.("[data-run]");
     if (!runEl) return;
     const id = runEl.getAttribute("data-run");
@@ -2660,19 +2887,21 @@ function renderLounge(cab, mod, result, shared) {
     const param = g.getAttribute("data-param");
     const axis = g.getAttribute("data-axis"); // "x" | "y"
     const params0 = cab.params;
-    const from = params0[param];
+    // Grips on the room side / the left end drive the same stored size as the matching far edge.
+    const stored = { mainWidthLo: "mainWidth", totalWidthLo: "totalWidth", mainDepthFront: "mainDepth", lWidthFront: "lWidth", depthFront: "depth" }[param] ?? param;
+    const from = params0[stored];
     const before = job.snapshot();
     // mm ↔ px: the SVG carries its own mapping; plan view maps the vertical axis to Y (depth), not Z.
-    const toMm = (clientX, clientY) => {
-      const s = front.querySelector("svg");
-      const rect = s.getBoundingClientRect();
-      const k = Number(s.getAttribute("width")) / rect.width;
-      const scale = Number(s.dataset.scale);
-      const ox = Number(s.dataset.ox);
-      const oy = Number(s.dataset.oy);
-      const planH = Number(s.dataset.h);
-      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : planH - ((clientY - rect.top) * k - oy) / scale;
+    // The mapping is read once, at the press: the plan re-fits while it changes, and setRunEdge reads
+    // `pos` in the plan as it was when the drag started (params0).
+    const rect0 = svg.getBoundingClientRect();
+    const map0 = {
+      k: Number(svg.getAttribute("width")) / rect0.width,
+      scale: Number(svg.dataset.scale), ox: Number(svg.dataset.ox), oy: Number(svg.dataset.oy), planH: Number(svg.dataset.h),
     };
+    const toMm = (clientX, clientY) => (axis === "x"
+      ? ((clientX - rect0.left) * map0.k - map0.ox) / map0.scale
+      : map0.planH - ((clientY - rect0.top) * map0.k - map0.oy) / map0.scale);
     try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
     front.classList.add("dragging");
     g.classList.add("active");
@@ -2691,7 +2920,7 @@ function renderLounge(cab, mod, result, shared) {
       loungeDrag = null;
       const changed = job.commitSnapshot(before);
       const now = job.getSelected();
-      log("lounge.run.drag", { id: cab.id, param, from, to: now ? now.params[param] : null, changed, where: "plan view" });
+      log("lounge.run.drag", { id: cab.id, param: stored, edge: param, from, to: now ? now.params[stored] : null, changed, pose: now ? now.pose : null, where: "plan view" });
       renderPanel();
     };
     front.addEventListener("pointermove", move);
@@ -2774,12 +3003,55 @@ function renderLounge(cab, mod, result, shared) {
       mcField("Cabinet depth (mm)", "depth", 100),
       mcField("Cabinet height (mm)", "height", 100),
     ] : []),
-    style === "PARALLEL" ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
-    ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
-      numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
-      numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
-    ] : []),
   ].filter(Boolean));
+
+  // Wheel arch avoidance: the red pairs on the floor plan cut whatever this lounge stands in (job.js
+  // syncLoungeArch → planWheelArches). I / L: a notch in each board the arch hits. Parallel: the boards,
+  // plus top / front covers in the middle gap. The checkbox off refuses it.
+  const worldArches = job.getSpace()?.wheelArches || [];
+  const archOn = p.wheelArchAvoidance !== false;
+  const hitArches = (p.planWheelArches || []).filter((a) => a.id !== "hand");
+  const hw = p.handWheelArch || {};
+  const handOn = hw.enabled === true;
+  const setHand = (patch) => {
+    const next = { enabled: true, depth: hw.depth > 0 ? hw.depth : 300, height: hw.height > 0 ? hw.height : 250, ...patch };
+    job.setParams(cab.id, { ...p, handWheelArch: next, ...(next.enabled ? { wheelArchAvoidance: true } : {}) });
+    log("lounge.wheel.hand", { id: cab.id, arch: next });
+  };
+  const loungeWheel = section("Wheel arch avoidance", [
+    el("label", { class: "field check", title: "Cut this lounge around the wheel arches drawn on the floor plan" }, [
+      el("span", { text: "Wheel arch avoidance" }),
+      el("input", { type: "checkbox", checked: archOn, onchange: (e) => setP("wheelArchAvoidance", e.target.checked, "wheel") }),
+    ]),
+    ...(!archOn ? [
+      el("div", { class: "empty small", text: "Off. No board is cut, even where the lounge stands in a wheel arch." }),
+    ] : !worldArches.length ? [
+      el("div", { class: "empty small", text: "No wheel arch on the floor plan yet. Draw one there (Wheel arch, A); the boards it meets are then cut." }),
+    ] : hitArches.length ? [
+      ...hitArches.map((a) => kv(a.id, `along ${Math.round(a.x0)}–${Math.round(a.x1)} · ${Math.round(a.y1 - a.y0)} in from the wall · ${Math.round(a.z1)} high`)),
+      el("div", { class: "empty small", text: style === "PARALLEL"
+        ? "From the floor plan. Each board the arch meets gets a notch; in the middle gap a top and a front cover close it, and the middle cabinet stands on the top cover."
+        : "From the floor plan. Each board the arch meets gets a notch; nothing else is added." }),
+    ] : [
+      el("div", { class: "empty small", text: "This lounge stands outside the wheel arches on the floor plan." }),
+    ]),
+    ...(archOn ? [
+      check("By hand (full width)", handOn, (on) => setHand({ enabled: on }), "A cut along the whole lounge, typed here. Cut the same way as a floor-plan arch: a notch in each board it meets (parallel: covers in the middle gap)."),
+      ...(handOn ? [
+        numField("Depth from the wall (mm)", hw.depth ?? 300, (v) => setHand({ depth: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+        numField("Height from the floor (mm)", hw.height ?? 250, (v) => setHand({ height: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+        el("div", { class: "empty small", text: "Runs the full length of the lounge, against the wall." }),
+      ] : []),
+    ] : []),
+    // The older parallel-only cut-out: shown only while a job still has it on, so it can be turned off.
+    ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
+      check("Old cut-out (middle gap)", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel"), "The earlier parallel-only cut-out. Use By hand (full width) instead."),
+      ...(p.wheelAvoidanceEnabled === true ? [
+        numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+        numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+      ] : []),
+    ] : []),
+  ]);
 
   // Cabinet-level fields, folded.
   const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
@@ -2804,10 +3076,11 @@ function renderLounge(cab, mod, result, shared) {
     shared.board,
     section("Plan view · from above · wall at the top", [
       front,
-      el("div", { class: "zs-hint", text: "Click a run to select it · drag an orange edge · Shift = 1 mm" }),
+      el("div", { class: "zs-hint", text: "Click a run to select it · drag an orange edge · click a number to type it · Shift = 1 mm · the wall side stays" }),
     ]),
     runCard,
     shape,
+    loungeWheel,
     fold,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),
@@ -3236,6 +3509,35 @@ function renderSketchPanel(cab) {
   fillDrawer(result, errors, warnings);
 }
 
+/** Ensuite as drawn: a fixed copy of the Fusion cabinet. Nothing to edit; it says what it is and what it holds. */
+function renderDrawing(cab, mod, result, { checks, remove, board }) {
+  const env = mod.envelope(cab.params);
+  const rp = result?.params || {};
+  const boards = result?.boards || [];
+  const count = (kind) => boards.filter((b) => b.stock?.kind === kind).length;
+  const about = mod.part === "tall"
+    ? "A lid at 383–398 over the cavity (worked out from the other boards: the STEP has no body for it — check it). Above it, 398–697 sits behind a fixed panel with a 427 × 200 R30 access opening; the base top is at 697. All four stiles stand on the lid at 398; below 398 the right side panel keeps only its front strip. The left side has no panel: an 80 filler stands there (the wall side). Two doors above."
+    : "Left bay: a lid at 383–398 over the cavity; below it the left side panel keeps only its front strip and the back stile stops at 398. Right bay: open to the floor. Two doors.";
+  panel.replaceChildren(...[
+    el("div", { class: "panel-head" }, [
+      el("div", { class: "panel-title", text: mod.label }),
+      el("div", { class: "panel-sub", text: `${cab.id} · as drawn · ${boards.length} boards` }),
+    ]),
+    board,
+    section("Size", [
+      kv("W × D × H", `${env.W} × ${env.D} × ${env.H} mm`),
+      kv("Boards", `${count("carcass")} carcass 15 · ${count("door")} door stock 16`),
+    ]),
+    section("As drawn", [
+      el("div", { class: "empty small", text: about }),
+      el("div", { class: "empty small", text: `Copied board by board from ${rp.source || "the Fusion model"} — outlines, notches, openings, hinge cups and grooves. Fixed: it cannot be resized and has no zones. Placed by As drawn → Ensuite sample, where the model has it: back on the rear wall, the tall at the left wall, the lower beside it.` }),
+      ...((rp.corrections || []).map((c) => el("div", { class: "msg warn", text: `Drawing fix: ${c}` }))),
+    ]),
+    checks,
+    el("div", { class: "panel-foot" }, [remove]),
+  ].filter(Boolean));
+}
+
 function renderCabinet(cab) {
   const mod = getModule(cab.moduleId);
   if (mod.panel === "sketch") {
@@ -3335,6 +3637,12 @@ function renderCabinet(cab) {
   }
 
   const board = boardSection();
+
+  if (mod.panel === "drawing") {
+    renderDrawing(cab, mod, result, { checks, remove, board });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
 
   if (mod.panel === "bedSide") {
     renderBedSide(cab, mod, result, { checks, remove, board, setEnv });
@@ -3747,12 +4055,14 @@ function renderWall(w) {
     ]),
     w.fit ? section("Fit to cabinets", [
       el("div", { class: "kv" }, [el("span", { text: "Overhead" }), el("b", { text: w.fit.overheadId })]),
-      el("div", { class: "kv" }, [el("span", { text: "Base" }), el("b", { text: w.fit.kitchenId })]),
+      el("div", { class: "kv" }, [el("span", { text: w.fit.loungeId ? "Lounge" : "Base" }), el("b", { text: w.fit.loungeId || w.fit.kitchenId })]),
       s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Overhead depth" }), el("b", { text: `${Math.round(s.fitSteps.overheadDepth)} mm · bottom ${Math.round(s.fitSteps.overheadBottom)}` })]) : null,
       s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Neck" }), el("b", { text: `${Math.round(s.fitSteps.neckDepth)} mm deep` })]) : null,
-      s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Base depth" }), el("b", { text: `${Math.round(s.fitSteps.kitchenDepth)} mm · top ${Math.round(s.fitSteps.kitchenTop)}` })]) : null,
-      numField("Corner radius", w.fit.radius ?? 50, (v) => job.setWallFit(w.id, { overheadId: w.fit.overheadId, kitchenId: w.fit.kitchenId, radius: Math.max(0, v) }, "radius"), { step: 1, min: 0 }),
-      el("div", { class: "empty small", text: "Upper depth is the overhead plus 20. Its lower edge is 15 mm below the door, and the door hangs 30 mm below the carcass. The gap between the steps is 100 deep. The base step is 50 above the base and 30 deeper than its total depth. The four step corners are real arcs of this radius." }),
+      s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: w.fit.loungeId ? "Lounge depth" : "Base depth" }), el("b", { text: `${Math.round(s.fitSteps.kitchenDepth)} mm · top ${Math.round(s.fitSteps.kitchenTop)}` })]) : null,
+      numField("Corner radius", w.fit.radius ?? 50, (v) => job.setWallFit(w.id, { overheadId: w.fit.overheadId, kitchenId: w.fit.kitchenId, loungeId: w.fit.loungeId, radius: Math.max(0, v) }, "radius"), { step: 1, min: 0 }),
+      el("div", { class: "empty small", text: w.fit.loungeId
+        ? "Upper depth is the overhead plus 20. Its lower edge is 15 mm below the door, and the door hangs 30 mm below the carcass. The gap between the steps is 100 deep. The lounge step is 80 above the lounge and 50 past the run this partition stands on — the main run's depth, or the wing's depth when it stands on the L. The four step corners are real arcs of this radius."
+        : "Upper depth is the overhead plus 20. Its lower edge is 15 mm below the door, and the door hangs 30 mm below the carcass. The gap between the steps is 100 deep. The base step is 50 above the base and 30 deeper than its total depth. The four step corners are real arcs of this radius." }),
       el("button", { class: "tb", text: "Clear cabinet fit", onclick: () => job.setWallFit(w.id, null, "clear") }),
     ].filter(Boolean)) : null,
     section(`Control panels (${(w.controlPanels || []).length})`, controlPanelRows(w.id, w.controlPanels || [], { host: "wall", canAdd: true })),
@@ -3863,6 +4173,7 @@ function paintPanel() {
   panel.classList.toggle("kitchen", page === "kitchen");
   panel.classList.toggle("ohc", page === "ohc");
   panel.classList.toggle("fridge", page === "tallFridge");
+  panel.classList.toggle("lounge", page === "lounge");
   if (sel) renderCabinet(sel);
   else {
     const pl = job.getSelectedPlane();

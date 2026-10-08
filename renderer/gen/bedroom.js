@@ -1466,6 +1466,11 @@ function textWidth(text, size = 9) {
 function hits(a, b, pad = 3) {
   return a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
 }
+function editableText(spec, text, box) {
+  if (!spec.attrs) return `<g pointer-events="none">${text}</g>`;
+  const pad = 3;
+  return `<g class="col-dim editable" ${spec.attrs}>` + (spec.title ? `<title>${esc(spec.title)}</title>` : "") + `<rect x="${px(box.x0 - pad)}" y="${px(box.y0 - pad)}" width="${px(box.x1 - box.x0 + 2 * pad)}" height="${px(box.y1 - box.y0 + 2 * pad)}" fill="transparent" pointer-events="all" />` + text + `</g>`;
+}
 function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
   if (!(Math.abs(spec.to - spec.from) > 0.4)) return null;
   const tick = 3.5;
@@ -1482,7 +1487,11 @@ function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
     const textY = y + side * 8;
     const mid2 = (x0 + x1) / 2 + along;
     if (mid2 < x0 || mid2 > x1) return null;
-    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" /><text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" /></g>` + editableText(
+      spec,
+      `<text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`,
+      { x0: mid2 - w / 2, y0: textY - h / 2, x1: mid2 + w / 2, y1: textY + h / 2 }
+    );
     return { svg: svg2, box: { x0: mid2 - w / 2, y0: textY - h / 2, x1: mid2 + w / 2, y1: textY + h / 2 } };
   }
   const y0 = toY(Math.max(spec.from, spec.to));
@@ -1494,16 +1503,17 @@ function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
   const mid = (y0 + y1) / 2 + along;
   if (mid < y0 || mid > y1) return null;
   const anchor = side > 0 ? "start" : "end";
-  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" /><text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" /></g>`;
   const box = side > 0 ? { x0: textX, y0: mid - h / 2, x1: textX + w, y1: mid + h / 2 } : { x0: textX - w, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
-  return { svg, box };
+  const text = `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`;
+  return { svg: svg + editableText(spec, text, box), box };
 }
 function layoutDimensions(specs, toX, toY, avoid = []) {
   const occupied = avoid.map((b) => ({ ...b }));
   const order = specs.map((spec, i) => ({ spec, i })).sort((a, b) => (a.spec.priority ?? 1) - (b.spec.priority ?? 1) || Math.abs(a.spec.to - a.spec.from) - Math.abs(b.spec.to - b.spec.from));
   const out = [];
   for (const { spec } of order) {
-    const preferred = spec.axis === "x" ? -1 : 1;
+    const preferred = spec.side ?? (spec.axis === "x" ? -1 : 1);
     const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
     let placed = null;
     for (const offset of [16, 58]) {

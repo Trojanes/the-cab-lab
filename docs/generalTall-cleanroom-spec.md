@@ -106,7 +106,7 @@
 | avoidance_support | Avoidance_Vertical | 15 | XZ/Y | x 同上；y[CD−avoidDepth, CD−avoidDepth+15]；z[0, avoidH−15] |
 | top_system (style_1) | T1 前轨 | 16 | XZ/Y | x core[0,midWidth]；y[0,16]；z[CH−railH, CH] |
 | top_system (style_1) | T2 二轨 | 15 | XZ/Y | y[16,31]；z 同 T1 |
-| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−frontRail−CPT, CH−frontRail]（挂在 T1/T2 下；V1/V2 插口仍高 16）；ledGroove：顶面 A 开 LED T 形槽（主槽宽 14.5 深 6.5、前留边 18，两支槽中心距两端 30、通到后缘）； 轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
+| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−frontRail−CPT, CH−frontRail]（挂在 T1/T2 下；V1/V2 插口仍高 16）；ledGroove：顶面 A 开 LED T 形槽（主槽宽 14.5 深 6.5、前留边 18，两支槽中心距两端 30、槽近边距板端 22.75，与厨房 B3 相同，通到后缘）； 轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
 | bottom_system (style_1) | B1/B2/B3 | 16/15/CPT | XZ/Y·XY/Z | B1 y[0,16] z[0,railH]；B2 y[16,31]；B3 y[0,150] z[frontRail, frontRail+CPT]（坐在 B1/B2 上），轮廓同 T3；ledGroove：底面 B 开同样的 LED 槽（照亮踢脚空间） |
 | top_system (style_2) | TH1 固定前脸 | 15 | XY/Z | y[0,100]；z[CH−16, CH−1]（= CH − 厚 − inset，实测 [2084,2099]，15 厚留 1 mm 缝） |
 | top_system (style_2) | TopStyle2FixedFrontPanel 固定板 | FPT（门板料） | XZ/Y | 一般：门面上的盖板 x[leftT+sideClearance, leftT+midWidth−sideClearance]，y[−FPT,0]，z[CH−sysH, CH]。**冰箱紧贴顶**：嵌板，填冰箱开口——x 在 V1（或 V2）内侧面与 V5 之间（= 冰箱宽），y[0,FPT]（前脸与柜身前缘齐平），z[CH−sysH, TH1 底面]；TH1 前边外露（21 Bunk 冰箱柜：532 × 85 × 16） |

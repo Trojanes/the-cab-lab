@@ -8,7 +8,7 @@ import { carcassDimMat, carcassMat } from "./carcassFinish.js";
 import { getJob, getSelectedId, getSelectedIds, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden, conflictIds } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
-import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry } from "./boardGeom.js";
+import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry, grooveFigures, grooveSlab } from "./boardGeom.js";
 import { faceAtHit } from "./boardModel.js";
 import { worldOf, boardOverride, nominalBoardPoint } from "./pose.js";
 
@@ -729,20 +729,20 @@ scene.add(ghostBEdges);
  */
 const PLANE_AXES = { XY: ["x", "y", "z"], XZ: ["x", "z", "y"], YZ: ["y", "z", "x"] };
 
-function grooveLoop(group, U, V, T, u0, u1, v0, v1, t) {
-  const pts = [[u0, v0], [u1, v0], [u1, v1], [u0, v1], [u0, v0]].map(([u, v]) => {
-    const p = new THREE.Vector3();
-    p[U] = u;
-    p[V] = v;
-    p[T] = t;
-    return p;
-  });
-  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints(pts), grooveLineMat);
+function grooveSeg(group, U, V, T, a, c, t) {
+  const p = (uv) => {
+    const q = new THREE.Vector3();
+    q[U] = uv[0];
+    q[V] = uv[1];
+    q[T] = t;
+    return q;
+  };
+  const line = new THREE.Line(new THREE.BufferGeometry().setFromPoints([p(a), p(c)]), grooveLineMat);
   line.userData = { kind: "groove" };
   group.add(line);
 }
 
-/** Dark floor in the pocket and the slot outline, on the machined face only. Display only. */
+/** Dark floor in the pocket and the slot walls, on the machined face only. A T is one floor, and an open mouth is not stroked. Display only. */
 function addGrooveMarks(group, b) {
   const axes = PLANE_AXES[b.profilePlane];
   if (!axes || !b.faces) return;
@@ -752,26 +752,15 @@ function addGrooveMarks(group, b) {
     if (face.id !== "A" && face.id !== "B") continue;
     const sign = face.id === "A" ? 1 : -1;
     const tFace = sign === 1 ? b[`${T}1`] : b[`${T}0`];
-    for (const ft of face.features || []) {
-      if ((ft.kind !== "groove" && ft.kind !== "tgroove") || !Number.isFinite(ft.u0) || !Number.isFinite(ft.v0)) continue;
-      const u0 = b[`${U}0`] + Math.min(ft.u0, ft.u1);
-      const u1 = b[`${U}0`] + Math.max(ft.u0, ft.u1);
-      const v0 = b[`${V}0`] + Math.min(ft.v0, ft.v1);
-      const v1 = b[`${V}0`] + Math.max(ft.v0, ft.v1);
-      if (u1 - u0 < 0.5 || v1 - v0 < 0.5) continue;
-      grooveLoop(group, U, V, T, u0, u1, v0, v1, tFace + sign * 0.6);
-      const depth = Math.min(ft.depth || 0, thick - 0.4);
-      if (!(depth > 0.4)) continue;
-      const size = { x: 0.4, y: 0.4, z: 0.4 };
-      const pos = { x: 0, y: 0, z: 0 };
-      size[U] = Math.max(u1 - u0 - 0.6, 0.4);
-      size[V] = Math.max(v1 - v0 - 0.6, 0.4);
-      size[T] = 0.6;
-      pos[U] = (u0 + u1) / 2;
-      pos[V] = (v0 + v1) / 2;
-      pos[T] = tFace - sign * (depth - 0.4);
-      const fill = new THREE.Mesh(new THREE.BoxGeometry(size.x, size.y, size.z), grooveFloorMat);
-      fill.position.set(pos.x, pos.y, pos.z);
+    for (const fig of grooveFigures(b, face.id)) {
+      for (const [a, c] of fig.walls) grooveSeg(group, U, V, T, a, c, tFace + sign * 0.6);
+      const depth = Math.min(fig.depth || 0, thick - 0.4);
+      if (!(depth > 0.4) || fig.pts.length < 3) continue;
+      const tNear = tFace - sign * depth;
+      const tFar = tFace - sign * (depth - 0.6);
+      const geo = grooveSlab(b.profilePlane, fig.pts, Math.min(tNear, tFar), Math.max(tNear, tFar));
+      if (!geo) continue;
+      const fill = new THREE.Mesh(geo, grooveFloorMat);
       fill.renderOrder = 3;
       fill.userData = { kind: "groove" };
       group.add(fill);

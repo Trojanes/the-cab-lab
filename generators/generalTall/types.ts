@@ -35,8 +35,12 @@ export interface GTZone {
   height: number;
   shelfEnabled?: boolean;
   shelfHeight?: number;
-  lockPosition?: "top" | "bottom" | "side" | "shelf_top" | "shelf_bottom";
+  /** Absent on a door: a top lock. "none": no lock. */
+  lockPosition?: "top" | "bottom" | "side" | "shelf_top" | "shelf_bottom" | "none";
+  /** "side": lock centre above the zone bottom. */
   lockHeight?: number;
+  /** Lock centre from the door edge opposite the hinge (Fusion: Lock Side Distance). Absent: DEFAULT_LOCK_SIDE_DISTANCE. */
+  lockSideDistance?: number;
   hingeSettings?: GTHingeSettings;
   verticalDivider?: boolean;
   dividerCenterX?: number;

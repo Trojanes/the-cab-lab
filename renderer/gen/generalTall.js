@@ -1106,7 +1106,7 @@ var rules_default = {
   LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED \u69FD\u5BBD\uFF08ledGroove\uFF1AT3 \u9876\u9762\u3001B3 \u5E95\u9762\u7684 T \u5F62\u69FD\uFF1B\u4E0E\u540A\u67DC\u76F8\u540C\uFF09\u3002" },
   LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED \u69FD\u6DF1\u3002" },
   LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "T3 / B3 \u524D\u7F18\u5230 LED \u4E3B\u69FD\u8FD1\u8FB9\u7684\u7559\u8FB9\u3002" },
-  LED_GROOVE_BRANCH_END_INSET_MM: { value: 30, doc: "\u4E24\u6761 LED \u652F\u69FD\u4E2D\u5FC3\u8DDD\u677F\u4E24\u7AEF\uFF1B\u652F\u69FD\u4ECE\u4E3B\u69FD\u901A\u5230\u677F\u540E\u7F18\uFF0C\u5BBD\u540C\u69FD\u5BBD\u3002" },
+  LED_GROOVE_BRANCH_END_INSET_MM: { value: 30, doc: "\u4E24\u6761 LED \u652F\u69FD\u4E2D\u5FC3\u8DDD\u677F\u4E24\u7AEF\uFF0C\u4E0E\u53A8\u623F B3 \u76F8\u540C\uFF08\u69FD\u8FD1\u8FB9\u8DDD\u677F\u7AEF 22.75\uFF09\u3002\u652F\u69FD\u4ECE\u4E3B\u69FD\u901A\u5230\u677F\u540E\u7F18\uFF0C\u5BBD\u540C\u69FD\u5BBD\u3002" },
   EDGE_BAND_THICKNESS_MM: { value: 1, doc: "\u5C01\u8FB9\u5E26\u539A\u5EA6\u3002\u989C\u8272\u53E6\u5B9A\uFF1A\u95E8\u677F\u6599\u7684\u8FB9\u3001\u4EE5\u53CA\u548C\u95E8\u9762\u9F50\u5E73\u9732\u5728\u524D\u9762\u7684\u67DC\u4F53\u8FB9\uFF08V1/V2/V5 \u524D\u8FB9\u3001\u51B0\u7BB1\u5D4C\u677F\u9876\u4E0A\u7684 TH1 \u524D\u8FB9\u3001\u62BD\u5C49\u4E0A\u65B9\u9732\u51FA\u7684\u51B0\u7BB1\u5E95\u677F\u548C\u524D\u6491\u6761\u524D\u8FB9\uFF09\u7528\u95E8\u677F\u989C\u8272\uFF0C\u5176\u4F59\u770B\u5F97\u89C1\u7684\u67DC\u4F53\u8FB9\u7528\u67DC\u4F53\u989C\u8272\uFF08\u542B H \u6A2A\u6865\u671D\u7A7A\u683C\u5B50\u7684\u90A3\u6761\u957F\u8FB9\uFF1B\u671D\u51B0\u7BB1\u8154\u3001\u8D34\u5730\u8D34\u9876\u8D34\u677F\u7684\u4E0D\u5C01\uFF09\u3002" },
   HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
   HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
@@ -1118,7 +1118,7 @@ var rules_default = {
   HINGE_SD_SPAN: { value: 300, doc: "sd = clamp[75,100](75 + (\u957F\u8FB9\u2212300)\xB725/300)\u3002" },
   SD_GAIN_NUM: { value: 25, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u5B50\u3002" },
   SD_GAIN_DEN: { value: 300, doc: "sd \u516C\u5F0F\u589E\u76CA\u5206\u6BCD\u3002" },
-  DEFAULT_LOCK_SIDE_DISTANCE: { value: 80, doc: "\u4FA7\u9501\u5FC3\u8DDD\u95E8\u4FA7\u6CBF\u3002" },
+  DEFAULT_LOCK_SIDE_DISTANCE: { value: 80, doc: "\u95E8\u9501\u5FC3\u8DDD\u94F0\u94FE\u5BF9\u9762\u90A3\u6761\u95E8\u8FB9\u3002\u5DE6\u5F00\u95E8\u5728\u53F3\u8FB9\uFF0C\u53F3\u5F00\u95E8\u5728\u5DE6\u8FB9\u3002\u62BD\u5C49\u548C\u7FFB\u95E8\u4ECD\u5C45\u4E2D\u3002" },
   LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER: { value: 30.5, doc: "\u5B89\u88C5\u9762\u5230\u9501\u69FD\u5FC3\u3002" },
   LOCK_SLOT_LENGTH: { value: 55, doc: "razor_long_rounded_1 \u9501\u69FD\u957F\u3002" },
   LOCK_SLOT_WIDTH: { value: 15.5, doc: "\u9501\u69FD\u5BBD\uFF08r = \u5BBD/2\uFF09\u3002" },
@@ -1152,22 +1152,20 @@ function addLedGroove(b, face) {
   const rear = dim(`${K}.rear`, { y1: ref(`${b.id}.y1`), y0: ref(`${b.id}.y0`) }, (t) => t.y1 - t.y0);
   const depth = RULES.LED_GROOVE_DEPTH_MM.value;
   addFeature(b, face, { id: `${b.id}_LED_MAIN`, kind: "tgroove", u0: 0, u1: width, v0, v1, depth, for: "led", key: `${K}_MAIN`, source: "generalTall" });
-  const centres = [
-    dim(`${K}_BRANCH_1.cu`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.INSET),
-    dim(`${K}_BRANCH_2.cu`, { w: ref(`${K}_MAIN.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.w - t.INSET)
-  ];
-  const half = RULES.LED_GROOVE_WIDTH_MM.value / 2;
-  centres.forEach((cu, i) => {
+  [0, 1].forEach((i) => {
+    const KB = `${K}_BRANCH_${i + 1}`;
+    const u0 = i === 0 ? dim(`${KB}.u0`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.INSET - t.W / 2) : dim(`${KB}.u0`, { w: ref(`${K}_MAIN.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET - t.W / 2);
+    const u1 = i === 0 ? dim(`${KB}.u1`, { INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.INSET + t.W / 2) : dim(`${KB}.u1`, { w: ref(`${K}_MAIN.u1`), INSET: RULES.LED_GROOVE_BRANCH_END_INSET_MM, W: RULES.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET + t.W / 2);
     addFeature(b, face, {
       id: `${b.id}_LED_BRANCH_${i + 1}`,
       kind: "tgroove",
-      u0: cu - half,
-      u1: cu + half,
+      u0,
+      u1,
       v0: v1,
       v1: rear,
       depth,
       for: "led",
-      key: `${K}_BRANCH_${i + 1}`,
+      key: KB,
       source: "generalTall"
     });
   });
@@ -1413,6 +1411,11 @@ function textWidth(text, size = 9) {
 function hits(a, b, pad = 3) {
   return a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
 }
+function editableText(spec, text, box) {
+  if (!spec.attrs) return `<g pointer-events="none">${text}</g>`;
+  const pad = 3;
+  return `<g class="col-dim editable" ${spec.attrs}>` + (spec.title ? `<title>${esc(spec.title)}</title>` : "") + `<rect x="${px(box.x0 - pad)}" y="${px(box.y0 - pad)}" width="${px(box.x1 - box.x0 + 2 * pad)}" height="${px(box.y1 - box.y0 + 2 * pad)}" fill="transparent" pointer-events="all" />` + text + `</g>`;
+}
 function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
   if (!(Math.abs(spec.to - spec.from) > 0.4)) return null;
   const tick = 3.5;
@@ -1429,7 +1432,11 @@ function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
     const textY = y + side * 8;
     const mid2 = (x0 + x1) / 2 + along;
     if (mid2 < x0 || mid2 > x1) return null;
-    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" /><text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" /></g>` + editableText(
+      spec,
+      `<text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`,
+      { x0: mid2 - w / 2, y0: textY - h / 2, x1: mid2 + w / 2, y1: textY + h / 2 }
+    );
     return { svg: svg2, box: { x0: mid2 - w / 2, y0: textY - h / 2, x1: mid2 + w / 2, y1: textY + h / 2 } };
   }
   const y0 = toY(Math.max(spec.from, spec.to));
@@ -1441,16 +1448,17 @@ function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
   const mid = (y0 + y1) / 2 + along;
   if (mid < y0 || mid > y1) return null;
   const anchor = side > 0 ? "start" : "end";
-  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" /><text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" /></g>`;
   const box = side > 0 ? { x0: textX, y0: mid - h / 2, x1: textX + w, y1: mid + h / 2 } : { x0: textX - w, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
-  return { svg, box };
+  const text = `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`;
+  return { svg: svg + editableText(spec, text, box), box };
 }
 function layoutDimensions(specs, toX, toY, avoid = []) {
   const occupied = avoid.map((b) => ({ ...b }));
   const order = specs.map((spec, i) => ({ spec, i })).sort((a, b) => (a.spec.priority ?? 1) - (b.spec.priority ?? 1) || Math.abs(a.spec.to - a.spec.from) - Math.abs(b.spec.to - b.spec.from));
   const out = [];
   for (const { spec } of order) {
-    const preferred = spec.axis === "x" ? -1 : 1;
+    const preferred = spec.side ?? (spec.axis === "x" ? -1 : 1);
     const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
     let placed = null;
     for (const offset of [16, 58]) {
@@ -1618,7 +1626,7 @@ function generateGTSvgPreview(result, options = {}) {
     const w = CW * scale;
     const h = (it.z1 - it.z0) * scale;
     if (h < 14 || w < 40) continue;
-    const cx = toX(it.zone?.verticalDivider === true ? CW / 4 : CW / 2);
+    const cx = toX(it.zoneType === "double_door" && it.zone?.verticalDivider === true ? CW / 4 : CW / 2);
     const cy = toY((it.z0 + it.z1) / 2);
     const name = GT_ZONE_LABELS[it.zoneType ?? ""] ?? it.zoneType ?? it.id;
     if (options.readout) {
@@ -1647,7 +1655,7 @@ function generateGTSvgPreview(result, options = {}) {
     parts.push(grip(`data-boundary="zone" data-axis="z" data-index="${i}"`, toX(0), toY(z), toX(CW), toY(z)));
   }
   for (const it of zones) {
-    if (it.zone?.verticalDivider !== true) continue;
+    if (it.zoneType !== "double_door" || it.zone?.verticalDivider !== true) continue;
     const vd = result.boards.find((b) => b.category === "vertical_divider" && b.id.endsWith(`_${zid(it)}`));
     const cx = vd ? (vd.x0 + vd.x1) / 2 : Number(it.zone.dividerCenterX ?? result.params.midWidth / 2);
     parts.push(grip(`data-boundary="divider" data-axis="x" data-zone="${zid(it)}"`, toX(cx), toY(it.z1), toX(cx), toY(it.z0), true));
@@ -6041,32 +6049,43 @@ function generateGeneralTall(input, options = {}) {
         hinges.push({ id: `${fp.id}_hinge_${i + 1}`, panelId: fp.id, centerX: cx, centerZ: c.z, diameter: cupD, depth: cupDepth });
       });
     }
-    if (s.locksOn && fp.zone.zone.lockPosition) {
+    const doorLock = zt === "side_door" || zt === "left_side_door" || zt === "right_side_door" || zt === "double_door";
+    const lp = fp.zone.zone.lockPosition ?? (doorLock ? "top" : void 0);
+    if (s.locksOn && lp && lp !== "none") {
       const lw = RULES.LOCK_SLOT_LENGTH.value, lh = RULES.LOCK_SLOT_WIDTH.value;
-      const cx = r2((fp.x0 + fp.x1) / 2);
+      const hingeLeft = zt === "left_side_door" || zt === "side_door" || zt === "double_door" && fp.leaf === "L";
+      const hingeRight = zt === "right_side_door" || zt === "double_door" && fp.leaf === "R";
+      const ownSide = Number(fp.zone.zone.lockSideDistance);
+      const side = Number.isFinite(ownSide) && ownSide >= 0 ? ownSide : RULES.DEFAULT_LOCK_SIDE_DISTANCE.value;
+      const cx = hingeLeft ? r2(Math.max(fp.x0 + lw / 2, fp.x1 - side)) : hingeRight ? r2(Math.min(fp.x1 - lw / 2, fp.x0 + side)) : r2((fp.x0 + fp.x1) / 2);
       const zt2 = fp.zone.zone;
       let cz = null;
       let mountingFace = "bottom";
       let mountingBoardId;
-      const lp = zt2.lockPosition;
       const zIdx = zoneItems.indexOf(fp.zone);
       const nextZone = zoneItems[zIdx + 1];
       const zoneAbove = nextZone ? boundaries.find((b) => b.id === `boundary-${nextZone.zone.id}` && b.boundaryType !== "none") : void 0;
       const zoneBelow = boundaries.find((b) => b.id === `boundary-${fp.zone.zone.id}` && b.boundaryType !== "none");
+      const topInsert = boards.find((b) => b.id === "T3") ?? boards.find((b) => b.id === "TH1");
+      const bottomInsert = boards.find((b) => b.id === "B3") ?? boards.find((b) => b.id === "BH1");
+      const isTopZone = zIdx === zoneItems.length - 1;
+      const isBottomZone = zIdx === 0;
       if (lp === "top") {
         const underRail = fp.zone === baseDrawer && fridgeFloor;
-        const mount = underRail ? r2(fridgeFloor.z0 - CPT) : zoneAbove ? zoneAbove.z0 : fp.z1;
+        const onInsert = !underRail && !zoneAbove && isTopZone && topInsert;
+        const mount = underRail ? r2(fridgeFloor.z0 - CPT) : zoneAbove ? zoneAbove.z0 : onInsert ? topInsert.z0 : fp.z1;
         cz = r2(mount - RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "top";
-        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : void 0;
+        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : onInsert ? topInsert.id : void 0;
       } else if (lp === "bottom") {
-        const mount = zoneBelow ? zoneBelow.z1 : fp.z0;
+        const onInsert = !zoneBelow && isBottomZone && bottomInsert;
+        const mount = zoneBelow ? zoneBelow.z1 : onInsert ? bottomInsert.z1 : fp.z0;
         cz = r2(mount + RULES.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "bottom";
-        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : void 0;
+        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : onInsert ? bottomInsert.id : void 0;
       } else if (lp === "side") {
         mountingFace = "side";
-        mountingBoardId = `VD_${fp.zone.zone.id}`;
+        mountingBoardId = boards.some((b) => b.id === `VD_${fp.zone.zone.id}`) ? `VD_${fp.zone.zone.id}` : void 0;
         cz = r2(fp.zone.z0 + asNum(zt2.lockHeight, 0));
         if (cz > fp.z1) {
           cz = fp.z1;
@@ -6102,11 +6121,14 @@ function generateGeneralTall(input, options = {}) {
     let prof;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
       const ad = s.avoid.depth, ah = s.avoid.height;
+      const sup = ah > RULES.AVOIDANCE_SUPPORT_THICKNESS.value ? RULES.AVOIDANCE_SUPPORT_THICKNESS : 0;
+      const notchY = ex({ md: ref("tall.md"), d: s.avoid.depth, t: sup }, (t2) => Math.round((t2.md - t2.d + t2.t) * 1e3) / 1e3, sup ? "midDepth - avoidD + support" : "midDepth - avoidD");
+      const notchZ = ex({ h: s.avoid.height, t: sup }, (t2) => Math.round((t2.h - t2.t) * 1e3) / 1e3, sup ? "avoidH - support" : "avoidH");
       prof = yzTrace(`SidePanel_${side}`, [
         [ex({ F: ref("tall.FPT") }, (t2) => -t2.F, "-FPT"), lit(0)],
-        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t2) => Math.round((t2.md - t2.d) * 1e3) / 1e3, "midDepth - avoidD"), lit(0)],
-        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t2) => Math.round((t2.md - t2.d) * 1e3) / 1e3, "midDepth - avoidD"), ex({ h: s.avoid.height }, (t2) => t2.h, "avoidH")],
-        [link("tall.md"), ex({ h: s.avoid.height }, (t2) => t2.h, "avoidH")],
+        [notchY, lit(0)],
+        [notchY, notchZ],
+        [link("tall.md"), notchZ],
         [link("tall.md"), link("tall.CH")],
         [ex({ F: ref("tall.FPT") }, (t2) => -t2.F, "-FPT"), link("tall.CH")]
       ]);

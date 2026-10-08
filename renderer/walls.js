@@ -111,13 +111,15 @@ export function normalizeWall(raw) {
   if (raw.split && (raw.split.axis === "u" || raw.split.axis === "z") && Number.isFinite(splitAt)) {
     wall.split = { axis: raw.split.axis, at: Math.round(splitAt * 10) / 10 };
   }
-  if (raw.fit && raw.fit.overheadId && raw.fit.kitchenId) {
+  if (raw.fit && raw.fit.overheadId && (raw.fit.kitchenId || raw.fit.loungeId)) {
     const radius = Number(raw.fit.radius);
     wall.fit = {
       overheadId: String(raw.fit.overheadId),
-      kitchenId: String(raw.fit.kitchenId),
       radius: Number.isFinite(radius) && radius >= 0 ? Math.round(radius * 10) / 10 : FIT_CORNER_RADIUS_MM,
     };
+    // A lounge takes the base's place. The two are never stored together.
+    if (raw.fit.loungeId) wall.fit.loungeId = String(raw.fit.loungeId);
+    else wall.fit.kitchenId = String(raw.fit.kitchenId);
   }
   const panels = (Array.isArray(raw.controlPanels) ? raw.controlPanels : []).map(normalizeControlPanel).filter(Boolean);
   if (panels.length) wall.controlPanels = panels;
@@ -292,6 +294,9 @@ export const FIT_OHC_BELOW_DOOR_MM = 15;
 export const FIT_NECK_DEPTH_MM = 100;
 export const FIT_KITCHEN_HEIGHT_EXTRA_MM = 50;
 export const FIT_KITCHEN_DEPTH_EXTRA_MM = 30;
+/** A lounge's lower step: 50 past the run the partition actually sits on (the main run, or the wing), 80 above its top. */
+export const FIT_LOUNGE_DEPTH_EXTRA_MM = 50;
+export const FIT_LOUNGE_HEIGHT_EXTRA_MM = 80;
 /** Default radius on the four step corners (two outer, two inner). */
 export const FIT_CORNER_RADIUS_MM = 50;
 
@@ -307,12 +312,14 @@ function frontThicknessOf(cab) {
 /** Outer front/back in cabinet-local Y, and the world front, back, underside and top. */
 export function cabinetOuter(cab) {
   const env = getModule(cab.moduleId).envelope(cab.params);
+  const lounge = cab.moduleId === "loungeGenerator";
   const fpt = frontThicknessOf(cab);
   const kitchen = isBaseCabinet(cab.moduleId);
   // Kitchen depth already includes the door. Overhead depth is the carcass; the door hangs in front.
-  const frontY = -fpt;
-  const backY = kitchen ? env.D - fpt : env.D;
-  const depth = kitchen ? env.D : env.D + fpt;
+  // A lounge's room face is local y = 0 and its back is y = D; nothing hangs in front of that box.
+  const frontY = lounge ? 0 : -fpt;
+  const backY = lounge ? env.D : kitchen ? env.D - fpt : env.D;
+  const depth = lounge || kitchen ? env.D : env.D + fpt;
   const front = worldOf(cab.pose, [0, frontY, 0]);
   const back = worldOf(cab.pose, [0, backY, 0]);
   const bottom = worldOf(cab.pose, [0, 0, 0]);
@@ -322,6 +329,36 @@ export function cabinetOuter(cab) {
 
 function uCoord(wall, world) {
   return wall.axis === "y" ? world[0] : world[1];
+}
+
+/**
+ * The lounge run whose end the partition stands on, and that run's room face.
+ * An L's envelope reaches the wing tip; a partition on the main run stops at
+ * the main run's own room face, and one on the wing stops at the wing's.
+ */
+function loungeContact(cab, wall) {
+  const boxes = getModule(cab.moduleId).footprintBoxes(cab.params);
+  if (!boxes || !boxes.length) return null;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+  for (const b of boxes) {
+    xMin = Math.min(xMin, b.x0);
+    xMax = Math.max(xMax, b.x1);
+  }
+  const axis = wall.axis === "x" ? 0 : 1;
+  const TOL = 40;
+  let best = null;
+  for (const b of boxes) {
+    for (const x of [b.x0, b.x1]) {
+      if (Math.abs(x - xMin) > 0.5 && Math.abs(x - xMax) > 0.5) continue;
+      const room = worldOf(cab.pose, [x, b.y0, 0]);
+      const back = worldOf(cab.pose, [x, b.y1, 0]);
+      const gap = Math.max(Math.abs(room[axis] - wall.at), Math.abs(back[axis] - wall.at));
+      if (gap > TOL) continue;
+      if (!best || gap < best.gap - 0.5) best = { gap, front: room, back, run: b.id };
+    }
+  }
+  return best;
 }
 
 /**
@@ -372,10 +409,10 @@ function roundMarkedCorners(pts, radius) {
   return out;
 }
 
-export function fitOutline({ backU, sign, z0, topAt, kitchenTop, kitchenDepth, ohcBottom, ohcDepth, samples = [], radius = 0 }) {
-  const kDepth = kitchenDepth + FIT_KITCHEN_DEPTH_EXTRA_MM;
+export function fitOutline({ backU, sign, z0, topAt, kitchenTop, kitchenDepth, ohcBottom, ohcDepth, samples = [], radius = 0, depthExtra = FIT_KITCHEN_DEPTH_EXTRA_MM, heightExtra = FIT_KITCHEN_HEIGHT_EXTRA_MM, lowerName = "base" }) {
+  const kDepth = kitchenDepth + depthExtra;
   const oDepth = ohcDepth + FIT_OHC_DEPTH_EXTRA_MM;
-  const kTop = kitchenTop + FIT_KITCHEN_HEIGHT_EXTRA_MM;
+  const kTop = kitchenTop + heightExtra;
   const oBot = ohcBottom - FIT_OHC_DOOR_DROP_MM - FIT_OHC_BELOW_DOOR_MM;
   const warnings = [];
   const bands = [];
@@ -384,7 +421,7 @@ export function fitOutline({ backU, sign, z0, topAt, kitchenTop, kitchenDepth, o
     bands.push({ z1: oBot, depth: FIT_NECK_DEPTH_MM });
     bands.push({ z1: Infinity, depth: oDepth });
   } else {
-    warnings.push("the overhead and the base meet — the 100 mm neck is skipped");
+    warnings.push(`the overhead and the ${lowerName} meet — the 100 mm neck is skipped`);
     bands.push({ z1: kTop, depth: kDepth });
     bands.push({ z1: Infinity, depth: oDepth });
   }
@@ -438,7 +475,7 @@ function fitRadius(wall) {
 }
 
 /**
- * Live overhead + base for a wall that has `fit`, or null when it does not.
+ * Live overhead + base (or lounge) for a wall that has `fit`, or null when it does not.
  * `warnings` explain a fit that could not be applied.
  */
 export function readFit(wall) {
@@ -446,16 +483,28 @@ export function readFit(wall) {
   const list = cabinetsOf() || [];
   const warnings = [];
   const ohc = list.find((c) => c.id === wall.fit.overheadId);
-  const kit = list.find((c) => c.id === wall.fit.kitchenId);
+  const loungeId = wall.fit.loungeId;
+  const lowerId = loungeId || wall.fit.kitchenId;
+  const lower = list.find((c) => c.id === lowerId);
+  const isLounge = !!(lower && lower.moduleId === "loungeGenerator");
+  const noun = isLounge ? "lounge" : "base";
   if (!ohc || ohc.moduleId !== "overheadCabinet") warnings.push(`${wall.fit.overheadId}: overhead is missing`);
-  if (!kit || !isBaseCabinet(kit.moduleId)) warnings.push(`${wall.fit.kitchenId}: base is missing`);
+  if (loungeId) {
+    if (!isLounge) warnings.push(`${loungeId}: lounge is missing`);
+  } else if (!lower || !isBaseCabinet(lower.moduleId)) warnings.push(`${wall.fit.kitchenId}: base is missing`);
   if (warnings.length) return { warnings, outline: null, steps: null };
   const o = cabinetOuter(ohc);
-  const k = cabinetOuter(kit);
+  const k = cabinetOuter(lower);
+  if (isLounge) {
+    const hit = loungeContact(lower, wall);
+    if (!hit) warnings.push("the partition does not sit on a lounge end");
+    else { k.front = hit.front; k.back = hit.back; }
+  }
   const oBack = uCoord(wall, o.back);
   const oFront = uCoord(wall, o.front);
   const kBack = uCoord(wall, k.back);
   const kFront = uCoord(wall, k.front);
+  const ids = { overheadId: ohc.id, ...(isLounge ? { loungeId: lower.id } : { kitchenId: lower.id }) };
   const along = (front, back) => {
     const span = Math.hypot(front[0] - back[0], front[1] - back[1]);
     const du = Math.abs(uCoord(wall, front) - uCoord(wall, back));
@@ -463,23 +512,25 @@ export function readFit(wall) {
   };
   if (!along(k.front, k.back) || !along(o.front, o.back)) {
     warnings.push("this wall does not run along the cabinet depth");
-    return { warnings, outline: null, steps: null, overheadId: ohc.id, kitchenId: kit.id };
+    return { warnings, outline: null, steps: null, ...ids };
   }
   if (Math.abs(oBack - kBack) > 40 || Math.sign(oFront - oBack) !== Math.sign(kFront - kBack)) {
-    warnings.push("the overhead and the base do not share a back");
+    warnings.push(`the overhead and the ${noun} do not share a back`);
   }
   // Keep the wall's own end — the one nearest the cabinet backs. Using the
   // base's carcass back instead pulls the partition off the back wall (the
   // door thickness sits at the front, so that back is short of the wall) and
   // the partition is then free-standing.
   const near = Math.min(Math.abs(kBack - wall.u0), Math.abs(kBack - wall.u1));
-  if (near > 500) warnings.push("the base does not sit against this wall");
+  if (near > 500) warnings.push(`the ${noun} does not sit against this wall`);
   const backU = Math.abs(wall.u0 - kBack) <= Math.abs(wall.u1 - kBack) ? wall.u0 : wall.u1;
   const sign = kFront >= backU ? 1 : -1;
+  const measured = { ...k, depth: Math.abs(kFront - backU) };
   return {
-    warnings, overheadId: ohc.id, kitchenId: kit.id,
+    warnings, ...ids,
     backU, sign,
-    kitchen: { ...k, depth: Math.abs(kFront - backU) },
+    kitchen: isLounge ? null : measured,
+    lounge: isLounge ? measured : null,
     overhead: { ...o, depth: Math.abs(oFront - backU) },
   };
 }
@@ -526,19 +577,23 @@ export function wallSolid(wall, resolved, stock) {
   const fit = readFit(wall);
   if (fit) {
     fitWarnings = fit.warnings.slice();
-    if (fit.kitchen && fit.overhead && !fitWarnings.some((m) => m.includes("does not run along") || m.includes("does not sit"))) {
+    const lower = fit.lounge || fit.kitchen;
+    if (lower && fit.overhead && !fitWarnings.some((m) => m.includes("does not run along") || m.includes("does not sit"))) {
       const samples = wall.axis === "x" && resolved && resolved.profile ? resolved.profile.map(([y]) => y) : [];
       const fitted = fitOutline({
         backU: fit.backU,
         sign: fit.sign,
         z0,
         topAt: topZ,
-        kitchenTop: fit.kitchen.z1,
-        kitchenDepth: fit.kitchen.depth,
+        kitchenTop: lower.z1,
+        kitchenDepth: lower.depth,
         ohcBottom: fit.overhead.z0,
         ohcDepth: fit.overhead.depth,
         samples,
         radius: fitRadius(wall),
+        depthExtra: fit.lounge ? FIT_LOUNGE_DEPTH_EXTRA_MM : FIT_KITCHEN_DEPTH_EXTRA_MM,
+        heightExtra: fit.lounge ? FIT_LOUNGE_HEIGHT_EXTRA_MM : FIT_KITCHEN_HEIGHT_EXTRA_MM,
+        lowerName: fit.lounge ? "lounge" : "base",
       });
       fitWarnings.push(...fitted.warnings);
       if (fitted.outline) {

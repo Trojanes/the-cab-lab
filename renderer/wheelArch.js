@@ -6,28 +6,46 @@
 // wheelAvoidances; a partition is notched up to the arch height.
 import { localOf } from "./pose.js";
 
-/** World arch boxes clipped into a lounge's local frame. Empty when the lounge misses every arch. */
-export function loungePlanArches(pose, env, worldBoxes) {
+function aabbLocal(pose, box) {
+  const corners = [
+    [box.x0, box.y0, box.z0], [box.x1, box.y0, box.z0], [box.x1, box.y1, box.z0], [box.x0, box.y1, box.z0],
+    [box.x0, box.y0, box.z1], [box.x1, box.y0, box.z1], [box.x1, box.y1, box.z1], [box.x0, box.y1, box.z1],
+  ].map((p) => localOf(pose, p));
+  const xs = corners.map((p) => p[0]);
+  const ys = corners.map((p) => p[1]);
+  const zs = corners.map((p) => p[2]);
+  return { x0: Math.min(...xs), x1: Math.max(...xs), y0: Math.min(...ys), y1: Math.max(...ys), z0: Math.min(...zs), z1: Math.max(...zs) };
+}
+
+/**
+ * Where a world arch meets a module's own local regions (its footprint, not
+ * the empty corner of an L). One entry per touching region. This is the
+ * contact that makes that module produce wheel-arch avoidance.
+ */
+export function localOverlaps(pose, worldBoxes, regions) {
   const out = [];
-  const round = (n) => Math.round(n);
   for (const box of worldBoxes || []) {
-    const corners = [
-      [box.x0, box.y0, box.z0], [box.x1, box.y0, box.z0], [box.x1, box.y1, box.z0], [box.x0, box.y1, box.z0],
-      [box.x0, box.y0, box.z1], [box.x1, box.y0, box.z1], [box.x1, box.y1, box.z1], [box.x0, box.y1, box.z1],
-    ].map((p) => localOf(pose, p));
-    const xs = corners.map((p) => p[0]);
-    const ys = corners.map((p) => p[1]);
-    const zs = corners.map((p) => p[2]);
-    const x0 = Math.max(0, Math.min(...xs));
-    const x1 = Math.min(env.W, Math.max(...xs));
-    const y0 = Math.max(0, Math.min(...ys));
-    const y1 = Math.min(env.D, Math.max(...ys));
-    const z0 = Math.max(0, Math.min(...zs));
-    const z1 = Math.min(env.H, Math.max(...zs));
-    if (!(x1 - x0 > 1 && y1 - y0 > 1 && z1 - z0 > 1)) continue;
-    out.push({ id: box.id, x0: round(x0), x1: round(x1), y0: round(y0), y1: round(y1), z0: round(z0), z1: round(z1) });
+    const local = aabbLocal(pose, box);
+    for (const region of regions || []) {
+      const x0 = Math.max(local.x0, region.x0);
+      const x1 = Math.min(local.x1, region.x1);
+      const y0 = Math.max(local.y0, region.y0);
+      const y1 = Math.min(local.y1, region.y1);
+      const z0 = Math.max(local.z0, region.z0 ?? 0);
+      const z1 = Math.min(local.z1, region.z1 ?? Infinity);
+      if (!(x1 - x0 > 1 && y1 - y0 > 1 && z1 - z0 > 1)) continue;
+      out.push({ id: box.id, x0: round(x0), x1: round(x1), y0: round(y0), y1: round(y1), z0: round(z0), z1: round(z1) });
+    }
   }
   return out;
+}
+
+/** World arch boxes clipped to the lounge's real footprint. Empty when nothing touches. */
+export function loungePlanArches(pose, env, worldBoxes, footprints) {
+  const regions = footprints && footprints.length
+    ? footprints.map((b) => ({ x0: b.x0, x1: b.x1, y0: b.y0, y1: b.y1, z0: b.z0 ?? 0, z1: b.z1 ?? env.H }))
+    : [{ x0: 0, x1: env.W, y0: 0, y1: env.D, z0: 0, z1: env.H }];
+  return localOverlaps(pose, worldBoxes, regions);
 }
 
 export const ARCH_MIN_MM = 50;

@@ -14,7 +14,7 @@ import { startFitPick, cancelFitPick, isFitPicking, boardRightClick } from "./in
 import { exportStep } from "./export3d.js";
 import { waterfallPlan, partitionPlan } from "./waterfall.js";
 import { showChoice, showControlPanelForm } from "./quickCard.js";
-import { overheadEndPanel, kitchenWaterfallSide } from "./modules.js";
+import { overheadEndPanel, kitchenWaterfallSide, isBaseCabinet } from "./modules.js";
 
 const bridge = window.cablab || null;
 
@@ -189,7 +189,7 @@ canvas.addEventListener("contextmenu", (e) => {
     const wall = job.getWall(ud.wallId);
     if (!wall) return;
     const cabs = job.getJob().cabinets;
-    const ready = cabs.some((c) => c.moduleId === "overheadCabinet") && cabs.some((c) => c.moduleId === "kitchenCabinet");
+    const ready = cabs.some((c) => c.moduleId === "overheadCabinet") && cabs.some((c) => isBaseCabinet(c.moduleId) || c.moduleId === "loungeGenerator");
     const items = [
       { title: wall.id },
       { label: wall.hidden ? "Show" : "Hide", run: () => job.toggleWallVisible(wall.id) },

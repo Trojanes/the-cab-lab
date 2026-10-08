@@ -41,6 +41,7 @@ export function waterfallPlan(wall, { stock, cabinets }) {
   if (!wall.fit) return refuse("Fit to cabinets first");
   if ((wall.openings || []).length) return refuse("this partition has a door");
   const fit = readFit(wall);
+  if (fit && fit.loungeId) return refuse("a lounge does not become a waterfall");
   if (!fit || !fit.kitchen || !fit.overhead) return refuse((fit && fit.warnings[0]) || "the fit is incomplete");
   if (fit.warnings.length) return refuse(fit.warnings[0]);
   const kit = (cabinets || []).find((c) => c.id === fit.kitchenId);

@@ -9,7 +9,7 @@ import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts
 import { RULES as R } from "./rules.ts";
 import type { HingeRecord, LockRecord, ZiGrooveRecord, ZiSlotRecord } from "./types.ts";
 
-/** LED T-groove: a main channel along X behind the front land, two branches from it to the rear edge. */
+/** LED T-groove, the same cut as a kitchen B3: main channel behind the front land, two branches to the rear edge. Branch centres sit `LED_GROOVE_BRANCH_END_INSET_MM` from each end, so the wall nearer the end is that inset minus half the groove width. */
 function addLedGroove(b: Board, face: "A" | "B") {
   const K = `${b.id}.feat.LED`;
   const width = dim(`${K}_MAIN.u1`, { x1: ref(`${b.id}.x1`), x0: ref(`${b.id}.x0`) }, (t) => t.x1 - t.x0);
@@ -18,15 +18,17 @@ function addLedGroove(b: Board, face: "A" | "B") {
   const rear = dim(`${K}.rear`, { y1: ref(`${b.id}.y1`), y0: ref(`${b.id}.y0`) }, (t) => t.y1 - t.y0);
   const depth = R.LED_GROOVE_DEPTH_MM.value;
   addFeature(b, face, { id: `${b.id}_LED_MAIN`, kind: "tgroove", u0: 0, u1: width, v0, v1, depth, for: "led", key: `${K}_MAIN`, source: "generalTall" });
-  const centres = [
-    dim(`${K}_BRANCH_1.cu`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.INSET),
-    dim(`${K}_BRANCH_2.cu`, { w: ref(`${K}_MAIN.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM }, (t) => t.w - t.INSET),
-  ];
-  const half = R.LED_GROOVE_WIDTH_MM.value / 2;
-  centres.forEach((cu, i) => {
+  [0, 1].forEach((i) => {
+    const KB = `${K}_BRANCH_${i + 1}`;
+    const u0 = i === 0
+      ? dim(`${KB}.u0`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET - t.W / 2)
+      : dim(`${KB}.u0`, { w: ref(`${K}_MAIN.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET - t.W / 2);
+    const u1 = i === 0
+      ? dim(`${KB}.u1`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET + t.W / 2)
+      : dim(`${KB}.u1`, { w: ref(`${K}_MAIN.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET + t.W / 2);
     addFeature(b, face, {
       id: `${b.id}_LED_BRANCH_${i + 1}`, kind: "tgroove",
-      u0: cu - half, u1: cu + half, v0: v1, v1: rear, depth, for: "led", key: `${K}_BRANCH_${i + 1}`, source: "generalTall",
+      u0, u1, v0: v1, v1: rear, depth, for: "led", key: KB, source: "generalTall",
     });
   });
 }

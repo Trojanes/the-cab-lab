@@ -398,7 +398,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .snap-list-row input { margin: 0; accent-color: var(--accent); }
 #app:has(#rightpanel.wide) .sketch-bar { right: calc(var(--right-w-wide) + 12px); }
 #app:has(#rightpanel.wide.kitchen) .sketch-bar,
-#app:has(#rightpanel.wide.ohc) .sketch-bar { right: calc(var(--right-w-kitchen) + 12px); }
+#app:has(#rightpanel.wide.ohc) .sketch-bar,
+#app:has(#rightpanel.wide.lounge) .sketch-bar { right: calc(var(--right-w-kitchen) + 12px); }
 .sketch-title { font-weight: 600; color: var(--text); white-space: nowrap; }
 .sketch-group { display: flex; align-items: center; gap: 2px; padding-left: 10px; border-left: 1px solid var(--line); }
 .sketch-group-label { color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; margin-right: 4px; }
@@ -490,7 +491,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .fp-btn.active { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 #app:has(#rightpanel.wide) .fp-btn { right: calc(var(--right-w-wide) + 12px); }
 #app:has(#rightpanel.wide.kitchen) .fp-btn,
-#app:has(#rightpanel.wide.ohc) .fp-btn { right: calc(var(--right-w-kitchen) + 12px); }
+#app:has(#rightpanel.wide.ohc) .fp-btn,
+#app:has(#rightpanel.wide.lounge) .fp-btn { right: calc(var(--right-w-kitchen) + 12px); }
 #floorplan {
   position: absolute;
   inset: 0;
@@ -512,7 +514,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 }
 #app:has(#rightpanel.wide) .fp-tools { padding-right: calc(var(--right-w-wide) + 10px); }
 #app:has(#rightpanel.wide.kitchen) .fp-tools,
-#app:has(#rightpanel.wide.ohc) .fp-tools { padding-right: calc(var(--right-w-kitchen) + 10px); }
+#app:has(#rightpanel.wide.ohc) .fp-tools,
+#app:has(#rightpanel.wide.lounge) .fp-tools { padding-right: calc(var(--right-w-kitchen) + 10px); }
 .fp-title { font-weight: 600; letter-spacing: 0.02em; margin-right: 4px; }
 .fp-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 6px; }
 .fp-tools .tb.seg { border: 1px solid transparent; }
@@ -576,6 +579,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .fp-card.sliding [data-for="shower"], .fp-card:not(.sliding) [data-for="sliding"] { display: none; }
 .fp-card.arch label:not([data-for="arch"]) { display: none; }
 .fp-card:not(.arch) [data-for="arch"] { display: none; }
+.fp-card.cavity label:not([data-for="cavity"]) { display: none; }
+.fp-card:not(.cavity) [data-for="cavity"] { display: none; }
 .fp-card {
   position: absolute;
   z-index: 4;
@@ -672,7 +677,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 }
 #rightpanel.wide { width: var(--right-w-wide); }
 #rightpanel.wide.kitchen,
-#rightpanel.wide.ohc { width: var(--right-w-kitchen); }
+#rightpanel.wide.ohc,
+#rightpanel.wide.lounge { width: var(--right-w-kitchen); }
 #rightpanel.panel-out {
   animation: panel-out 0.32s ease-in forwards;
   pointer-events: none;
@@ -1205,7 +1211,8 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 /* Kitchen: no card around the elevation, and it uses the section's side padding so the drawing is larger. */
 #rightpanel.kitchen .bedroom-front,
 #rightpanel.ohc .bedroom-front,
-#rightpanel.fridge .bedroom-front {
+#rightpanel.fridge .bedroom-front,
+#rightpanel.lounge .bedroom-front {
   border: none;
   border-radius: 0;
   background: transparent;
@@ -1215,7 +1222,8 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 }
 #rightpanel.kitchen .bedroom-front svg > rect:first-of-type,
 #rightpanel.ohc .bedroom-front svg > rect:first-of-type,
-#rightpanel.fridge .bedroom-front svg > rect:first-of-type { fill: var(--bg-panel); }
+#rightpanel.fridge .bedroom-front svg > rect:first-of-type,
+#rightpanel.lounge .bedroom-front svg > rect:first-of-type { fill: var(--bg-panel); }
 .bedroom-front svg { display: block; width: 100%; height: auto; }
 .bedroom-front .region { cursor: pointer; }
 .bedroom-front .col-dim.editable { cursor: text; }
@@ -1237,7 +1245,8 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 }
 #rightpanel.kitchen .bedroom-front,
 #rightpanel.ohc .bedroom-front,
-#rightpanel.fridge .bedroom-front { position: relative; }
+#rightpanel.fridge .bedroom-front,
+#rightpanel.lounge .bedroom-front { position: relative; }
 .bedroom-front .zone-dim.editable { cursor: text; }
 .bedroom-front .zone-dim.editable:hover text { fill: #fff; }
 .bedroom-front .region:hover { fill: rgba(79, 134, 224, 0.16); }

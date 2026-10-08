@@ -86,8 +86,22 @@ assert(fit.ok, "parallel same-way faces align");
 near(fit.gap, 400);
 near(fit.delta[0], 400);
 near(fit.delta[1], 0);
-const oppose = alignTranslation(right, worldPlane(upright, boardFaceLocal(board, faceL, null)));
-assert(!oppose.ok && oppose.reason === "faces look opposite ways", oppose.reason);
+assert(fit.how === "flush", `same-way faces are a flush, got ${fit.how}`);
+// Face-to-face (mate): this board's +X face onto another board's −X face 400 away.
+const facing = worldPlane({ x: 400, y: 0, z: 0 }, boardFaceLocal(board, faceL, null));
+const mate = alignTranslation(right, facing);
+assert(mate.ok && mate.how === "mate", `facing faces mate, got ${mate.reason || mate.how}`);
+near(mate.gap, 384);
+near(mate.delta[0], 384);
+near(mate.delta[1], 0);
+near(right.point[0] + mate.delta[0], facing.point[0]);
+// Same thing the other way round: the −X face moves onto a +X face (lower cabinet's left side against the tall one's right side).
+const back = alignTranslation(facing, right);
+assert(back.ok && back.how === "mate", "mate works from either side");
+near(facing.point[0] + back.delta[0], right.point[0]);
+const tilted90 = worldPlane(upright, boardFaceLocal(board, { id: "T", normal: "+Z" }, null));
+const skew = alignTranslation(right, tilted90);
+assert(!skew.ok && skew.reason === "faces are not parallel", skew.reason);
 
 const corners = boardCornerLocals(board, null);
 assert(corners.length === 8, `box has 8 corners, got ${corners.length}`);

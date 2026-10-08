@@ -293,19 +293,19 @@ export function worldPlane(pose, local) {
 }
 
 /**
- * Translation that puts `source` on the same plane as `target`, normals pointing
- * the same way (Inventor flush / 对齐). Opposite or non-parallel faces are refused.
+ * Translation that puts `source` on the same plane as `target`.
+ * Normals the same way → flush (Inventor 对齐); normals facing each other → mate
+ * (Inventor 贴合, e.g. one cabinet's left side against the next one's right side).
+ * Only non-parallel faces are refused. `how` says which one it was.
  */
 export function alignTranslation(source, target) {
   if (!source || !target) return { ok: false, reason: "missing face" };
   const n1 = vecNorm(source.normal);
   const n2 = vecNorm(target.normal);
   const dot = vecDot(n1, n2);
-  if (dot < 0.999) {
-    return { ok: false, reason: dot < -0.999 ? "faces look opposite ways" : "faces are not parallel", dot };
-  }
+  if (Math.abs(dot) < 0.999) return { ok: false, reason: "faces are not parallel", dot };
   const gap = vecDot(n1, [target.point[0] - source.point[0], target.point[1] - source.point[1], target.point[2] - source.point[2]]);
-  return { ok: true, gap, delta: [n1[0] * gap, n1[1] * gap, n1[2] * gap] };
+  return { ok: true, how: dot > 0 ? "flush" : "mate", gap, delta: [n1[0] * gap, n1[1] * gap, n1[2] * gap] };
 }
 
 /** Pose after a world-space shift. Rotation is unchanged. */

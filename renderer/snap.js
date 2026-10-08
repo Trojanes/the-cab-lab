@@ -88,11 +88,20 @@ function build() {
   }
 
   // Every corner of each cabinet's outer box, including the top. The box is not
-  // drawn; the corners are still feature points.
+  // drawn; the corners are still feature points. A top that stops just under the
+  // roof (within the ceiling gap) also has the point straight above it on the roof,
+  // like a partition, so a ceiling-hung box can start beside it.
+  const roofGap = cabinetRoofGap();
   for (const cab of getJob().cabinets) {
     const dirs = localAxes(cab.pose);
     for (const fp of cabinetFootprints(cab, cab.pose)) {
-      for (const [x, y, z] of fp.points) add(x, y, z, cab.id, dirs);
+      for (const [x, y, z] of fp.points) {
+        add(x, y, z, cab.id, dirs);
+        if (!sp || Math.abs(z - fp.z1) > 0.5) continue;
+        const roof = clearHeightAt(sp, x, y);
+        if (!(roof - z > 0.5 && roof - z <= roofGap)) continue;
+        grab(add(x, y, roof, cab.id, dirs), x, y, z);
+      }
     }
   }
   // Construction planes: their outline vertices (plane ∩ walls / roof / floor).
@@ -137,6 +146,11 @@ function build() {
     }
   }
   return Array.from(map.values());
+}
+
+/** How far under the roof a cabinet top still counts as reaching it: the ceiling gap, at least 5. */
+function cabinetRoofGap() {
+  return Math.max(partitionClearance(getStock()).ceiling || 0, 5) + 0.5;
 }
 
 export function snapPoints() {
@@ -208,9 +222,13 @@ function buildPlanes() {
     const flatFrom = sp.flatFromY ?? b.minY;
     if (b.maxY - flatFrom > 1) face("z", sp.height, -1, "space", "Ceiling", { ...ext, y: [flatFrom, b.maxY] });
   }
+  const roofGap = cabinetRoofGap();
   for (const cab of getJob().cabinets) {
     const fp = envelopeFootprint(cab, cab.pose);
-    const ext = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+    // Sides of a cabinet that stops just under the roof run on up to it (see build), so the roof point lies on them.
+    const roof = sp ? minClearHeight(sp, fp.minY, fp.maxY) : Infinity;
+    const sideTop = roof - fp.z1 > 0.5 && roof - fp.z1 <= roofGap ? roof : fp.z1;
+    const ext = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, sideTop] };
     face("x", fp.minX, -1, cab.id, `${cab.id} left side`, ext);
     face("x", fp.maxX, +1, cab.id, `${cab.id} right side`, ext);
     face("y", fp.minY, -1, cab.id, `${cab.id} front face`, ext);

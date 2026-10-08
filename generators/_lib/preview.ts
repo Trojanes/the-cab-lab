@@ -264,6 +264,14 @@ export interface DimSpec {
   color: string;
   /** Lower is placed first, so it keeps the near side. */
   priority?: number;
+  /**
+   * Makes the number clickable: these attributes go on a `<g class="col-dim editable">` that wraps
+   * the number and a hit area (the panel reads them to open a typed field). `title` is its tooltip.
+   */
+  attrs?: string;
+  title?: string;
+  /** First side to try from `edgeLo` (default: width −1 = up, height +1 = right). */
+  side?: 1 | -1;
 }
 
 function textWidth(text: string, size = 9): number {
@@ -272,6 +280,16 @@ function textWidth(text: string, size = 9): number {
 
 function hits(a: PxBox, b: PxBox, pad = 3): boolean {
   return a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
+}
+
+/** The number of a bar: plain, or (with `spec.attrs`) inside a clickable group with a hit area. */
+function editableText(spec: DimSpec, text: string, box: PxBox): string {
+  if (!spec.attrs) return `<g pointer-events="none">${text}</g>`;
+  const pad = 3;
+  return `<g class="col-dim editable" ${spec.attrs}>` +
+    (spec.title ? `<title>${esc(spec.title)}</title>` : "") +
+    `<rect x="${px(box.x0 - pad)}" y="${px(box.y0 - pad)}" width="${px(box.x1 - box.x0 + 2 * pad)}" height="${px(box.y1 - box.y0 + 2 * pad)}" fill="transparent" pointer-events="all" />` +
+    text + `</g>`;
 }
 
 /**
@@ -309,8 +327,9 @@ function paintDim(
       `<line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" />` +
       `<line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" />` +
       `<line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" />` +
-      `<text x="${px(mid)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>` +
-      `</g>`;
+      `</g>` +
+      editableText(spec, `<text x="${px(mid)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`,
+        { x0: mid - w / 2, y0: textY - h / 2, x1: mid + w / 2, y1: textY + h / 2 });
     return { svg, box: { x0: mid - w / 2, y0: textY - h / 2, x1: mid + w / 2, y1: textY + h / 2 } };
   }
   const y0 = toY(Math.max(spec.from, spec.to));
@@ -328,12 +347,12 @@ function paintDim(
     `<line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" />` +
     `<line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" />` +
     `<line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" />` +
-    `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>` +
     `</g>`;
   const box = side > 0
     ? { x0: textX, y0: mid - h / 2, x1: textX + w, y1: mid + h / 2 }
     : { x0: textX - w, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
-  return { svg, box };
+  const text = `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`;
+  return { svg: svg + editableText(spec, text, box), box };
 }
 
 /**
@@ -354,7 +373,7 @@ export function layoutDimensions(
   const out: string[] = [];
   for (const { spec } of order) {
     // Width: -1 is above the bottom edge. Height: +1 is inside the left edge.
-    const preferred = spec.axis === "x" ? -1 : 1;
+    const preferred = spec.side ?? (spec.axis === "x" ? -1 : 1);
     const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
     let placed: { svg: string; box: PxBox } | null = null;
     for (const offset of [16, 58]) {

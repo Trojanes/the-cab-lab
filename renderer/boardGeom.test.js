@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import * as THREE from "three";
 import { generateSketchBoard } from "./gen/sketchBoard.js";
-import { boardGeometry, faceSheetGeometry } from "./boardGeom.js";
+import { boardGeometry, faceSheetGeometry, boardEdges, grooveFigures } from "./boardGeom.js";
 
 const r = generateSketchBoard({
   plane: "YZ",
@@ -173,4 +173,78 @@ console.log("boardGeom: a lid's finger hole is open");
 }
 
 console.log("boardGeom: a mitred bench top and waterfall face outward");
+
+/* An LED channel that runs out to the board edge is an open mouth. The rim line
+   and the groove stroke stop there; they do not cross the cut. */
+{
+  const board = {
+    id: "T3",
+    profilePlane: "XY",
+    thicknessAxis: "Z",
+    x0: 0, x1: 200, y0: 0, y1: 100, z0: 0, z1: 15,
+    profileVector: [{ x: 0, y: 0 }, { x: 200, y: 0 }, { x: 200, y: 100 }, { x: 0, y: 100 }],
+    faces: [{
+      id: "A",
+      features: [
+        { kind: "tgroove", for: "led", u0: 0, u1: 200, v0: 18, v1: 32.5, depth: 6.5 },
+        { kind: "tgroove", for: "led", u0: 22.75, u1: 37.25, v0: 32.5, v1: 100, depth: 6.5 },
+        { kind: "tgroove", for: "led", u0: 162.75, u1: 177.25, v0: 32.5, v1: 100, depth: 6.5 },
+      ],
+    }],
+  };
+  const lines = boardEdges(board, new THREE.LineBasicMaterial());
+  const pos = lines.geometry.getAttribute("position").array;
+  const shift = lines.position;
+  const crosses = (pred) => {
+    for (let i = 0; i < pos.length; i += 6) {
+      const a = { x: pos[i] + shift.x, y: pos[i + 1] + shift.y, z: pos[i + 2] + shift.z };
+      const c = { x: pos[i + 3] + shift.x, y: pos[i + 4] + shift.y, z: pos[i + 5] + shift.z };
+      if (pred(a, c)) return true;
+    }
+    return false;
+  };
+  const onTop = (p) => Math.abs(p.z - 15) < 0.2;
+  assert.equal(crosses((a, c) => onTop(a) && onTop(c) && Math.abs(a.y - 100) < 0.2 && Math.abs(c.y - 100) < 0.2
+    && Math.min(a.x, c.x) < 30 && Math.max(a.x, c.x) > 30), false, "no rim line across the branch mouth");
+  assert.equal(crosses((a, c) => onTop(a) && onTop(c) && Math.abs(a.x) < 0.2 && Math.abs(c.x) < 0.2
+    && Math.min(a.y, c.y) < 25 && Math.max(a.y, c.y) > 25), false, "no rim line across the side opening");
+  assert.equal(crosses((a, c) => onTop(a) && onTop(c) && Math.abs(a.y - 100) < 0.2 && Math.abs(c.y - 100) < 0.2
+    && Math.min(a.x, c.x) < 10 && Math.max(a.x, c.x) > 10), true, "the rim beside the opening stays");
+  assert.equal(crosses((a, c) => Math.abs(a.z) < 0.2 && Math.abs(c.z) < 0.2 && Math.abs(a.y - 100) < 0.2 && Math.abs(c.y - 100) < 0.2
+    && Math.min(a.x, c.x) < 30 && Math.max(a.x, c.x) > 30), true, "the other face keeps its edge");
+  const walls = grooveFigures(board, "A").flatMap((f) => f.walls);
+  assert.equal(walls.some(([a, c]) => Math.abs(a[1] - 100) < 0.2 && Math.abs(c[1] - 100) < 0.2), false, "the groove stroke stops at the open end");
+  assert.equal(walls.some(([a, c]) => Math.abs(a[1] - 32.5) < 0.2 && Math.abs(c[1] - 32.5) < 0.2
+    && Math.min(a[0], c[0]) >= 22.7 && Math.max(a[0], c[0]) <= 37.3), false, "no stroke across the T");
+}
+
+console.log("boardGeom: an open LED mouth has no line across it");
+
+/* A back-panel corner stores a bulge. The solid and the colour sheet follow the
+   arc; the straight join of the two ends is the chamfer and stays outside. */
+{
+  const q = Math.tan(Math.PI / 8);
+  const board = {
+    id: "l_back",
+    profilePlane: "YZ",
+    thicknessAxis: "X",
+    x0: 0, x1: 18, y0: 0, y1: 100, z0: 0, z1: 100,
+    profileVector: [
+      { y: 0, z: 0 }, { y: 100, z: 0 }, { y: 100, z: 100 },
+      { y: 50, z: 100, bulge: q }, { y: 0, z: 50 },
+    ],
+    faces: [{ id: "A", normal: "+X" }, { id: "B", normal: "-X" }],
+  };
+  const { geo } = boardGeometry(board);
+  const solid = new THREE.Mesh(geo);
+  const hit = (y, z) => new THREE.Raycaster(new THREE.Vector3(-5, y, z), new THREE.Vector3(1, 0, 0)).intersectObject(solid).length;
+  assert.ok(hit(20, 80) > 0, "the arc fills out past the straight cut");
+  assert.equal(hit(5, 95), 0, "the old sharp corner stays cut away");
+  const sheet = new THREE.Mesh(faceSheetGeometry(board, board.faces[0], 0.6));
+  const hitSheet = (y, z) => new THREE.Raycaster(new THREE.Vector3(30, y, z), new THREE.Vector3(-1, 0, 0)).intersectObject(sheet).length;
+  assert.ok(hitSheet(20, 80) > 0, "the colour sheet follows the arc");
+  assert.equal(hitSheet(5, 95), 0, "the colour sheet does not fill the chamfer");
+}
+
+console.log("boardGeom: a bulged corner is an arc, not a chamfer");
 
