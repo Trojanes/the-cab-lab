@@ -52,7 +52,8 @@ for (const { dir, title, only, skip, excludeDirs } of DIRS) {
   if (!existsSync(abs)) continue;
   files.length = 0;
   walk(abs, only, skip, excludeDirs);
-  files.sort();
+  const key = (p) => relative(root, p).replace(/\\/g, "/");
+  files.sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
   out += `\n## ${title}\n\n| file | tags | exports |\n|---|---|---|\n`;
   for (const f of files) {
     const text = readFileSync(f, "utf8");
