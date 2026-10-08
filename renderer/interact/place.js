@@ -16,6 +16,7 @@ import {
   nearestSnap, nearestInference, toClient, nearestFaceAlign, describePoint,
   facesAtPoint, facesOnPoint, faceVisible, rayHitFace, preferDrawable, drawableOn,
   extrudeRoom, inPlaneAxes, axisVector, AXES, AXIS_DIRS, uiScale,
+  pickFace, faceGuide, facePlanes, INFER_RELEASE_PX, nearestAxisAlign,
 } from "../snap.js";
 import { showTip, hideTip } from "../hud.js";
 import { wallBoards } from "../walls.js";
@@ -24,7 +25,7 @@ import {
   envelopeBox, envelopeFootprint, poseFits, solidBoxes, overlaps,
   fitBoxFacing, defaultSide, FRONT_THICKNESS_DEFAULT,
 } from "../fit.js";
-import { clearHeightAt, minClearHeight, maxClearHeight } from "../spaces.js";
+import { clearHeightAt, minClearHeight, maxClearHeight, roofName } from "../spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "../log.js";
 import { localOf, cornerOf } from "../pose.js";
 import { cancelBoard } from "../boardSketch.js";
@@ -37,7 +38,7 @@ import { startBedBox, cancelBedBox, bedActive } from "./bedBox.js";
 import { cancelPlane, planeActive } from "./cplane.js";
 import {
   S, host, resetHooks, registerMode, stopAll, emitMode, clearPreview,
-  resolveCursor, drawResolved, threePlane, floorFace,
+  resolveCursor, drawResolved, threePlane, floorFace, clampToSpace, L_MIN_BOX,
   DIM_OF, AXIS_OF, dimBox, DIM_ORDER, dimInputs, dimLabels,
   positionDimInputs, setDimNames,
 } from "./shared.js";
@@ -281,7 +282,7 @@ function clampToRoof(sp, anchor, size, sign, clamped, max) {
   if (clamped.H === "ceiling") clamped.H = roofName(sp, y0, y1);
   return roof;
 }
-const WALL_NAME = { x: ["left wall", "right wall"], y: ["front wall", "back wall"], z: ["floor", "ceiling"] };
+export const WALL_NAME = { x: ["left wall", "right wall"], y: ["front wall", "back wall"], z: ["floor", "ceiling"] };
 
 /**
  * Current placement box as a min-corner AABB. The two in-plane sizes come
@@ -442,19 +443,19 @@ function beginFace(p) {
     },
   };
   if (S.rb.locked[DIM_OF[plane.axis]] != null) S.rb.locked[DIM_OF[plane.axis]] = null; // extrusion is drawn, not preset-locked
-  S.rb.presetLocks = { ...rb.locked };
+  S.rb.presetLocks = { ...S.rb.locked };
   setDimNames(["W", "D", "H"]);
   if (ceiling) {
     // Presets are in module terms; re-key them to the world axes once the wall is known.
     applyCeilingTerm();
     S.rb.locked = { W: null, D: null, H: null };
     for (const a of AXES) if (a !== plane.axis && S.rb.term[a] !== "H") S.rb.locked[DIM_OF[a]] = preset[S.rb.term[a]] ?? null;
-    S.rb.presetLocks = { ...rb.locked };
+    S.rb.presetLocks = { ...S.rb.locked };
   }
   if (bunkMode()) {
     // Wall to wall: the length is never drawn. Depth and deck top are, one click each.
     S.rb.locked = { W: bunkLength(), D: null, H: null };
-    S.rb.presetLocks = { ...rb.locked };
+    S.rb.presetLocks = { ...S.rb.locked };
     setDimNames(["Length", "Depth", "Deck top"]);
   }
   dimBox.classList.remove("hidden");
@@ -522,9 +523,9 @@ function chooseFace(e) {
     const preset = getPreset(S.placing);
     S.rb.locked = { W: null, D: null, H: null };
     for (const a of AXES) if (a !== face.axis && S.rb.term[a] !== "H") S.rb.locked[DIM_OF[a]] = preset[S.rb.term[a]] ?? null;
-    S.rb.presetLocks = { ...rb.locked };
+    S.rb.presetLocks = { ...S.rb.locked };
   } else {
-    S.rb.locked = { ...rb.presetLocks };
+    S.rb.locked = { ...S.rb.presetLocks };
     if (!bunkMode()) S.rb.locked[DIM_OF[face.axis]] = null;
   }
   showFaceHint(face);
@@ -541,8 +542,8 @@ function faceBesideEdge(cx, cy, a, dir, faces) {
     if (!into) continue;
     const mid = (f.ext[into][0] + f.ext[into][1]) / 2;
     const sign = mid >= S.rb.anchor[into] ? 1 : -1;
-    const probe = { ...rb.anchor, [into]: S.rb.anchor[into] + sign * 400 };
-    const end = { ...rb.anchor, [edgeAxis]: S.rb.anchor[edgeAxis] + (dir[AXES.indexOf(edgeAxis)] >= 0 ? 400 : -400) };
+    const probe = { ...S.rb.anchor, [into]: S.rb.anchor[into] + sign * 400 };
+    const end = { ...S.rb.anchor, [edgeAxis]: S.rb.anchor[edgeAxis] + (dir[AXES.indexOf(edgeAxis)] >= 0 ? 400 : -400) };
     const p = toClient(probe.x, probe.y, probe.z);
     const b = toClient(end.x, end.y, end.z);
     if (p.behind || b.behind) continue;

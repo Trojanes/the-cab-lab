@@ -1,6 +1,6 @@
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
-import { el, section, kv, panel } from "./widgets.js";
+import { el, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";
 export function renderPlane(pl) {
   const AXIS = { x: "X (width)", y: "Y (depth)", z: "Z (height)" };
   panel.replaceChildren(

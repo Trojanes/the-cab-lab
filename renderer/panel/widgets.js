@@ -5,11 +5,13 @@ import { log } from "../log.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "../boardModel.js";
 import { swatchChipStyle } from "../doorSwatches.js";
 import { thickness } from "../materials.js";
+import { armedHandleFor, armHandle } from "../cabinets3d.js";
+import { removeGroove, startGroove } from "../grooveTool.js";
 
 /** The right panel element every editor repaints into. */
 export const panel = document.getElementById("rightpanel");
-const drawerChecks = document.querySelector('[data-dpane="checks"]');
-const drawerBoards = document.querySelector('[data-dpane="boards"]');
+export const drawerChecks = document.querySelector('[data-dpane="checks"]');
+export const drawerBoards = document.querySelector('[data-dpane="boards"]');
 
 /** Repaint slot — the shell wires this to renderPanel() at init so widget/editor
  *  callbacks never import the shell (no module cycles). */

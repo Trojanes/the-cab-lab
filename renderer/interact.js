@@ -52,7 +52,7 @@ export { startMeasure };
 // This file keeps the mode registry dispatch and the not-yet-extracted modes.
 import {
   S, host, MODES, resetHooks,
-  setModeGetter, emitMode, typingMode,
+  setModeGetter, emitMode, typingMode, stopAll,
   pick, localAxisWorld, threePlane, clampToSpace, floorFace, resolveCursor, drawResolved,
   dimInputs, focusDim, focusedDim, typableDims,
   beginWallSplit, beginHandleDrag, handleDragMove, endDrag, cursorFor,

@@ -4,7 +4,7 @@ import { openFloorPlan } from "../floorplan.js";
 import { DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SHEET_LONG_MM, SHEET_SHORT_MM, SLIDING_FLOOR_GAP, SLIDING_GAP, cabinetBlocksOpening, pelmetCover, wallBoards, wallLength, wallOrientation } from "../walls.js";
 import { envelopeFootprint, overlaps, statusOf } from "../fit.js";
 import { partitionClearance, thickness } from "../materials.js";
-import { el, numField, section, kv, panel } from "./widgets.js";
+import { el, numField, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";
 function doorBlockers(w, s) {
   const out = [];
   for (const o of s.openings) {

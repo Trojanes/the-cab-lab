@@ -35,6 +35,7 @@ import { log } from "../log.js";
 export const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
 export const DIM_OF = { x: "W", y: "D", z: "H" }; // box size along each world axis
 export const AXIS_OF = { W: "x", D: "y", H: "z" };
+export const L_MIN_BOX = 300; // smallest box the lounge L/U box flow accepts
 
 // --- mode bus -----------------------------------------------------------------
 

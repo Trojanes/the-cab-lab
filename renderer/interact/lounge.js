@@ -8,16 +8,21 @@ import * as job from "../job.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "../gen/lounge.js";
 import { showLoungeGhost, showSnapMarker, hideSnapMarker } from "../cabinets3d.js";
 import { showTip, hideTip } from "../hud.js";
-import { poseFits } from "../fit.js";
+import { poseFits, fitBoxFacing, sideBlocked, rotZFacing, SIDES } from "../fit.js";
 import { localOf, cornerOf } from "../pose.js";
 import { toClient, axisVector } from "../snap.js";
 import { log, flushTrace } from "../log.js";
 import { cancelMeasure } from "../measureTool.js";
 import { endRetype } from "./retype.js";
-import { armPlacement, roomFrom, stopAtCabinets, registerFinishHook } from "./place.js";
+import { armPlacement, roomFrom, stopAtCabinets, registerFinishHook, WALL_NAME } from "./place.js";
+import { cancelMove } from "./move.js";
+import { cancelOrient } from "./orient.js";
+import { cancelNose } from "./nose.js";
+import { cancelBedBox } from "./bedBox.js";
+import { cancelPlane } from "./cplane.js";
 import {
   S, host, registerMode, stopAll, emitMode, clearPreview,
-  dimBox, DIM_ORDER, dimInputs, dimLabels, positionDimInputs, setDimNames,
+  dimBox, DIM_ORDER, dimInputs, dimLabels, positionDimInputs, setDimNames, L_MIN_BOX,
 } from "./shared.js";
 
 // Lounge family state lives on S (shared.js): S.lounge (floor-drawn) and
@@ -448,7 +453,7 @@ function loungeBack() {
 // else the one toward the middle of the room. Only the outer L envelope is decided
 // here; the generator lays out the boards.
 
-const L_MIN_BOX = 300;
+
 
 /** Lounge I / L: the usual box placement (faces, feature points, inference, typed sizes) draws the run. */
 function startLoungeBox(style) {
