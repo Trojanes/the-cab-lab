@@ -67,7 +67,7 @@ for (const { dir, title, only, skip, excludeDirs } of DIRS) {
 }
 
 if (check) {
-  const existing = readFileSync(join(root, "docs/MODULE-MAP.md"), "utf8");
+  const existing = readFileSync(join(root, "docs/MODULE-MAP.md"), "utf8").replace(/\r\n/g, "\n");
   if (existing !== out) { console.error("MODULE-MAP.md is stale — run npm run module-map"); process.exit(1); }
   console.log("MODULE-MAP.md up to date");
 } else {
