@@ -6,7 +6,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine } from "../space.js";
 import * as job from "../job.js";
-import { getModule, isBaseCabinet } from "../modules.js";
+import { getModule, isBaseCabinet, ENSUITE_SAMPLE } from "../modules.js";
 import { RULES as BUNK_RULES, bunkUpperLimits } from "../gen/bunkBed.js";
 import { getPreset } from "../presets.js";
 import {
@@ -256,8 +256,11 @@ function ceilingSide(b) {
  * Back toward the outside of the vehicle, door face toward the inside.
  * Left half, or flush with the left wall: back on the left, doors +X.
  * Right half, or flush with the right wall: back on the right, doors −X.
- * A rear corner (flush with the back wall and a side wall) is the exception:
- * the back sits on the rear and the doors face forward, toward the front of the vehicle.
+ * A rear corner (flush with the back wall and a side wall, or a partition's
+ * side face) is the exception: the back sits on the rear and the doors face
+ * forward, toward the front of the vehicle.
+ * The back always goes on a wall, never against another cabinet, and the
+ * doors never face a wall or partition the box is flush with.
  */
 function inwardSide(b) {
   const sp = job.getSpace();
@@ -267,7 +270,9 @@ function inwardSide(b) {
     const onLeft = walls.has(3) && Math.abs(b.x0 - sp.bounds.minX) < 0.5;
     const onRight = walls.has(1) && Math.abs(b.x0 + b.W - sp.bounds.maxX) < 0.5;
     const onRear = walls.has(2) && Math.abs(b.y0 + b.D - sp.bounds.maxY) < 0.5;
-    if (onRear && (onLeft || onRight)) return { axis: "y", dir: -1, wall: "Back wall" };
+    const partLeft = partitionFlush(b, -1);
+    const partRight = partitionFlush(b, 1);
+    if (onRear && (onLeft || onRight || partLeft || partRight)) return { axis: "y", dir: -1, wall: "Back wall" };
     const mid = (sp.bounds.minX + sp.bounds.maxX) / 2;
     const cx = b.x0 + b.W / 2;
     doorsPositiveX = cx <= mid;
@@ -277,10 +282,22 @@ function inwardSide(b) {
       const ax = S.rb && S.rb.anchor ? S.rb.anchor.x : cx;
       doorsPositiveX = Math.abs(ax - sp.bounds.minX) <= Math.abs(ax - sp.bounds.maxX);
     }
+    if (doorsPositiveX && partRight && !partLeft && !onLeft) doorsPositiveX = false;
+    else if (!doorsPositiveX && partLeft && !partRight && !onRight) doorsPositiveX = true;
   }
   return doorsPositiveX
     ? { axis: "x", dir: 1, wall: "Left wall" }
     : { axis: "x", dir: -1, wall: "Right wall" };
+}
+
+/** A partition's face lies on the box's −X (`dir` −1) or +X (`dir` +1) side, overlapping it along Y. */
+function partitionFlush(b, dir) {
+  const at = dir > 0 ? b.x0 + b.W : b.x0;
+  const y0 = b.y0;
+  const y1 = b.y0 + b.D;
+  return solidBoxes().some((o) => o.kind === "wall"
+    && Math.abs((dir > 0 ? o.x[0] : o.x[1]) - at) < 0.5
+    && o.y[0] < y1 - 0.5 && o.y[1] > y0 + 0.5);
 }
 
 /** Door side for a floor cabinet: back outside, face inside. */
@@ -328,17 +345,21 @@ function kitchenPlace() {
 function overheadPlace() {
   return S.placing === "overheadCabinet" && ceilingMode();
 }
-/** The fridge cabinet is drawn like the kitchen too: a rectangle on the floor, then the height. */
+/** Fridge and general tall cabinets are drawn like the kitchen too: a rectangle on the floor, then the height. */
 function fridgePlace() {
-  return S.placing === "tallFridgeCabinet" && !ceilingMode() && !bunkMode() && !S.lshape;
+  return (S.placing === "tallFridgeCabinet" || S.placing === "generalTallCabinet") && !ceilingMode() && !bunkMode() && !S.lshape;
 }
 /**
- * Kitchen, overhead and fridge: nothing follows the cursor while the box is drawn (the rectangle
+ * Kitchen, overhead, fridge and lounge: nothing follows the cursor while the box is drawn (the rectangle
  * still stops on walls, partitions and cabinets; the text does not say so), and Enter on the
- * rectangle only steps to the pull — the box is created by the next click or Enter.
+ * rectangle only steps to the pull — the box is created by the next click or Enter, never from a preset.
  */
 function quietPlace() {
-  return kitchenPlace() || overheadPlace() || fridgePlace();
+  return kitchenPlace() || overheadPlace() || fridgePlace() || loungeBoxPlace();
+}
+/** The lounge's box (I, the L main box, the whole parallel) is drawn like the kitchen rectangle too. */
+function loungeBoxPlace() {
+  return !!S.lshape && S.lshape.step === "box" && !ceilingMode() && !bunkMode();
 }
 function axisOfDir(dir) {
   return Math.abs(dir[0]) > 0.5 ? "x" : Math.abs(dir[1]) > 0.5 ? "y" : "z";
@@ -1067,8 +1088,8 @@ function finishPlacement(how) {
   const n = S.rb.plane.axis;
   const kn = DIM_OF[n];
   if (S.rb.locked[kn] == null && !(S.rb.ext && S.rb.ext.len > 0)) {
-    if (S.rb.kitchen) {
-      kitchenWarn("Pull the thickness, or type it — Enter does not place a preset");
+    if (S.rb.kitchen || quietPlace()) {
+      kitchenWarn(`Pull the ${S.rb.kitchen ? "thickness" : currentTerm()[n] === "H" ? "height" : "size"}, or type it — Enter does not place a preset`);
       return;
     }
     S.rb.ext = S.rb.ext || { t0: 0, len: 0, label: null };
@@ -1111,6 +1132,55 @@ function repeatLastSize(anchor) {
     W, D, H, clamped,
   };
   createFromBox(b, "repeat", ceilingMode() ? ceilingSide(b) : placeSide(b));
+  return true;
+}
+
+/**
+ * The ensuite sample (rail "As drawn"): the two cabinets of the Fusion model, put where the model has
+ * them — against the rear wall, the tall one at the left wall, the lower one beside it. Only for a
+ * space like the model's (ENSUITE_SAMPLE: width and height at the rear); refused otherwise, and when
+ * something already stands there. One undo step. `at` = client point for the message.
+ */
+export function placeEnsuiteSample(at = null) {
+  disarm();
+  const S_ = ENSUITE_SAMPLE;
+  const say = (lines, tone = "warn") => showTip(at ? at.x : 0, at ? at.y : 0, lines, tone);
+  const refuse = (reason, extra = {}) => {
+    log("sample.blocked", { sample: S_.id, reason, ...extra });
+    say([reason, ...(extra.hint ? [extra.hint] : [])]);
+    return false;
+  };
+  const sp = job.getSpace();
+  if (!sp) return refuse("Define the space first");
+  const b = sp.bounds;
+  const width = b.maxX - b.minX;
+  const back = Math.max(...S_.parts.map((q) => getModule(q.moduleId).fixedSize.D));
+  const height = minClearHeight(sp, b.maxY - back, b.maxY);
+  if (Math.abs(width - S_.width) > 1 || Math.abs(height - S_.height) > 1) {
+    return refuse(`The sample is for a van ${S_.width} wide and ${S_.height} high at the rear`, { width: Math.round(width), height: Math.round(height), hint: `This space: ${Math.round(width)} wide, ${Math.round(height)} high` });
+  }
+  if (!(sp.walls || []).includes(2)) return refuse("The sample stands against the rear wall: this space has none");
+  const have = job.getJob().cabinets.filter((c) => S_.parts.some((q) => q.moduleId === c.moduleId));
+  if (have.length) {
+    job.select(have[0].id);
+    return refuse("The ensuite sample is already in this job", { ids: have.map((c) => c.id) });
+  }
+  const placed = S_.parts.map((q) => {
+    const F = getModule(q.moduleId).fixedSize;
+    const pose = { x: b.minX + q.x, y: b.maxY - F.D, z: 0, rotZ: 0 };
+    return { q, F, pose, box: { x: [pose.x, pose.x + F.W], y: [pose.y - FRONT_THICKNESS_DEFAULT, b.maxY], z: [0, F.H] } };
+  });
+  const solids = solidBoxes();
+  for (const it of placed) {
+    const hit = solids.find((o) => ["x", "y", "z"].every((a) => o[a][0] < it.box[a][1] - 0.5 && o[a][1] > it.box[a][0] + 0.5));
+    if (hit) return refuse(`${hit.cabId || hit.id} stands where the sample goes`, { blockedBy: hit.cabId || hit.id, part: it.q.moduleId, hint: "Move or remove it first" });
+  }
+  const before = job.snapshot();
+  const ids = placed.map((it) => job.addCabinet(it.q.moduleId, it.pose, { W: it.F.W, D: it.F.D, H: it.F.H }, { history: false }).id);
+  job.commitSnapshot(before);
+  job.select(ids[ids.length - 1]);
+  log("sample.place", { sample: S_.id, ids, poses: placed.map((it) => ({ moduleId: it.q.moduleId, pose: it.pose })) });
+  say([`Ensuite sample placed at the rear · ${ids.join(" + ")}`], "");
   return true;
 }
 

@@ -9,7 +9,7 @@ import { cancelBoard } from "../boardSketch.js";
 import { cancelMeasure } from "../measureTool.js";
 import { host, emitMode, pick, registerMode } from "./shared.js";
 
-let fitPick = null; // { wallId, overheadId, kitchenId, radius }
+let fitPick = null; // { wallId, overheadId, kitchenId, loungeId, radius }
 
 const fitCard = document.createElement("div");
 fitCard.id = "fitCard";
@@ -28,12 +28,13 @@ function fitName(id) {
 
 function paintFitCard() {
   if (!fitPick) { fitCard.classList.add("hidden"); return; }
-  const ready = !!(fitPick.overheadId && fitPick.kitchenId);
+  const ready = !!(fitPick.overheadId && (fitPick.kitchenId || fitPick.loungeId));
+  const lower = fitPick.loungeId ? `Lounge — ${fitName(fitPick.loungeId)}` : `Base — ${fitName(fitPick.kitchenId)}`;
   fitCard.replaceChildren(
     elFit("div", "move-card-title", "Fit to cabinets"),
-    elFit("div", "move-note", "Click an overhead and a base, in either order. Enter fits the wall. Esc cancels."),
+    elFit("div", "move-note", "Click an overhead and a base or a lounge, in either order. Enter fits the wall. Esc cancels."),
     elFit("div", "move-note", `Overhead — ${fitName(fitPick.overheadId)}`),
-    elFit("div", "move-note", `Base — ${fitName(fitPick.kitchenId)}`),
+    elFit("div", "move-note", lower),
   );
   const radiusLabel = document.createElement("label");
   radiusLabel.className = "field";
@@ -90,7 +91,7 @@ export function startFitPick(wallId) {
   host.stopPlacement?.();
   const existing = job.getWall(wallId);
   const remembered = existing && existing.fit && Number(existing.fit.radius);
-  fitPick = { wallId, overheadId: null, kitchenId: null, radius: Number.isFinite(remembered) && remembered >= 0 ? remembered : 50 };
+  fitPick = { wallId, overheadId: null, kitchenId: null, loungeId: null, radius: Number.isFinite(remembered) && remembered >= 0 ? remembered : 50 };
   job.select(wallId);
   log("wall.fit.start", { id: wallId });
   paintFitCard();
@@ -108,11 +109,11 @@ export function cancelFitPick(how = "esc") {
 }
 
 function confirmFit(how) {
-  if (!fitPick || !fitPick.overheadId || !fitPick.kitchenId) return;
+  if (!fitPick || !fitPick.overheadId || !(fitPick.kitchenId || fitPick.loungeId)) return;
   const picked = fitPick;
   fitPick = null;
   fitCard.classList.add("hidden");
-  job.setWallFit(picked.wallId, { overheadId: picked.overheadId, kitchenId: picked.kitchenId, radius: picked.radius }, how);
+  job.setWallFit(picked.wallId, { overheadId: picked.overheadId, kitchenId: picked.kitchenId, loungeId: picked.loungeId, radius: picked.radius }, how);
   hideTip();
   emitMode();
 }
@@ -122,13 +123,14 @@ function onFitClick(e) {
   const cabId = hit && hit.object.userData.cabId;
   const cab = cabId ? job.getJob().cabinets.find((c) => c.id === cabId) : null;
   if (!cab) {
-    showTip(e.clientX, e.clientY, ["Click an overhead or a base"]);
+    showTip(e.clientX, e.clientY, ["Click an overhead, a base or a lounge"]);
     return;
   }
   if (cab.moduleId === "overheadCabinet") fitPick.overheadId = cab.id;
-  else if (isBaseCabinet(cab.moduleId)) fitPick.kitchenId = cab.id;
+  else if (isBaseCabinet(cab.moduleId)) { fitPick.kitchenId = cab.id; fitPick.loungeId = null; }
+  else if (cab.moduleId === "loungeGenerator") { fitPick.loungeId = cab.id; fitPick.kitchenId = null; }
   else {
-    showTip(e.clientX, e.clientY, ["Fit uses an overhead and a base"]);
+    showTip(e.clientX, e.clientY, ["Fit uses an overhead and a base or a lounge"]);
     log("wall.fit.pick", { id: fitPick.wallId, cabinetId: cab.id, moduleId: cab.moduleId, accepted: false });
     return;
   }

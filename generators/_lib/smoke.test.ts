@@ -186,7 +186,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   const { trimToFaces, wallBoxes } = await import("../../renderer/walls.js");
   const { readFileSync } = await import("node:fs");
 
-  for (const id of ["smallCabinet", "overheadCabinet", "uShapeOverheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "ensuiteCabinet", "generalTallCabinet", "tallFridgeCabinet", "loungeGenerator", "bunkBed"]) {
+  for (const id of ["smallCabinet", "overheadCabinet", "uShapeOverheadCabinet", "bedroom", "bedBox", "kitchenCabinet", "ensuiteCabinet", "generalTallCabinet", "tallFridgeCabinet", "loungeGenerator", "bunkBed", "ensuiteDrawingLower", "ensuiteDrawingTall"]) {
     const m = MODULES[id];
     assert.ok(m, `MODULES.${id}`);
     const { W, D, H } = m.defaultSize;
@@ -239,7 +239,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   assert.equal(generatorDir("kitchenCabinet"), "kitchen");
   assert.equal(generatorDir("ensuiteCabinet"), "kitchen");
   for (const id of Object.keys(MODULES)) {
-    assert.ok(existsSync(join(root, "generators", generatorDir(id), "presets.json")) || id === "smallCabinet" || MODULES[id].command, `${id} presets or smallCabinet`);
+    assert.ok(existsSync(join(root, "generators", generatorDir(id), "presets.json")) || id === "smallCabinet" || MODULES[id].command || MODULES[id].fixedSize, `${id} presets or smallCabinet`);
   }
 
   const html = readFileSync(join(root, "renderer", "index.html"), "utf8");

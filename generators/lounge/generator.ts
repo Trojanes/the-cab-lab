@@ -18,6 +18,7 @@ import type {
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 import { gapCovers, notchPlanArches } from "./planArch.ts";
+import { SHEET_ALONG_MAX_MM, SHEET_CROSS_MAX_MM } from "../_lib/grain.ts";
 export {
   loungeFootprintBoxes,
   loungeFromDrawnRun,
@@ -546,6 +547,19 @@ function addFrameL(
   }
 }
 
+
+/**
+ * A board longer than a sheet cannot be cut: a red `generator.errors` line (the right panel only — the
+ * board is not tinted in 3D). Sheet 2400 × 1200 less trim (`SHEET_ALONG_MAX_MM` × `SHEET_CROSS_MAX_MM`),
+ * either way round. A run that long has to be shortened, or split like the kitchen (not built yet).
+ */
+function sheetLimitErrors(boards: Board[], errors: string[]): void {
+  for (const b of boards) {
+    const [a, c] = [b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0].map((v) => Math.round(Math.abs(v) * 10) / 10).sort((m, n) => n - m);
+    if (a > SHEET_ALONG_MAX_MM) errors.push(`${b.id} is ${a} long: a sheet gives at most ${SHEET_ALONG_MAX_MM} (2400 × 1200) — shorten that run.`);
+    else if (c > SHEET_CROSS_MAX_MM) errors.push(`${b.id} is ${a} × ${c}: a sheet gives at most ${SHEET_ALONG_MAX_MM} × ${SHEET_CROSS_MAX_MM} (2400 × 1200).`);
+  }
+}
 export function generateLounge(raw: LoungeParams, options: { layout?: unknown } = {}): LoungeResult {
   beginProvenance();
   const warnings: string[] = [];
@@ -669,6 +683,7 @@ export function generateLounge(raw: LoungeParams, options: { layout?: unknown } 
   const joints: Joint[] = buildLoungeFaces({ boards, openings, lids, hinges, locks, grooves, doorColour: doorColourOf(raw) });
   applyDoorSides(boards, raw);
   const milling = applyMilling(boards);
+  sheetLimitErrors(boards, errors);
 
   return {
     params: {

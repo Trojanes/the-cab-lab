@@ -53,13 +53,72 @@ export function renderLounge(cab, mod, result, shared) {
 
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
-    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedRun: loungeSelected(cab.id) }) || "";
+    const now = job.getJob().cabinets.find((c) => c.id === cab.id) || cab;
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), {
+      selectedRun: loungeSelected(cab.id),
+      params: now.params,
+      widthAnchor: mod.widthAnchor ? mod.widthAnchor(now.params, now) : -1,
+    }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No plan view — fix the checks first." }));
   };
   drawFront();
 
+  // A number on the plan: click to type it. The value is the param itself (lengths, depths, seat
+  // widths, the middle cabinet); the wall and the anchored end stay (job.setParams anchors the pose).
+  const LOUNGE_TYPED_MIN = { mainWidth: 800, mainDepth: 300, lWidth: 400, lDepth: 200, totalWidth: 1600, singleLoungeWidth: 400, depth: 400 };
+  const setTyped = (param, typed, shown) => {
+    if (!Number.isFinite(typed) || Math.abs(typed - shown) < 0.05) return;
+    if (param.startsWith("middleCabinet.")) {
+      const key = param.slice("middleCabinet.".length);
+      const v = Math.max(100, Math.round(typed));
+      job.setParams(cab.id, { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: v } });
+      log("lounge.run.midCab", { id: cab.id, key: param, to: v, shown, where: "plan view" });
+      return;
+    }
+    const v = Math.max(LOUNGE_TYPED_MIN[param] ?? 1, Math.round(typed * 10) / 10);
+    job.setParams(cab.id, { ...p, [param]: v });
+    log("lounge.run.size", { id: cab.id, key: param, from: p[param] ?? shown, to: v, shown, where: "plan view" });
+  };
+  const editPlanDim = (dim) => {
+    if (front.querySelector(".col-dim-input")) return;
+    const param = dim.getAttribute("data-param");
+    const shown = Number(dim.getAttribute("data-value"));
+    if (!param || !Number.isFinite(shown)) return;
+    const box = dim.getBoundingClientRect();
+    const host = front.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "col-dim-input";
+    input.step = "1";
+    input.value = String(shown);
+    input.style.left = `${box.left - host.left + box.width / 2}px`;
+    input.style.top = `${box.top - host.top}px`;
+    front.append(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply) => {
+      if (done) return;
+      done = true;
+      const typed = Number(input.value);
+      input.remove();
+      if (apply) setTyped(param, typed, shown);
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
+
   front.addEventListener("click", (e) => {
     if (loungeDrag) return;
+    const dim = e.target.closest?.(".col-dim.editable");
+    if (dim) {
+      e.stopPropagation();
+      editPlanDim(dim);
+      return;
+    }
     const runEl = e.target.closest?.("[data-run]");
     if (!runEl) return;
     const id = runEl.getAttribute("data-run");
@@ -77,19 +136,21 @@ export function renderLounge(cab, mod, result, shared) {
     const param = g.getAttribute("data-param");
     const axis = g.getAttribute("data-axis"); // "x" | "y"
     const params0 = cab.params;
-    const from = params0[param];
+    // Grips on the room side / the left end drive the same stored size as the matching far edge.
+    const stored = { mainWidthLo: "mainWidth", totalWidthLo: "totalWidth", mainDepthFront: "mainDepth", lWidthFront: "lWidth", depthFront: "depth" }[param] ?? param;
+    const from = params0[stored];
     const before = job.snapshot();
     // mm ↔ px: the SVG carries its own mapping; plan view maps the vertical axis to Y (depth), not Z.
-    const toMm = (clientX, clientY) => {
-      const s = front.querySelector("svg");
-      const rect = s.getBoundingClientRect();
-      const k = Number(s.getAttribute("width")) / rect.width;
-      const scale = Number(s.dataset.scale);
-      const ox = Number(s.dataset.ox);
-      const oy = Number(s.dataset.oy);
-      const planH = Number(s.dataset.h);
-      return axis === "x" ? ((clientX - rect.left) * k - ox) / scale : planH - ((clientY - rect.top) * k - oy) / scale;
+    // The mapping is read once, at the press: the plan re-fits while it changes, and setRunEdge reads
+    // `pos` in the plan as it was when the drag started (params0).
+    const rect0 = svg.getBoundingClientRect();
+    const map0 = {
+      k: Number(svg.getAttribute("width")) / rect0.width,
+      scale: Number(svg.dataset.scale), ox: Number(svg.dataset.ox), oy: Number(svg.dataset.oy), planH: Number(svg.dataset.h),
     };
+    const toMm = (clientX, clientY) => (axis === "x"
+      ? ((clientX - rect0.left) * map0.k - map0.ox) / map0.scale
+      : map0.planH - ((clientY - rect0.top) * map0.k - map0.oy) / map0.scale);
     try { front.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
     front.classList.add("dragging");
     g.classList.add("active");
@@ -108,7 +169,7 @@ export function renderLounge(cab, mod, result, shared) {
       loungeDrag = null;
       const changed = job.commitSnapshot(before);
       const now = job.getSelected();
-      log("lounge.run.drag", { id: cab.id, param, from, to: now ? now.params[param] : null, changed, where: "plan view" });
+      log("lounge.run.drag", { id: cab.id, param: stored, edge: param, from, to: now ? now.params[stored] : null, changed, pose: now ? now.pose : null, where: "plan view" });
       repaint();
     };
     front.addEventListener("pointermove", move);
@@ -191,12 +252,55 @@ export function renderLounge(cab, mod, result, shared) {
       mcField("Cabinet depth (mm)", "depth", 100),
       mcField("Cabinet height (mm)", "height", 100),
     ] : []),
-    style === "PARALLEL" ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
-    ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
-      numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
-      numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
-    ] : []),
   ].filter(Boolean));
+
+  // Wheel arch avoidance: the red pairs on the floor plan cut whatever this lounge stands in (job.js
+  // syncLoungeArch → planWheelArches). I / L: a notch in each board the arch hits. Parallel: the boards,
+  // plus top / front covers in the middle gap. The checkbox off refuses it.
+  const worldArches = job.getSpace()?.wheelArches || [];
+  const archOn = p.wheelArchAvoidance !== false;
+  const hitArches = (p.planWheelArches || []).filter((a) => a.id !== "hand");
+  const hw = p.handWheelArch || {};
+  const handOn = hw.enabled === true;
+  const setHand = (patch) => {
+    const next = { enabled: true, depth: hw.depth > 0 ? hw.depth : 300, height: hw.height > 0 ? hw.height : 250, ...patch };
+    job.setParams(cab.id, { ...p, handWheelArch: next, ...(next.enabled ? { wheelArchAvoidance: true } : {}) });
+    log("lounge.wheel.hand", { id: cab.id, arch: next });
+  };
+  const loungeWheel = section("Wheel arch avoidance", [
+    el("label", { class: "field check", title: "Cut this lounge around the wheel arches drawn on the floor plan" }, [
+      el("span", { text: "Wheel arch avoidance" }),
+      el("input", { type: "checkbox", checked: archOn, onchange: (e) => setP("wheelArchAvoidance", e.target.checked, "wheel") }),
+    ]),
+    ...(!archOn ? [
+      el("div", { class: "empty small", text: "Off. No board is cut, even where the lounge stands in a wheel arch." }),
+    ] : !worldArches.length ? [
+      el("div", { class: "empty small", text: "No wheel arch on the floor plan yet. Draw one there (Wheel arch, A); the boards it meets are then cut." }),
+    ] : hitArches.length ? [
+      ...hitArches.map((a) => kv(a.id, `along ${Math.round(a.x0)}–${Math.round(a.x1)} · ${Math.round(a.y1 - a.y0)} in from the wall · ${Math.round(a.z1)} high`)),
+      el("div", { class: "empty small", text: style === "PARALLEL"
+        ? "From the floor plan. Each board the arch meets gets a notch; in the middle gap a top and a front cover close it, and the middle cabinet stands on the top cover."
+        : "From the floor plan. Each board the arch meets gets a notch; nothing else is added." }),
+    ] : [
+      el("div", { class: "empty small", text: "This lounge stands outside the wheel arches on the floor plan." }),
+    ]),
+    ...(archOn ? [
+      check("By hand (full width)", handOn, (on) => setHand({ enabled: on }), "A cut along the whole lounge, typed here. Cut the same way as a floor-plan arch: a notch in each board it meets (parallel: covers in the middle gap)."),
+      ...(handOn ? [
+        numField("Depth from the wall (mm)", hw.depth ?? 300, (v) => setHand({ depth: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+        numField("Height from the floor (mm)", hw.height ?? 250, (v) => setHand({ height: Math.max(0, Math.round(v)) }), { step: 10, min: 0 }),
+        el("div", { class: "empty small", text: "Runs the full length of the lounge, against the wall." }),
+      ] : []),
+    ] : []),
+    // The older parallel-only cut-out: shown only while a job still has it on, so it can be turned off.
+    ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
+      check("Old cut-out (middle gap)", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel"), "The earlier parallel-only cut-out. Use By hand (full width) instead."),
+      ...(p.wheelAvoidanceEnabled === true ? [
+        numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+        numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
+      ] : []),
+    ] : []),
+  ]);
 
   // Cabinet-level fields, folded.
   const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
@@ -221,10 +325,11 @@ export function renderLounge(cab, mod, result, shared) {
     shared.board,
     section("Plan view · from above · wall at the top", [
       front,
-      el("div", { class: "zs-hint", text: "Click a run to select it · drag an orange edge · Shift = 1 mm" }),
+      el("div", { class: "zs-hint", text: "Click a run to select it · drag an orange edge · click a number to type it · Shift = 1 mm · the wall side stays" }),
     ]),
     runCard,
     shape,
+    loungeWheel,
     fold,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),

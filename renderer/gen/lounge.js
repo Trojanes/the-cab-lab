@@ -3165,6 +3165,10 @@ function hitOf(board, arch) {
   return [[x2[0], y2[0]], [x2[1], y2[0]], [x2[1], y2[1]], [x2[0], y2[1]]];
 }
 
+// generators/_lib/grain.ts
+var SHEET_CROSS_MAX_MM = 1180;
+var SHEET_ALONG_MAX_MM = 2380;
+
 // generators/lounge/place.ts
 var r22 = (v2) => Math.round(v2 * 1e3) / 1e3;
 var asNum = (v2, fb) => {
@@ -3422,6 +3426,83 @@ function fitCanvas(W, H, width, maxHeight, pad) {
   const height = Math.round(H * scale2 + pad.t + pad.b);
   return { scale: scale2, ox, oy, height };
 }
+function textWidth(text, size = 9) {
+  return text.length * size * 0.62 + 4;
+}
+function hits(a2, b, pad = 3) {
+  return a2.x0 - pad < b.x1 && a2.x1 + pad > b.x0 && a2.y0 - pad < b.y1 && a2.y1 + pad > b.y0;
+}
+function editableText(spec, text, box) {
+  if (!spec.attrs) return `<g pointer-events="none">${text}</g>`;
+  const pad = 3;
+  return `<g class="col-dim editable" ${spec.attrs}>` + (spec.title ? `<title>${esc(spec.title)}</title>` : "") + `<rect x="${px(box.x0 - pad)}" y="${px(box.y0 - pad)}" width="${px(box.x1 - box.x0 + 2 * pad)}" height="${px(box.y1 - box.y0 + 2 * pad)}" fill="transparent" pointer-events="all" />` + text + `</g>`;
+}
+function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
+  if (!(Math.abs(spec.to - spec.from) > 0.4)) return null;
+  const tick = 3.5;
+  const color = spec.color;
+  const halo = `fill="${color}" stroke="${PV.bg}" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round"`;
+  const w2 = textWidth(spec.text);
+  const h = 12;
+  if (spec.axis === "x") {
+    const x0 = toX(Math.min(spec.from, spec.to));
+    const x1 = toX(Math.max(spec.from, spec.to));
+    if (x1 - x0 < 18) return null;
+    const yEdge = toY(edge);
+    const y2 = yEdge + side * offsetPx;
+    const textY = y2 + side * 8;
+    const mid2 = (x0 + x1) / 2 + along;
+    if (mid2 < x0 || mid2 > x1) return null;
+    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y2 + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y2 + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y2)}" x2="${px(x1)}" y2="${px(y2)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y2 - tick)}" x2="${px(x0)}" y2="${px(y2 + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y2 - tick)}" x2="${px(x1)}" y2="${px(y2 + tick)}" stroke-width="0.8" /></g>` + editableText(
+      spec,
+      `<text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`,
+      { x0: mid2 - w2 / 2, y0: textY - h / 2, x1: mid2 + w2 / 2, y1: textY + h / 2 }
+    );
+    return { svg: svg2, box: { x0: mid2 - w2 / 2, y0: textY - h / 2, x1: mid2 + w2 / 2, y1: textY + h / 2 } };
+  }
+  const y0 = toY(Math.max(spec.from, spec.to));
+  const y1 = toY(Math.min(spec.from, spec.to));
+  if (y1 - y0 < 18) return null;
+  const xEdge = toX(edge);
+  const x2 = xEdge + side * offsetPx;
+  const textX = x2 + side * 5;
+  const mid = (y0 + y1) / 2 + along;
+  if (mid < y0 || mid > y1) return null;
+  const anchor = side > 0 ? "start" : "end";
+  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x2 + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x2 + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x2)}" y1="${px(y0)}" x2="${px(x2)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x2 - tick)}" y1="${px(y0)}" x2="${px(x2 + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x2 - tick)}" y1="${px(y1)}" x2="${px(x2 + tick)}" y2="${px(y1)}" stroke-width="0.8" /></g>`;
+  const box = side > 0 ? { x0: textX, y0: mid - h / 2, x1: textX + w2, y1: mid + h / 2 } : { x0: textX - w2, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
+  const text = `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>`;
+  return { svg: svg + editableText(spec, text, box), box };
+}
+function layoutDimensions(specs, toX, toY, avoid = []) {
+  const occupied = avoid.map((b) => ({ ...b }));
+  const order = specs.map((spec, i) => ({ spec, i })).sort((a2, b) => (a2.spec.priority ?? 1) - (b.spec.priority ?? 1) || Math.abs(a2.spec.to - a2.spec.from) - Math.abs(b.spec.to - b.spec.from));
+  const out = [];
+  for (const { spec } of order) {
+    const preferred = spec.side ?? (spec.axis === "x" ? -1 : 1);
+    const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
+    let placed = null;
+    for (const offset of [16, 58]) {
+      for (const side of [preferred, -preferred]) {
+        const edge = side === preferred ? spec.edgeLo : spec.edgeHi;
+        for (const along of alongs) {
+          const attempt = paintDim(toX, toY, spec, edge, side, offset, along);
+          if (!attempt) continue;
+          if (occupied.some((box) => hits(attempt.box, box))) continue;
+          placed = attempt;
+          break;
+        }
+        if (placed) break;
+      }
+      if (placed) break;
+    }
+    if (!placed) placed = paintDim(toX, toY, spec, spec.edgeLo, preferred, 16, 0);
+    if (!placed) continue;
+    occupied.push(placed.box);
+    out.push(placed.svg);
+  }
+  return out.join("");
+}
 function svgRoot(width, height, data, aria, body) {
   const d2 = Object.entries(data).map(([k2, v2]) => `data-${k2}="${v2}"`).join(" ");
   return `<svg width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img" aria-label="${esc(aria)}" ${d2} font-family="${PV.font}"><rect x="0" y="0" width="${width}" height="${height}" fill="${PV.bg}" />` + body + `</svg>`;
@@ -3451,11 +3532,12 @@ function generateLoungeSvgPreview(result, options = {}) {
   const width = options.width ?? 520;
   const showDimensions = options.showDimensions ?? true;
   const selected = options.selectedRun ?? null;
-  const { scale: scale2, ox, oy, height } = fitCanvas(planW, span, width, options.maxHeight ?? 460, { l: 40, r: 16, t: 22, b: showDimensions ? 34 : 14 });
+  const { scale: scale2, ox, oy, height } = fitCanvas(planW, span, width, options.maxHeight ?? 460, { l: 52, r: 52, t: 34, b: showDimensions ? 30 : 14 });
   const toX = (x2) => ox + x2 * scale2;
   const toY = (y2) => oy + (yMax - y2) * scale2;
   const rect = (r) => `x="${px(toX(r.x0))}" y="${px(toY(r.y1))}" width="${px(Math.max((r.x1 - r.x0) * scale2, 0.8))}" height="${px(Math.max((r.y1 - r.y0) * scale2, 0.8))}"`;
   const parts = [];
+  const avoid = [];
   parts.push(`<line x1="${px(toX(0) - 8)}" y1="${px(toY(planH))}" x2="${px(toX(planW) + 8)}" y2="${px(toY(planH))}" stroke="${PV.text3}" stroke-width="3" stroke-opacity="0.55" pointer-events="none" />`);
   for (const { key, r } of runs) {
     parts.push(`<rect class="region" data-run="${key}" ${rect(r)} fill="rgba(79,134,224,0.06)" stroke="none" />`);
@@ -3481,56 +3563,103 @@ function generateLoungeSvgPreview(result, options = {}) {
   if (mid.length) {
     const r = { x0: Math.min(...mid.map((b) => b.x0)), x1: Math.max(...mid.map((b) => b.x1)), y0: Math.min(...mid.map((b) => b.y0)), y1: Math.max(...mid.map((b) => b.y1)) };
     parts.push(`<rect pointer-events="none" ${rect(r)} fill="none" stroke="${PV.select}" stroke-dasharray="6 3" stroke-width="1.25" />`);
-    if ((r.x1 - r.x0) * scale2 > 50) parts.push(label(toX((r.x0 + r.x1) / 2), toY((r.y0 + r.y1) / 2), "middle cabinet", { size: 10, fill: "#8fb3ef" }));
+    if ((r.x1 - r.x0) * scale2 > 50) {
+      const cx = toX((r.x0 + r.x1) / 2);
+      const cy = toY((r.y0 + r.y1) / 2);
+      parts.push(label(cx, cy, "middle cabinet", { size: 10, fill: "#8fb3ef" }));
+      avoid.push({ x0: cx - 42, y0: cy - 9, x1: cx + 42, y1: cy + 9 });
+    }
   }
+  const nameBox = (x2, y2, text, size, vertical = false) => {
+    const w2 = text.length * size * 0.6 + 6;
+    avoid.push(vertical ? { x0: x2 - size, y0: y2 - w2 / 2, x1: x2 + size, y1: y2 + w2 / 2 } : { x0: x2 - w2 / 2, y0: y2 - size, x1: x2 + w2 / 2, y1: y2 + size });
+  };
   for (const { key, r } of runs) {
     const w2 = (r.x1 - r.x0) * scale2;
     const h = (r.y1 - r.y0) * scale2;
     if (w2 < 44 || h < 18) continue;
     const cx = toX((r.x0 + r.x1) / 2);
     const cy = toY((r.y0 + r.y1) / 2);
-    const vertical = h > w2 * 1.6 && w2 < 70;
-    if (vertical) {
-      parts.push(`<g transform="rotate(-90 ${px(cx)} ${px(cy)})">${label(cx, cy, `${LOUNGE_RUN_LABELS[key]} \xB7 ${fmt(r.y1 - r.y0)} \xD7 ${fmt(r.x1 - r.x0)}`, { size: 10 })}</g>`);
-    } else if (h >= 60) {
-      const top = toY(r.y1);
-      parts.push(label(cx, top + 14, LOUNGE_RUN_LABELS[key], { size: 11 }));
-      parts.push(label(cx, top + 28, `${fmt(r.x1 - r.x0)} \xD7 ${fmt(r.y1 - r.y0)}`, { size: 10, fill: PV.text2 }));
-    } else if (h >= 34) {
-      parts.push(label(cx, cy - 7, LOUNGE_RUN_LABELS[key], { size: 11 }));
-      parts.push(label(cx, cy + 8, `${fmt(r.x1 - r.x0)} \xD7 ${fmt(r.y1 - r.y0)}`, { size: 10, fill: PV.text2 }));
+    const name = LOUNGE_RUN_LABELS[key];
+    if (h > w2 * 1.6 && w2 < 70) {
+      parts.push(`<g transform="rotate(-90 ${px(cx)} ${px(cy)})">${label(cx, cy, name, { size: 10 })}</g>`);
+      nameBox(cx, cy, name, 10, true);
     } else {
-      parts.push(label(cx, cy, `${LOUNGE_RUN_LABELS[key]} \xB7 ${fmt(r.x1 - r.x0)} \xD7 ${fmt(r.y1 - r.y0)}`, { size: 10 }));
+      const y2 = h >= 60 ? toY(r.y1) + 14 : cy;
+      parts.push(label(cx, y2, name, { size: 11 }));
+      nameBox(cx, y2, name, 11);
     }
   }
   const sel = runs.find((it) => it.key === selected);
   if (sel) parts.push(`<rect pointer-events="none" ${rect(sel.r)} fill="${PV.select}" fill-opacity="0.12" stroke="${PV.select}" stroke-width="2" />`);
   const vline = (param2, x2, y0, y1) => parts.push(grip(`data-boundary="edge" data-param="${param2}" data-axis="x"`, toX(x2), toY(y0), toX(x2), toY(y1)));
   const hline = (param2, y2, x0, x1) => parts.push(grip(`data-boundary="edge" data-param="${param2}" data-axis="y"`, toX(x0), toY(y2), toX(x1), toY(y2)));
+  const keepHi = (options.widthAnchor ?? -1) > 0;
+  const p2 = options.params ?? {};
+  const T = result.params.partitionPanelThickness ?? 18;
+  const specs = [];
+  const total = "#8ec5ef";
+  const run2 = PV.text2;
+  const edit = (param2, value, title) => ({
+    attrs: `data-param="${param2}" data-value="${fmt(value)}"`,
+    title: `${title} \xB7 click to type`
+  });
   if (style === "I_SHAPE" && fp.i) {
-    vline("mainWidth", fp.i.x1, fp.i.y0, fp.i.y1);
-    hline("mainDepth", fp.i.y1, fp.i.x0, fp.i.x1);
+    const r = fp.i;
+    if (keepHi) vline("mainWidthLo", r.x0, r.y0, r.y1);
+    else vline("mainWidth", r.x1, r.y0, r.y1);
+    hline("mainDepthFront", r.y0, r.x0, r.x1);
+    specs.push({ axis: "x", from: r.x0, to: r.x1, edgeLo: r.y1, edgeHi: r.y0, side: -1, text: fmt(r.x1 - r.x0), color: total, priority: 0, ...edit("mainWidth", r.x1 - r.x0, "Length along the wall") });
+    specs.push({ axis: "z", from: r.y0, to: r.y1, edgeLo: keepHi ? r.x0 : r.x1, edgeHi: keepHi ? r.x1 : r.x0, side: keepHi ? -1 : 1, text: fmt(r.y1 - r.y0), color: total, priority: 0, ...edit("mainDepth", r.y1 - r.y0, "Seat depth, wall to the room side") });
   } else if (style === "PARALLEL" && fp.left && fp.right) {
-    vline("totalWidth", fp.right.x1, fp.right.y0, fp.right.y1);
-    vline("singleLoungeWidth", fp.right.x0, fp.right.y0, fp.right.y1);
-    hline("depth", fp.right.y1, fp.left.x0, fp.right.x1);
+    const L = fp.left;
+    const R = fp.right;
+    const W = R.x1 - L.x0;
+    const D2 = Math.max(L.y1, R.y1);
+    if (keepHi) vline("totalWidthLo", L.x0, L.y0, L.y1);
+    else vline("totalWidth", R.x1, R.y0, R.y1);
+    vline("singleLoungeWidth", R.x0, Math.max(0, R.y0), R.y1);
+    hline("depthFront", 0, L.x0, R.x1);
+    const SW = Number(p2.singleLoungeWidth) || L.x1 - L.x0;
+    const lIn = p2.leftBackPanel === true ? T : 0;
+    const rIn = p2.rightBackPanel === true ? T : 0;
+    const lSeat = [L.x0 + lIn, L.x0 + lIn + SW];
+    const rSeat = [R.x1 - rIn - SW, R.x1 - rIn];
+    specs.push({ axis: "x", from: L.x0, to: R.x1, edgeLo: D2, edgeHi: 0, side: -1, text: fmt(W), color: total, priority: 0, ...edit("totalWidth", W, "Outer face to outer face") });
+    specs.push({ axis: "z", from: 0, to: D2, edgeLo: keepHi ? R.x1 : L.x0, edgeHi: keepHi ? L.x0 : R.x1, side: keepHi ? 1 : -1, text: fmt(D2), color: total, priority: 0, ...edit("depth", D2, "Run length, wall to the aisle end") });
+    specs.push({ axis: "x", from: lSeat[0], to: lSeat[1], edgeLo: 0, edgeHi: D2, text: fmt(SW), color: run2, ...edit("singleLoungeWidth", SW, "Run width (both runs)") });
+    specs.push({ axis: "x", from: rSeat[0], to: rSeat[1], edgeLo: 0, edgeHi: D2, text: fmt(SW), color: run2, ...edit("singleLoungeWidth", SW, "Run width (both runs)") });
+    if (rSeat[0] - lSeat[1] > 1) specs.push({ axis: "x", from: lSeat[1], to: rSeat[0], edgeLo: 0, edgeHi: D2, text: fmt(rSeat[0] - lSeat[1]), color: PV.text3 });
   } else if (fp.main && fp.l) {
     const wing = fp.l;
     const main = fp.main;
     const leftWing = wing.x0 <= main.x0;
     const innerX = leftWing ? wing.x1 : wing.x0;
-    const far = leftWing ? main : wing;
-    vline("mainWidth", far.x1, far.y0, far.y1);
-    vline("lDepth", innerX, wing.y0, main.y0);
-    hline("lWidth", wing.y1, 0, planW);
+    const W = Math.max(wing.x1, main.x1) - Math.min(wing.x0, main.x0);
+    const D2 = main.y1;
+    if (leftWing) vline("mainWidth", main.x1, main.y0, main.y1);
+    else vline("mainWidthLo", main.x0, main.y0, main.y1);
+    vline("lDepth", innerX, Math.max(0, wing.y0), main.y0);
+    hline("lWidthFront", 0, wing.x0, wing.x1);
     hline("mainDepth", main.y0, main.x0, main.x1);
+    const seat = Number(p2.lDepth) || wing.x1 - wing.x0;
+    const wingSeat = leftWing ? [innerX - seat, innerX] : [innerX, innerX + seat];
+    const outerX = leftWing ? wing.x0 : wing.x1;
+    const freeX = leftWing ? main.x1 : main.x0;
+    specs.push({ axis: "x", from: Math.min(wing.x0, main.x0), to: Math.max(wing.x1, main.x1), edgeLo: D2, edgeHi: 0, side: -1, text: fmt(W), color: total, priority: 0, ...edit("mainWidth", W, "Overall width along the wall") });
+    specs.push({ axis: "z", from: 0, to: D2, edgeLo: outerX, edgeHi: freeX, side: leftWing ? -1 : 1, text: fmt(D2), color: total, priority: 0, ...edit("lWidth", D2, "Wall to the room end of the wing") });
+    specs.push({ axis: "z", from: main.y0, to: main.y1, edgeLo: freeX, edgeHi: innerX, side: leftWing ? -1 : 1, text: fmt(main.y1 - main.y0), color: run2, ...edit("mainDepth", main.y1 - main.y0, "Main run seat depth") });
+    specs.push({ axis: "x", from: wingSeat[0], to: wingSeat[1], edgeLo: 0, edgeHi: main.y0, text: fmt(seat), color: run2, ...edit("lDepth", seat, "Wing seat width") });
+    specs.push({ axis: "x", from: main.x0, to: main.x1, edgeLo: main.y0, edgeHi: main.y1, text: fmt(main.x1 - main.x0), color: PV.text3 });
+  }
+  if (mid.length) {
+    const r = { x0: Math.min(...mid.map((b) => b.x0)), x1: Math.max(...mid.map((b) => b.x1)), y0: Math.min(...mid.map((b) => b.y0)), y1: Math.max(...mid.map((b) => b.y1)) };
+    specs.push({ axis: "x", from: r.x0, to: r.x1, edgeLo: r.y0, edgeHi: r.y1, text: fmt(r.x1 - r.x0), color: "#8fb3ef", ...edit("middleCabinet.width", r.x1 - r.x0, "Middle cabinet width") });
+    specs.push({ axis: "z", from: r.y0, to: r.y1, edgeLo: r.x0, edgeHi: r.x1, text: fmt(r.y1 - r.y0), color: "#8fb3ef", ...edit("middleCabinet.depth", r.y1 - r.y0, "Middle cabinet depth") });
   }
   if (showDimensions) {
-    const wy = toY(planH) - 11;
-    parts.push(dimText(toX(0), wy, "wall", "start", PV.text3));
-    parts.push(dimText(toX(planW), wy, `W ${fmt(planW)}`, "end", PV.text2));
-    parts.push(dimText(ox - 6, toY(planH / 2), fmt(planH), "end", PV.text2));
-    parts.push(dimText(toX(planW / 2), toY(0) + 14, `room side \xB7 ${STYLE_LABEL[style] ?? style} \xB7 seat ${fmt(result.params.height)} high`, "middle", PV.text3));
+    parts.push(layoutDimensions(specs.filter((sp) => Math.abs(sp.to - sp.from) * scale2 >= 18), toX, toY, avoid));
+    parts.push(dimText(toX(planW / 2), toY(yMin) + 16, `room side \xB7 ${STYLE_LABEL[style] ?? style} \xB7 seat ${fmt(result.params.height)} high`, "middle", PV.text3));
   }
   return svgRoot(width, height, { scale: scale2, ox, oy, w: planW, h: planH }, "Lounge plan view", parts.join(""));
 }
@@ -4078,6 +4207,13 @@ function addFrameL(L, Dm, Dl, Wl, H, T, right, ft, boards, lids, locks, grooves,
     panel.tessellated = true;
   }
 }
+function sheetLimitErrors(boards, errors) {
+  for (const b of boards) {
+    const [a2, c2] = [b.x1 - b.x0, b.y1 - b.y0, b.z1 - b.z0].map((v2) => Math.round(Math.abs(v2) * 10) / 10).sort((m2, n) => n - m2);
+    if (a2 > SHEET_ALONG_MAX_MM) errors.push(`${b.id} is ${a2} long: a sheet gives at most ${SHEET_ALONG_MAX_MM} (2400 \xD7 1200) \u2014 shorten that run.`);
+    else if (c2 > SHEET_CROSS_MAX_MM) errors.push(`${b.id} is ${a2} \xD7 ${c2}: a sheet gives at most ${SHEET_ALONG_MAX_MM} \xD7 ${SHEET_CROSS_MAX_MM} (2400 \xD7 1200).`);
+  }
+}
 function generateLounge(raw, options = {}) {
   beginProvenance();
   const warnings = [];
@@ -4189,6 +4325,7 @@ function generateLounge(raw, options = {}) {
   const joints = buildLoungeFaces({ boards, openings, lids, hinges, locks, grooves, doorColour: doorColourOf(raw) });
   applyDoorSides(boards, raw);
   const milling = applyMilling(boards);
+  sheetLimitErrors(boards, errors);
   return {
     params: {
       style,

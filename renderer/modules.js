@@ -64,6 +64,9 @@ let loungeFootprintBoxes = loungeMod.loungeFootprintBoxes;
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { benchTopColor, builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
 import * as sketchMod from "./gen/sketchBoard.js";
+import * as ensuiteDrawingMod from "./gen/ensuiteDrawing.js";
+let generateEnsuiteDrawing = ensuiteDrawingMod.generateEnsuiteDrawing;
+let ensuiteDrawingSize = ensuiteDrawingMod.ensuiteDrawingSize;
 let generateSketchBoard = sketchMod.generateSketchBoard;
 import { localBoxOf } from "./sketchBoard.js";
 
@@ -826,7 +829,7 @@ const overheadCabinet = {
   noOrient: true, // only one side can hold the doors: the one facing the room
   growsDown: true, // the top is glued to the ceiling; H changes move the bottom
   panel: "ohc", // wide right-hand editor: zone strip + front view
-  defaultSize: { W: 1200, D: 350, H: 400 },
+  defaultSize: { W: 1200, D: 400, H: 425 },
   minSize: { W: MIN_ZONE_WIDTH, D: 150, H: 150 },
 
   defaults(W, D, H, materials) {
@@ -1381,6 +1384,75 @@ const ensuiteCabinet = {
   },
 };
 
+/**
+ * Ensuite as drawn: the two ensuite cabinets copied board by board from the
+ * Fusion model (generators/ensuiteDrawing/drawing.json). A fixed reference, not
+ * a formula: no resizing, no zones. Not placed freely: the rail's "Ensuite
+ * sample" puts both where the model has them, at the rear of a van like the
+ * model's (ENSUITE_SAMPLE, `placeEnsuiteSample` in interact.js).
+ */
+function ensuiteDrawingModule(id, part, label, sub) {
+  const size = ensuiteDrawingSize(part);
+  return {
+    id,
+    label,
+    sub,
+    panel: "drawing",
+    part,
+    /** Not armed from the rail on its own: only the ensuite sample places it. */
+    sample: "ensuite",
+    fixedSize: { ...size },
+    defaultSize: { ...size },
+    minSize: { ...size },
+    handles: [],
+    resizeFaces: [],
+    defaults(_W, _D, _H, materials) {
+      const { finish } = materialsOf(materials);
+      const color = cabinetColor(finish, "B");
+      return {
+        part,
+        carcassColor: color.carcassColor,
+        carcassColorName: color.carcassColorName,
+        doorSeries: color.doorSeries,
+        doorSides: color.doorSides,
+        doorColor: color.doorColor,
+        doorColorName: color.doorColorName,
+        colorSlot: color.colorSlot,
+      };
+    },
+    generate(params, options) {
+      return generateEnsuiteDrawing({ ...params, part }, options);
+    },
+    envelope() {
+      return { ...ensuiteDrawingSize(part) };
+    },
+    /** Fixed as drawn: a size change is refused (the params come back unchanged). */
+    setEnvelope(params) {
+      return params;
+    },
+    dividers() {
+      return [];
+    },
+  };
+}
+const ensuiteDrawingLower = ensuiteDrawingModule("ensuiteDrawingLower", "lower", "Ensuite lower · drawn", "lower cabinet · as in Fusion");
+const ensuiteDrawingTall = ensuiteDrawingModule("ensuiteDrawingTall", "tall", "Ensuite tall · drawn", "through cabinet · as in Fusion");
+
+/**
+ * Where the Fusion model (Main_Design_second_van) has the ensuite, in a space like the model's:
+ * 2275 wide, 1965 high at the rear. Both stand with their backs on the rear wall (doors facing
+ * forward); `x` = from the left wall (space minX). The tall's open side (80 filler) is on the left wall.
+ */
+export const ENSUITE_SAMPLE = {
+  id: "ensuite",
+  width: 2275,
+  height: 1965,
+  parts: [
+    { moduleId: "ensuiteDrawingTall", x: 0 },
+    { moduleId: "ensuiteDrawingLower", x: 523 },
+  ],
+};
+
 /** The tall generator's door thickness: frontPanelThickness > frontFaceAllowance > doorPanelThickness > 16. */
 function tallDoorThickness(p) {
   return p.frontPanelThickness ?? p.frontFaceAllowance ?? p.doorPanelThickness ?? 16;
@@ -1408,6 +1480,7 @@ function tallSetSide(p, side, v) {
 const TALL_BENCH_SWITCHES = [
   { key: "leftSide", label: "左侧板", options: [["none", "无"], ["carcass", "柜身"], ["colour", "门板色"]], get: (p) => tallSideValue(p, "left"), set: (p, v) => tallSetSide(p, "left", v) },
   { key: "rightSide", label: "右侧板", options: [["none", "无"], ["carcass", "柜身"], ["colour", "门板色"]], get: (p) => tallSideValue(p, "right"), set: (p, v) => tallSetSide(p, "right", v) },
+  { key: "ledGroove", label: "灯槽", options: [["off", "关"], ["on", "开"]], get: (p) => p.ledGroove === true ? "on" : "off", set: (p, v) => ({ ...p, ledGroove: v === "on" }) },
 ];
 
 const generalTallCabinet = {
@@ -1420,7 +1493,8 @@ const generalTallCabinet = {
   },
   panel: "tall", // wide right-hand editor: front elevation + zone card
   defaultSize: { W: 600, D: 568, H: 2000 }, // carcass 568 + 16 doors = cabinetDepth 584
-  minSize: { W: 400, D: 350, H: 800 },
+  // A narrow pantry beside the fridge (e.g. 374 wide, back on the side wall) must fit; the generator builds down to 250.
+  minSize: { W: 300, D: 350, H: 800 },
   defaults(W, D, H, materials) {
     const { finish, stock } = materialsOf(materials);
     const color = cabinetColor(finish, "B");
@@ -1806,11 +1880,24 @@ const tallFridgeCabinet = {
   ],
 };
 
+/** Lounge: −1 keeps local x = 0, +1 keeps x = W. The L keeps its wing end; I / parallel the corner drawn first. */
+function loungeWidthAnchor(params, cab) {
+  if ((params.style || "L_SHAPE") === "L_SHAPE") return params.lPosition === "LEFT" ? -1 : 1;
+  return cab?.placeCorner?.x ?? -1;
+}
+
 const loungeGenerator = {
   id: "loungeGenerator",
   label: "Lounge",
   sub: "I / L",
   panel: "lounge", // wide right-hand editor: plan view + run card
+  /**
+   * Any size change keeps the lounge on its walls (job.setParams): the back (local y = D) is the wall
+   * and stays; along the wall the end that stays is the L wing's end (it sits on a side wall), else
+   * the corner the box was drawn from.
+   */
+  widthAnchor: loungeWidthAnchor,
+  depthAnchor: () => 1,
   defaultSize: { W: 2000, D: 800, H: 420 },
   minSize: { W: 800, D: 400, H: 300 },
   defaults(W, D, H, materials) {
@@ -1867,8 +1954,8 @@ const loungeGenerator = {
   },
 
   /** Plan (top-down) view — a front elevation of a lounge is a flat strip; the layout lives in XY. */
-  frontView(result, { selectedRun = null } = {}) {
-    return generateLoungeSvgPreview(result, { selectedRun, showDimensions: true });
+  frontView(result, { selectedRun = null, params = null, widthAnchor = -1 } = {}) {
+    return generateLoungeSvgPreview(result, { selectedRun, showDimensions: true, params: params || undefined, widthAnchor, width: 640 });
   },
 
   setEnvelope(params, { W, D, H }) {
@@ -1919,7 +2006,16 @@ const loungeGenerator = {
     const next = { ...params };
     const v = round1(pos);
     const minRun = 200;
+    // Edges drawn on the room side or the left end: `pos` is where that edge went, in the plan as it
+    // was when the drag started (the wall stays at y = D, the right end at x = W).
+    const d0 = this.envelope(params).D;
+    const w0 = this.envelope(params).W;
     switch (key) {
+      case "mainWidthLo": next.mainWidth = Math.max(800, round1((params.mainWidth ?? w0) - v)); break;
+      case "totalWidthLo": next.totalWidth = Math.max(1600, round1((params.totalWidth ?? w0) - v)); break;
+      case "mainDepthFront": next.mainDepth = Math.max(300, round1(d0 - v)); break; // I: the room edge
+      case "lWidthFront": next.lWidth = Math.max(400, round1(d0 - v)); break; // L: the wing's room end
+      case "depthFront": next.depth = Math.max(400, round1(d0 - v)); break; // parallel: the aisle ends
       case "mainWidth": next.mainWidth = Math.max(800, v); break;
       case "mainDepth":
         // I/U: the back edge sits at y = mainDepth. L: main's front edge sits at
@@ -2140,6 +2236,8 @@ export const MODULES = {
   bedSideTable,
   bunkBed,
   sketchBoard,
+  ensuiteDrawingLower,
+  ensuiteDrawingTall,
 };
 
 /**
@@ -2153,6 +2251,8 @@ export const GENERATOR_DIRS = {
   generalTallCabinet: "generalTall",
   tallFridgeCabinet: "generalTall",
   loungeGenerator: "lounge",
+  ensuiteDrawingLower: "ensuiteDrawing",
+  ensuiteDrawingTall: "ensuiteDrawing",
 };
 
 export function generatorDir(moduleId) {
@@ -2210,6 +2310,14 @@ export const MODULE_GROUPS = [
       { moduleId: "loungeGenerator", lounge: "I", label: "I", sub: "one run" },
       { moduleId: "loungeGenerator", lounge: "L", label: "L", sub: "main box, then the wing" },
       { moduleId: "loungeGenerator", lounge: "Parallel", label: "Parallel", sub: "two runs face to face" },
+    ],
+  },
+  {
+    id: "drawn",
+    label: "As drawn",
+    sub: "fixed copies from Fusion",
+    items: [
+      { moduleId: "ensuiteDrawingLower", sample: "ensuite", label: "Ensuite sample", sub: "rear of the van · tall + lower as in Fusion · 2275 wide, 1965 high" },
     ],
   },
   {
@@ -2296,6 +2404,10 @@ const applyBundle = {
     loungeFootprintBoxes = m.loungeFootprintBoxes;
   },
   sketchBoard(m) { generateSketchBoard = m.generateSketchBoard; },
+  ensuiteDrawing(m) {
+    generateEnsuiteDrawing = m.generateEnsuiteDrawing;
+    ensuiteDrawingSize = m.ensuiteDrawingSize;
+  },
 };
 
 export async function reloadGeneratorDir(dir) {

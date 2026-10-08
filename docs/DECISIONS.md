@@ -8,6 +8,24 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-09 · Upstream 27ed7e2 merged into the layered structure
+
+- **What**: 43 shell hunks routed into modules — lounge-fit walls pick
+  (`fitPick.js`), `placeEnsuiteSample` + `partitionFlush` + generalTall
+  draw (`place.js`), lounge typed-lock/tips/Enter (`lounge.js`),
+  tall multi-select + lock + wheel-arch (`tall.js`), lounge typed plan
+  dims + wheel-arch (`lounge.js` panel), new `panel/drawing.js` for the
+  `mod.panel === "drawing"` kind, mate-logging (`align.js`).
+- **Why**: same routing rule as the d384a36 merge — the shells are the
+  diff surface; module ownership decides where each hunk lands.
+- **Rejected**: taking upstream's monolithic `interact.js`/`panel.js` —
+  would re-grow the two files we split and orphan the index system.
+- **Notes**: the new `ensuiteDrawing` modules carry 5 overlap findings
+  that are verbatim Fusion STEP fidelity, registered in
+  `audit.known.json` as upstream-native (not a merge regression).
+  `gen/*` rebuilt with our toolchain — byte-level formatting differs
+  from upstream's bundles (esbuild version), content identical.
+
 ## 2026-10-08 · The layered renderer is a frozen contract
 
 - **What**: interact/panel shells stay dispatchers; modes and editors

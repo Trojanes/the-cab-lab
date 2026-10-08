@@ -272,8 +272,10 @@ async function saveAsDefault() {
   if (!kind.settingsKey) return;
   const errors = kind.validate(values);
   if (errors.length) { showNote("Fix the errors first; an invalid default is not saved.", "err"); return; }
-  const res = await setSetting(kind.settingsKey, values);
-  log("space.default.set", { spaceKind: currentKind, ok: !!res.ok, path: res.path, error: res.error || undefined, values });
+  // Cavities belong to this van's layout, not to every new space: they stay out of the default.
+  const { cavities: _cavities, ...saved } = values;
+  const res = await setSetting(kind.settingsKey, saved);
+  log("space.default.set", { spaceKind: currentKind, ok: !!res.ok, path: res.path, error: res.error || undefined, values: saved });
   if (res.ok) {
     showNote(`Saved as default for new ${kind.label} spaces · ${res.path}`, "ok");
     const reset = overlay.querySelector("[data-reset-default]");

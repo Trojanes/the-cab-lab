@@ -126,6 +126,7 @@ const wallMat = new THREE.MeshStandardMaterial({
 });
 const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x55606f, roughness: 0.9, transparent: true, opacity: 0.6 });
 const wheelArchMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.55, transparent: true, opacity: 0.38, depthWrite: false });
+const cavityMat = new THREE.MeshStandardMaterial({ color: 0xe8c547, roughness: 0.55, transparent: true, opacity: 0.38, depthWrite: false });
 const roofMat = new THREE.MeshStandardMaterial({
   color: 0x46526a,
   roughness: 0.9,
@@ -241,6 +242,13 @@ export function drawSpace(resolved) {
   }
   for (const o of resolved.wheelArches || []) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.z1 - o.z0), wheelArchMat);
+    m.position.set((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, (o.z0 + o.z1) / 2);
+    m.raycast = () => {};
+    room.add(m);
+  }
+  // Cavities (hot water, electrics): yellow, like the plan. Not solid — cabinets may stand over them.
+  for (const o of resolved.cavities || []) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.z1 - o.z0), cavityMat);
     m.position.set((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, (o.z0 + o.z1) / 2);
     m.raycast = () => {};
     room.add(m);

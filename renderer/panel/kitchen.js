@@ -764,7 +764,7 @@ export function renderKitchen(cab, mod, result, shared) {
         el("div", { class: "empty small", text: "The cut runs the full width of this cabinet. Height is from the floor, depth is from the back. A wheel arch on the floor plan sets the width." }),
       ]
     ) : [
-      el("div", { class: "empty small", text: "Off. Turn it on to cut the back of this cabinet around a wheel arch." }),
+      el("div", { class: "empty small", text: "Off. When this cabinet touches a wheel arch on the floor plan, this turns on and the back is cut where it sits in the arch." }),
     ]),
   ]);
 

@@ -1305,36 +1305,56 @@ export function generateGeneralTall(input: GTParams, options: { layout?: unknown
         hinges.push({ id: `${fp.id}_hinge_${i + 1}`, panelId: fp.id, centerX: cx, centerZ: c.z, diameter: cupD, depth: cupDepth });
       });
     }
-    // 锁（五种 lockPosition）
-    if (s.locksOn && fp.zone.zone.lockPosition) {
+    // 锁（五种 lockPosition）。门没写锁位时默认顶锁；"none" 才不加。
+    const doorLock = zt === "side_door" || zt === "left_side_door" || zt === "right_side_door" || zt === "double_door";
+    const lp = fp.zone.zone.lockPosition ?? (doorLock ? "top" : undefined);
+    if (s.locksOn && lp && lp !== "none") {
       const lw = R.LOCK_SLOT_LENGTH.value, lh = R.LOCK_SLOT_WIDTH.value;
-      const cx = r2((fp.x0 + fp.x1) / 2);
+      // A door's lock sits on the edge opposite the hinge, DEFAULT_LOCK_SIDE_DISTANCE in.
+      // Left hinge (side_door, left door, the left leaf): the right edge. Right hinge: the left edge.
+      // A drawer or a flap has no side hinge, so it stays centred.
+      const hingeLeft = zt === "left_side_door" || zt === "side_door" || (zt === "double_door" && fp.leaf === "L");
+      const hingeRight = zt === "right_side_door" || (zt === "double_door" && fp.leaf === "R");
+      const ownSide = Number(fp.zone.zone.lockSideDistance);
+      const side = Number.isFinite(ownSide) && ownSide >= 0 ? ownSide : R.DEFAULT_LOCK_SIDE_DISTANCE.value;
+      const cx = hingeLeft ? r2(Math.max(fp.x0 + lw / 2, fp.x1 - side))
+        : hingeRight ? r2(Math.min(fp.x1 - lw / 2, fp.x0 + side))
+        : r2((fp.x0 + fp.x1) / 2);
       const zt2 = fp.zone.zone;
       let cz: number | null = null;
       let mountingFace: "top" | "bottom" | "side" = "bottom";
       let mountingBoardId: string | undefined;
-      const lp = zt2.lockPosition;
       // Top / bottom locks are measured from the board the bolt catches: the Zi above / below the zone
       // (the front rail under the fridge floor for a drawer right under the fridge); else the front's own edge.
       const zIdx = zoneItems.indexOf(fp.zone);
       const nextZone = zoneItems[zIdx + 1];
       const zoneAbove = nextZone ? boundaries.find((b) => b.id === `boundary-${nextZone.zone.id}` && b.boundaryType !== "none") : undefined;
       const zoneBelow = boundaries.find((b) => b.id === `boundary-${fp.zone.zone.id}` && b.boundaryType !== "none");
+      // The top zone has no Zi above: the bolt catches the top system's insert board (T3, or TH1 in style 2),
+      // so the lock is measured from its underside — not from the door's own top edge, which sits higher.
+      // Likewise the bottom zone measures from the top face of B3 / BH1.
+      const topInsert = boards.find((b) => b.id === "T3") ?? boards.find((b) => b.id === "TH1");
+      const bottomInsert = boards.find((b) => b.id === "B3") ?? boards.find((b) => b.id === "BH1");
+      const isTopZone = zIdx === zoneItems.length - 1;
+      const isBottomZone = zIdx === 0;
       if (lp === "top") {
         const underRail = fp.zone === baseDrawer && fridgeFloor;
-        const mount = underRail ? r2(fridgeFloor!.z0 - CPT) : zoneAbove ? zoneAbove.z0 : fp.z1;
+        const onInsert = !underRail && !zoneAbove && isTopZone && topInsert;
+        const mount = underRail ? r2(fridgeFloor!.z0 - CPT) : zoneAbove ? zoneAbove.z0 : onInsert ? topInsert!.z0 : fp.z1;
         cz = r2(mount - R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "top";
-        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : undefined;
+        mountingBoardId = underRail ? "FridgeBaseRail" : zoneAbove ? `Zi_${zoneAbove.id}` : onInsert ? topInsert!.id : undefined;
       } else if (lp === "bottom") {
-        const mount = zoneBelow ? zoneBelow.z1 : fp.z0;
+        const onInsert = !zoneBelow && isBottomZone && bottomInsert;
+        const mount = zoneBelow ? zoneBelow.z1 : onInsert ? bottomInsert!.z1 : fp.z0;
         cz = r2(mount + R.LOCK_MOUNTING_SURFACE_TO_SLOT_CENTER.value);
         mountingFace = "bottom";
-        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : undefined;
+        mountingBoardId = zoneBelow ? `Zi_${zoneBelow.id}` : onInsert ? bottomInsert!.id : undefined;
       }
       else if (lp === "side") {
         mountingFace = "side";
-        mountingBoardId = `VD_${fp.zone.zone.id}`;
+        // The vertical divider when the zone has one; else the carcass side the lock edge closes on.
+        mountingBoardId = boards.some((b) => b.id === `VD_${fp.zone.zone.id}`) ? `VD_${fp.zone.zone.id}` : undefined;
         cz = r2(fp.zone.z0 + asNum(zt2.lockHeight, 0));
         if (cz > fp.z1) {
           cz = fp.z1;
@@ -1366,11 +1386,17 @@ export function generateGeneralTall(input: GTParams, options: { layout?: unknown
     let prof: P2[] | undefined;
     if (s.avoid.enabled && s.avoid.depth > 0 && s.avoid.height > 0 && adapt) {
       const ad = s.avoid.depth, ah = s.avoid.height;
+      // With the two supports, the panel covers their ends: the notch stops at the rear face of
+      // Avoidance_Vertical and the underside of avoidance_horizontal, not at their front / top faces.
+      // A cut too shallow for supports keeps the old notch (to the cut's own faces).
+      const sup = ah > R.AVOIDANCE_SUPPORT_THICKNESS.value ? R.AVOIDANCE_SUPPORT_THICKNESS : 0;
+      const notchY = ex({ md: ref("tall.md"), d: s.avoid.depth, t: sup }, (t) => Math.round((t.md - t.d + t.t) * 1000) / 1000, sup ? "midDepth - avoidD + support" : "midDepth - avoidD");
+      const notchZ = ex({ h: s.avoid.height, t: sup }, (t) => Math.round((t.h - t.t) * 1000) / 1000, sup ? "avoidH - support" : "avoidH");
       prof = yzTrace(`SidePanel_${side}`, [
         [ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT"), lit(0)],
-        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - avoidD"), lit(0)],
-        [ex({ md: ref("tall.md"), d: s.avoid.depth }, (t) => Math.round((t.md - t.d) * 1000) / 1000, "midDepth - avoidD"), ex({ h: s.avoid.height }, (t) => t.h, "avoidH")],
-        [link("tall.md"), ex({ h: s.avoid.height }, (t) => t.h, "avoidH")],
+        [notchY, lit(0)],
+        [notchY, notchZ],
+        [link("tall.md"), notchZ],
         [link("tall.md"), link("tall.CH")],
         [ex({ F: ref("tall.FPT") }, (t) => -t.F, "-FPT"), link("tall.CH")],
       ]);

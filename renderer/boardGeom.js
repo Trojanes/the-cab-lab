@@ -95,24 +95,65 @@ export function boardHoles(b) {
   return b.profileHoles.map((hole) => hole.map((p) => ({ x: p.x + dx, y: p.y + dy })));
 }
 
+function pointBulge(p) {
+  const b = Number(p && p.bulge);
+  return Number.isFinite(b) ? b : 0;
+}
+
+/** Copy one outline point and keep its arc, when it has one. */
+function withBulge(p, pt) {
+  const b = pointBulge(p);
+  if (b) pt.bulge = b;
+  return pt;
+}
+
 export function boardOutline(b) {
   const plane = b.profilePlane;
   const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
   if (plane === "YZ" && b.thicknessAxis === "X") {
-    if (pv) return pv.map((p) => ({ y: p.y, z: p.z }));
-    if (b.cutProfileVector && b.cutProfileVector.length >= 4) return b.cutProfileVector.map((p) => ({ y: b.y0 + p.y, z: b.z0 + p.z }));
+    if (pv) return pv.map((p) => withBulge(p, { y: p.y, z: p.z }));
+    if (b.cutProfileVector && b.cutProfileVector.length >= 4) return b.cutProfileVector.map((p) => withBulge(p, { y: b.y0 + p.y, z: b.z0 + p.z }));
     return null;
   }
   if (plane === "XY" && b.thicknessAxis === "Z" && pv) {
     const { dx, dy } = xyShift(b);
-    return pv.map((p) => ({ x: p.x + dx, y: p.y + dy }));
+    return pv.map((p) => withBulge(p, { x: p.x + dx, y: p.y + dy }));
   }
   if (plane === "XZ" && b.thicknessAxis === "Y" && pv) {
     const dx = b.x0 - Math.min(...pv.map((p) => p.x));
     const dz = b.z0 - Math.min(...pv.map((p) => p.z));
-    return pv.map((p) => ({ x: p.x + dx, z: p.z + dz }));
+    return pv.map((p) => withBulge(p, { x: p.x + dx, z: p.z + dz }));
   }
   return null;
+}
+
+/**
+ * A bulged edge is a real arc. Polygon work (the colour sheet, a pocket) needs
+ * the curve as points; a straight join of the two ends is the chamfer.
+ */
+function expandBulges(points, uKey, vKey) {
+  if (!points || !points.some((p) => Math.abs(pointBulge(p)) > 1e-9)) return points || [];
+  let raw = points.slice();
+  if (raw.length > 2) {
+    const a = raw[0], c = raw[raw.length - 1];
+    if (Math.abs(a[uKey] - c[uKey]) < 1e-6 && Math.abs(a[vKey] - c[vKey]) < 1e-6) raw = raw.slice(0, -1);
+  }
+  const out = [];
+  for (let i = 0; i < raw.length; i += 1) {
+    const a = raw[i];
+    const c = raw[(i + 1) % raw.length];
+    const { bulge, ...rest } = a;
+    out.push(rest);
+    const arc = arcOf([a[uKey], a[vKey]], [c[uKey], c[vKey]], pointBulge(a));
+    if (!arc) continue;
+    const step = Math.min((5 * Math.PI) / 180, 2 * Math.acos(Math.max(-1, 1 - 0.05 / arc.r)));
+    const k = Math.max(2, Math.ceil(Math.abs(arc.sweep) / step));
+    for (let j = 1; j < k; j += 1) {
+      const t = arc.a0 + (arc.sweep * j) / k;
+      out.push({ ...rest, [uKey]: arc.c[0] + arc.r * Math.cos(t), [vKey]: arc.c[1] + arc.r * Math.sin(t) });
+    }
+  }
+  return out;
 }
 
 function shiftXY(points, dx, dy) {
@@ -137,7 +178,7 @@ function planeOf(b) {
 
 function toUv(b, points) {
   const [U, V] = planeOf(b);
-  return points.map((p) => [p[U], p[V]]);
+  return expandBulges(points, U, V).map((p) => [p[U], p[V]]);
 }
 
 function fromUv(b, uv) {
@@ -202,8 +243,16 @@ function clipHorizontal(poly, y, keepBelow) {
   return clipPoly(poly, inside, cross);
 }
 
-/** Polygon minus an axis-aligned rectangle. Pieces may share the cut edge. */
+/** Polygon minus an axis-aligned rectangle. A rect that only touches the outline is left alone, so a neighbouring channel does not slit the piece beside it. */
 function subtractRect(poly, r) {
+  let minU = Infinity, maxU = -Infinity, minV = Infinity, maxV = -Infinity;
+  for (const p of poly) {
+    if (p[0] < minU) minU = p[0];
+    if (p[0] > maxU) maxU = p[0];
+    if (p[1] < minV) minV = p[1];
+    if (p[1] > maxV) maxV = p[1];
+  }
+  if (r.u1 <= minU + 1e-6 || r.u0 >= maxU - 1e-6 || r.v1 <= minV + 1e-6 || r.v0 >= maxV - 1e-6) return [poly];
   const left = clipVertical(poly, r.u0, true);
   const right = clipVertical(poly, r.u1, false);
   const mid = clipVertical(clipVertical(poly, r.u0, false), r.u1, true);
@@ -595,6 +644,53 @@ export function boxMesh(x0, x1, y0, y1, z0, z1, mat) {
   return mesh;
 }
 
+/**
+ * Grooves on one face as one outline each (a T is one shape, so the joint is
+ * not a line) and the wall segments worth stroking. A segment on the board rim
+ * is an open mouth — the channel runs out there — and is left out.
+ */
+export function grooveFigures(b, faceId) {
+  const face = (b.faces || []).find((f) => f.id === faceId);
+  if (!face) return [];
+  const [U, V] = planeOf(b);
+  const U0 = b[`${U}0`], U1 = b[`${U}1`], V0 = b[`${V}0`], V1 = b[`${V}1`];
+  const rects = [];
+  for (const ft of face.features || []) {
+    if ((ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
+    if (!Number.isFinite(ft.u0) || !Number.isFinite(ft.v0) || !(ft.depth > 0.2)) continue;
+    rects.push({
+      depth: ft.depth,
+      u0: U0 + Math.min(ft.u0, ft.u1),
+      u1: U0 + Math.max(ft.u0, ft.u1),
+      v0: V0 + Math.min(ft.v0, ft.v1),
+      v1: V0 + Math.max(ft.v0, ft.v1),
+    });
+  }
+  const onRim = (a, c) => {
+    const tol = 0.4;
+    if (Math.abs(a[0] - c[0]) < tol && (Math.abs(a[0] - U0) < tol || Math.abs(a[0] - U1) < tol)) return true;
+    if (Math.abs(a[1] - c[1]) < tol && (Math.abs(a[1] - V0) < tol || Math.abs(a[1] - V1) < tol)) return true;
+    return false;
+  };
+  return mergeTGrooves(rects).map((g) => {
+    const walls = [];
+    for (let i = 0; i < g.pts.length; i += 1) {
+      const a = g.pts[i], c = g.pts[(i + 1) % g.pts.length];
+      if (Math.hypot(a[0] - c[0], a[1] - c[1]) < 0.2 || onRim(a, c)) continue;
+      walls.push([a, c]);
+    }
+    return { depth: g.depth, pts: g.pts, walls };
+  });
+}
+
+/** A thin slab of a groove outline, in the board's plane, from t0 to t1 along its thickness. */
+export function grooveSlab(plane, pts, t0, t1) {
+  if (!pts || pts.length < 3 || !(t1 - t0 > 0.05)) return null;
+  if (plane === "XY") return prismXY(pts.map(([u, v]) => ({ x: u, y: v })), t0, t1);
+  if (plane === "XZ") return prismXZ(pts.map(([u, v]) => ({ x: u, z: v })), t0, t1);
+  return prismYZ(pts.map(([u, v]) => ({ y: u, z: v })), t0, t1);
+}
+
 /** Edge lines of the board outline only. A groove is a hole in the solid; edging that mesh also draws the triangulator's bridge from the hole out to the rim. */
 function outlineSolid(b) {
   if (b.profilePlane === "XY" && b.thicknessAxis === "Z" && b.slabs && b.slabs.length) {
@@ -633,11 +729,108 @@ function holeRimPositions(b) {
   return pos;
 }
 
+/** t in [0,1] where the segment lies inside the closed rect, or null. */
+function overlapT(a, c, r, U, V) {
+  const du = c[U] - a[U];
+  const dv = c[V] - a[V];
+  let t0 = 0;
+  let t1 = 1;
+  // Keep the part of p + t q >= 0.
+  const clipMin = (p, q) => {
+    if (Math.abs(q) < 1e-9) return p >= -1e-6;
+    const t = -p / q;
+    if (q > 0) {
+      if (t > t1) return false;
+      if (t > t0) t0 = t;
+    } else {
+      if (t < t0) return false;
+      if (t < t1) t1 = t;
+    }
+    return true;
+  };
+  if (!clipMin(a[U] - r.u0, du)) return null;
+  if (!clipMin(r.u1 - a[U], -du)) return null;
+  if (!clipMin(a[V] - r.v0, dv)) return null;
+  if (!clipMin(r.v1 - a[V], -dv)) return null;
+  if (t1 - t0 < 1e-4) return null;
+  return [t0, t1];
+}
+
+function lerpPoint(a, c, t) {
+  return { x: a.x + (c.x - a.x) * t, y: a.y + (c.y - a.y) * t, z: a.z + (c.z - a.z) * t };
+}
+
+/** Drop the part of a face-rim segment that a channel has opened. The rest of the rim stays. */
+function cutRimSegments(segments, b) {
+  const cuts = [];
+  for (const faceId of ["A", "B"]) {
+    const rects = ledBreakouts(b, faceId);
+    if (!rects.length) continue;
+    const [U, V, T] = planeOf(b);
+    const t = faceId === "A" ? b[`${T}1`] : b[`${T}0`];
+    for (const r of rects) cuts.push({ U, V, T, t, r });
+  }
+  if (!cuts.length) return segments;
+  let cur = segments;
+  for (const cut of cuts) {
+    const next = [];
+    for (const [a, c] of cur) {
+      if (Math.abs(a[cut.T] - cut.t) > 0.3 || Math.abs(c[cut.T] - cut.t) > 0.3) {
+        next.push([a, c]);
+        continue;
+      }
+      const span = overlapT(a, c, cut.r, cut.U, cut.V);
+      if (!span) { next.push([a, c]); continue; }
+      const [t0, t1] = span;
+      if (t0 > 1e-3) next.push([a, lerpPoint(a, c, t0)]);
+      if (t1 < 1 - 1e-3) next.push([lerpPoint(a, c, t1), c]);
+    }
+    cur = next;
+  }
+  return cur;
+}
+
+function lineSegmentsFrom(pairs, mat, position) {
+  const arr = new Float32Array(pairs.length * 6);
+  pairs.forEach(([a, c], i) => {
+    const o = i * 6;
+    arr[o] = a.x - position.x;
+    arr[o + 1] = a.y - position.y;
+    arr[o + 2] = a.z - position.z;
+    arr[o + 3] = c.x - position.x;
+    arr[o + 4] = c.y - position.y;
+    arr[o + 5] = c.z - position.z;
+  });
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.BufferAttribute(arr, 3));
+  const lines = new THREE.LineSegments(geo, mat);
+  lines.position.copy(position);
+  return lines;
+}
+
+function worldSegments(lines) {
+  const src = lines.geometry.getAttribute("position").array;
+  const shift = lines.position;
+  const segs = [];
+  for (let i = 0; i < src.length; i += 6) {
+    segs.push([
+      { x: src[i] + shift.x, y: src[i + 1] + shift.y, z: src[i + 2] + shift.z },
+      { x: src[i + 3] + shift.x, y: src[i + 4] + shift.y, z: src[i + 5] + shift.z },
+    ]);
+  }
+  return segs;
+}
+
 export function boardEdges(b, mat) {
   const solid = outlineSolid(b);
-  const lines = solid
+  let lines = solid
     ? new THREE.LineSegments(new THREE.EdgesGeometry(solid), mat)
     : boxEdges(b.x0, b.x1, b.y0, b.y1, b.z0, b.z1, mat);
+  if (ledBreakouts(b, "A").length || ledBreakouts(b, "B").length) {
+    const next = lineSegmentsFrom(cutRimSegments(worldSegments(lines), b), lines.material, lines.position);
+    lines.geometry.dispose();
+    lines = next;
+  }
   const extra = holeRimPositions(b);
   if (!extra.length) return lines;
   const base = lines.geometry.getAttribute("position");

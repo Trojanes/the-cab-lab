@@ -13,6 +13,7 @@
 // The renderer never branches on `kind`; vehicle / floorplan only differ here.
 import { getSetting } from "./settings.js";
 import { archesToBoxes } from "./wheelArch.js";
+import { cavitiesToBoxes } from "./cavity.js";
 
 const WALL_KEYS = { key: "walls", type: "walls", label: "Walls" };
 
@@ -253,6 +254,7 @@ export function resolveSpace(space) {
   const resolved = getSpaceKind(space.kind).resolve(space.params);
   if (!resolved) return null;
   resolved.wheelArches = archesToBoxes(space.params && space.params.wheelArches, resolved.bounds);
+  resolved.cavities = cavitiesToBoxes(space.params && space.params.cavities, resolved.bounds);
   return resolved;
 }
 

@@ -48,7 +48,10 @@ export function grabPan(camera, target, dx, dy, viewDepth, clientHeight) {
   camera.updateMatrixWorld();
 }
 
-/** Wheel scale. `deltaY` < 0 zooms in. Matches a 5% step per typical notch. */
+/** Distance kept per wheel notch (deltaY 100): 0.85 = 15% closer per notch (was 0.95, 5%, too slow). */
+export const WHEEL_NOTCH_SCALE = 0.85;
+
+/** Wheel scale. `deltaY` < 0 zooms in. One typical notch moves WHEEL_NOTCH_SCALE of the distance. */
 export function wheelZoomScale(event) {
   let deltaY = event.deltaY || 0;
   if (event.deltaMode === 1) deltaY *= 16;
@@ -56,7 +59,7 @@ export function wheelZoomScale(event) {
   // A trackpad pinch arrives as a wheel event with ctrl held.
   if (event.ctrlKey) deltaY *= 10;
   if (!deltaY) return 1;
-  const step = Math.pow(0.95, Math.abs(deltaY) * 0.01);
+  const step = Math.pow(WHEEL_NOTCH_SCALE, Math.abs(deltaY) * 0.01);
   return deltaY < 0 ? step : 1 / step;
 }
 

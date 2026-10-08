@@ -538,7 +538,8 @@ function beginLoungeSeat(b, how) {
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) dimLabels[k].classList.toggle("hidden", k !== "D");
   emitMode();
-  updateLoungeSeat(null);
+  // Enter is a click where the cursor is: the seat starts from the cursor, not a default width.
+  updateLoungeSeat(S.lshape.lastClient);
 }
 
 /** Seat width from the cursor: its distance from the nearer end of the room face, snapped near 560. */
@@ -554,12 +555,12 @@ function loungeSeatWidth(e) {
       const dirV = axisVector(fr.u, 1);
       const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(dirV[0], dirV[1], dirV[2]));
       const raw = job.snap(Math.min(t, fr.length - t));
-      if (S.lshape.locked == null || Math.abs(raw - S.lshape.locked) > 40) {
-        S.lshape.locked = null;
+      // A typed seat width holds whatever the cursor does; empty the field + Tab frees it (as the kitchen).
+      if (S.lshape.locked == null) {
         seat = raw;
         S.lshape.moved = true;
+        if (Math.abs(seat - PARALLEL_RUN_WIDTH) <= 40 && PARALLEL_RUN_WIDTH <= max) { seat = PARALLEL_RUN_WIDTH; snap = true; }
       }
-      if (S.lshape.locked == null && Math.abs(seat - PARALLEL_RUN_WIDTH) <= 40 && PARALLEL_RUN_WIDTH <= max) { seat = PARALLEL_RUN_WIDTH; snap = true; }
     }
   }
   S.lshape.seat = Math.max(PARALLEL_MIN_SEAT, Math.min(max, seat));
@@ -595,15 +596,7 @@ function updateLoungeSeat(e) {
   dimLabels.D.classList.toggle("locked", S.lshape.locked != null);
   const m = boxes[0];
   positionDimInputs({ x0: m.x0, y0: m.y0, z0: m.z0, W: m.x1 - m.x0, D: m.y1 - m.y0, H: m.z1 - m.z0 });
-  const ev = e || S.lshape.lastClient;
-  if (ev) {
-    showTip(ev.clientX, ev.clientY, [
-      `Seats ${Math.round(S.lshape.seat)} each · gap ${Math.round(fr.length - 2 * S.lshape.seat)}`,
-      S.lshape.snap ? `snapped to ${PARALLEL_RUN_WIDTH} — move past it for another width` : `move along the wall · snaps near ${PARALLEL_RUN_WIDTH}`,
-      S.lshape.locked != null ? `S locked ${Math.round(S.lshape.locked)}` : "Tab types S",
-      "click or Enter creates · Esc redraws the box",
-    ], S.lshape.locked != null ? "lock" : "");
-  }
+  hideTip();
 }
 
 function finishLoungeSeat(how) {
@@ -733,11 +726,11 @@ function loungeWide(e) {
       const dirV = axisVector(fr.u, inward);
       const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(dirV[0], dirV[1], dirV[2]));
       const raw = Math.max(0, Math.min(fr.length - LOUNGE_MIN, job.snap(t)));
-      if (S.lshape.locked == null || Math.abs(raw - S.lshape.locked) > 40) {
-        S.lshape.locked = null;
+      // A typed width holds whatever the cursor does; empty the field + Tab frees it (as the kitchen).
+      if (S.lshape.locked == null) {
         wide = raw;
+        if (Math.abs(wide - fr.depth) <= 40 && fr.depth <= fr.length - LOUNGE_MIN) { wide = fr.depth; snap = true; }
       }
-      if (Math.abs(wide - fr.depth) <= 40 && fr.depth <= fr.length - LOUNGE_MIN) { wide = fr.depth; snap = true; }
     }
   }
   S.lshape.wide = wide;
@@ -759,12 +752,11 @@ function loungePull(e) {
       const dirV = axisVector(fr.n, front.dir);
       const t = closestTOnLine(e.clientX, e.clientY, new THREE.Vector3(base.x, base.y, base.z), new THREE.Vector3(dirV[0], dirV[1], dirV[2]));
       const raw = Math.max(0, job.snap(t));
-      // A typed length holds until the cursor actually leaves it.
-      if (S.lshape.locked == null || Math.abs(raw - S.lshape.locked) > 40) {
-        S.lshape.locked = null;
+      // A typed length holds whatever the cursor does; empty the field + Tab frees it (as the kitchen).
+      if (S.lshape.locked == null) {
         len = raw;
+        if (Math.abs(len - fr.depth) <= 40) { len = fr.depth; snap = true; }
       }
-      if (Math.abs(len - fr.depth) <= 40) { len = fr.depth; snap = true; }
     }
   }
   let clamped = null;
@@ -811,10 +803,8 @@ function updateLoungeL(e) {
     const other = S.lshape.lit === "hi" ? "lo" : "hi";
     showLoungeGhost([main], [edgeOf(other), edgeOf(S.lshape.lit)]);
     hideSnapMarker();
-    if (ev) {
-      const side = loungeEndSide(front, S.lshape.lit) === "RIGHT" ? "Right" : "Left";
-      showTip(ev.clientX, ev.clientY, [`Lounge L · main box ${dims}`, `${side} end — click: the wing turns here`, "Esc: redraw the main box"]);
-    }
+    // Like the kitchen: nothing follows the cursor; the status bar says what the click does.
+    hideTip();
     return;
   }
   if (S.lshape.step === "wide") {
@@ -831,15 +821,7 @@ function updateLoungeL(e) {
     dimLabels.D.classList.toggle("locked", S.lshape.locked != null);
     const mark = loungeWingBox(fr, front, S.lshape.end, 1, Math.max(S.lshape.wide, 1));
     positionDimInputs({ x0: mark.x0, y0: mark.y0, z0: mark.z0, W: mark.x1 - mark.x0, D: mark.y1 - mark.y0, H: mark.z1 - mark.z0 });
-    const ev = e || S.lshape.lastClient;
-    if (ev) {
-      showTip(ev.clientX, ev.clientY, [
-        `Wing width ${Math.round(S.lshape.wide)}`,
-        S.lshape.snap ? `snapped to main depth ${Math.round(fr.depth)} — drag past it for another width` : `drag the side line · snaps near ${Math.round(fr.depth)}`,
-        S.lshape.locked != null ? `L locked ${Math.round(S.lshape.locked)}` : "Tab types L",
-        "click or Enter confirms the width · Esc: back to the edge",
-      ], S.lshape.locked != null ? "lock" : "");
-    }
+    hideTip();
     return;
   }
   loungePull(e);
@@ -859,17 +841,7 @@ function updateLoungeL(e) {
   if (document.activeElement !== dimInputs.D) dimInputs.D.value = String(Math.round(S.lshape.len));
   dimLabels.D.classList.toggle("locked", S.lshape.locked != null);
   positionDimInputs(loungeWingDimBox());
-  const ev = e || S.lshape.lastClient;
-  if (ev) {
-    const lines = [
-      `Wing ${Math.round(S.lshape.len)} out · ${Math.round(S.lshape.wide)} wide`,
-      S.lshape.snap ? `= main depth ${Math.round(fr.depth)}` : null,
-      S.lshape.clamped ? `Stopped at ${S.lshape.clamped}` : null,
-      S.lshape.locked != null ? `L locked ${Math.round(S.lshape.locked)}` : null,
-      "click / Enter creates · Esc: back to the edge",
-    ];
-    showTip(ev.clientX, ev.clientY, lines, S.lshape.clamped ? "warn" : S.lshape.locked != null ? "lock" : "");
-  }
+  hideTip();
 }
 
 function loungeLClick(e) {
@@ -921,13 +893,7 @@ function finishLoungeL(how) {
   if (!S.lshape || S.lshape.step !== "pull") return;
   const fr = S.lshape.frame;
   const { front, box } = S.lshape;
-  if (how === "enter" && S.lshape.locked == null && S.lshape.len < LOUNGE_MIN) {
-    // Enter before pulling: the wing comes out as far as the main box is deep.
-    S.lshape.locked = fr.depth;
-    loungePull(null);
-    S.lshape.locked = null;
-    how = "enter.default";
-  }
+  // Enter is a click where the cursor is: no default wing length (2026-10-09).
   const len = S.lshape.len;
   if (!(len >= LOUNGE_MIN)) {
     const ev = S.lshape.lastClient;
@@ -1090,7 +1056,7 @@ export const MODE = {
   confirm(how) {
     if (S.lounge) loungeConfirm(how);
     else if (S.lshape && S.lshape.step === "pull") finishLoungeL(how);
-    else if (S.lshape && S.lshape.step === "wide") loungeLClick(null);
+    else if (S.lshape && S.lshape.step !== "box") loungeLClick(null); // edge / wide / seat: Enter is the click
   },
   cancel() {
     if (S.lounge) loungeBack();

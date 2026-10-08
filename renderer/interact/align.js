@@ -1,7 +1,8 @@
 // @module interact @owns align.* — face-to-face flush (a Move page)
 // Face align — a page of Move (M), not its own command.
-// Inventor flush (对齐): the first face moves onto the second face's plane.
-// Normals must already point the same way. Module slides the whole cabinet;
+// Inventor flush (对齐) or mate (贴合): the first face moves onto the second face's
+// plane. Normals the same way = flush; facing each other = mate (side against side).
+// Only non-parallel faces are refused. Module slides the whole cabinet;
 // Panel slides only that board. The second face stays where it is.
 import * as job from "../job.js";
 import { faceLabel } from "../boardModel.js";
@@ -145,7 +146,7 @@ function finishAlign(hit, e) {
     job.updateCabinet(cab.id, (c) => { writeBoardOverride(c, srcRef.boardId, o); });
   }
   log("align.finish", {
-    mode, source: srcRef, fixed: target.label, gap: Math.round(fit.gap * 10) / 10,
+    mode, how: fit.how, source: srcRef, fixed: target.label, gap: Math.round(fit.gap * 10) / 10,
     delta: fit.delta.map((v) => Math.round(v * 10) / 10), clamped,
   });
   align.source = null;

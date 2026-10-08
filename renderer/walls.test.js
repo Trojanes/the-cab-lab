@@ -186,6 +186,14 @@ assert(!fitsSheet(1201, 2000), "both sides over 1200 do not fit");
   assert(!hits(yz, new THREE.Vector3(-10, 298, 925), new THREE.Vector3(1, 0, 0)), "YZ arc cuts off the square corner");
   assert(hits(xz, new THREE.Vector3(284, -10, 914), new THREE.Vector3(0, 1, 0)), "XZ arc keeps the solid inside the curve");
   assert(!hits(xz, new THREE.Vector3(298, -10, 925), new THREE.Vector3(0, 1, 0)), "XZ arc cuts off the square corner");
+  const loungeStep = fitOutline({
+    backU: 0, sign: 1, z0: 0, topAt: () => 2400,
+    kitchenTop: 420, kitchenDepth: 600, ohcBottom: 1400, ohcDepth: 366,
+    depthExtra: 50, heightExtra: 80, lowerName: "lounge",
+  });
+  const loungeHas = (u, z) => loungeStep.outline.some((p) => Math.abs(p.u - u) < 0.2 && Math.abs(p.z - z) < 0.2);
+  assert(loungeHas(650, 0) && loungeHas(650, 500), "lounge step is depth + 50 and 80 above the lounge");
+  assert(loungeHas(100, 500) && loungeHas(100, 1355), "the neck above a lounge is still 100 deep");
 }
 
 // A wall beside a base and an overhead picks up that outline. Backs share y = 2000.
@@ -239,6 +247,62 @@ assert(!fitsSheet(1201, 2000), "both sides over 1200 do not fit");
   bindCabinets(() => []);
   const missing = wallSolid(w, space(2400), stock);
   assert(missing.fitWarnings.some((m) => m.includes("missing")), missing.fitWarnings.join("; "));
+}
+
+// A lounge takes the base's place: 50 past its room face, 80 above its top.
+{
+  const lounge = {
+    id: "cab-l", moduleId: "loungeGenerator",
+    pose: { x: 400, y: 1500, z: 0, rotZ: 0 },
+    params: { style: "I_SHAPE", mainWidth: 800, mainDepth: 600, height: 420 },
+  };
+  const overhead = {
+    id: "cab-ol", moduleId: "overheadCabinet",
+    pose: { x: 400, y: 1750, z: 1418, rotZ: 0 },
+    params: { cabinetWidth: 800, cabinetDepth: 350, cabinetHeight: 400, frontPanelThickness: 16 },
+  };
+  bindCabinets(() => [lounge, overhead]);
+  const loaded = normalizeWall({
+    id: "wall-l", axis: "x", at: 400, u0: 1400, u1: 2100, side: 1,
+    fit: { overheadId: "cab-ol", loungeId: "cab-l", radius: 0 },
+  });
+  assert(loaded.fit.loungeId === "cab-l" && loaded.fit.kitchenId == null, "a lounge fit is stored without a base");
+  const solid = wallSolid(loaded, space(2400), stock);
+  assert(solid.fitWarnings.length === 0, solid.fitWarnings.join("; "));
+  const has = (u, z) => solid.outline.some((p) => Math.abs(p.u - u) < 0.2 && Math.abs(p.z - z) < 0.2);
+  assert(has(2100, 0) && has(1450, 0) && has(1450, 500), "lounge step is 50 past the room face and 80 above the seat");
+  assert(has(2000, 500) && has(2000, 1373), "neck above a lounge is still 100 deep, down to 15 mm below the door");
+  assert(has(1714, 1373), "overhead step is its outer depth plus 20");
+  // The same overhead, but the partition stands on the main run of an L, not the wing.
+  const ell = {
+    id: "cab-ell", moduleId: "loungeGenerator",
+    pose: { x: 915, y: 2225, z: 0, rotZ: 90 },
+    params: { style: "L_SHAPE", mainWidth: 1861, mainDepth: 560, lWidth: 915, lDepth: 560, lPosition: "RIGHT", height: 420 },
+  };
+  const overheadL = {
+    id: "cab-ol", moduleId: "overheadCabinet",
+    pose: { x: 350, y: 2225, z: 1418, rotZ: 90 },
+    params: overhead.params,
+  };
+  bindCabinets(() => [ell, overheadL]);
+  const onMain = wallSolid(wall({
+    id: "wall-ell", axis: "y", at: 2225, side: -1, u0: 0, u1: 640,
+    fit: { overheadId: "cab-ol", loungeId: "cab-ell", radius: 0 },
+  }), space(2400), stock);
+  assert(onMain.fitWarnings.length === 0, onMain.fitWarnings.join("; "));
+  const onMainHas = (u, z) => onMain.outline.some((p) => Math.abs(p.u - u) < 0.2 && Math.abs(p.z - z) < 0.2);
+  assert(onMainHas(0, 0) && onMainHas(610, 0) && onMainHas(610, 500), "a partition on the main run is main depth 560 + 50, not the wing");
+  const onWing = wallSolid(wall({
+    id: "wall-wing", axis: "y", at: 4086, side: -1, u0: 0, u1: 1000,
+    fit: { overheadId: "cab-ol", loungeId: "cab-ell", radius: 0 },
+  }), space(2400), stock);
+  assert(onWing.fitWarnings.length === 0, onWing.fitWarnings.join("; "));
+  const wingFront = Math.max(...onWing.outline.map((p) => p.u));
+  near(wingFront, 965, 0.5);
+  const { waterfallPlan } = await import("./waterfall.js");
+  const refused = waterfallPlan(loaded, { stock, cabinets: [lounge, overhead] });
+  assert(!refused.ok && /lounge/.test(refused.reason), refused.reason);
+  bindCabinets(() => []);
 }
 
 {

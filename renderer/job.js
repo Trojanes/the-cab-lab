@@ -2,7 +2,7 @@
 // Undo/redo = whole-job snapshots. Generation results are cached per cabinet
 // and rebuilt whenever params change.
 import { getModule, MODULES, isBaseCabinet } from "./modules.js";
-import { baseAvoidances, loungePlanArches } from "./wheelArch.js";
+import { baseAvoidances, localOverlaps, loungePlanArches } from "./wheelArch.js";
 import { resolveSpace, SPACE_KINDS } from "./spaces.js";
 import { validateJobInput, validateJobV2 } from "./jobContract.js";
 import { log } from "./log.js";
@@ -324,35 +324,103 @@ function bindAllToSpace() {
 const PLAN_ARCH = /^wa-\d+-[LR]$/;
 
 /**
- * A base takes the floor-plan pair only while Wheel arch avoidance is on.
- * Off clears the cut. On, with no pair drawn yet, leaves a hand-entered list.
+ * Step 1 of docking a floor-plan wheel arch to a module: the cabinet's own
+ * body touches a box, so this module produces its avoidance. Off (the
+ * checkbox) refuses that. A hand-entered arch stays when nothing touches.
+ * Which boards then yield is the module's own cut — kitchen the back,
+ * lounge only the boards sitting in the overlap.
  */
 function syncWheelArch(cab) {
   if (!isBaseCabinet(cab.moduleId)) return false;
   const boxes = getSpace()?.wheelArches || [];
   const prev = cab.params.wheelAvoidances || [];
-  let next;
-  if (cab.params.wheelArchAvoidance === false) {
-    next = [];
-  } else if (cab.params.wheelArchAvoidance === true && boxes.length) {
-    const env = getModule(cab.moduleId).envelope(cab.params);
-    const door = Number(cab.params.frontThickness);
-    const frontThickness = Number.isFinite(door) && door > 0 ? door : (cab.params.frontPanelThickness ?? 16);
-    next = baseAvoidances({ pose: cab.pose, W: env.W, D: env.D, H: env.H, frontThickness }, boxes);
-  } else {
-    next = prev.filter((a) => !PLAN_ARCH.test(a.id));
-  }
-  if (JSON.stringify(prev) === JSON.stringify(next)) return false;
-  cab.params = { ...cab.params, wheelAvoidances: next };
+  const env = getModule(cab.moduleId).envelope(cab.params);
+  const door = Number(cab.params.frontThickness);
+  const frontThickness = Number.isFinite(door) && door > 0 ? door : (cab.params.frontPanelThickness ?? 16);
+  const refused = cab.params.wheelArchAvoidance === false;
+  const hits = refused ? [] : localOverlaps(cab.pose, boxes, [
+    { x0: 0, x1: env.W, y0: -frontThickness, y1: env.D, z0: 0, z1: env.H },
+  ]);
+  const fromPlan = hits.length
+    ? baseAvoidances({ pose: cab.pose, W: env.W, D: env.D, H: env.H, frontThickness }, boxes)
+    : [];
+  const hand = prev.filter((a) => !PLAN_ARCH.test(a.id));
+  const next = refused || !hits.length ? (refused ? [] : hand) : (fromPlan.length ? fromPlan : hand);
+  const flag = refused ? false : (hits.length ? true : cab.params.wheelArchAvoidance);
+  const sameList = JSON.stringify(prev) === JSON.stringify(next);
+  const norm = (v) => (v === true ? true : v === false ? false : undefined);
+  const sameFlag = norm(flag) === norm(cab.params.wheelArchAvoidance);
+  if (sameList && sameFlag) return false;
+  const params = { ...cab.params, wheelAvoidances: next };
+  if (flag === true) params.wheelArchAvoidance = true;
+  else if (flag === false) params.wheelArchAvoidance = false;
+  else delete params.wheelArchAvoidance;
+  cab.params = params;
   invalidate(cab.id);
   return true;
 }
-/** A lounge takes whatever part of a floor-plan pair it stands in. Outside every pair, the cut is cleared. */
+/**
+ * A general tall takes one cut across its full width, at the back bottom (generator `avoidance`:
+ * depth from the back, height from the floor; the side panels follow it). Touching a floor-plan
+ * arch turns it on and sets depth / height from the arch (the deepest and highest one it meets);
+ * the checkbox off (wheelArchAvoidance false) refuses it. Away from every arch a hand-entered cut stays,
+ * a cut that came from the plan is switched off.
+ */
+function syncTallArch(cab) {
+  if (cab.moduleId !== "generalTallCabinet") return false;
+  const boxes = getSpace()?.wheelArches || [];
+  const p = cab.params;
+  const prev = p.avoidance || {};
+  const env = getModule(cab.moduleId).envelope(p);
+  const door = Number(p.frontPanelThickness) > 0 ? Number(p.frontPanelThickness) : 16;
+  const refused = p.wheelArchAvoidance === false;
+  const hits = refused || !boxes.length ? [] : localOverlaps(cab.pose, boxes, [
+    { x0: 0, x1: env.W, y0: -door, y1: env.D, z0: 0, z1: env.H },
+  ]);
+  // envelope D stops at the carcass front, so no door thickness to take off here.
+  const fromPlan = hits.length ? baseAvoidances({ pose: cab.pose, W: env.W, D: env.D, H: env.H, frontThickness: 0 }, boxes) : [];
+  let next = prev;
+  let flag = p.wheelArchAvoidance;
+  if (refused) {
+    next = { ...prev, enabled: false };
+  } else if (fromPlan.length) {
+    next = {
+      enabled: true,
+      depth: Math.max(...fromPlan.map((a) => a.depth)),
+      height: Math.max(...fromPlan.map((a) => a.height)),
+      fromPlan: fromPlan.map((a) => a.id),
+    };
+    flag = true;
+  } else if (prev.fromPlan) {
+    next = { enabled: false, depth: prev.depth, height: prev.height };
+  }
+  const norm = (v) => (v === true ? true : v === false ? false : undefined);
+  if (JSON.stringify(prev) === JSON.stringify(next) && norm(flag) === norm(p.wheelArchAvoidance)) return false;
+  const params = { ...p, avoidance: next };
+  if (flag === true) params.wheelArchAvoidance = true;
+  else if (flag === false) params.wheelArchAvoidance = false;
+  else delete params.wheelArchAvoidance;
+  cab.params = params;
+  invalidate(cab.id);
+  return true;
+}
+/** A lounge produces avoidance only for the part of its footprint a box touches. */
 function syncLoungeArch(cab) {
   if (cab.moduleId !== "loungeGenerator") return false;
   const world = getSpace()?.wheelArches || [];
-  const env = getModule(cab.moduleId).envelope(cab.params);
-  const next = world.length ? loungePlanArches(cab.pose, env, world) : [];
+  const mod = getModule(cab.moduleId);
+  const env = mod.envelope(cab.params);
+  const feet = typeof mod.footprintBoxes === "function" ? mod.footprintBoxes(cab.params) : null;
+  // The panel's checkbox off (wheelArchAvoidance false) refuses the cut. The hand-entered arch
+  // (handWheelArch: depth in from the wall, height from the floor) runs the full width of the lounge
+  // and is cut the same way as a plan one.
+  const on = cab.params.wheelArchAvoidance !== false;
+  const fromPlan = on && world.length ? loungePlanArches(cab.pose, env, world, feet) : [];
+  const h = cab.params.handWheelArch;
+  const fromHand = on && h && h.enabled === true && h.depth > 0 && h.height > 0
+    ? [{ id: "hand", x0: 0, x1: env.W, y0: Math.max(0, env.D - h.depth), y1: env.D, z0: 0, z1: Math.min(h.height, env.H) }]
+    : [];
+  const next = [...fromPlan, ...fromHand];
   const prev = cab.params.planWheelArches || [];
   if (JSON.stringify(prev) === JSON.stringify(next)) return false;
   const params = { ...cab.params };
@@ -367,6 +435,7 @@ function syncWheelArches() {
   for (const cab of job.cabinets) {
     if (syncWheelArch(cab)) changed.push(cab.id);
     if (syncLoungeArch(cab)) changed.push(cab.id);
+    if (syncTallArch(cab) && !changed.includes(cab.id)) changed.push(cab.id);
   }
   for (const id of syncControlPanels()) if (!changed.includes(id)) changed.push(id);
   return changed;
@@ -379,7 +448,11 @@ function bindAttached() {
 export function defineSpace(kind, params, { history = true, finish, stock } = {}) {
   if (history) pushHistory();
   const keptArches = params.wheelArches ?? job.space?.params?.wheelArches;
-  job.space = { kind, params: { ...params, ...(keptArches ? { wheelArches: keptArches } : {}) } };
+  const keptCavities = params.cavities ?? job.space?.params?.cavities;
+  job.space = {
+    kind,
+    params: { ...params, ...(keptArches ? { wheelArches: keptArches } : {}), ...(keptCavities ? { cavities: keptCavities } : {}) },
+  };
   if (finish) job.finish = normalizeFinish(finish);
   if (stock) job.stock = normalizeStock(stock);
   bindAllToSpace();
@@ -425,6 +498,42 @@ export function removeWheelArch(id) {
   job.space = { kind: job.space.kind, params: { ...job.space.params, wheelArches: list.filter((a) => a.id !== id) } };
   const changed = syncWheelArches();
   log("wheelarch.remove", { id, changed });
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+function nextCavityId() {
+  const taken = new Set((job.space?.params?.cavities || []).map((c) => c.id));
+  let n = 1;
+  while (taken.has(`cv-${n}`)) n += 1;
+  return `cv-${n}`;
+}
+
+/**
+ * A cavity kept for an appliance or services (yellow in the floor plan). `cav` is
+ * { x0, x1, y0, y1, height } in world mm, standing on the floor. Cabinets do not react to it yet.
+ */
+export function addCavity(cav, { how = "ok" } = {}) {
+  if (!job.space) return null;
+  pushHistory();
+  const id = nextCavityId();
+  const rec = { id, x0: cav.x0, x1: cav.x1, y0: cav.y0, y1: cav.y1, height: cav.height };
+  const list = [...(job.space.params.cavities || []), rec];
+  job.space = { kind: job.space.kind, params: { ...job.space.params, cavities: list } };
+  log("cavity.add", { ...rec, how });
+  dirty = true;
+  emit("job");
+  return rec;
+}
+
+export function removeCavity(id) {
+  if (!job.space) return false;
+  const list = job.space.params.cavities || [];
+  if (!list.some((c) => c.id === id)) return false;
+  pushHistory();
+  job.space = { kind: job.space.kind, params: { ...job.space.params, cavities: list.filter((c) => c.id !== id) } };
+  log("cavity.remove", { id });
   dirty = true;
   emit("job");
   return true;
@@ -483,6 +592,7 @@ export function addCabinet(moduleId, pose, size, extra) {
   bindToSpace(cab);
   syncWheelArch(cab);
   syncLoungeArch(cab);
+  syncTallArch(cab);
   job.cabinets.push(cab);
   bindAttached();
   selectedId = cab.id;
@@ -628,25 +738,25 @@ export function setWallSplit(id, split, { history = true } = {}) {
   emit("job");
 }
 
-/** Remember which overhead and base a partition follows. `fit` null clears it. */
+/** Remember which overhead and base (or lounge) a partition follows. `fit` null clears it. */
 export function setWallFit(id, fit, how = "ok") {
   const wall = getWall(id);
   if (!wall) return;
   const radius = Number(fit && fit.radius);
-  const next = fit && fit.overheadId && fit.kitchenId
+  const next = fit && fit.overheadId && (fit.kitchenId || fit.loungeId)
     ? {
       overheadId: String(fit.overheadId),
-      kitchenId: String(fit.kitchenId),
+      ...(fit.loungeId ? { loungeId: String(fit.loungeId) } : { kitchenId: String(fit.kitchenId) }),
       radius: Number.isFinite(radius) && radius >= 0 ? Math.round(radius * 10) / 10 : 50,
     }
     : null;
   if (!next && !wall.fit) return;
-  if (next && wall.fit && wall.fit.overheadId === next.overheadId && wall.fit.kitchenId === next.kitchenId && wall.fit.radius === next.radius) return;
+  if (next && wall.fit && wall.fit.overheadId === next.overheadId && wall.fit.kitchenId === next.kitchenId && wall.fit.loungeId === next.loungeId && wall.fit.radius === next.radius) return;
   pushHistory();
   if (next) wall.fit = next;
   else delete wall.fit;
   syncControlPanels();
-  log(next ? "wall.fit" : "wall.fit.clear", { id, how, overheadId: next && next.overheadId, kitchenId: next && next.kitchenId, radius: next && next.radius });
+  log(next ? "wall.fit" : "wall.fit.clear", { id, how, overheadId: next && next.overheadId, kitchenId: next && next.kitchenId, loungeId: next && next.loungeId, radius: next && next.radius });
   dirty = true;
   emit("job");
 }
@@ -978,6 +1088,7 @@ export function updateCabinet(id, fn) {
   bindToSpace(cab);
   syncWheelArch(cab);
   syncLoungeArch(cab);
+  syncTallArch(cab);
   if (cab.params !== before) invalidate(id);
   bindAttached();
   if (cab.moduleId === "overheadCabinet") syncControlPanels();
@@ -986,18 +1097,22 @@ export function updateCabinet(id, fn) {
 }
 
 /**
- * Modules whose width follows other params (the fridge cabinet: cut-out + side panel) keep one side
- * face where it is: `widthAnchor(params, cab)` = −1 (left, local x = 0) or +1 (right, local x = W).
- * Returns the pose that does it, or null when the width did not change.
+ * Modules whose size follows other params keep one face where it is when the size changes through
+ * setParams. `widthAnchor(params, cab)` = −1 (left, local x = 0) or +1 (right, local x = W): the fridge
+ * cabinet (cut-out + side panel), the lounge (its wing end / the corner drawn first).
+ * `depthAnchor(params, cab)` = −1 (front, y = 0) or +1 (back, y = D): the lounge keeps its wall.
+ * Returns the pose that does it, or null when neither size changed.
  */
 function anchoredPose(cab, mod, before, after) {
-  if (!mod.widthAnchor) return null;
-  const w0 = mod.envelope(before).W;
-  const w1 = mod.envelope(after).W;
-  if (!(Math.abs(w1 - w0) > 1e-6)) return null;
-  const keep = mod.widthAnchor(after, cab);
-  const box = (W) => ({ x0: 0, x1: W, y0: 0, y1: 0, z0: 0, z1: 0 });
-  return keepCorner(cab.pose, box(w0), box(w1), { x: keep, y: -1, z: -1 });
+  if (!mod.widthAnchor && !mod.depthAnchor) return null;
+  const e0 = mod.envelope(before);
+  const e1 = mod.envelope(after);
+  const wMoved = !!mod.widthAnchor && Math.abs(e1.W - e0.W) > 1e-6;
+  const dMoved = !!mod.depthAnchor && Math.abs(e1.D - e0.D) > 1e-6;
+  if (!wMoved && !dMoved) return null;
+  const keep = { x: wMoved ? mod.widthAnchor(after, cab) : -1, y: dMoved ? mod.depthAnchor(after, cab) : -1, z: -1 };
+  const box = (e) => ({ x0: 0, x1: e.W, y0: 0, y1: e.D, z0: 0, z1: 0 });
+  return keepCorner(cab.pose, box(e0), box(e1), keep);
 }
 
 /** Right-click a placed cabinet: use the job's other door colour. One undo step. */

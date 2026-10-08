@@ -408,6 +408,16 @@ export function renderTallFridge(cab, mod, result, shared) {
     aboveSec,
     belowSec,
     presetSec,
+    section("LED", [
+      el("label", { class: "field check", title: "Style 1 cuts the T3 top and the B3 underside. Style 2 has no T3, so only B3 is cut. The main channel is 14.5 × 6.5, 18 mm behind the front edge. Each branch is centred 30 mm from the board end, so its near wall is 22.75 mm from that edge — the same as a kitchen B3 — and runs back to the rear edge." }, [
+        el("span", { text: "LED channels" }),
+        el("input", { type: "checkbox", checked: p.ledGroove === true, onchange: (e) => {
+          const to = e.target.checked;
+          if ((p.ledGroove === true) === to) return;
+          commit({ ...p, ledGroove: to }, "led", { from: p.ledGroove === true, to });
+        } }),
+      ]),
+    ]),
     fold,
     shared.grain,
     checks,

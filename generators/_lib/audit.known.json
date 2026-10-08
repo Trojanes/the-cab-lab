@@ -9,6 +9,11 @@
     { "case": "bedroom", "check": "outline", "contains": "OHC_D", "why": "roof cut ends 0.1 mm below the divider's bottom edge (#14)" },
     { "case": "generalTall/base-params", "check": "overlap", "contains": "Zi_boundary-drawer-b", "why": "half Zi tabs are at y 0..45 (spec) but the V1/V2 slot is at 100..150 (spec): the spec disagrees with itself" },
     { "case": "scenario/kitchen-2460", "check": "size", "why": "an unsplit 2460 run is expected to exceed the sheet; the app tells the user to split" },
-    { "case": "scenario/kitchen", "check": "size", "contains": "BENCH", "why": "bench top longer than a sheet: not designed yet" }
+    { "case": "scenario/kitchen", "check": "size", "contains": "BENCH", "why": "bench top longer than a sheet: not designed yet" },
+    { "case": "default/ensuiteDrawingLower", "check": "overlap", "contains": "C25 and C26", "why": "as-drawn Fusion copy: the top front strip bears 1 mm on the right batten (upstream 27ed7e2)" },
+    { "case": "default/ensuiteDrawingTall", "check": "overlap", "contains": "C77 and C93", "why": "as-drawn Fusion copy: back stile front face meets a horizontal rail (upstream 27ed7e2)" },
+    { "case": "default/ensuiteDrawingTall", "check": "overlap", "contains": "C81 and C93", "why": "as-drawn Fusion copy: the shelf runs 1 mm into a rail (upstream 27ed7e2)" },
+    { "case": "default/ensuiteDrawingTall", "check": "overlap", "contains": "C81 and C96", "why": "as-drawn Fusion copy: the shelf's side edge touches the filler stile 0.5 mm (upstream 27ed7e2)" },
+    { "case": "default/ensuiteDrawingTall", "check": "overlap", "contains": "C94 and C101", "why": "as-drawn Fusion copy: a rail runs 1 mm into the far board (upstream 27ed7e2)" }
   ]
 }

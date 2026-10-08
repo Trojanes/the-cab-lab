@@ -131,13 +131,20 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 
 声明按现存板件过滤。I/PARALLEL/中柜无声明（v1 范围）——重实现建议补全后入库。
 
-## 7. 校验规则（全部为 warning，无 error）
+## 7. 校验规则（除板长外都是 warning）
 
 - L：lWidth < mainWidth 才合法。
 - I：W > 2·ppt、D > 2·ppt、H > ppt；避让深 < D、避让高 < H−ppt。
 - PARALLEL：totalW ≥ 2·SW（否则两段重叠）；避让同上。
 - 中柜：startHeight > 避让高；宽 ≤ gap、深 ≤ D；宽 > 3×门缝、高 > 2×门缝；2×铰链侧距 < 门高。
 - 占位项告警：lFrontAccess 在 classic / 非 L 上、FLAP，框架式 L 的轮拱避让。
+- 板长（2026-10-09 起，error）：任何一块板的最长边超过 `SHEET_ALONG_MAX_MM` 2380，或第二长边超过 `SHEET_CROSS_MAX_MM` 1180（板材 2400 × 1200 去修边），报 `<板> is N long: a sheet gives at most 2380 …`。只在右侧检查里显示红色，3D 里板子不变红。拆段（像厨房 Split）还没有做。
+
+## 7.1 改尺寸时的位置（2026-10-09 起，渲染层）
+
+- 后背（本地 y = D）就是墙，任何改尺寸都留在原地，动的是靠房间那一边（`depthAnchor` = +1）。
+- 沿墙方向：L 留翼端那一头（`lPosition` RIGHT → x = W，LEFT → x = 0）；I 和平行留画盒子时第一下点的那个角（`placeCorner.x`），没有就留 x = 0（`widthAnchor`）。
+- 平面图上可拖的边因此在靠房间那一边和不固定的那一头；数字贴着边画（`layoutDimensions`），可以点开直接输入。
 
 ## 8. 黄金验收数值（L 默认参数：H420/W2000/D600/lW1600/lD800/RIGHT）
 

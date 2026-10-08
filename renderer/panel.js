@@ -16,6 +16,7 @@ import { renderBedroomEast } from "./panel/bedroomEast.js";
 import { renderBunk } from "./panel/bunk.js";
 import { renderSmall } from "./panel/small.js";
 import { renderSketchPanel } from "./panel/sketch.js";
+import { renderDrawing } from "./panel/drawing.js";
 import { renderBedSide } from "./panel/bedside.js";
 import { renderPlane } from "./panel/plane.js";
 import { renderWall } from "./panel/wall.js";
@@ -121,6 +122,12 @@ function renderCabinet(cab) {
   }
 
   const board = boardSection();
+
+  if (mod.panel === "drawing") {
+    renderDrawing(cab, mod, result, { checks, remove, board });
+    fillDrawer(result, errors, warnings);
+    return;
+  }
 
   if (mod.panel === "bedSide") {
     renderBedSide(cab, mod, result, { checks, remove, board, setEnv });
@@ -252,6 +259,7 @@ function paintPanel() {
   panel.classList.toggle("kitchen", page === "kitchen");
   panel.classList.toggle("ohc", page === "ohc");
   panel.classList.toggle("fridge", page === "tallFridge");
+  panel.classList.toggle("lounge", page === "lounge");
   if (sel) renderCabinet(sel);
   else {
     const pl = job.getSelectedPlane();

@@ -224,7 +224,8 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
     const h = (it.z1 - it.z0) * scale;
     if (h < 14 || w < 40) continue;
     // A vertical divider runs down the middle: centre the name on the left leaf instead.
-    const cx = toX(it.zone?.verticalDivider === true ? CW / 4 : CW / 2);
+    // Only a double door builds the divider; a stale flag on another type draws nothing.
+    const cx = toX(it.zoneType === "double_door" && it.zone?.verticalDivider === true ? CW / 4 : CW / 2);
     const cy = toY((it.z0 + it.z1) / 2);
     const name = GT_ZONE_LABELS[it.zoneType ?? ""] ?? it.zoneType ?? it.id;
     if (options.readout) {
@@ -260,7 +261,7 @@ export function generateGTSvgPreview(result: GTResult, options: GTSvgPreviewOpti
     parts.push(grip(`data-boundary="zone" data-axis="z" data-index="${i}"`, toX(0), toY(z), toX(CW), toY(z)));
   }
   for (const it of zones) {
-    if (it.zone?.verticalDivider !== true) continue;
+    if (it.zoneType !== "double_door" || it.zone?.verticalDivider !== true) continue;
     const vd = result.boards.find((b) => b.category === "vertical_divider" && b.id.endsWith(`_${zid(it)}`));
     const cx = vd ? (vd.x0 + vd.x1) / 2 : Number(it.zone.dividerCenterX ?? result.params.midWidth / 2);
     parts.push(grip(`data-boundary="divider" data-axis="x" data-zone="${zid(it)}"`, toX(cx), toY(it.z1), toX(cx), toY(it.z0), true));

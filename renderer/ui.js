@@ -5,7 +5,7 @@ import { MODULES, MODULE_GROUPS, PLANNED_MODULES, isBaseCabinet, reloadGenerator
 import { syncCabinets, syncPlanes } from "./cabinets3d.js";
 import { syncWalls } from "./walls3d.js";
 import { floorPlanOpen, openFloorPlan } from "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
-import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, startMeasure, boardUndoKey, overlaps } from "./interact.js";
+import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, startMeasure, boardUndoKey, overlaps, placeEnsuiteSample } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
 import { faceLabel } from "./boardModel.js";
@@ -54,7 +54,7 @@ function plannedButton(label, sub) {
 }
 
 for (const mod of Object.values(MODULES)) {
-  if (mod.command) continue;
+  if (mod.command || mod.sample) continue;
   if (!grouped.has(mod.id)) list.append(moduleButton(mod));
 }
 
@@ -80,7 +80,15 @@ for (const group of MODULE_GROUPS) {
   fly.className = "rail-flyout hidden";
   fly.append(Object.assign(document.createElement("div"), { className: "rail-title", textContent: group.label }));
   for (const item of group.items) {
-    if (item.lounge && MODULES.loungeGenerator) {
+    if (item.sample === "ensuite" && MODULES[item.moduleId]) {
+      const btn = moduleButton(MODULES[item.moduleId], item.label, item.sub, () => {
+        const r = btn.getBoundingClientRect();
+        closeFlyout();
+        placeEnsuiteSample({ x: r.right + 12, y: r.top + 12 });
+      });
+      btn.dataset.sample = item.sample;
+      fly.append(btn);
+    } else if (item.lounge && MODULES.loungeGenerator) {
       const btn = moduleButton(MODULES.loungeGenerator, item.label, item.sub, () => {
         if (getLoungeStyle() === item.lounge) disarm();
         else startLounge(item.lounge);

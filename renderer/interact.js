@@ -75,8 +75,8 @@ import { startPlane, cancelPlane, planeActive, MODE as cplaneMode } from "./inte
 export { startNose, cancelNose, startPlane, cancelPlane };
 import { startBedBox, cancelBedBox, bedModuleId, MODE as bedMode } from "./interact/bedBox.js";
 export { startBedBox, cancelBedBox };
-import { armPlacement, disarm, MODE as placeMode } from "./interact/place.js";
-export { armPlacement, disarm };
+import { armPlacement, disarm, placeEnsuiteSample, MODE as placeMode } from "./interact/place.js";
+export { armPlacement, disarm, placeEnsuiteSample };
 import { startLounge, cancelLounge, getLoungeStyle, loungeModuleId, MODE as loungeMode } from "./interact/lounge.js";
 export { startLounge, cancelLounge, getLoungeStyle };
 
