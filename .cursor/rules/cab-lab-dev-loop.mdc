@@ -65,6 +65,9 @@ mechanical part; this rule covers the judgement part it can't see.
 6. **Cross-repo data shape** (`cnjob`, `job` contract, snapshot fields):
    `verify:full` is the floor — replay must stay green, and OmniCam's
    golden (`CABINETNC_UPDATE_GOLDENS`) only moves with a stated reason.
+7. **Picked between architectures?** Append 3 lines to
+   `docs/DECISIONS.md` (what / why / rejected option) in the same
+   commit — that's the institutional memory the next session reads.
 
 ## What to report
 

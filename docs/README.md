@@ -28,6 +28,7 @@ Cab Lab 是木工设计端软件，目标是将空间和家具设计转换为可
 | `ARCHITECTURE.md` | 系统结构 |
 | `CNJOB.md` | Cab Lab → OmniCam 接口 |
 | `TESTING.md` | 测试原则 |
+| `DECISIONS.md` | 决策日志（只追加）——为什么这么改，下次别再考古 |
 | `adr/` | 关键架构决定 |
 | `*-spec.md` | 具体 Generator / 模型规则 |
 

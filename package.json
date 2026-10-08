@@ -12,6 +12,7 @@
     "check:deps": "node scripts/check-deps.mjs",
     "check:map": "node scripts/module-map.mjs --check",
     "module-map": "node scripts/module-map.mjs > docs/MODULE-MAP.md",
+    "test:crash": "node scripts/replay-log.mjs fixtures/crash",
     "verify": "node scripts/verify.mjs",
     "verify:quick": "node scripts/verify.mjs --quick",
     "verify:ci": "node scripts/verify.mjs --ci",

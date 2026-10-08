@@ -43,6 +43,9 @@
 4. **生成器输出有意漂移**？先 `node scripts/diff-snapshots.mjs --regen` 读字段级 diff，确认是意图才 `npm run regen:snapshots`。**绝不为变绿而重发** —— 那就是静默回归的通道。
 5. **新行为配新 pin**：bug 修复 / 生成器新语义必须同提交带回归测试（层级见 TESTING.md）。没 pin 的修复注定回归。
 6. **跨仓数据面**（`cnjob`/`job` 契约/快照字段）：`verify:full` 是地板 —— 回放必须绿，OmniCam golden 只在有理由时用 `CABINETNC_UPDATE_GOLDENS=1` 显式更新。
+7. **选了架构路线？** 同提交里往 `docs/DECISIONS.md` 追加 3 行（改了什么/为什么/否决的选项）——这是下个会话的制度记忆。
+
+**报 bug 顺手 pin**：`logs/` 里有崩溃快照时 `node scripts/replay-log.mjs --pin logs/crash-….json <name>` 把它存成 `fixtures/crash/` 回归 fixture——`verify` 每次都会重放，同 bug 不再回来。
 
 ## 各门禁断言什么
 

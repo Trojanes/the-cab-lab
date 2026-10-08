@@ -41,6 +41,7 @@ const STEPS = [
     ["test:bench", "generator-rules bench"],
     ["test:sketch", "board sketch geometry"],
     ["test:commands", "command registry"],
+    ["test:crash", "pinned crash dumps replay"],
     ["audit", "geometry audit (known-bad allowed)"],
   ]),
   ...(full || ci ? [
