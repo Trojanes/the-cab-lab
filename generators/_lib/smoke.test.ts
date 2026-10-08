@@ -196,7 +196,9 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
     const errs = result.validation?.errors ?? [];
     assert.equal(errs.length, 0, `${id} defaults: ${errs.join("; ")}`);
     // Budget: every edit regenerates the cabinet, in the browser. Keep one run well under a frame.
+    // Warm up first — edits hit a JIT-warm generator; timing cold start is not what the budget guards.
     const runs = 30;
+    for (let i = 0; i < runs; i++) m.generate(params);
     const t0 = performance.now();
     for (let i = 0; i < runs; i++) m.generate(params);
     const ms = (performance.now() - t0) / runs;

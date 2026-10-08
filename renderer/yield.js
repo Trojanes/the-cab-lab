@@ -8,7 +8,7 @@
 // red with the reason. One undo step for the grow, one for the yield.
 import * as job from "./job.js";
 import { getModule, DIM_OF_AXIS } from "./modules.js";
-import { blockingIssues } from "./interact.js";
+import { blockingIssues } from "./fit.js";
 import { envelopeFootprint, poseFits, cabinetHits } from "./fit.js";
 import { localAxes } from "./pose.js";
 import { log } from "./log.js";

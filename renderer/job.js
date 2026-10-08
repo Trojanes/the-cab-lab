@@ -159,7 +159,43 @@ function invalidate(id) {
 // --- history ---------------------------------------------------------------
 
 /** Call before a committed mutation. Drag previews call commit() once at drag end instead. */
+let historyBatch = null;
+
+/** history.begin — mutations until history.end are one undo step (the batch owns the entry). */
+export function beginBatch() {
+  if (historyBatch == null) historyBatch = JSON.stringify(job);
+}
+
+export function endBatch() {
+  if (historyBatch != null) commitSnapshot(historyBatch);
+  historyBatch = null;
+}
+
+export function inBatch() {
+  return historyBatch != null;
+}
+
+/** Full restorable state — dry-run support. Includes selection, the dirty flag, and the undo/redo stacks (a dry-run must not grow undo or wipe redo). */
+export function snapshotAll() {
+  return JSON.stringify({ job, selectedId, subSel, dirty, undoStack, redoStack });
+}
+
+export function restoreAll(snap) {
+  const s = JSON.parse(snap);
+  job = s.job;
+  conflict = null;
+  selectedId = s.selectedId;
+  subSel = s.subSel;
+  dirty = s.dirty;
+  undoStack.length = 0; undoStack.push(...s.undoStack);
+  redoStack.length = 0; redoStack.push(...s.redoStack);
+  invalidate();
+  bindAllToSpace();
+  emit("job");
+}
+
 export function pushHistory() {
+  if (historyBatch != null) return; // the batch owns the undo step
   undoStack.push(JSON.stringify(job));
   if (undoStack.length > 200) undoStack.shift();
   redoStack.length = 0;

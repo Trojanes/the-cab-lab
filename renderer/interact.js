@@ -37,7 +37,10 @@ import {
 import { showTip, hideTip } from "./hud.js";
 import { wallPickables } from "./walls3d.js";
 import { wallBoards } from "./walls.js";
-import { envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, solidBoxes, overlaps } from "./fit.js";
+import { envelopeBox, envelopeFootprint, cabinetFootprints, poseFits, solidBoxes, overlaps, blockingIssues, SIDES, rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, sideBlocked, defaultSide, poseRotatedTo, envelopeAsBox, orientFit, FRONT_THICKNESS_DEFAULT } from "./fit.js";
+
+// Re-exported for floorplan.js / panel.js (moved to fit.js — pure math).
+export { rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide };
 import { clearHeightAt, minClearHeight, maxClearHeight, roofName, slicePlane } from "./spaces.js";
 import { log, traceSample, flushTrace, clearTrace } from "./log.js";
 import { poseOf, boardOverride, rotatePoseAbout, translatePose, translateBoardOverride, rotateBoardOverride, worldOf, boardFaceLocal, worldPlane, alignTranslation, translatePoseBy, translateBoardOverrideBy, localOf, cornerOf } from "./pose.js";
@@ -55,7 +58,6 @@ import {
 } from "./measureTool.js";
 export { startMeasure };
 
-const FRONT_THICKNESS_DEFAULT = 16;
 const DWELL_MS = 400; // rest this long on an inference line to keep the point as a source
 const DIM_OF = { x: "W", y: "D", z: "H" }; // box size along each world axis
 const AXIS_OF = { W: "x", D: "y", H: "z" };
@@ -3730,111 +3732,9 @@ function pointHover(e) {
 }
 
 // --- orientation ---------------------------------------------------------------------
-//
-// A box (world AABB) plus a door side (which vertical side the fronts are on)
-// fixes everything: W is the horizontal edge along the door side, D the edge
-// through it (minus the fronts), H the height; rotZ turns the generator's −Y
-// onto that side and the origin lands on the matching box corner. The box
-// itself never moves — changing the door side swaps W/D, not the footprint.
-
-const SIDES = [{ axis: "y", dir: -1 }, { axis: "y", dir: 1 }, { axis: "x", dir: 1 }, { axis: "x", dir: -1 }];
-
-/** rotZ (deg) that turns the fronts (local −Y) toward the world direction `axis` ± `dir`. */
-export function rotZFacing(axis, dir) {
-  if (axis === "y") return dir > 0 ? 180 : 0;
-  return dir > 0 ? 90 : 270;
-}
-/** Inverse: which world side the fronts of a cabinet with this rotZ are on. */
-export function sideOfRotZ(rotZ) {
-  const r = (((rotZ || 0) % 360) + 360) % 360;
-  return r === 180 ? { axis: "y", dir: 1 } : r === 90 ? { axis: "x", dir: 1 } : r === 270 ? { axis: "x", dir: -1 } : { axis: "y", dir: -1 };
-}
-export function sideLabel(side) {
-  return `${side.dir > 0 ? "+" : "−"}${side.axis.toUpperCase()}`;
-}
-
-/**
- * Pose and module size for a world box `{x0,y0,z0,W,D,H}` (W/D/H along X/Y/Z)
- * whose doors are on `side`. `fpt` = front panel thickness kept inside the box.
- * Returns { pose, W, D, H } in module terms.
- */
-export function fitBoxFacing(b, side, fpt = FRONT_THICKNESS_DEFAULT) {
-  const x1 = b.x0 + b.W;
-  const y1 = b.y0 + b.D;
-  const along = side.axis === "y" ? b.W : b.D; // door-side edge → W
-  const through = side.axis === "y" ? b.D : b.W; // edge through the doors → D + fronts
-  const rotZ = rotZFacing(side.axis, side.dir);
-  let x;
-  let y;
-  if (rotZ === 0) { x = b.x0; y = b.y0 + fpt; }
-  else if (rotZ === 180) { x = x1; y = y1 - fpt; }
-  else if (rotZ === 90) { x = x1 - fpt; y = b.y0; }
-  else { x = b.x0 + fpt; y = y1; }
-  return { pose: { x, y, z: b.z0, rotZ }, W: along, D: through - fpt, H: b.H };
-}
-
-/** Is this side of the box flush against a wall or another cabinet (so doors could not open)? */
-function sideBlocked(b, side, excludeId = null) {
-  const lo = { x: b.x0, y: b.y0, z: b.z0 };
-  const hi = { x: b.x0 + b.W, y: b.y0 + b.D, z: b.z0 + b.H };
-  const at = side.dir > 0 ? hi[side.axis] : lo[side.axis];
-  const sp = job.getSpace();
-  if (sp) {
-    const bound = side.axis === "x" ? (side.dir > 0 ? sp.bounds.maxX : sp.bounds.minX) : (side.dir > 0 ? sp.bounds.maxY : sp.bounds.minY);
-    const wallIdx = side.axis === "y" ? (side.dir > 0 ? 2 : 0) : (side.dir > 0 ? 1 : 3);
-    if (Math.abs(at - bound) < 0.5 && (sp.walls || []).includes(wallIdx)) return true;
-  }
-  const others = AXES.filter((a) => a !== side.axis);
-  for (const o of solidBoxes()) {
-    if (o.id === excludeId) continue;
-    const near = side.dir > 0 ? o[side.axis][0] : o[side.axis][1];
-    if (Math.abs(near - at) > 0.5) continue;
-    if (others.every((a) => lo[a] < o[a][1] - 0.5 && hi[a] > o[a][0] + 0.5)) return true;
-  }
-  return false;
-}
-
-/**
- * Door side for a new box: never against a wall or a neighbour; a blocked
- * side puts the doors opposite; otherwise the long horizontal edge is the
- * door edge (W), facing the middle of the room (ties: front, −Y).
- */
-export function defaultSide(b, excludeId = null) {
-  const free = SIDES.filter((s) => !sideBlocked(b, s, excludeId));
-  if (!free.length) return SIDES[0];
-  const sp = job.getSpace();
-  const cx = b.x0 + b.W / 2;
-  const cy = b.y0 + b.D / 2;
-  const towardRoom = (s) => {
-    if (!sp) return 0;
-    const lo = s.axis === "x" ? sp.bounds.minX : sp.bounds.minY;
-    const hi = s.axis === "x" ? sp.bounds.maxX : sp.bounds.maxY;
-    const c = s.axis === "x" ? cx : cy;
-    const off = (c - (lo + hi) / 2) / Math.max(hi - lo, 1);
-    if (Math.abs(off) < 0.25) return 0; // the middle half of the room is a tie → front
-    return -Math.sign(off) * s.dir; // 1 facing the room centre, −1 facing away
-  };
-  const edge = (s) => (s.axis === "y" ? b.W : b.D); // W if this side holds the doors
-  const opposite = (s) => SIDES.find((t) => t.axis === s.axis && t.dir === -s.dir);
-  const blockedOpp = SIDES.filter((s) => sideBlocked(b, s, excludeId)).map(opposite).filter((s) => free.includes(s));
-  const pool = blockedOpp.length ? blockedOpp : free;
-  const score = (s) => edge(s) * 4 + towardRoom(s) * 2 + (s.axis === "y" && s.dir < 0 ? 1 : 0) - (s.axis === "x" && s.dir < 0 ? 0.5 : 0);
-  return pool.slice().sort((a, c) => score(c) - score(a))[0];
-}
-
-/** Pose turned `rotZ - current` degrees about world Z through the envelope centre, so R stays a 90° yaw. */
-function poseRotatedTo(cab, rotZ) {
-  const env = envelopeBox(cab, job.resultFor(cab.id));
-  const center = [(env.x0 + env.x1) / 2, (env.y0 + env.y1) / 2, (env.z0 + env.z1) / 2];
-  const next = rotatePoseAbout(cab.pose, "z", rotZ - (cab.pose.rotZ || 0), center);
-  return {
-    ...poseOf(cab.pose),
-    ...next,
-    x: job.snap(next.x),
-    y: job.snap(next.y),
-    z: job.snap(next.z),
-  };
-}
+// rotZFacing / sideOfRotZ / sideLabel / fitBoxFacing / sideBlocked /
+// defaultSide / poseRotatedTo live in fit.js now (pure math — the command
+// layer uses them headless); interact.js re-exports them above.
 
 /** Nearest vertical envelope face of a cabinet (or of `onlyId`) under the cursor, seen from outside. */
 function pickSideFace(clientX, clientY, onlyId = null) {
@@ -3880,21 +3780,6 @@ export function startOrient(id = job.getSelectedId()) {
   canvas.style.cursor = "crosshair";
   log("orient.start", { id: orient.id, pose: orient.pose0, side: cab ? sideOfRotZ(cab.pose.rotZ) : null });
   emitMode();
-}
-
-/** World AABB of a cabinet's envelope as a placement-style box. */
-function envelopeAsBox(cab) {
-  const fp = envelopeFootprint(cab, cab.pose);
-  return { x0: fp.minX, y0: fp.minY, z0: fp.z0, W: fp.maxX - fp.minX, D: fp.maxY - fp.minY, H: fp.z1 - fp.z0 };
-}
-
-/** What the cabinet becomes with its doors on `side`, or the reason it can't. */
-function orientFit(cab, side) {
-  const mod = getModule(cab.moduleId);
-  const fpt = envelopeBox(cab, job.resultFor(cab.id)).fpt;
-  const fit = fitBoxFacing(envelopeAsBox(cab), side, fpt);
-  const small = ["W", "D"].filter((k) => fit[k] < mod.minSize[k]);
-  return { ...fit, small, blocked: sideBlocked(envelopeAsBox(cab), side, cab.id) };
 }
 
 /** The pending side as it sits on the (already rotated) envelope, for the orange hint. */
@@ -4179,14 +4064,6 @@ function resizeDragMove(e) {
 }
 
 /** The documented V1 half-slot conflict still builds the cabinet, so a resize keeps that size. */
-function blockingErrors(errs) {
-  return (errs || []).filter((e) => !/half-slot conflict/.test(e));
-}
-
-/** What stops a drag: blocking generator errors plus HPL boards past the sheet limit for their grain. */
-export function blockingIssues(result) {
-  return [...blockingErrors(result?.validation?.errors), ...(result?.grain?.issues || []).map((i) => i.message)];
-}
 
 function zonesSummary(params) {
   if (Array.isArray(params.columns)) return params.columns.map((c) => ({ width: c.width, heights: (c.zones || []).map((z) => z.height) }));

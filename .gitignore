@@ -10,3 +10,6 @@ docs/AGENT-COMMANDS.pdf
 !.env.example
 *-credentials.json
 service-account*.json
+
+# CLI session file (cwd job state between invocations)
+.cablab-session.json
