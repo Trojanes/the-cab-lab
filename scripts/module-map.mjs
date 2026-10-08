@@ -68,7 +68,15 @@ for (const { dir, title, only, skip, excludeDirs } of DIRS) {
 
 if (check) {
   const existing = readFileSync(join(root, "docs/MODULE-MAP.md"), "utf8").replace(/\r\n/g, "\n");
-  if (existing !== out) { console.error("MODULE-MAP.md is stale — run npm run module-map"); process.exit(1); }
+  if (existing !== out) {
+    const a = existing.split("\n"), b = out.split("\n");
+    const i = a.findIndex((l, k) => l !== b[k]);
+    console.error(`MODULE-MAP.md is stale — run npm run module-map`);
+    console.error(`first diff at line ${i + 1}:`);
+    console.error(`  file:      ${a[i] ?? "(end)"}`);
+    console.error(`  generated: ${b[i] ?? "(end)"}`);
+    process.exit(1);
+  }
   console.log("MODULE-MAP.md up to date");
 } else {
   process.stdout.write(out);
