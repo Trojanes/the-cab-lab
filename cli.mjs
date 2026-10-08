@@ -178,14 +178,28 @@ async function main() {
   }
 
   if (clean[0] === "--repl") {
+    loadSession(); // resume the cwd session like --batch / single-shot do
     const rl = readline.createInterface({ input: process.stdin, terminal: false });
     for await (const line of rl) {
       const t = line.trim();
       if (!t || t.startsWith("#")) continue;
-      const [verb, ...rest] = t.split(/\s+/);
-      const args = bindPositional(verb, parseArgs(rest));
-      const r = await runVerb(verb, args, { dryRun });
-      if (r.ok && !dryRun && verbSpec(verb)?.mutates) saveSession();
+      // Two input forms: "verb --k v" text, or {"verb","args","dryRun"} JSON
+      // (JSON is what mcp.mjs speaks — arbitrary args survive whitespace).
+      let verb, args, lineDry = false;
+      if (t.startsWith("{")) {
+        try {
+          const msg = JSON.parse(t);
+          verb = msg.verb;
+          args = msg.args || {};
+          lineDry = !!msg.dryRun;
+        } catch (e) { emit({ ok: false, error: `bad JSON line: ${e.message}`, code: "bad_args" }, true); continue; }
+      } else {
+        const [v, ...rest] = t.split(/\s+/);
+        verb = v;
+        args = bindPositional(v, parseArgs(rest));
+      }
+      const r = await runVerb(verb, args, { dryRun: dryRun || lineDry });
+      if (r.ok && !dryRun && !lineDry && verbSpec(verb)?.mutates) saveSession();
       emit(r, true); // repl is always --json lines
     }
     return 0;
