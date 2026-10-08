@@ -3,7 +3,7 @@
 Cabinet CAD: parametric generators (`generators/<module>/generator.ts`) →
 `job.json` state → 3D renderer. Read `.cursor/rules/` first — it is the
 rulebook (`cab-lab-core` contract, `cab-lab-usage-log` event semantics,
-`cab-lab-index` file routing).
+`cab-lab-index` file routing, `cab-lab-dev-loop` the verify gate).
 
 ## Don't read files to find things
 
@@ -21,8 +21,15 @@ developers and agents follow. Quick form:
 - `panel/*` ⟂ `interact/*` no cross-imports (`npm run check:deps` enforces).
 - Editing = change `job.json`/params then regenerate; undo = snapshots.
 
-## Verify before done
+## Verify before done — the gate is mandatory
 
-`npm run check:deps && npm run test:job && npm run test:generators` minimum;
-`node scripts/e2e-drive.mjs` for real-app pointer/keyboard coverage;
-`npm run audit` for generator geometry findings.
+A change is unfinished until its tier is green
+(full spec: **`docs/DEV-LOOP.md`**):
+
+- `npm run verify:quick` — docs/rules/tests only (~3 s)
+- `npm run verify` — renderer/panel/interact changes (~15 s)
+- `npm run verify:full` — generators, cnjob, job contract, merges (~4 min)
+
+Report which tier you ran and its result. Never regenerate golden
+snapshots to make a suite green without reading
+`node scripts/diff-snapshots.mjs --regen` first.

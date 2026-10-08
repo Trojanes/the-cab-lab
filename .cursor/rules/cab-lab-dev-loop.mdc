@@ -1,0 +1,49 @@
+---
+description: "Mandatory dev loop — every code change ends with the verify gate, never with 'looks right'"
+alwaysApply: true
+---
+
+# The dev loop — no change is done without a verify
+
+A change is finished only when the gate it owes has passed. "It compiled"
+or "the diff looks right" is not a result. Run, then report the gate.
+
+## Gate tier by what you touched
+
+```
+docs/, .cursor/rules, comments, tests themselves → npm run verify:quick   (~3 s)
+renderer/panel/*, renderer/interact/*, renderer/*.js core (job, ui, fit…) → npm run verify         (~15 s)
+generators/*, cnjob.ts, job.js contract, package.json deps                → npm run verify:full    (~4 min)
+any merge / upstream port / multi-module refactor                         → npm run verify:full
+```
+
+When unsure between two tiers, run the higher one. `verify` never asks
+you questions; a red line is a real signal — fix, don't rationalize.
+
+## Rules that prevent regressions at the source
+
+1. **Smallest diff that says it.** No drive-by refactors, no renames you
+   didn't need — every moved line is a merge-conflict debt for upstream.
+2. **Owning file only.** Follow `cab-lab-index` routing; add the feature
+   to the module that `@owns` the concept, not to wherever the cursor
+   happened to be. Shared helpers go to `widgets.js`/`shared.js`/`fit.js`
+   by the layer rules, never to a shell.
+3. **New file → new tags.** Header line `// @module … @owns …` + run
+   `npm run module-map` to regenerate `docs/MODULE-MAP.md` in the same
+   commit. `check:map` fails on stale maps.
+4. **Generator output changed on purpose?** You must prove intent:
+   `node scripts/diff-snapshots.mjs --regen` → read the field-level diff →
+   only then `npm run regen:snapshots`. Never regen to make a red suite
+   green without reading the diff — that's how silent regressions ship.
+5. **New behaviour → new pin.** Bug fixes and new generator behaviour get
+   a regression test in the same change (see docs/TESTING.md layers).
+   An un-pinned fix will regress.
+6. **Cross-repo data shape** (`cnjob`, `job` contract, snapshot fields):
+   `verify:full` is the floor — replay must stay green, and OmniCam's
+   golden (`CABINETNC_UPDATE_GOLDENS`) only moves with a stated reason.
+
+## What to report
+
+State the gate you ran and its result, e.g. "`npm run verify` — 19/19
+green". If a step was skipped, say which and why. A change pushed without
+a verify line is treated as unfinished work.
