@@ -42,5 +42,8 @@
   "FRAME_DRAWER_TONGUE_GAP": { "value": 0.5, "doc": "抽屉顶横条舌头 = 托板槽深 - 0.5（槽深为托板半厚）。" },
   "FRAME_DRAWER_POCKET_OVERRUN": { "value": 5, "doc": "托板上的横条槽比舌头每头长 5；槽高 = 板厚 + FRAME_SLOT_CLEARANCE。" },
   "L_MIN_WING_WIDTH": { "value": 300, "doc": "框架式 L：拐角段沿墙宽度下限。" },
+  "BACK_PANEL_ABOVE_SEAT": { "value": 530, "doc": "背板比座面高出的高度。座高 420 时板高 950；座高再加，板高加同样的数。" },
+  "BACK_PANEL_OVERHANG": { "value": 50, "doc": "背板比这一截的房间面再往房间伸出的距离。座体不动。backPanelOverhang 没设时用这个。" },
+  "BACK_PANEL_CORNER_RADIUS": { "value": 50, "doc": "背板靠房间的上角圆角半径。靠墙的上角保持直角。" },
   "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "框架式 L 封边带厚，全部柜体色：座面一圈的上边（前板、侧板、后横条）、拐角段两块侧板朝房间的前边、盖子四边、储物格里看得见的托条和后横条下边。端头一律当作顶墙，不封。" }
 }

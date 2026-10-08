@@ -20,6 +20,8 @@
  * paints both faces. Carcass and partition have no colour face.
  */
 import { Outline, beginProvenance, endProvenance, ex, param, type Provenance } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { applyDoorSides, carcassColourOf, doorColourOf, doorSidesOf } from "../_lib/finish.ts";
 import { applyGrain, type GrainResult } from "../_lib/grain.ts";
 import { applyMilling, type MillingResult } from "../_lib/milling.ts";
@@ -277,7 +279,7 @@ function recordRing(prefix: string, pts: SketchPoint[]): SketchPoint[] {
   return outline.points.map(([u, v]) => ({ u, v }));
 }
 
-export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
+export function generateSketchBoard(raw: SketchBoardParams, options: { layout?: unknown } = {}): SketchBoardResult {
   beginProvenance();
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -409,6 +411,7 @@ export function generateSketchBoard(raw: SketchBoardParams): SketchBoardResult {
     ...(curved ? { tessellated: true } : {}),
   };
 
+  applyLayoutDraft([board], options.layout != null ? options.layout : LAYOUT, {}, errors, warnings);
   attachFaces([board]);
   // Through openings are cutouts on a big face (docs/model-spec.md), in board-local (u, v).
   recordedHoles.forEach((loop, i) => {

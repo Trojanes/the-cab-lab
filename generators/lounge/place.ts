@@ -33,23 +33,17 @@ function boxesFromParams(p: LoungeParams): LoungeBox[] {
     const D = asNum(p.mainDepth, 600);
     return [{ id: "i", x0: 0, x1: W, y0: 0, y1: D }];
   }
-  if (style === "U_SHAPE") {
-    const W = asNum(p.mainWidth, 2000);
-    const D = asNum(p.mainDepth, 1600);
-    const runD = asNum(p.lDepth, 600);
-    return [
-      { id: "left", x0: 0, x1: runD, y0: 0, y1: D },
-      { id: "back", x0: 0, x1: W, y0: r2(D - runD), y1: D },
-      { id: "right", x0: r2(W - runD), x1: W, y0: 0, y1: D },
-    ];
-  }
   if (style === "PARALLEL") {
     const totalW = asNum(p.totalWidth, 4000);
     const SW = asNum(p.singleLoungeWidth, 1500);
     const D = asNum(p.depth, 800);
+    const t = Math.max(1, asNum(p.partitionPanelThickness, 18));
+    const left = p.leftBackPanel === true ? t : 0;
+    const rightIn = p.rightBackPanel === true ? t : 0;
+    const over = (on: boolean) => (on ? Math.max(0, p.backPanelOverhang == null ? 50 : asNum(p.backPanelOverhang, 50)) : 0);
     return [
-      { id: "left", x0: 0, x1: SW, y0: 0, y1: D },
-      { id: "right", x0: r2(totalW - SW), x1: totalW, y0: 0, y1: D },
+      { id: "left", x0: 0, x1: r2(SW + left), y0: p.leftBackPanel === true ? r2(-over(true)) : 0, y1: D },
+      { id: "right", x0: r2(totalW - SW - rightIn), x1: totalW, y0: p.rightBackPanel === true ? r2(-over(true)) : 0, y1: D },
     ];
   }
   const mainW = asNum(p.mainWidth, 2000);
@@ -57,13 +51,15 @@ function boxesFromParams(p: LoungeParams): LoungeBox[] {
   const ret = asNum(p.lWidth, 1600);
   const thick = asNum(p.lDepth, 600);
   const right = (p.lPosition ?? "RIGHT") !== "LEFT";
-  const mainX0 = right ? 0 : thick;
-  const mainX1 = right ? r2(mainW - thick) : mainW;
+  const inset = p.backPanel === true ? Math.max(1, asNum(p.partitionPanelThickness, 18)) : 0;
+  const over = p.backPanel === true ? Math.max(0, p.backPanelOverhang == null ? 50 : asNum(p.backPanelOverhang, 50)) : 0;
+  const mainX0 = right ? 0 : r2(thick + inset);
+  const mainX1 = right ? r2(mainW - thick - inset) : mainW;
   const lX0 = right ? mainX1 : 0;
-  const lX1 = right ? mainW : thick;
+  const lX1 = right ? mainW : r2(thick + inset);
   return [
     { id: "main", x0: mainX0, x1: mainX1, y0: r2(ret - mainD), y1: ret },
-    { id: "l", x0: lX0, x1: lX1, y0: 0, y1: ret },
+    { id: "l", x0: lX0, x1: lX1, y0: over ? r2(-over) : 0, y1: ret },
   ];
 }
 
@@ -94,11 +90,6 @@ export function loungePolyline(params: LoungeParams): Array<{ x: number; y: numb
     const D = asNum(params.mainDepth, 600);
     return [{ x: 0, y: D }, { x: W, y: D }];
   }
-  if (style === "U_SHAPE") {
-    const W = asNum(params.mainWidth, 2000);
-    const D = asNum(params.mainDepth, 1600);
-    return [{ x: 0, y: 0 }, { x: 0, y: D }, { x: W, y: D }, { x: W, y: 0 }];
-  }
   if (style === "PARALLEL") {
     const totalW = asNum(params.totalWidth, 4000);
     const SW = asNum(params.singleLoungeWidth, 1500);
@@ -123,7 +114,7 @@ export function loungeFromDrawnRun(input: {
   b: { x: number; y: number };
   depth: number;
   roomSign: number;
-  style: "I" | "L" | "U";
+  style: "I" | "L";
   side?: "LEFT" | "RIGHT";
   wing?: number;
   height?: number;
@@ -171,19 +162,6 @@ export function loungeFromDrawnRun(input: {
   const wing = input.wing ?? 0;
   if (!(wing > depth)) throw new Error("lounge return must extend past the middle front");
   const side = input.side === "LEFT" ? "LEFT" : "RIGHT";
-  if (input.style === "U") {
-    return {
-      params: {
-        style: "U_SHAPE",
-        mainWidth: r2(len),
-        mainDepth: r2(wing),
-        lDepth: r2(depth),
-        height: H,
-        partitionPanelThickness: ppt,
-      },
-      pose: { x: r2(left.x + rx * wing), y: r2(left.y + ry * wing), z: 0, rotZ },
-    };
-  }
   const origin = side === "LEFT"
     ? { x: r2(left.x - ux * depth + rx * wing), y: r2(left.y - uy * depth + ry * wing) }
     : { x: r2(left.x + rx * wing), y: r2(left.y + ry * wing) };
@@ -274,19 +252,6 @@ export function loungeFromPolyline(
     };
   }
 
-  const xs = points.map((p) => p.x);
-  const ys = points.map((p) => p.y);
-  const minX = Math.min(...xs);
-  const minY = Math.min(...ys);
-  const W = r2(Math.max(...xs) - minX);
-  const D = r2(Math.max(...ys) - minY);
-  const runD = asNum(base.lDepth, 600);
-  return {
-    params: {
-      ...base, style: "U_SHAPE",
-      mainWidth: W, mainDepth: D, lDepth: runD,
-      height: H, partitionPanelThickness: ppt,
-    },
-    pose: { x: r2(minX), y: r2(minY), z: 0, rotZ: 0 },
-  };
+  // Four or more points was a U lounge, which was retired.
+  throw new Error("a lounge is an I (2 points), an L or a parallel pair (3 points); the U lounge was retired");
 }

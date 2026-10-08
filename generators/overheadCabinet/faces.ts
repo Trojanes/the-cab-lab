@@ -87,12 +87,13 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       annotate(b, "A", { semantic: "back", visible: false });
     }
   }
-  const bp = B.get("BP");
-  if (bp) {
-    annotate(bp, "A", { semantic: "inside" });
-    annotate(bp, "B", { semantic: "bottom", visible: true });
+  const bpBoards = boards.filter((b) => b.boardType === "BP");
+  const bp = bpBoards[0];
+  for (const one of bpBoards) {
+    annotate(one, "A", { semantic: "inside" });
+    annotate(one, "B", { semantic: "bottom", visible: true });
   }
-  const dividers = boards.filter((b) => b.category === "divider");
+  const dividers = boards.filter((b) => b.category === "divider").sort((a, b) => a.x0 - b.x0);
   if (dividers.length) {
     annotate(dividers[0]!, "B", { semantic: "outside" });
     annotate(dividers[dividers.length - 1]!, "A", { semantic: "outside" });
@@ -103,10 +104,11 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     annotate(dividers[0]!, "A", { semantic: "inside" });
     annotate(dividers[dividers.length - 1]!, "B", { semantic: "inside" });
   }
-  const t3 = B.get("T3");
-  if (t3) {
-    annotate(t3, "A", { semantic: "top" });
-    annotate(t3, "B", { semantic: "bottom" });
+  const t3Boards = boards.filter((b) => b.boardType === "T3");
+  const t3 = t3Boards[0];
+  for (const one of t3Boards) {
+    annotate(one, "A", { semantic: "top" });
+    annotate(one, "B", { semantic: "bottom" });
   }
 
   // Visible outer edges only. Notches, tongues and strip ends stay bare.
@@ -122,20 +124,23 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     if (b.category !== "front_panel") continue;
     for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
   }
-  band(bp, "-Y", fb.carcassColorName);
+  for (const one of bpBoards) band(one, "-Y", fb.carcassColorName);
   for (const d of dividers) band(d, "-Y", fb.carcassColorName);
-  band(t3, "-Y", fb.carcassColorName);
-  band(t3, "+Y", fb.carcassColorName);
-  band(B.get("T4"), "-Z", fb.carcassColorName);
+  for (const one of t3Boards) {
+    band(one, "-Y", fb.carcassColorName);
+    band(one, "+Y", fb.carcassColorName);
+  }
+  for (const one of boards.filter((b) => b.boardType === "T4")) band(one, "-Z", fb.carcassColorName);
   band(B.get("RGHD_TOP"), "-Y", fb.carcassColorName);
 
   // --- BP: divider grooves -------------------------------------------------------
-  if (bp) {
+  if (bpBoards.length) {
     geometry.divider_features.forEach((df, index) => {
       if (fb.suppressedGrooves.includes(index) || !df.bp_groove) return;
+      const host = bpBoards.find((b) => df.XDi >= b.x0 - EPS && df.XDi <= b.x1 + EPS) ?? bpBoards[0]!;
       const g = df.bp_groove;
-      const r = localRect(bp, { x: g.x, y: g.y });
-      addFeature(bp, "A", {
+      const r = localRect(host, { x: g.x, y: g.y });
+      addFeature(host, "A", {
         id: g.id,
         kind: "groove",
         ...r,
@@ -194,13 +199,17 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
     },
   };
   for (const part of ["T2", "T3", "T4"] as const) {
-    const board = B.get(part);
-    if (!board) continue;
-    const [U, V] = planeAxes(board.profilePlane);
+    const hosts = fb.boards.filter((b) => b.boardType === part);
+    if (!hosts.length) continue;
+    const [U, V] = planeAxes(hosts[0]!.profilePlane);
     for (const hole of geometry.panel_screw_holes[part]) {
-      const K = `${part}.feat.${hole.id}`;
+      const x = hole.center[0];
+      const board = hosts.find((b) => x >= b.x0 - EPS && x <= b.x1 + EPS);
+      if (!board) continue;
+      const K = `${board.id}.feat.${hole.id}`;
       const df = geometry.divider_features.find((f) => f.id === hole.for_divider);
-      const cu = dim(`${K}.${U}`, { XDi: df?.XDi ?? hole.center[0], [`${part}_${U}0`]: ref(`${part}.${U}0`) }, (t) => t.XDi - t[`${part}_${U}0`]!, { formula: `XDi - ${part}.${U}0` });
+      const x0name = `${board.id}.${U}0`;
+      const cu = dim(`${K}.${U}`, { XDi: df?.XDi ?? x, x0: ref(x0name) }, (t) => t.XDi - t.x0, { formula: `XDi - ${x0name}` });
       const m = midlineTerm[part]!;
       const cv = dim(`${K}.${V}`, m.terms, m.fn);
       addFeature(board, "A", {
@@ -237,19 +246,21 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
 
   // --- T3: LED T-groove on the top face -------------------------------------------------
   for (const led of fb.ledFeatures) {
-    if (led.type !== "t3_groove" || !t3) continue;
+    const host = B.get(String(led.targetBoardId ?? "T3")) ?? t3;
+    if (led.type !== "t3_groove" || !host) continue;
     const main = led.main as { x0: number; x1: number; y0: number; y1: number };
     const branches = (led.branches as Array<{ x0: number; x1: number; y0: number; y1: number }>) ?? [];
     const depth = Number(led.depth);
-    const KM = "T3.feat.LED_MAIN";
+    const KM = host.id === "T3" ? "T3.feat.LED_MAIN" : `${host.id}.feat.LED_MAIN`;
+    const rearKey = host.id === "T3" ? "T3.pv.rearY" : `${host.id}.pv.rearY`;
     dim(`${KM}.x0`, {}, () => 0, { formula: "0" });
-    dim(`${KM}.x1`, { x1: ref("T3.x1"), x0: ref("T3.x0") }, (t) => t.x1 - t.x0);
+    dim(`${KM}.x1`, { x1: ref(`${host.id}.x1`), x0: ref(`${host.id}.x0`) }, (t) => t.x1 - t.x0);
     dim(`${KM}.y0`, { LAND: R.LED_GROOVE_FRONT_LAND_MM }, (t) => t.LAND);
     dim(`${KM}.y1`, { LAND: R.LED_GROOVE_FRONT_LAND_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.LAND + t.W);
     // One logical feature: every segment shares the group and the one depth rule (layout.json T3.features.LED).
     const shared = { group: "T3.LED", depthKey: "T3.feat.LED.depth" };
-    addFeature(t3, "A", {
-      id: "T3_LED_MAIN",
+    addFeature(host, "A", {
+      id: host.id === "T3" ? "T3_LED_MAIN" : `${host.id}_LED_MAIN`,
       kind: "tgroove",
       u0: main.x0, u1: main.x1, v0: main.y0, v1: main.y1,
       depth,
@@ -259,16 +270,16 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       ...shared,
     });
     branches.forEach((br, i) => {
-      const KB = `T3.feat.LED_BRANCH_${i + 1}`;
+      const KB = host.id === "T3" ? `T3.feat.LED_BRANCH_${i + 1}` : `${host.id}.feat.LED_BRANCH_${i + 1}`;
       const x = i === 0
         ? { terms: { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, x0: (t: Record<string, number>) => t.INSET - t.W / 2, x1: (t: Record<string, number>) => t.INSET + t.W / 2 }
         : { terms: { width: ref(`${KM}.x1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, x0: (t: Record<string, number>) => t.width - t.INSET - t.W / 2, x1: (t: Record<string, number>) => t.width - t.INSET + t.W / 2 };
       dim(`${KB}.x0`, x.terms, x.x0);
       dim(`${KB}.x1`, x.terms, x.x1);
       dim(`${KB}.y0`, { mainY1: ref(`${KM}.y1`) }, (t) => t.mainY1);
-      dim(`${KB}.y1`, { rearY: ref("T3.pv.rearY") }, (t) => t.rearY);
-      addFeature(t3, "A", {
-        id: `T3_LED_BRANCH_${i + 1}`,
+      dim(`${KB}.y1`, { rearY: ref(rearKey) }, (t) => t.rearY);
+      addFeature(host, "A", {
+        id: host.id === "T3" ? `T3_LED_BRANCH_${i + 1}` : `${host.id}_LED_BRANCH_${i + 1}`,
         kind: "tgroove",
         u0: br.x0, u1: br.x1, v0: br.y0, v1: br.y1,
         depth,
@@ -283,8 +294,12 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
   // --- rangehood -----------------------------------------------------------------------
   for (const f of fb.rangehoodFeatures) {
     const type = String(f.type);
-    if (type === "rangehood_bp_cutout" && bp) {
-      const r = localRect(bp, { x: f.x as [number, number], y: f.y as [number, number] });
+    if (type === "rangehood_bp_cutout" && bpBoards.length) {
+      const span = f.x as [number, number];
+      const mid = (span[0] + span[1]) / 2;
+      const hostBp = bpBoards.find((b) => mid >= b.x0 - EPS && mid <= b.x1 + EPS) ?? bp;
+      if (!hostBp) continue;
+      const r = localRect(hostBp, { x: span, y: f.y as [number, number] });
       const K = "BP.feat.RGHD_CUTOUT";
       const Cd = param({ Cd: inputs.cabinetDepth }).Cd;
       const edgeOffsetX = param({ edgeOffsetX: Number(f.edgeOffsetX) }).edgeOffsetX;
@@ -296,7 +311,7 @@ export function buildOverheadFaces(fb: FaceBuildInputs): Joint[] {
       dim(`${K}.x1`, { x0: ref(`${K}.x0`), W: R.RANGEHOOD_CUTOUT_WIDTH_MM }, (t) => t.x0 + t.W);
       dim(`${K}.y0`, { Cd, D: R.RANGEHOOD_CUTOUT_DEPTH_MM }, (t) => (t.Cd - t.D) / 2);
       dim(`${K}.y1`, { y0: ref(`${K}.y0`), D: R.RANGEHOOD_CUTOUT_DEPTH_MM }, (t) => t.y0 + t.D);
-      addFeature(bp, "A", { id: String(f.id), kind: "cutout", ...r, through: true, for: "rangehood", key: K, source: "overhead_rangehood" });
+      addFeature(hostBp, "A", { id: String(f.id), kind: "cutout", ...r, through: true, for: "rangehood", key: K, source: "overhead_rangehood" });
     } else if (type === "rangehood_divider_side_groove") {
       const d = B.get(String(f.targetBoardId));
       if (!d) continue;

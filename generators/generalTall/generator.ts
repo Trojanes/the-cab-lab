@@ -4,6 +4,8 @@
  * 顶轨后缘停在立板前脸之前一个门厚。底部横桥在避让打开时抬到避让高度。
  */
 import { beginProvenance, dim, endProvenance, ex, lit, param, ref, same, valueOf, type Expr } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
@@ -17,7 +19,7 @@ import type {
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 
-export { generateGTSvgPreview } from "./svgPreview.ts";
+export { generateGTSvgPreview, gtZoneOpenings } from "./svgPreview.ts";
 export { GT_UI_PRESETS } from "./uiPresets.ts";
 
 const asNum = (v: unknown, fb: number) => {
@@ -560,11 +562,15 @@ function stampTallBoards(s: S, boards: Board[]) {
     if (id.startsWith("H34")) {
       put("x0", hX1);
       put("x1", hX0);
+      // Rear stiles thicker than the bridge (CPT 16): the bridge stops on their inner faces.
+      put("x0", xL1);
+      put("x1", xR0);
       if (Number.isFinite(valueOf("V5.x1"))) put("x0", link("V5.x1"));
       if (Number.isFinite(valueOf("V5.x0"))) put("x1", link("V5.x0"));
       put("y0", h34y0);
       put("y1", md);
     }
+    if (id.startsWith("H12")) { put("x0", xL1); put("x1", xR0); put("y0", zero); put("y1", ex({ d: R.H12_DEPTH }, (t) => t.d, "H12_DEPTH")); }
     if (/_mid$/.test(id) && id.startsWith("H")) {
       if (Number.isFinite(valueOf("tall.hMid.z0"))) {
         put("z0", link("tall.hMid.z0"));
@@ -627,7 +633,7 @@ function stampTallBoards(s: S, boards: Board[]) {
   }
 }
 
-export function generateGeneralTall(input: GTParams): GTResult {
+export function generateGeneralTall(input: GTParams, options: { layout?: unknown } = {}): GTResult {
   beginProvenance();
   const errors: string[] = [];
   const warnings: string[] = [];
@@ -1005,8 +1011,9 @@ export function generateGeneralTall(input: GTParams): GTResult {
       same(`${h.name}.y0`, "tall.hY0");
       same(`${h.name}.y1`, "tall.hY1");
     } else {
-      let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
-      let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
+      // Between the rear stiles V3 / V4: their inner faces are CPT in, which can be thicker than the bridge.
+      let x0 = Math.max(r2(dx + R.H_SUPPORT_THICKNESS.value), vLeftX1);
+      let x1 = Math.min(r2(dx + mw - R.H_SUPPORT_THICKNESS.value), vRightX0);
       const v5 = boards.find((board) => board.id === "V5");
       if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - R.H34_DEPTH.value) {
         if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
@@ -1046,8 +1053,8 @@ export function generateGeneralTall(input: GTParams): GTResult {
         same(`${h.name}.y0`, "tall.hY0");
         same(`${h.name}.y1`, "tall.hY1");
       } else {
-        let x0 = r2(dx + R.H_SUPPORT_THICKNESS.value);
-        let x1 = r2(dx + mw - R.H_SUPPORT_THICKNESS.value);
+        let x0 = Math.max(r2(dx + R.H_SUPPORT_THICKNESS.value), vLeftX1);
+        let x1 = Math.min(r2(dx + mw - R.H_SUPPORT_THICKNESS.value), vRightX0);
         const v5 = boards.find((board) => board.id === "V5");
         if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - R.H34_DEPTH.value) {
           if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
@@ -1073,7 +1080,7 @@ export function generateGeneralTall(input: GTParams): GTResult {
     boards.push(mkBoard("H24_fridgeBase", "H24 fridge base", "h_support", "H24_fridgeBase", s.hT, "carcass",
       "YZ", "X", r2(dx + mw - R.H_SUPPORT_THICKNESS.value), r2(dx + mw), hY0, hY1, z0, zTop, undefined));
     boards.push(mkBoard("H34_fridgeBase", "H34 fridge base", "h_support", "H34_fridgeBase", s.hT, "carcass",
-      "XZ", "Y", r2(dx + R.H_SUPPORT_THICKNESS.value), r2(dx + mw - R.H_SUPPORT_THICKNESS.value), r2(md - R.H34_DEPTH.value), md, h34z0, floor, undefined));
+      "XZ", "Y", Math.max(r2(dx + R.H_SUPPORT_THICKNESS.value), vLeftX1), Math.min(r2(dx + mw - R.H_SUPPORT_THICKNESS.value), vRightX0), r2(md - R.H34_DEPTH.value), md, h34z0, floor, undefined));
     boards.push(mkBoard("FridgeBaseRail", "Fridge Base Front Rail", "h_support", "fridge_base_rail", CPT, "carcass",
       "XY", "Z", vLeftX1, vRightX0, 0, railY1, railZ0, floor, undefined));
     for (const id of ["H13_fridgeBase", "H24_fridgeBase"]) {
@@ -1089,18 +1096,18 @@ export function generateGeneralTall(input: GTParams): GTResult {
     same("FridgeBaseRail.y1", "tall.fridgeBase.railY1");
   }
 
-  /* ---- blank_panel 区 H12 支撑 ---- */
+  /* ---- blank_panel 区 H12 支撑：竖立的条（深 H12_DEPTH，高 100），夹在前立梃 V1 / V2 之间 ---- */
   for (const zi of zoneItems) {
     if (zi.zone.type !== "blank_panel") continue;
     const H = R.H_SUPPORT_HEIGHT.value;
     if (zi.height >= R.H12_SPLIT_HEIGHT.value) {
       boards.push(mkBoard(`H12_${zi.zone.id}_top`, "H12 Support Top", "blank_panel_support", "H12", s.hT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, R.H12_DEPTH.value, r2(zi.z1 - H), zi.z1, undefined));
+        "XZ", "Y", vLeftX1, vRightX0, 0, R.H12_DEPTH.value, r2(zi.z1 - H), zi.z1, undefined));
       boards.push(mkBoard(`H12_${zi.zone.id}_bottom`, "H12 Support Bottom", "blank_panel_support", "H12", s.hT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, R.H12_DEPTH.value, zi.z0, r2(zi.z0 + H), undefined));
+        "XZ", "Y", vLeftX1, vRightX0, 0, R.H12_DEPTH.value, zi.z0, r2(zi.z0 + H), undefined));
     } else {
       boards.push(mkBoard(`H12_${zi.zone.id}`, "H12 Support", "blank_panel_support", "H12", s.hT, "carcass",
-        "XY", "Z", dx, r2(dx + mw), 0, R.H12_DEPTH.value, zi.z0, zi.z1, undefined));
+        "XZ", "Y", vLeftX1, vRightX0, 0, R.H12_DEPTH.value, zi.z0, zi.z1, undefined));
     }
   }
 
@@ -1390,6 +1397,10 @@ export function generateGeneralTall(input: GTParams): GTResult {
 
   /* ---- 组装 ---- */
   stampTallBoards(s, boards);
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+    leftSide: s.leftT > 0 ? s.leftFinish : "none",
+    rightSide: s.rightT > 0 ? s.rightFinish : "none",
+  });
   attachFaces(boards);
   const joints: Joint[] = buildTallFaces({ boards, ziSlots, ziGrooves, hinges, locks, doorColour: doorColourOf(input), ledGroove: input.ledGroove === true,
     fridgeZ: fridgeZoneItem ? [fridgeZoneItem.z0, fridgeZoneItem.z1] : null });

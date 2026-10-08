@@ -14,8 +14,9 @@ import { collectPins, pinsForBoard, mergePins, checkPins, countPins } from "../g
 import { renderBoard2D, boardPoints, planeAxes } from "./board2d.js";
 import { entryOf, FACES, tree, usesRule, usesParam, affectedByRule, affectedBy, boardsOfKeys, fmt, evaluate, varsFor, flatFormula } from "./provenance.js";
 import { planExplode, assemblyOffsets, radialOffsets, explodeUnit, dirLabel, separation } from "./explode.js";
-import { nameTable, toDisplay, fromDisplay, FACE_NAMES, SIZE_NAMES, AXIS_NAMES, CORNER_NAMES, withOffset, sizeFormula, addParam, removeParam, formulaPieces } from "./ruleText.js";
-import { createDraft, isDirty, commitEdit, undo as undoDraft, redo as redoDraft, discard as discardDraft, rebase, setFace, setRelation, setCorner, setFeatureDepth, diffLayouts, movedBoards, ensureBoard } from "./draft.js";
+import { nameTable, toDisplay, fromDisplay, stripLeadEquals, FACE_NAMES, SIZE_NAMES, AXIS_NAMES, CORNER_NAMES, withOffset, sizeFormula, addParam, removeParam, formulaPieces } from "./ruleText.js";
+import { bindFormulaBar, editingBar, removeChip } from "./formulaBar.js";
+import { createDraft, isDirty, commitEdit, undo as undoDraft, redo as redoDraft, discard as discardDraft, rebase, setFace, setRelation, setCorner, setFeatureDepth, diffLayouts, movedBoards, ensureBoard, ensureAxis } from "./draft.js";
 import { fridgeFix, fridgeParts, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths } from "../modules.js";
 import { fridgeCabinetWidth } from "../gen/generalTall.js";
 import { buildDefaultAnnotations, disposeAnnotations, LabelOverlay } from "./annotate.js";
@@ -37,13 +38,15 @@ const cache = new Map(); // tabId -> { result, prov, boards: Map, presets, rules
 function saveState() {
   try {
     const tabs = state.tabs.map((t) => ({ ...t, tryout: null }));
-    // localStorage survives closing the bench window. sessionStorage does not, so a draft died on close.
-    localStorage.setItem(STATE_KEY, JSON.stringify({ tabs, active: state.active }));
+    // This window only. A new Generator Rules window, and the next launch of
+    // the app, start from the module just opened — not the last screen.
+    sessionStorage.setItem(STATE_KEY, JSON.stringify({ tabs, active: state.active }));
   } catch (_) { /* nothing */ }
 }
 function loadState() {
   try {
-    const raw = JSON.parse(localStorage.getItem(STATE_KEY) || sessionStorage.getItem(STATE_KEY) || "null");
+    localStorage.removeItem(STATE_KEY);
+    const raw = JSON.parse(sessionStorage.getItem(STATE_KEY) || "null");
     if (raw && Array.isArray(raw.tabs)) {
       state = { tabs: raw.tabs, active: Math.min(raw.active, raw.tabs.length - 1) };
       tabSeq = raw.tabs.reduce((m, t) => Math.max(m, Number(String(t.id).split("-")[1]) || 0), 0);
@@ -487,10 +490,11 @@ function renderBaseInputs(form, mod, t) {
     });
     return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), input]);
   };
+  const outer = mod.envelope(p);
   form.append(h("div", { class: "in-group", text: "柜体尺寸" }));
-  form.append(num("柜宽", gs.length, (v) => setParams(mod.setEnvelope(p, { W: v }), "globalSettings.length", gs.length, v)));
-  form.append(num("柜深（含门）", gs.depth, (v) => setParams(mod.setEnvelope(p, { D: v }), "globalSettings.depth", gs.depth, v)));
-  form.append(num("柜高", gs.height, (v) => setParams(mod.setEnvelope(p, { H: v }), "globalSettings.height", gs.height, v)));
+  form.append(num("柜宽", outer.W, (v) => setParams(mod.setEnvelope(p, { W: v }), "globalSettings.length", outer.W, v)));
+  form.append(num("柜深（含门）", outer.D, (v) => setParams(mod.setEnvelope(p, { D: v }), "globalSettings.depth", gs.depth, v)));
+  form.append(num("柜高", outer.H, (v) => setParams(mod.setEnvelope(p, { H: v }), "globalSettings.height", outer.H, v)));
   form.append(h("div", { class: "in-group", text: "材料" }));
   form.append(num("柜身板厚", p.materialThickness, (v) => setParam("materialThickness", v), "0.5"));
   form.append(num("门板厚", p.frontThickness, (v) => setParam("frontThickness", v), "0.5"));
@@ -499,7 +503,7 @@ function renderBaseInputs(form, mod, t) {
   form.append(num("踢脚高度", p.bottomClearanceHeight, (v) => {
     const next = structuredClone(p);
     next.bottomClearanceHeight = v;
-    setParams(mod.setEnvelope(next, { H: gs.height }), "bottomClearanceHeight", p.bottomClearanceHeight, v);
+    setParams(mod.setEnvelope(next, { H: mod.envelope(next).H }), "bottomClearanceHeight", p.bottomClearanceHeight, v);
   }));
   const kick = h("select", {}, [["style_1", "内凹"], ["style_2", "齐平"]].map(([v, label]) => h("option", { value: v, text: label })));
   kick.value = p.bottomClearanceStyle || "style_1";
@@ -846,7 +850,6 @@ function fridgeZoneList(p, list, kind, types, labels, commit) {
 function renderLoungeInputs(form, mod, t) {
   const p = t.params;
   const style = p.style || "L_SHAPE";
-  const frame = style === "I_SHAPE" || style === "L_SHAPE" || style === "PARALLEL" ? p.construction !== "classic" : false;
   const num = (label, value, apply, min, step = "10") => {
     const input = h("input", { type: "number", step, value: value == null ? "" : String(value) });
     input.addEventListener("change", () => {
@@ -864,7 +867,7 @@ function renderLoungeInputs(form, mod, t) {
     return h("label", { class: "field input-field" }, [h("span", { class: "in-label" }, [h("span", { text: label })]), sel]);
   };
   form.append(h("div", { class: "in-group", text: "外形" }));
-  form.append(choice("样式", style, [["I_SHAPE", "I"], ["L_SHAPE", "L"], ["U_SHAPE", "U"], ["PARALLEL", "平行"]], (v) => setParams(mod.setStyle(p, v), "style", style, v)));
+  form.append(choice("样式", style, [["I_SHAPE", "I"], ["L_SHAPE", "L"], ["PARALLEL", "平行"]], (v) => setParams(mod.setStyle(p, v), "style", style, v)));
   form.append(num("座高", p.height, (v) => setKey("height", v), mod.minSize?.H ?? 300));
   if (style === "I_SHAPE") {
     form.append(num("长度", p.mainWidth, (v) => setKey("mainWidth", v), 800));
@@ -875,16 +878,12 @@ function renderLoungeInputs(form, mod, t) {
     form.append(num("翼长", p.lWidth, (v) => setKey("lWidth", v), 400));
     form.append(num("翼座深", p.lDepth, (v) => setKey("lDepth", v), 200));
     form.append(choice("翼在", p.lPosition || "RIGHT", [["RIGHT", "右"], ["LEFT", "左"]], (v) => setKey("lPosition", v)));
-    if (frame) form.append(choice("翼端", p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("lFrontAccess", v)));
-  } else if (style === "U_SHAPE") {
-    form.append(num("总宽", p.mainWidth, (v) => setKey("mainWidth", v), 800));
-    form.append(num("总深", p.mainDepth, (v) => setKey("mainDepth", v), 600));
-    form.append(num("腿座深", p.lDepth, (v) => setKey("lDepth", v), 200));
+    form.append(choice("翼端", p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("lFrontAccess", v)));
   } else if (style === "PARALLEL") {
     form.append(num("总宽", p.totalWidth, (v) => setKey("totalWidth", v), 1600));
     form.append(num("每边座宽", p.singleLoungeWidth, (v) => setKey("singleLoungeWidth", v), 400));
     form.append(num("进深", p.depth, (v) => setKey("depth", v), 400));
-    if (frame) form.append(choice("过道端", p.aisleAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("aisleAccess", v)));
+    form.append(choice("过道端", p.aisleAccess === "DRAWER" ? "DRAWER" : "NONE", [["NONE", "座面"], ["DRAWER", "抽屉"]], (v) => setKey("aisleAccess", v)));
     const on = p.hasMiddleCabinet !== false && (p.hasMiddleCabinet === true || (p.totalWidth ?? 0) - 2 * (p.singleLoungeWidth ?? 0) >= 300);
     form.append(choice("中间柜", p.hasMiddleCabinet === false ? "off" : "on", [["on", "有"], ["off", "无"]], (v) => setKey("hasMiddleCabinet", v === "on")));
     if (p.hasMiddleCabinet === true && p.middleCabinet) {
@@ -897,9 +896,6 @@ function renderLoungeInputs(form, mod, t) {
   }
   form.append(h("div", { class: "in-group", text: "材料" }));
   form.append(num("板厚", p.partitionPanelThickness ?? 18, (v) => setKey("partitionPanelThickness", Math.max(1, v)), 1, "0.5"));
-  if (!frame && style !== "U_SHAPE") {
-    form.append(choice("轮拱切口", p.wheelAvoidanceEnabled === true ? "on" : "off", [["off", "无"], ["on", "有"]], (v) => setKey("wheelAvoidanceEnabled", v === "on")));
-  }
   form.append(h("div", { class: "empty small", text: "一段盖板超过 1600 会按车间规则切成多块。这个 1600 不在这里改。" }));
 }
 
@@ -1307,22 +1303,19 @@ $("#layoutDialog [data-ok]").addEventListener("click", async () => {
 
 const MODE_GHOST = 0.18;
 let modeGroup = null;
-const labelOverlay = new LabelOverlay($("#bcenter"));
+const labelOverlay = new LabelOverlay($("#viewport"));
+labelOverlay.dragFromFace = () => !!paramDrag?.face;
 labelOverlay.onCommit = (key, text) => {
   const t = tab();
-  if (!t?.mode || !/^[xyz][01]$/.test(key)) { buildModeOverlay(); return; }
+  if (!t?.mode || !/^[xyz][01]$/.test(key)) return;
   const res = applyFaceFormula(t.mode.board, key, text);
-  if (!res.ok) { t.mode.error = res.error; renderSelection(); buildModeOverlay(); }
-  else if (res.unchanged) buildModeOverlay();
+  if (!res?.ok) {
+    t.mode.error = res?.error || "没有采用";
+    renderSelection();
+    buildModeOverlay();
+  }
 };
-labelOverlay.onCancel = () => { if (tab()?.mode) buildModeOverlay(); };
-labelOverlay.onDrop = (key, sym) => {
-  const t = tab();
-  const it = labelOverlay.items.find((x) => x.key === key);
-  if (!t?.mode || !it) return;
-  applyFaceFormula(t.mode.board, key, addParam(fromDisplay(it.formula, names()), sym));
-};
-labelOverlay.onChipDrag = (payload) => { paramDrag = payload; };
+labelOverlay.onChipDrag = (e, payload) => startParamDrag(e, payload);
 (function tickOverlay() {
   const t = tab();
   if (t?.mode?.kind === "default") labelOverlay.update(camera, canvas, boardGroups.get(t.mode.board)?.group.position || null);
@@ -1385,7 +1378,19 @@ function modeLabels(b, rule) {
   const faces = {};
   const sizes = {};
   for (const a of ["x", "y", "z"]) {
-    const r = rule.axes[a];
+    const r = shownCase(rule.axes[a], b.id, a);
+    if (!r) {
+      const lo = concreteFormula(prov, `${b.id}.${a}0`);
+      const hi = concreteFormula(prov, `${b.id}.${a}1`);
+      for (const f of [`${a}0`, `${a}1`]) {
+        const formula = toDisplay(f.endsWith("0") ? lo : hi);
+        faces[f] = { drive: false, editable: true, formula, pieces: formulaPieces(formula), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
+      }
+      const sizeText = toDisplay(sizeFormula(lo, hi));
+      const sz = b[`${a}1`] - b[`${a}0`];
+      sizes[a] = { formula: sizeText, pieces: formulaPieces(sizeText), lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(sz)}`, `= ${sizeText}`] };
+      continue;
+    }
     const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
     for (const f of [`${a}0`, `${a}1`]) {
       const isDrive = f === drive;
@@ -1399,7 +1404,7 @@ function modeLabels(b, rule) {
     }
     const sz = entryOf(prov, `${b.id}.${a}Size`)?.value ?? b[`${a}1`] - b[`${a}0`];
     const sizeText = toDisplay(nameCenterlines(r.size));
-    sizes[a] = { formula: sizeText, lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(sz)}`, `= ${sizeText}`] };
+    sizes[a] = { formula: sizeText, pieces: formulaPieces(sizeText), lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(sz)}`, `= ${sizeText}`] };
   }
   return { faces, sizes };
 }
@@ -1436,7 +1441,7 @@ function concreteFormula(prov, key) {
     const v = Math.round(locals.get(name) * 1000) / 1000;
     out = out.replace(new RegExp(`\\b${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\b`, "g"), String(v));
   }
-  return nameCenterlines(out.replace(/\s+/g, " ").trim());
+  return stripLeadEquals(nameCenterlines(out.replace(/\s+/g, " ").trim()));
 }
 
 /** A centre line written as a millimetre value (666.7) is shown as its name (XD1). */
@@ -1456,6 +1461,12 @@ function nameCenterlines(formula) {
   });
 }
 
+function seedAxis(board, prov, axis) {
+  const lo = concreteFormula(prov, `${board.id}.${axis}0`);
+  const hi = concreteFormula(prov, `${board.id}.${axis}1`);
+  return { from: "lo", at: lo, size: sizeFormula(lo, hi) };
+}
+
 function seedAxes(board, prov) {
   const axes = {};
   for (const a of ["x", "y", "z"]) {
@@ -1470,12 +1481,13 @@ function seedAxes(board, prov) {
 function ruleBoard(boardId) {
   const listed = cur()?.result?.debug?.ruleBoards;
   if (Array.isArray(listed)) return listed.includes(boardId);
-  return !!placementRule(boardId)?.axes;
+  return !!tab()?.draft;
 }
 
 /** Six faces of a board that is still placed in generator code. Shown, not edited: a box rule would not be saved. */
 function provenanceLabels(b) {
   const prov = cur().prov;
+  const canEdit = ruleBoard(b.id);
   const faces = {};
   const sizes = {};
   for (const a of ["x", "y", "z"]) {
@@ -1483,10 +1495,10 @@ function provenanceLabels(b) {
     const hi = concreteFormula(prov, `${b.id}.${a}1`);
     for (const f of [`${a}0`, `${a}1`]) {
       const formula = toDisplay(f.endsWith("0") ? lo : hi);
-      faces[f] = { drive: false, editable: false, formula, pieces: formulaPieces(formula, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
+      faces[f] = { drive: false, editable: canEdit, formula, pieces: formulaPieces(formula, primarySymbols()), lines: [`${FACE_NAMES[f]} ${fmt(b[f])}`, `= ${formula}`] };
     }
     const sz = toDisplay(sizeFormula(lo, hi));
-    sizes[a] = { formula: sz, lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(b[`${a}1`] - b[`${a}0`])}`, `= ${sz}`] };
+    sizes[a] = { formula: sz, pieces: formulaPieces(sz), lines: [`${SIZE_NAMES[`${a}Size`]} ${fmt(b[`${a}1`] - b[`${a}0`])}`, `= ${sz}`] };
   }
   return { faces, sizes };
 }
@@ -1527,60 +1539,233 @@ function primarySymbols() {
   return primaryParams().map((p) => p.sym);
 }
 
-/** The chip currently being dragged. dataTransfer types are not reliable while the pointer is still moving. */
+/** The chip currently being dragged. `face` is set when it came out of a formula. */
 let paramDrag = null;
+const dragGhost = document.createElement("div");
+dragGhost.className = "param-chip drag-ghost";
+dragGhost.hidden = true;
+document.body.append(dragGhost);
+const blankDragImage = document.createElement("canvas");
+blankDragImage.width = 1;
+blankDragImage.height = 1;
+
+function placeDragGhost(e) {
+  dragGhost.style.left = `${e.clientX + 14}px`;
+  dragGhost.style.top = `${e.clientY + 16}px`;
+}
+
+/** Start a chip drag. The native drag image is blank; a chip follows the cursor instead. */
+function startParamDrag(e, payload) {
+  paramDrag = payload;
+  e.dataTransfer.setData("text/plain", payload.sym);
+  e.dataTransfer.setData("text/cablab-param", payload.sym);
+  if (payload.face) e.dataTransfer.setData("text/cablab-face", payload.face);
+  e.dataTransfer.effectAllowed = payload.face ? "move" : "copy";
+  e.dataTransfer.setDragImage(blankDragImage, 0, 0);
+  dragGhost.textContent = payload.sym;
+  dragGhost.hidden = false;
+  placeDragGhost(e);
+}
+
+function endParamDrag() {
+  paramDrag = null;
+  dragGhost.hidden = true;
+  $("#paramTray").classList.remove("drop");
+  document.querySelectorAll(".formula-chips.drop").forEach((el) => el.classList.remove("drop"));
+}
 
 function syncParamTray() {
   const tray = $("#paramTray");
-  const on = tab()?.mode?.kind === "default";
+  const t = tab();
+  const on = t?.mode?.kind === "default";
   tray.classList.toggle("hidden", !on);
   if (!on) { tray.replaceChildren(); return; }
-  const chips = primaryParams().map((p) => {
-    const chip = h("span", { class: "param-chip", text: p.sym, title: p.label || p.sym });
-    chip.draggable = true;
-    chip.addEventListener("dragstart", (e) => {
-      paramDrag = { sym: p.sym, face: null };
-      e.dataTransfer.setData("text/plain", p.sym);
-      e.dataTransfer.setData("text/cablab-param", p.sym);
-      e.dataTransfer.effectAllowed = "copy";
-    });
+  const seen = new Set();
+  const items = [];
+  const push = (sym, label) => {
+    if (!sym || seen.has(sym)) return;
+    seen.add(sym);
+    items.push({ sym, label });
+  };
+  for (const p of primaryParams()) push(p.sym, p.label || p.sym);
+  const onBoard = [];
+  for (const it of labelOverlay.items) {
+    for (const piece of formulaPieces(it.formula || "")) if (piece.kind === "param") onBoard.push(piece.sym);
+  }
+  t.mode.palette = [...new Set([...(t.mode.palette || []), ...onBoard])];
+  for (const sym of t.mode.palette) push(sym, sym);
+  const chips = items.map((p) => {
+    const chip = h("span", { class: "param-chip", text: p.sym, title: p.label && p.label !== p.sym ? p.label : "拖到蓝色公式上加入", draggable: "true" });
+    chip.addEventListener("dragstart", (e) => startParamDrag(e, { sym: p.sym, face: null }));
     return chip;
   });
-  tray.replaceChildren(h("span", { class: "tray-label", text: "一级参数" }), ...(chips.length ? chips : [h("span", { class: "muted", text: "这个生成器没有可拖的一级参数" })]));
+  tray.replaceChildren(h("span", { class: "tray-label", text: "参数" }), ...(chips.length ? chips : [h("span", { class: "muted", text: "这块板上还没有参数" })]));
 }
 
 $("#paramTray").addEventListener("dragover", (e) => {
-  if (!paramDrag?.face) return;
+  if (!paramDrag?.face && ![...e.dataTransfer.types].includes("text/cablab-face")) return;
   e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
   $("#paramTray").classList.add("drop");
 });
-$("#paramTray").addEventListener("dragleave", () => $("#paramTray").classList.remove("drop"));
+$("#paramTray").addEventListener("dragleave", (e) => {
+  if (e.relatedTarget && $("#paramTray").contains(e.relatedTarget)) return;
+  $("#paramTray").classList.remove("drop");
+});
 $("#paramTray").addEventListener("drop", (e) => {
   e.preventDefault();
   $("#paramTray").classList.remove("drop");
-  const sym = paramDrag?.sym || e.dataTransfer.getData("text/cablab-param");
-  const face = paramDrag?.face || e.dataTransfer.getData("text/cablab-face");
-  paramDrag = null;
+  const sym = e.dataTransfer.getData("text/cablab-param") || paramDrag?.sym;
+  const face = e.dataTransfer.getData("text/cablab-face") || paramDrag?.face;
   const t = tab();
+  const open = editingBar();
+  if (open && face && open.dataset.face === face && removeChip(open, sym)) return;
   const it = labelOverlay.items.find((x) => x.key === face);
   if (!t?.mode || !sym || !face || !it) return;
   applyFaceFormula(t.mode.board, face, removeParam(fromDisplay(it.formula, names()), sym));
 });
-window.addEventListener("dragend", () => { paramDrag = null; $("#paramTray").classList.remove("drop"); });
+document.addEventListener("dragover", (e) => { if (paramDrag) placeDragGhost(e); });
+document.addEventListener("dragend", endParamDrag);
 
-/** A primary parameter dropped on a face formula is appended. A chip dragged out of a formula is ignored here. */
-function bindFormulaDrop(el, face, current) {
-  el.addEventListener("dragover", (e) => {
-    if (![...e.dataTransfer.types].includes("text/cablab-param")) return;
-    e.preventDefault();
+/** One formula. Click a blue one to edit: chips stay whole, operators and numbers are typed. */
+function formulaRow(expr, { face, drag }) {
+  const id = tab()?.mode?.board;
+  if (face && id && !entryOf(cur()?.prov, `${id}.${face}`)?.formula) {
+    return h("span", { class: "muted", text: "还没有公式" });
+  }
+  const row = h("div", { class: "formula-chips" });
+  row.append(h("span", { class: "formula-op", text: "= " }));
+  const bar = h("div");
+  row.append(bar);
+  bindFormulaBar(bar, {
+    expr,
+    edit: drag,
+    face,
+    dragging: () => !!paramDrag,
+    onDragStart: (e, sym) => startParamDrag(e, { sym, face }),
+    onCommit: (text) => {
+      const res = applyFaceFormula(tab().mode.board, face, text);
+      if (!res?.ok && tab()?.mode) {
+        tab().mode.error = res?.error || "没有采用";
+        renderSelection();
+        buildModeOverlay();
+      }
+    },
   });
-  el.addEventListener("drop", (e) => {
-    e.preventDefault();
-    const sym = e.dataTransfer.getData("text/cablab-param");
-    const from = e.dataTransfer.getData("text/cablab-face");
-    if (!sym || from) return;
-    applyFaceFormula(tab().mode.board, face, addParam(fromDisplay(current(), names()), sym));
-  });
+  return row;
+}
+
+const BLANK_LAYOUT = { module: "draft", version: 1, boards: {} };
+let branchMemo = { key: "", hits: {} };
+
+function codeFormula(result, boardId, face) {
+  return stripLeadEquals(result?.debug?.provenance?.entries?.[`${boardId}.${face}`]?.formula || "").replace(/\s+/g, " ").trim();
+}
+
+function switchValue(key) {
+  const sw = (MODULES[tab()?.moduleId]?.benchSwitches || []).find((s) => s.key === key);
+  return sw ? sw.get(tab().params) : undefined;
+}
+
+/** Switches already on this module that change this axis. Others stay off the tree. */
+function faceBranches(boardId, axis) {
+  const t = tab();
+  const switches = MODULES[t?.moduleId]?.benchSwitches || [];
+  if (!t || !switches.length) return [];
+  const key = `${t.id}|${JSON.stringify(t.params)}`;
+  if (branchMemo.key !== key) branchMemo = { key, hits: {} };
+  const slot = `${boardId}.${axis}`;
+  if (branchMemo.hits[slot]) return branchMemo.hits[slot];
+  const branches = [];
+  for (const sw of switches) {
+    const cur = sw.get(t.params);
+    const leaves = sw.options.map(([id, label]) => {
+      const res = generate(t.moduleId, sw.set(structuredClone(t.params), id), BLANK_LAYOUT);
+      const faces = {};
+      for (const f of [`${axis}0`, `${axis}1`]) faces[f] = codeFormula(res, boardId, f);
+      const formula = [`${axis}0`, `${axis}1`].map((f) => faces[f]).join(" | ");
+      return { id, label, formula, faces, current: id === cur };
+    });
+    if (new Set(leaves.map((l) => l.formula)).size > 1) branches.push({ key: sw.key, label: sw.label, leaves });
+  }
+  branchMemo.hits[slot] = branches;
+  return branches;
+}
+
+/** `this` writes only the open situation. `all` writes one formula for every situation. */
+function editWhen(boardId, face) {
+  const t = tab();
+  const branches = faceBranches(boardId, face[0]);
+  if (!branches.length || t.mode?.caseScope?.[face[0]] === "all") return { universal: true, when: undefined, branches };
+  const when = {};
+  for (const b of branches) when[b.key] = switchValue(b.key);
+  return { universal: false, when, branches };
+}
+
+function shownCase(raw, boardId, axis) {
+  if (!raw) return null;
+  const branches = faceBranches(boardId, axis);
+  const now = {};
+  for (const b of branches) now[b.key] = switchValue(b.key);
+  const list = raw.cases?.length ? raw.cases : [raw];
+  const hit = list.filter((c) => !c.when || Object.entries(c.when).every(([k, v]) => now[k] === v));
+  hit.sort((a, b) => Object.keys(b.when || {}).length - Object.keys(a.when || {}).length);
+  return hit[0] || null;
+}
+
+function withAxis(layout, board, face, prov) {
+  const spec = editWhen(board.id, face);
+  const when = spec.universal ? undefined : spec.when;
+  if (!spec.universal || !layout.boards?.[board.id]?.axes?.[face[0]]) layout = ensureAxis(layout, board.id, face[0], seedAxis(board, prov, face[0]), when);
+  return { layout, when, universal: spec.universal };
+}
+
+function scopeText(branches) {
+  if (branches.length === 1) {
+    const cur = branches[0].leaves.find((l) => l.current)?.label || "当前";
+    return { this: `只改${cur}`, all: `${branches[0].leaves.map((l) => l.label).join("和")}用同一条` };
+  }
+  return { this: "只改当前这一档", all: "这几档用同一条" };
+}
+
+/** The fork under one axis. A switch is a branch only when its leaves disagree. */
+function caseTree(boardId, axis, { choose = true } = {}) {
+  if (!(MODULES[tab()?.moduleId]?.benchSwitches || []).length) return null;
+  const branches = faceBranches(boardId, axis);
+  if (!branches.length) return h("div", { class: "tree-plain", text: "这一面不分叉。" });
+  const t = tab();
+  const scope = t.mode?.caseScope?.[axis] || "this";
+  const setScope = (value) => {
+    t.mode.caseScope = { ...(t.mode.caseScope || {}), [axis]: value };
+    renderSelection();
+  };
+  const words = scopeText(branches);
+  const branchNode = (b) => {
+    const show = [`${axis}0`, `${axis}1`].filter((f) => new Set(b.leaves.map((l) => l.faces?.[f])).size > 1);
+    return h("li", {}, [
+      h("div", { class: "tree-name", text: b.label }),
+      h("ul", {}, b.leaves.map((leaf) => h("li", {}, [
+        h("div", { class: `tree-name leaf${leaf.current ? " on" : ""}` }, [
+          h("span", { text: leaf.label }),
+          leaf.current ? h("span", { class: "tree-now", text: "当前" }) : null,
+        ]),
+        ...show.map((f) => h("div", { class: "tree-formula" }, [
+          h("span", { class: "tree-face", text: FACE_NAMES[f] }),
+          h("span", { text: leaf.faces?.[f] ? toDisplay(leaf.faces[f]) : "—" }),
+        ])),
+      ]))),
+    ]);
+  };
+  return h("div", { class: "case-tree" }, [
+    h("ul", { class: "tree" }, branches.map(branchNode)),
+    ...(choose ? [
+      h("div", { class: "tree-note", text: scope === "all" ? "下面的公式写成一条，这几档都用。" : "下面的公式只写到标着「当前」的那一档。另一档仍用原来的公式。" }),
+      h("div", { class: "btn-row" }, [
+        h("button", { class: `tb${scope === "this" ? " primary" : ""}`, text: words.this, onclick: () => setScope("this") }),
+        h("button", { class: `tb${scope === "all" ? " primary" : ""}`, text: words.all, onclick: () => setScope("all") }),
+      ]),
+    ] : []),
+  ]);
 }
 
 /** Write one face formula. A board that has no placement rule yet gets one from its current faces, so the edit moves it. */
@@ -1592,19 +1777,24 @@ function applyFaceFormula(boardId, face, text) {
   if (t.mode) t.mode.error = null;
   let layout = t.draft?.layout;
   if (!layout) return { ok: false, error: "这个生成器还没有放置规则文件" };
-  if (!layout.boards?.[boardId]?.axes?.[face[0]]) layout = ensureBoard(layout, boardId, seedAxes(c.boards.get(boardId), c.prov));
+  const prep = withAxis(layout, c.boards.get(boardId), face, c.prov);
   let next;
-  try { next = setFace(layout, boardId, face, expr); } catch (err) { return { ok: false, error: err.message }; }
-  return tryLayout(next, `${boardId}.${face} = ${expr}`, { mode: "default", board: boardId, face });
+  try { next = setFace(prep.layout, boardId, face, expr, prep.when, prep.universal); } catch (err) { return { ok: false, error: err.message }; }
+  return tryLayout(next, `${boardId}.${face} = ${expr}`, { mode: "default", board: boardId, face, when: prep.when || null });
 }
 
 /** Default mode for a board whose position was computed in the generator: blue faces are editable, the size is the formula. */
 function renderProvenancePanel(panel, id, b) {
   const prov = cur().prov;
   const t = tab();
+  const canEdit = ruleBoard(id);
   panel.append(h("div", { class: "panel-head" }, [
     h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 默认模式` }),
-    h("div", { class: "panel-sub", text: "这是现在的位置公式，只能看。缺口和槽由代码算，改一条位置不会存上，板还在原来的地方。要挪分隔板，去改分区宽度。" }),
+    h("div", { class: "panel-sub", text: canEdit
+      ? "点蓝色公式再编辑。参数是整颗按钮，退格删掉整颗，字母不能改；运算和数字可以直接改，回车确认。这是草稿，右下角「提交」才写入 layout.json。"
+      : t.draft
+        ? "这是现在的位置公式，只能看。缺口和槽由代码算，改一条位置不会存上，板还在原来的地方。"
+        : "这是现在的位置公式，只能看。这个生成器还没有放置规则文件。" }),
   ]));
   for (const a of ["x", "y", "z"]) {
     const lo = concreteFormula(prov, `${id}.${a}0`);
@@ -1614,7 +1804,7 @@ function renderProvenancePanel(panel, id, b) {
       return h("div", { class: "face-row" }, [
         h("span", { class: "fname", text: FACE_NAMES[f] }),
         h("span", { class: "fval", text: fmt(b[f]) }),
-        h("span", { class: "formula", text: `= ${text}` }),
+        formulaRow(text, { face: f, drag: canEdit }),
       ]);
     });
     const sz = toDisplay(sizeFormula(lo, hi));
@@ -1624,8 +1814,9 @@ function renderProvenancePanel(panel, id, b) {
       h("div", { class: "size-row" }, [
         h("span", { text: SIZE_NAMES[`${a}Size`] }),
         h("span", { class: "fval", text: fmt(b[`${a}1`] - b[`${a}0`]) }),
-        h("span", { text: `= ${sz}` }),
+        formulaRow(sz, { drag: false }),
       ]),
+      caseTree(id, a, { choose: canEdit }),
     ]));
   }
   if (t.mode.error) panel.append(h("div", { class: "mode-err", text: `没有采用：${t.mode.error}` }));
@@ -1640,34 +1831,44 @@ function renderDefaultPanel(panel) {
   const b = c.boards.get(id);
   const rule = placementRule(id);
   if (!rule) { renderProvenancePanel(panel, id, b); return; }
-  const N = names();
   panel.append(h("div", { class: "panel-head" }, [
     h("div", { class: "panel-title", text: `${id} · ${boardLabel(id)} · 默认模式` }),
-    h("div", { class: "panel-sub", text: "改一个面的位置：整块板沿这条轴平移，尺寸不变。尺寸和形状在「板件编辑」里改。公式用原来的符号，如 CPT、2 * CPT、T1.y1。" }),
+    h("div", { class: "panel-sub", text: "点蓝色公式再编辑。参数是整颗按钮，退格删掉整颗，字母不能改；运算和数字可以直接改，回车确认。整块板沿这条轴平移，尺寸不变。" }),
   ]));
-  const apply = (face, text, input) => {
-    const expr = fromDisplay(text, N);
-    if (!expr) return;
-    let next;
-    try { next = setFace(t.draft.layout, id, face, expr); } catch (err) { t.mode.error = err.message; renderSelection(); return; }
-    // Cleared before trying: a successful edit redraws the panel inside tryLayout.
-    t.mode.error = null;
-    const res = tryLayout(next, `${id}.${face} = ${expr}`, { mode: "default", board: id, face });
-    if (!res.ok) { t.mode.error = res.error; renderSelection(); if (input) input.focus(); return; }
-    if (res.unchanged) renderSelection();
-  };
   for (const a of ["x", "y", "z"]) {
-    const r = rule.axes[a];
+    const r = shownCase(rule.axes[a], id, a);
+    if (!r) {
+      const lo = concreteFormula(c.prov, `${id}.${a}0`);
+      const hi = concreteFormula(c.prov, `${id}.${a}1`);
+      const rows = [`${a}0`, `${a}1`].map((f) => {
+        const text = toDisplay(f.endsWith("0") ? lo : hi);
+        return h("div", { class: "face-row" }, [
+          h("span", { class: "fname", text: FACE_NAMES[f] }),
+          h("span", { class: "fval", text: fmt(b[f]) }),
+          formulaRow(text, { face: f, drag: true }),
+        ]);
+      });
+      panel.append(h("div", { class: "mode-axis" }, [
+        h("div", { class: "axis-title" }, [h("span", { text: `${AXIS_NAMES[a]}（${a.toUpperCase()}）` })]),
+        ...rows,
+        h("div", { class: "size-row" }, [
+          h("span", { text: SIZE_NAMES[`${a}Size`] }),
+          h("span", { class: "fval", text: fmt(b[`${a}1`] - b[`${a}0`]) }),
+          formulaRow(sizeFormula(lo, hi), { drag: false }),
+        ]),
+        caseTree(id, a),
+      ]));
+      continue;
+    }
     const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
     const rows = [`${a}0`, `${a}1`].map((f) => {
       const isDrive = f === drive;
       const text = isDrive ? toDisplay(r.at) : drivenText(a, r);
-      const input = h("input", { type: "text", value: text, spellcheck: "false", title: isDrive ? "这条轴的驱动面" : "输入新公式：这一面成为驱动面，对面跟着移同样的距离" });
-      input.dataset.face = f;
-      input.addEventListener("keydown", (e) => { if (e.key === "Enter" && input.value !== text) apply(f, input.value, input); if (e.key === "Escape") { input.value = text; input.blur(); } });
-      input.addEventListener("change", () => { if (input.value !== text) apply(f, input.value, input); });
-      bindFormulaDrop(input, f, () => input.value);
-      return h("div", { class: `face-row${isDrive ? " drive" : ""}` }, [h("span", { class: "fname", text: FACE_NAMES[f] }), h("span", { class: "fval", text: fmt(b[f]) }), input]);
+      return h("div", { class: `face-row${isDrive ? " drive" : ""}` }, [
+        h("span", { class: "fname", text: FACE_NAMES[f] }),
+        h("span", { class: "fval", text: fmt(b[f]) }),
+        formulaRow(text, { face: f, drag: true }),
+      ]);
     });
     const sz = entryOf(c.prov, `${id}.${a}Size`)?.value ?? b[`${a}1`] - b[`${a}0`];
     const sticks = [`${a}0`, `${a}1`].map((f) => [f, entryOf(c.prov, `${id}.frame.${f}`)?.value]).filter(([f, v]) => v != null && Math.abs(v - b[f]) > 1e-6);
@@ -1677,8 +1878,9 @@ function renderDefaultPanel(panel) {
         h("span", { class: "muted", text: "● = 驱动面" }),
       ]),
       ...rows,
-      h("div", { class: "size-row", title: "尺寸在板件编辑里改，这里只读" }, [h("span", { text: SIZE_NAMES[`${a}Size`] }), h("span", { class: "fval", text: fmt(sz) }), h("span", { text: `= ${toDisplay(r.size)}` })]),
+      h("div", { class: "size-row", title: "尺寸在板件编辑里改，这里只读" }, [h("span", { text: SIZE_NAMES[`${a}Size`] }), h("span", { class: "fval", text: fmt(sz) }), formulaRow(r.size, { drag: false })]),
       ...(sticks.length ? [h("div", { class: "mode-note", text: `轮廓伸出了定位框：${sticks.map(([f, v]) => `${FACE_NAMES[f]}实际 ${fmt(b[f])}，定位框 ${fmt(v)}`).join("；")}。公式定的是定位框，改它整块板（连同轮廓）一起移。` })] : []),
+      caseTree(id, a),
     ]));
   }
   if (t.mode.error) panel.append(h("div", { class: "mode-err", text: `没有采用：${t.mode.error}` }));
@@ -1847,10 +2049,12 @@ function relationCandidate(kind) {
   if (kind === "contact" && move.face[1] === ref.face[1] && !move.notch && !ref.notch) {
     return { ok: false, error: `接触要两个面相向：${pickLabel(move)} 和 ${pickLabel(ref)} 朝同一个方向，只能延伸` };
   }
+  if (!t?.draft?.layout) return { ok: false, error: "这个生成器还没有放置规则文件" };
   let layout = t.draft.layout;
-  if (!layout.boards?.[move.board]?.axes?.[move.face[0]]) layout = ensureBoard(layout, move.board, seedAxes(c.boards.get(move.board), c.prov));
+  const prep = withAxis(layout, c.boards.get(move.board), move.face, c.prov);
+  layout = prep.layout;
   let next;
-  try { next = setRelation(layout, move.board, move.face, refKey, kind, gap, move.delta || 0); } catch (err) { return { ok: false, error: err.message }; }
+  try { next = setRelation(layout, move.board, move.face, refKey, kind, gap, move.delta || 0, prep.when, prep.universal); } catch (err) { return { ok: false, error: err.message }; }
   const res = generate(t.moduleId, t.params, next);
   if (res.validation?.errors?.length) return { ok: false, error: res.validation.errors.join("；") };
   const nb = res.boards.find((x) => x.id === move.board);
@@ -1908,6 +2112,7 @@ function renderFacePanel(panel) {
     h("div", { class: `pick-step${pick.step === "move" ? " active" : ""}` }, [h("span", { text: "① 移动面：" }), pick.move ? h("b", { text: pickLabel(pick.move) }) : h("span", { class: "muted", text: `在 3D 里点 ${id} 的一个面，外包面和缺口里的面都可以` })]),
     h("div", { class: `pick-step${pick.step === "ref" ? " active" : ""}` }, [h("span", { text: "② 参照面：" }), pick.ref ? h("b", { text: pickLabel(pick.ref) }) : h("span", { class: "muted", text: "点另一块板上沿同一条轴的面，包括缺口里的台阶" })]),
   );
+  if (pick.move?.face) panel.append(caseTree(id, pick.move.face[0]));
   if (pick.step === "kind") {
     const gap = h("input", { type: "number", step: "0.1", value: t.mode.gap ?? "0", title: "正数是留空隙。接触仍要求两边轮廓在这个面上重叠。" });
     gap.addEventListener("input", () => { t.mode.gap = gap.value; });
@@ -2858,9 +3063,9 @@ function placementBlock(id, b) {
     if (!expr) return;
     let layout = t.draft?.layout;
     if (!layout) return;
-    if (!layout.boards?.[id]?.axes?.[face[0]]) layout = ensureBoard(layout, id, seedAxes(b, c.prov));
+    const prep = withAxis(layout, b, face, c.prov);
     let next;
-    try { next = setFace(layout, id, face, expr); } catch (err) { t.placeError = { id, message: err.message }; renderSelection(); return; }
+    try { next = setFace(prep.layout, id, face, expr, prep.when, prep.universal); } catch (err) { t.placeError = { id, message: err.message }; renderSelection(); return; }
     t.placeError = null;
     const res = tryLayout(next, `${id}.${face} = ${expr}`, { mode: "overview", board: id, face });
     if (!res.ok) { t.placeError = { id, message: res.error }; renderSelection(); if (input) input.focus(); }
@@ -2868,6 +3073,7 @@ function placementBlock(id, b) {
   const block = h("div", {});
   for (const a of ["x", "y", "z"]) {
     const r = axes[a];
+    if (!r) continue;
     const drive = `${a}${r.from === "lo" ? "0" : "1"}`;
     const rows = [`${a}0`, `${a}1`].map((f) => {
       const isDrive = f === drive;
@@ -3568,7 +3774,7 @@ function syncToolbar() {
 }
 
 window.addEventListener("keydown", (e) => {
-  if (e.target && /^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName)) return;
+  if (e.target && (/^(INPUT|SELECT|TEXTAREA)$/.test(e.target.tagName) || e.target.isContentEditable)) return;
   if ((e.ctrlKey || e.metaKey) && (e.key === "z" || e.key === "Z")) { e.preventDefault(); draftStep(e.shiftKey ? "redo" : "undo"); return; }
   if ((e.ctrlKey || e.metaKey) && (e.key === "y" || e.key === "Y")) { e.preventDefault(); draftStep("redo"); return; }
   if (e.key === "Escape") {

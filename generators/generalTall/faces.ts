@@ -3,7 +3,7 @@
  */
 import { dim, ref } from "../_lib/dim.ts";
 import { setEdgeBand } from "../_lib/edgeBand.ts";
-import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, localRect, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
+import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, localRect, tagEdges, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
 import { resolveDeclaredJoints } from "../_lib/resolveJoints.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { RULES as R } from "./rules.ts";
@@ -69,13 +69,11 @@ export function buildTallFaces(fb: {
   for (const s of fb.ziSlots) {
     const v = B.get(s.vPanelId);
     if (!v) continue;
+    // The slot runs in from the V board's edge, so it is already cut in the outline:
+    // tag those edges (a notch). A face groove here read as 50 mm deep on a 16 mm board
+    // and the .cnjob export refused every tall cabinet.
     const r = localRect(v, { y: [s.y0, s.y1], z: [s.z0, s.z1] });
-    const left = s.vPanelId === "V1" || s.vPanelId === "V3";
-    addFeature(v, left ? "A" : "B", {
-      id: s.id, kind: "groove", ...r, depth: s.depth,
-      for: `Zi_${s.boundaryId}`,
-      source: "generalTall",
-    });
+    tagEdges(v, "notch", r, { id: s.id, for: `Zi_${s.boundaryId}`, source: "generalTall" });
   }
 
   for (const g of fb.ziGrooves) {

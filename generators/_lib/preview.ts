@@ -148,6 +148,15 @@ export interface BoardGap {
   at: number;
   /** Midpoint of the shared run on the other axis, cabinet mm. */
   cross: number;
+  /** Facing faces. Clearance runs from `aHi` to `bLo`. */
+  aHi: number;
+  bLo: number;
+  /** Centre line of each board. */
+  aMid: number;
+  bMid: number;
+  /** Shared run on the other axis. The dimension sits on the low edge of this. */
+  crossLo: number;
+  crossHi: number;
 }
 
 /**
@@ -189,6 +198,12 @@ export function boardGaps(boards: Board[]): BoardGap[] {
           center: Math.round((mid(b) - mid(a)) * 10) / 10,
           at: (hi(a) + lo(b)) / 2,
           cross: (crossLo + crossHi) / 2,
+          aHi: hi(a),
+          bLo: lo(b),
+          aMid: mid(a),
+          bMid: mid(b),
+          crossLo,
+          crossHi,
         });
       }
     }
@@ -196,15 +211,204 @@ export function boardGaps(boards: Board[]): BoardGap[] {
   return out;
 }
 
-/** One number in the gap: clearance between the faces, or centre line to centre line. */
-export function gapMarks(gaps: BoardGap[], toX: (n: number) => number, toY: (n: number) => number, scale: number, mode: "clear" | "center" = "clear"): string {
-  const center = mode === "center";
-  return gaps.map((g) => {
-    if (g.clear * scale < 16) return "";
-    const x = g.axis === "x" ? toX(g.at) : toX(g.cross);
-    const y = g.axis === "z" ? toY(g.at) : toY(g.cross);
-    return label(x, y, fmt(center ? g.center : g.clear), { size: 9, fill: center ? "#e0a34f" : "#8ec5ef" });
-  }).join("");
+export interface ColumnOpening {
+  id: string;
+  /** Stored column span: boundary to boundary. */
+  width: number;
+  /** Open distance between the two panel faces that bound the column. */
+  clear: number;
+  /** Centre of the left panel to centre of the right panel. */
+  center: number;
+}
+
+/**
+ * Each column as clearance and as centre-to-centre. Both differ from the stored
+ * width by a fixed inset of the panels, so a typed clearance and a typed centre
+ * distance change that width by the same delta, and switching the readout
+ * converts one into the other without moving the cabinet.
+ */
+export function columnOpenings(
+  columns: { id: string; x0: number; x1: number }[],
+  boards: Board[],
+): ColumnOpening[] {
+  const panels = boards.filter((b) => b.thicknessAxis === "X" && b.category !== "front_panel");
+  const r1 = (v: number) => Math.round(v * 10) / 10;
+  return columns.map((col) => {
+    const width = r1(col.x1 - col.x0);
+    const left = panels
+      .filter((p) => p.x1 <= col.x0 + 0.8 || (p.x0 - 0.2 <= col.x0 && col.x0 <= p.x1 + 0.2))
+      .sort((a, b) => (b.x0 + b.x1) - (a.x0 + a.x1))[0];
+    const right = panels
+      .filter((p) => p.x0 >= col.x1 - 0.8 || (p.x0 - 0.2 <= col.x1 && col.x1 <= p.x1 + 0.2))
+      .sort((a, b) => (a.x0 + a.x1) - (b.x0 + b.x1))[0];
+    if (!left || !right) return { id: col.id, width, clear: width, center: width };
+    return {
+      id: col.id,
+      width,
+      clear: r1(right.x0 - left.x1),
+      center: r1((right.x0 + right.x1) / 2 - (left.x0 + left.x1) / 2),
+    };
+  });
+}
+
+export interface PxBox { x0: number; y0: number; x1: number; y1: number }
+
+/** A dimension to place. Width prefers the bottom edge (`edgeLo`); height prefers the left (`edgeLo`). */
+export interface DimSpec {
+  axis: "x" | "z";
+  from: number;
+  to: number;
+  edgeLo: number;
+  edgeHi: number;
+  text: string;
+  color: string;
+  /** Lower is placed first, so it keeps the near side. */
+  priority?: number;
+}
+
+function textWidth(text: string, size = 9): number {
+  return text.length * size * 0.62 + 4;
+}
+
+function hits(a: PxBox, b: PxBox, pad = 3): boolean {
+  return a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
+}
+
+/**
+ * One dimension bar. `side` -1 pulls a width bar up off its edge and a height
+ * bar to the left; +1 drops a width bar down and a height bar to the right.
+ * The number sits on the inner side of the bar. `toY` is z-up.
+ */
+function paintDim(
+  toX: (n: number) => number,
+  toY: (n: number) => number,
+  spec: DimSpec,
+  edge: number,
+  side: 1 | -1,
+  offsetPx: number,
+  along: number,
+): { svg: string; box: PxBox } | null {
+  if (!(Math.abs(spec.to - spec.from) > 0.4)) return null;
+  const tick = 3.5;
+  const color = spec.color;
+  const halo = `fill="${color}" stroke="${PV.bg}" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round"`;
+  const w = textWidth(spec.text);
+  const h = 12;
+  if (spec.axis === "x") {
+    const x0 = toX(Math.min(spec.from, spec.to));
+    const x1 = toX(Math.max(spec.from, spec.to));
+    if (x1 - x0 < 18) return null;
+    const yEdge = toY(edge);
+    const y = yEdge + side * offsetPx;
+    const textY = y + side * 8;
+    const mid = (x0 + x1) / 2 + along;
+    if (mid < x0 || mid > x1) return null;
+    const svg = `<g pointer-events="none" stroke="${color}">` +
+      `<line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" />` +
+      `<line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" />` +
+      `<line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" />` +
+      `<line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" />` +
+      `<line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" />` +
+      `<text x="${px(mid)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>` +
+      `</g>`;
+    return { svg, box: { x0: mid - w / 2, y0: textY - h / 2, x1: mid + w / 2, y1: textY + h / 2 } };
+  }
+  const y0 = toY(Math.max(spec.from, spec.to));
+  const y1 = toY(Math.min(spec.from, spec.to));
+  if (y1 - y0 < 18) return null;
+  const xEdge = toX(edge);
+  const x = xEdge + side * offsetPx;
+  const textX = x + side * 5;
+  const mid = (y0 + y1) / 2 + along;
+  if (mid < y0 || mid > y1) return null;
+  const anchor = side > 0 ? "start" : "end";
+  const svg = `<g pointer-events="none" stroke="${color}">` +
+    `<line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" />` +
+    `<line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" />` +
+    `<line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" />` +
+    `<line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" />` +
+    `<line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" />` +
+    `<text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text>` +
+    `</g>`;
+  const box = side > 0
+    ? { x0: textX, y0: mid - h / 2, x1: textX + w, y1: mid + h / 2 }
+    : { x0: textX - w, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
+  return { svg, box };
+}
+
+/**
+ * Place every bar so the numbers do not overlap. A width bar starts just above
+ * its bottom edge, a height bar just inside its left edge. A number that would
+ * land on another moves to the opposite edge, and only then steps further out.
+ */
+export function layoutDimensions(
+  specs: DimSpec[],
+  toX: (n: number) => number,
+  toY: (n: number) => number,
+  avoid: PxBox[] = [],
+): string {
+  const occupied = avoid.map((b) => ({ ...b }));
+  const order = specs
+    .map((spec, i) => ({ spec, i }))
+    .sort((a, b) => (a.spec.priority ?? 1) - (b.spec.priority ?? 1) || Math.abs(a.spec.to - a.spec.from) - Math.abs(b.spec.to - b.spec.from));
+  const out: string[] = [];
+  for (const { spec } of order) {
+    // Width: -1 is above the bottom edge. Height: +1 is inside the left edge.
+    const preferred = spec.axis === "x" ? -1 : 1;
+    const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
+    let placed: { svg: string; box: PxBox } | null = null;
+    for (const offset of [16, 58]) {
+      for (const side of [preferred, -preferred] as const) {
+        const edge = side === preferred ? spec.edgeLo : spec.edgeHi;
+        for (const along of alongs) {
+          const attempt = paintDim(toX, toY, spec, edge, side, offset, along);
+          if (!attempt) continue;
+          if (occupied.some((box) => hits(attempt.box, box))) continue;
+          placed = attempt;
+          break;
+        }
+        if (placed) break;
+      }
+      if (placed) break;
+    }
+    if (!placed) placed = paintDim(toX, toY, spec, spec.edgeLo, preferred as 1 | -1, 16, 0);
+    if (!placed) continue;
+    occupied.push(placed.box);
+    out.push(placed.svg);
+  }
+  return out.join("");
+}
+
+/**
+ * The openings for one readout. Clearance runs face to face. Centre to centre
+ * runs centre line to centre line. Only the selected one is drawn.
+ */
+export function gapMarks(
+  gaps: BoardGap[],
+  toX: (n: number) => number,
+  toY: (n: number) => number,
+  scale: number,
+  mode: "clear" | "center" = "clear",
+  opts: { extra?: DimSpec[]; avoid?: PxBox[] } = {},
+): string {
+  const kind = mode === "center" ? "center" : "clear";
+  const color = kind === "center" ? "#e0a34f" : "#8ec5ef";
+  const specs: DimSpec[] = gaps
+    .map((g) => {
+      const from = kind === "center" ? g.aMid : g.aHi;
+      const to = kind === "center" ? g.bMid : g.bLo;
+      return {
+        axis: g.axis,
+        from,
+        to,
+        edgeLo: g.crossLo,
+        edgeHi: g.crossHi,
+        text: fmt(kind === "center" ? g.center : g.clear),
+        color,
+      };
+    })
+    .filter((s) => Math.abs(s.to - s.from) * scale >= 18);
+  return layoutDimensions([...specs, ...(opts.extra ?? [])], toX, toY, opts.avoid ?? []);
 }
 
 export function svgRoot(width: number, height: number, data: Record<string, number>, aria: string, body: string): string {

@@ -2,20 +2,69 @@
 // and describes its envelope: which params are the outer W/D/H and which
 // divider handles exist. The renderer only reads this; formulas stay in the
 // generators.
-import { generateSmallCabinet, generateSmallCabinetSvgPreview } from "./gen/smallCabinet.js";
-import { generateBedroom, generateBedroomSvgPreview, setLayout as setBedroomLayout, layoutLimits as bedroomLayoutLimits, bedBoxSizeFor, setOhcBoundary as setBedroomOhcBoundary, equalOhcZones as bedroomEqualOhcZones, LAYOUT_KEYS as BEDROOM_LAYOUT_KEYS, RULES as BEDROOM_RULES, WARDROBE_STYLES as BEDROOM_WARDROBE_STYLES } from "./gen/bedroom.js";
-import { generateBedroomEast, eastWardrobeMax, eastEqualBays, eastSetBayBoundary, eastOhcBottomLimits, RULES as EAST_RULES } from "./gen/bedroomEast.js";
-import { generateBedBox, BED_BOX_DEFAULT_HEIGHT, BED_BOX_MIN, RULES as BED_BOX_RULES } from "./gen/bedBox.js";
-import { generateBedSideTable, generateBedSideSvg, shelfLimits as bedSideShelfLimits, mirrorZoneType as mirrorBedSideZone, RULES as BED_SIDE_RULES } from "./gen/bedSideTable.js";
-import { generateBunkBed, bunkUpperLimits, bunkMinSize, RULES as BUNK_RULES } from "./gen/bunkBed.js";
-import { generateOverheadCabinet, generateOHCSvgPreview } from "./gen/overheadCabinet.js";
-import { generateUShapeOverhead } from "./gen/uShapeOverhead.js";
-import { generateKitchenCabinet, generateKitchenSvgPreview, RULES as KITCHEN_RULES } from "./gen/kitchen.js";
-import { fitTallCabinetHeight, fridgeCabinetWidth, generateGeneralTall, generateGTSvgPreview, GT_UI_PRESETS } from "./gen/generalTall.js";
-import { generateLounge, generateLoungeSvgPreview, loungeFootprintBoxes } from "./gen/lounge.js";
+import * as smallMod from "./gen/smallCabinet.js";
+import * as bedroomMod from "./gen/bedroom.js";
+import * as bedroomEastMod from "./gen/bedroomEast.js";
+import * as bedBoxMod from "./gen/bedBox.js";
+import * as bedSideMod from "./gen/bedSideTable.js";
+import * as bunkMod from "./gen/bunkBed.js";
+import * as overheadMod from "./gen/overheadCabinet.js";
+import * as uShapeMod from "./gen/uShapeOverhead.js";
+import * as kitchenMod from "./gen/kitchen.js";
+import * as tallMod from "./gen/generalTall.js";
+import * as loungeMod from "./gen/lounge.js";
+let generateSmallCabinet = smallMod.generateSmallCabinet;
+let generateSmallCabinetSvgPreview = smallMod.generateSmallCabinetSvgPreview;
+let generateBedroom = bedroomMod.generateBedroom;
+let generateBedroomSvgPreview = bedroomMod.generateBedroomSvgPreview;
+let setBedroomLayout = bedroomMod.setLayout;
+let bedroomLayoutLimits = bedroomMod.layoutLimits;
+let bedBoxSizeFor = bedroomMod.bedBoxSizeFor;
+let setBedroomOhcBoundary = bedroomMod.setOhcBoundary;
+let bedroomEqualOhcZones = bedroomMod.equalOhcZones;
+let BEDROOM_LAYOUT_KEYS = bedroomMod.LAYOUT_KEYS;
+let BEDROOM_RULES = bedroomMod.RULES;
+let BEDROOM_WARDROBE_STYLES = bedroomMod.WARDROBE_STYLES;
+let generateBedroomEast = bedroomEastMod.generateBedroomEast;
+let eastWardrobeMax = bedroomEastMod.eastWardrobeMax;
+let eastEqualBays = bedroomEastMod.eastEqualBays;
+let eastSetBayBoundary = bedroomEastMod.eastSetBayBoundary;
+let eastOhcBottomLimits = bedroomEastMod.eastOhcBottomLimits;
+let EAST_RULES = bedroomEastMod.RULES;
+let generateBedBox = bedBoxMod.generateBedBox;
+let BED_BOX_DEFAULT_HEIGHT = bedBoxMod.BED_BOX_DEFAULT_HEIGHT;
+let BED_BOX_MIN = bedBoxMod.BED_BOX_MIN;
+let BED_BOX_RULES = bedBoxMod.RULES;
+let generateBedSideTable = bedSideMod.generateBedSideTable;
+let generateBedSideSvg = bedSideMod.generateBedSideSvg;
+let bedSideShelfLimits = bedSideMod.shelfLimits;
+let mirrorBedSideZone = bedSideMod.mirrorZoneType;
+let BED_SIDE_RULES = bedSideMod.RULES;
+let generateBunkBed = bunkMod.generateBunkBed;
+let bunkUpperLimits = bunkMod.bunkUpperLimits;
+let bunkMinSize = bunkMod.bunkMinSize;
+let BUNK_RULES = bunkMod.RULES;
+let generateOverheadCabinet = overheadMod.generateOverheadCabinet;
+let generateOHCSvgPreview = overheadMod.generateOHCSvgPreview;
+let generateOHCFrontView = overheadMod.generateOHCFrontView;
+let ohcZoneOpenings = overheadMod.ohcZoneOpenings;
+let generateUShapeOverhead = uShapeMod.generateUShapeOverhead;
+let generateKitchenCabinet = kitchenMod.generateKitchenCabinet;
+let generateKitchenSvgPreview = kitchenMod.generateKitchenSvgPreview;
+let KITCHEN_RULES = kitchenMod.RULES;
+let fitTallCabinetHeight = tallMod.fitTallCabinetHeight;
+let fridgeCabinetWidth = tallMod.fridgeCabinetWidth;
+let generateGeneralTall = tallMod.generateGeneralTall;
+let generateGTSvgPreview = tallMod.generateGTSvgPreview;
+let gtZoneOpenings = tallMod.gtZoneOpenings;
+let GT_UI_PRESETS = tallMod.GT_UI_PRESETS;
+let generateLounge = loungeMod.generateLounge;
+let generateLoungeSvgPreview = loungeMod.generateLoungeSvgPreview;
+let loungeFootprintBoxes = loungeMod.loungeFootprintBoxes;
 import { clearHeightAt, maxClearHeight } from "./spaces.js";
 import { benchTopColor, builtInFinish, builtInStock, cabinetColor, thickness } from "./materials.js";
-import { generateSketchBoard } from "./gen/sketchBoard.js";
+import * as sketchMod from "./gen/sketchBoard.js";
+let generateSketchBoard = sketchMod.generateSketchBoard;
 import { localBoxOf } from "./sketchBoard.js";
 
 function materialsOf(materials) {
@@ -27,6 +76,41 @@ function materialsOf(materials) {
 
 export const MIN_ZONE_HEIGHT = 60;
 const round1 = (v) => Math.round(v * 10) / 10;
+
+/** Which column a kitchen width change grows or shrinks, remembered for this session. */
+const kitchenWidthColumn = new Map();
+export function getKitchenWidthColumn(id) {
+  const n = kitchenWidthColumn.get(id);
+  return Number.isInteger(n) ? n : null;
+}
+export function setKitchenWidthColumn(id, index) {
+  if (index == null) kitchenWidthColumn.delete(id);
+  else kitchenWidthColumn.set(id, index);
+}
+
+function kitchenBenchRise(params) {
+  return params && (params.benchTopColorName || params.benchTopColor) ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
+}
+function kitchenWaterfall(params) {
+  return params?.waterfall === "left" || params?.waterfall === "right" ? params.waterfall : null;
+}
+/** The kitchen's waterfall end (left | right) or null. */
+export function kitchenWaterfallSide(params) { return kitchenWaterfall(params); }
+/** Bench stock thickness: the bench top's rise and a waterfall's thickness. */
+export function kitchenBenchThickness() { return KITCHEN_RULES.BENCH_THICKNESS_MM.value; }
+/** A kitchen with a bench top colour builds a bench top (and may build a waterfall). */
+export function kitchenBenchOn(params) { return !!(params && (params.benchTopColorName || params.benchTopColor)); }
+
+/** The overhead's door-stock end panel (a converted partition): which end, or null. */
+export function overheadEndPanel(params) {
+  return params?.endPanel === "left" || params?.endPanel === "right" ? params.endPanel : null;
+}
+/** Its thickness inside the overhead's outer width: the door stock, else 0. */
+export function overheadEndPanelThickness(params) {
+  if (!overheadEndPanel(params)) return 0;
+  const t = Number(params.frontPanelThickness);
+  return Number.isFinite(t) && t > 0 ? t : 16;
+}
 
 /** Envelope dimension along a local axis. */
 export const DIM_OF_AXIS = { x: "W", y: "D", z: "H" };
@@ -122,9 +206,13 @@ const smallCabinet = {
     };
   },
 
-  generate(params) {
-    return generateSmallCabinet(params);
+  generate(params, options) {
+    return generateSmallCabinet(params, options);
   },
+  benchSwitches: [
+    { key: "leftSide", label: "左侧板", options: [["door", "门板"], ["carcass", "柜身"]], get: (p) => p.leftSideDoorColor ? "door" : "carcass", set: (p, v) => ({ ...p, leftSideDoorColor: v === "door" }) },
+    { key: "rightSide", label: "右侧板", options: [["door", "门板"], ["carcass", "柜身"]], get: (p) => p.rightSideDoorColor ? "door" : "carcass", set: (p, v) => ({ ...p, rightSideDoorColor: v === "door" }) },
+  ],
 
   frontView(result, { selectedZoneId = null } = {}) {
     return generateSmallCabinetSvgPreview(result, { selectedZoneId });
@@ -266,9 +354,13 @@ const bedroom = {
     };
   },
 
-  generate(params) {
-    return generateBedroom(params);
+  generate(params, options) {
+    return generateBedroom(params, options);
   },
+  benchSwitches: [
+    { key: "style", label: "衣柜门", options: [["style1", "样式 1"], ["nook", "壁龛"]], get: (p) => p.style === "nook" ? "nook" : "style1", set: (p, v) => ({ ...p, style: v }) },
+    { key: "ledGroove", label: "灯槽", options: [["on", "开"], ["off", "关"]], get: (p) => p.ledGroove === false ? "off" : "on", set: (p, v) => ({ ...p, ledGroove: v === "on" }) },
+  ],
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedRegion` is outlined. */
   frontView(result, { selectedRegion = null, gaps = "clear" } = {}) {
@@ -452,8 +544,8 @@ const bedBox = {
       colorSlot: color.colorSlot,
     };
   },
-  generate(params) {
-    return generateBedBox(params);
+  generate(params, options) {
+    return generateBedBox(params, options);
   },
   envelope(params) {
     return { W: params.width, D: params.depth, H: params.height };
@@ -539,9 +631,12 @@ const bunkBed = {
       frontPanelThickness: 0, // the front partition is inside the depth
     };
   },
-  generate(params) {
-    return generateBunkBed(params);
+  generate(params, options) {
+    return generateBunkBed(params, options);
   },
+  benchSwitches: [
+    { key: "endSide", label: "梯子一侧", options: [["RIGHT", "右"], ["LEFT", "左"]], get: (p) => p.endSide === "LEFT" ? "LEFT" : "RIGHT", set: (p, v) => ({ ...p, endSide: v }) },
+  ],
   envelope(params) {
     return { W: params.length, D: params.depth, H: params.height };
   },
@@ -616,7 +711,12 @@ const bedSideTable = {
       colorSlot: color.colorSlot,
     };
   },
-  generate(params) { return generateBedSideTable(params); },
+  generate(params, options) { return generateBedSideTable(params, options); },
+  benchSwitches: [
+    { key: "side", label: "靠床一侧", options: [["left", "左"], ["right", "右"]], get: (p) => p.side === "right" ? "right" : "left", set: (p, v) => ({ ...p, side: v }) },
+    { key: "lower", label: "下层", options: [["left_door", "左开门"], ["right_door", "右开门"], ["drawer", "抽屉"]], get: (p) => p.zones?.[0]?.type || "left_door", set: (p, v) => { const zones = (p.zones || [{}, {}]).map((z) => ({ ...z })); zones[0] = { ...(zones[0] || {}), type: v }; return { ...p, zones }; } },
+    { key: "upper", label: "上层", options: [["drawer", "抽屉"], ["left_door", "左开门"], ["right_door", "右开门"]], get: (p) => p.zones?.[1]?.type || "drawer", set: (p, v) => { const zones = (p.zones || [{}, {}]).map((z) => ({ ...z })); zones[1] = { ...(zones[1] || {}), type: v }; return { ...p, zones }; } },
+  ],
   frontView(result) { return generateBedSideSvg(result); },
   envelope(params) { return { W: params.width, D: params.depth, H: params.height }; },
   setEnvelope(params, { W, D, H }) {
@@ -791,22 +891,46 @@ const overheadCabinet = {
       { key: "rangehoodAlignment", label: "开孔靠", kind: "select", options: [["left", "左侧"], ["right", "右侧"]] },
     ] },
   ],
+  benchSwitches: [
+    { key: "style", label: "样式", options: [["style_1", "样式 1"], ["style_2", "样式 2"]], get: (p) => p.style === "style_2" ? "style_2" : "style_1", set: (p, v) => ({ ...p, style: v }) },
+    { key: "ledGroove", label: "灯槽", options: [["on", "开"], ["off", "关"]], get: (p) => p.ledGroove === false ? "off" : "on", set: (p, v) => ({ ...p, ledGroove: v === "on" }) },
+    { key: "rangehoodAlignment", label: "油烟机靠", options: [["left", "左侧"], ["right", "右侧"]], get: (p) => p.rangehoodAlignment === "right" ? "right" : "left", set: (p, v) => ({ ...p, rangehoodAlignment: v }) },
+  ],
 
-  /** 2D front elevation (SVG markup) from the last generation; `selectedZoneIndex` is outlined. */
+  /**
+   * 2D front elevation (SVG markup) from the last generation, in the kitchen's look: boards on the
+   * dark ground, openings on the edges, `selectedZoneIndex` washed blue, the number under each zone typed in the panel.
+   */
   frontView(result, { selectedZoneIndex = -1, gaps = "clear" } = {}) {
-    const geo = result?.debug?.legacyGeometry;
-    if (!geo) return null;
-    return generateOHCSvgPreview(geo, { selectedZoneIndex, showDimensions: true, gaps });
+    if (!result?.boards?.length) return null;
+    return generateOHCFrontView(result, { selectedZoneIndex, showDimensions: true, gaps });
   },
 
+  /** Per zone: stored span (boundary to boundary), clearance (face to face) and centre to centre, from the emitted boards. */
+  zoneOpenings(result) {
+    return result?.boards?.length ? ohcZoneOpenings(result) : [];
+  },
+
+  /**
+   * The outer box. An end panel (`endPanel` left | right, door stock outside the end
+   * divider — a converted partition) is inside W; the carcass frame does not move,
+   * so on the left the box starts at −FPT.
+   */
   envelope(params) {
-    return { W: params.cabinetWidth, D: params.cabinetDepth, H: params.cabinetHeight };
+    return { W: round1(params.cabinetWidth + overheadEndPanelThickness(params)), D: params.cabinetDepth, H: params.cabinetHeight };
+  },
+
+  localBox(params) {
+    const env = this.envelope(params);
+    const fpt = params.frontPanelThickness ?? 16;
+    const x0 = params.endPanel === "left" ? -overheadEndPanelThickness(params) : 0;
+    return { x0, x1: round1(x0 + env.W), y0: -fpt, y1: env.D, z0: 0, z1: env.H, W: env.W, D: env.D, H: env.H, fpt };
   },
 
   setEnvelope(params, { W, D, H }) {
     const next = { ...params };
     if (W != null) {
-      next.cabinetWidth = round1(W);
+      next.cabinetWidth = round1(W - overheadEndPanelThickness(params));
       next.zones = fitZoneWidths(params.zones || [], next.cabinetWidth);
     }
     if (D != null) next.cabinetDepth = round1(D);
@@ -820,12 +944,13 @@ const overheadCabinet = {
   resizeFace(params, side, size) {
     if (side.axis !== "x") return this.setEnvelope(params, { [DIM_OF_AXIS[side.axis]]: size });
     const zones = params.zones || [];
-    const next = resizeRow(zones, side, size - params.cabinetWidth, {
+    const ep = overheadEndPanelThickness(params);
+    const next = resizeRow(zones, side, size - (params.cabinetWidth + ep), {
       key: "width",
       min: MIN_ZONE_WIDTH,
       make: (width) => ({ id: freshId("zone-", zones.map((z) => z.id)), type: "up_flap", width }),
     });
-    return next ? { ...params, cabinetWidth: round1(size), zones: next } : null;
+    return next ? { ...params, cabinetWidth: round1(size - ep), zones: next } : null;
   },
 
   /** Zone boundaries: vertical lines on the front face at local x (left → right). */
@@ -908,9 +1033,13 @@ const uShapeOverheadCabinet = {
     };
   },
 
-  generate(params) {
-    return generateUShapeOverhead(params);
+  generate(params, options) {
+    return generateUShapeOverhead(params, options);
   },
+  benchSwitches: [
+    { key: "ledGroove", label: "灯槽", options: [["off", "关"], ["on", "开"]], get: (p) => p.ledGroove === true ? "on" : "off", set: (p, v) => ({ ...p, ledGroove: v === "on" }) },
+    { key: "rangehoodAlignment", label: "油烟机靠", options: [["left", "左侧"], ["right", "右侧"]], get: (p) => p.rangehoodAlignment === "right" ? "right" : "left", set: (p, v) => ({ ...p, rangehoodAlignment: v }) },
+  ],
 
   envelope(params) {
     return {
@@ -960,6 +1089,26 @@ export function isBaseCabinet(moduleId) {
   return moduleId === "kitchenCabinet" || moduleId === "ensuiteCabinet";
 }
 
+function kitchenEndColumn(params, side) {
+  const cols = params?.columns || [];
+  return side === "left" ? cols[0] : cols[cols.length - 1];
+}
+function kitchenSideFront(params, side) {
+  const col = kitchenEndColumn(params, side);
+  const key = side === "left" ? "leftSidePanelOptions" : "rightSidePanelOptions";
+  const zone = (col?.zones || []).find((z) => z[key]) || col?.zones?.[0];
+  return zone?.[key]?.frontVisible === true;
+}
+function kitchenSetSideFront(params, side, on) {
+  const next = structuredClone(params);
+  const col = kitchenEndColumn(next, side);
+  if (!col?.zones?.length) return next;
+  const key = side === "left" ? "leftSidePanelOptions" : "rightSidePanelOptions";
+  const zone = col.zones.find((z) => ["left_door", "right_door", "double_door", "drawer", "down_flap"].includes(z.zoneType)) || col.zones[0];
+  zone[key] = { ...(zone[key] || {}), panelType: on ? "door" : "carcass", frontVisible: on };
+  return next;
+}
+
 const kitchenCabinet = {
   id: "kitchenCabinet",
   label: "Kitchen",
@@ -973,8 +1122,10 @@ const kitchenCabinet = {
     const color = cabinetColor(finish, "B");
     const bench = benchTopColor(finish);
     const bch = 70;
+    const rise = KITCHEN_RULES.BENCH_THICKNESS_MM.value;
+    const carcassH = round1(Math.max(H - rise, bch + MIN_ZONE_HEIGHT));
     return {
-      globalSettings: { length: round1(W), depth: round1(D), height: round1(H) },
+      globalSettings: { length: round1(W), depth: round1(D), height: carcassH },
       benchTopColor: bench.name,
       benchTopColorName: bench.name,
       materialThickness: thickness(stock, "carcass"),
@@ -992,7 +1143,7 @@ const kitchenCabinet = {
         {
           id: "c1",
           width: round1(W),
-          zones: [{ id: "z1", height: round1(H - bch), zoneType: "left_door" }],
+          zones: [{ id: "z1", height: round1(carcassH - bch), zoneType: "left_door" }],
         },
       ],
       wheelAvoidances: [],
@@ -1000,8 +1151,8 @@ const kitchenCabinet = {
     };
   },
 
-  generate(params) {
-    return generateKitchenCabinet(params);
+  generate(params, options) {
+    return generateKitchenCabinet(params, options);
   },
 
   /** 2D front elevation (SVG markup) from the last generation; `selectedZoneId` is outlined. */
@@ -1011,13 +1162,14 @@ const kitchenCabinet = {
 
   envelope(params) {
     const gs = params.globalSettings || {};
-    return { W: gs.length, D: gs.depth, H: gs.height };
+    const fall = kitchenWaterfall(params) ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
+    return { W: (gs.length || 0) + fall, D: gs.depth, H: (gs.height || 0) + kitchenBenchRise(params) };
   },
 
   /**
-   * The drawn box. Without a bench top it matches the default envelope
-   * (doors hang at −16 unless the cabinet stored frontPanelThickness).
-   * With one, the front grows by the overhang and the top by the slab.
+   * The drawn box. The height includes the bench top. A waterfall's 25 mm
+   * is inside the width; the carcass sits inboard of it. The front still
+   * grows by the bench overhang.
    */
   localBox(params) {
     const env = this.envelope(params);
@@ -1026,34 +1178,47 @@ const kitchenCabinet = {
     const doorT = Number.isFinite(door) && door > 0 ? door : fpt;
     const bench = !!(params && (params.benchTopColorName || params.benchTopColor));
     const over = bench ? KITCHEN_RULES.BENCH_FRONT_OVERHANG_MM.value : 0;
-    const rise = bench ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
     return {
       x0: 0, x1: env.W,
       y0: bench ? -(doorT + over) : -fpt,
       y1: env.D,
-      z0: 0, z1: env.H + rise,
-      W: env.W, D: env.D, H: env.H + rise, fpt,
+      z0: 0, z1: env.H,
+      W: env.W, D: env.D, H: env.H, fpt,
     };
   },
 
-  setEnvelope(params, { W, D, H }) {
+  setEnvelope(params, { W, D, H }, opts = {}) {
     const next = structuredClone(params);
     const gs = next.globalSettings;
+    const rise = kitchenBenchRise(next);
+    const fall = kitchenWaterfall(next) ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
     if (W != null) {
-      gs.length = round1(W);
-      if (next.columns?.length === 1) {
-        next.columns[0].width = round1(W);
-      } else if (next.columns?.length) {
-        // 多列：按比例缩放列宽，保持列数（末列吸收取整余量）
-        next.columns = fitZoneWidths(next.columns, round1(W));
+      const carcass = round1(W - fall);
+      const delta = round1(carcass - gs.length);
+      gs.length = carcass;
+      next.wheelAvoidances = (next.wheelAvoidances || []).map((a) =>
+        /^wa-\d+-[LR]$/.test(String(a.id)) ? a : { ...a, x0: 0, x1: carcass },
+      );
+      const cols = next.columns || [];
+      if (cols.length === 1) {
+        cols[0].width = carcass;
+      } else if (cols.length && opts.column != null && cols[opts.column]) {
+        const w = round1((cols[opts.column].width || 0) + delta);
+        if (w < MIN_ZONE_WIDTH) return null;
+        cols[opts.column].width = w;
+      } else if (cols.length) {
+        const fitted = fitZoneWidths(cols, carcass);
+        if (!fitted) return null;
+        next.columns = fitted;
       }
     }
     if (D != null) gs.depth = round1(D);
     if (H != null) {
-      gs.height = round1(H);
+      const carcassH = round1(H - rise);
+      gs.height = carcassH;
       const bch = next.bottomClearanceHeight ?? 70;
-      const zoneSum = round1(H - bch);
-      // 各列区和按原比例缩放到新 H − BCH
+      const zoneSum = round1(carcassH - bch);
+      // 各列区和按原比例缩放到新的柜身高 − BCH
       for (const col of next.columns ?? []) {
         const oldSum = (col.zones ?? []).reduce((a, z) => a + (z.height || 0), 0);
         if (oldSum > 0 && (col.zones ?? []).length) {
@@ -1076,24 +1241,27 @@ const kitchenCabinet = {
 
   resizeFaces: ["x-", "x+", "y-", "y+", "z+"],
   /**
-   * Side faces: a pull adds a door column (left_door on the left face, right_door on the right, once it is
-   * MIN_ZONE_WIDTH), a push trims the end column and merges one too narrow into its neighbour.
-   * Top face: the same on every column's top zone (a left_door, MIN_ZONE_HEIGHT).
+   * Side faces: a pull adds a door column, unless a column was chosen — then
+   * that column takes the whole change. Top face: the same on every column's
+   * top zone. Height is the outer height, bench top included.
    */
-  resizeFace(params, side, size) {
+  resizeFace(params, side, size, opts = {}) {
     const gs = params.globalSettings || {};
     if (side.axis === "y") return this.setEnvelope(params, { D: size });
     const columns = params.columns || [];
     if (side.axis === "x") {
+      if (opts.column != null) return this.setEnvelope(params, { W: size }, { column: opts.column });
+      const fall = kitchenWaterfall(params) ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
       const zoneH = round1((gs.height ?? 0) - (params.bottomClearanceHeight ?? 70));
-      const next = resizeRow(columns, side, size - gs.length, {
+      const next = resizeRow(columns, side, size - ((gs.length ?? 0) + fall), {
         key: "width",
         min: MIN_ZONE_WIDTH,
         make: (width) => ({ id: freshId("c", columns.map((c) => c.id)), width, zones: [{ id: "z1", height: zoneH, zoneType: side.dir < 0 ? "left_door" : "right_door" }] }),
       });
-      return next ? { ...params, globalSettings: { ...gs, length: round1(size) }, columns: next } : null;
+      return next ? { ...params, globalSettings: { ...gs, length: round1(size - fall) }, columns: next } : null;
     }
-    const delta = size - gs.height;
+    const rise = kitchenBenchRise(params);
+    const delta = size - ((gs.height ?? 0) + rise);
     const next = [];
     for (const col of columns) {
       const zones = col.zones || [];
@@ -1105,7 +1273,7 @@ const kitchenCabinet = {
       if (!z) return null;
       next.push({ ...col, zones: z });
     }
-    return { ...params, globalSettings: { ...gs, height: round1(size) }, columns: next };
+    return { ...params, globalSettings: { ...gs, height: round1((gs.height ?? 0) + delta) }, columns: next };
   },
 
   /** Column boundary `index` (between columns index / index+1) moves to local x = pos; the two columns trade width. */
@@ -1114,7 +1282,8 @@ const kitchenCabinet = {
     const left = columns[index];
     const right = columns[index + 1];
     if (!left || !right) return params;
-    const x0 = columns.slice(0, index).reduce((s, c) => s + (c.width || 0), 0);
+    const inset = kitchenWaterfall(params) === "left" ? KITCHEN_RULES.BENCH_THICKNESS_MM.value : 0;
+    const x0 = inset + columns.slice(0, index).reduce((s, c) => s + (c.width || 0), 0);
     const total = round1((left.width || 0) + (right.width || 0));
     const x = Math.max(x0 + MIN_ZONE_WIDTH, Math.min(x0 + total - MIN_ZONE_WIDTH, Math.round(pos)));
     left.width = round1(x - x0);
@@ -1170,6 +1339,30 @@ const kitchenCabinet = {
     ] },
     { group: "列和行", kind: "columns" },
   ],
+  /**
+   * Switches already on this cabinet. The bench shows one only when flipping
+   * it changes the face being edited.
+   */
+  benchSwitches: [
+    {
+      key: "bottomClearanceStyle", label: "踢脚",
+      options: [["style_1", "内凹"], ["style_2", "齐平"]],
+      get: (p) => p.bottomClearanceStyle || "style_1",
+      set: (p, v) => ({ ...p, bottomClearanceStyle: v }),
+    },
+    {
+      key: "leftFront", label: "左侧板",
+      options: [["door", "门板"], ["carcass", "柜身"]],
+      get: (p) => kitchenSideFront(p, "left") ? "door" : "carcass",
+      set: (p, v) => kitchenSetSideFront(p, "left", v === "door"),
+    },
+    {
+      key: "rightFront", label: "右侧板",
+      options: [["door", "门板"], ["carcass", "柜身"]],
+      get: (p) => kitchenSideFront(p, "right") ? "door" : "carcass",
+      set: (p, v) => kitchenSetSideFront(p, "right", v === "door"),
+    },
+  ],
 };
 
 /**
@@ -1183,8 +1376,8 @@ const ensuiteCabinet = {
   label: "Ensuite",
   sub: "vanity · no stove",
   zoneTypes: BASE_ZONE_TYPES,
-  generate(params) {
-    return generateKitchenCabinet({ ...params, baseKind: "ensuite" });
+  generate(params, options) {
+    return generateKitchenCabinet({ ...params, baseKind: "ensuite" }, options);
   },
 };
 
@@ -1196,6 +1389,26 @@ function tallDoorThickness(p) {
 const hasFridge = (params) => (params?.zones || []).some((z) => z.type === "fridge");
 const TALL_STORAGE_PRESETS = GT_UI_PRESETS.filter((pr) => !hasFridge(pr.params));
 const TALL_FRIDGE_PRESETS = GT_UI_PRESETS.filter((pr) => hasFridge(pr.params));
+
+function tallSideValue(p, side) {
+  const t = Number(side === "left" ? p.leftSidePanelThickness : p.rightSidePanelThickness) || 0;
+  if (!(t > 0)) return "none";
+  const finish = side === "left" ? p.leftSidePanelFinish : p.rightSidePanelFinish;
+  return finish === "colour" ? "colour" : "carcass";
+}
+function tallSetSide(p, side, v) {
+  const next = { ...p };
+  const tk = side === "left" ? "leftSidePanelThickness" : "rightSidePanelThickness";
+  const fk = side === "left" ? "leftSidePanelFinish" : "rightSidePanelFinish";
+  if (v === "none") { next[tk] = 0; return next; }
+  if (!(Number(next[tk]) > 0)) next[tk] = next.panelThickness || 16;
+  next[fk] = v === "colour" ? "colour" : "carcass";
+  return next;
+}
+const TALL_BENCH_SWITCHES = [
+  { key: "leftSide", label: "左侧板", options: [["none", "无"], ["carcass", "柜身"], ["colour", "门板色"]], get: (p) => tallSideValue(p, "left"), set: (p, v) => tallSetSide(p, "left", v) },
+  { key: "rightSide", label: "右侧板", options: [["none", "无"], ["carcass", "柜身"], ["colour", "门板色"]], get: (p) => tallSideValue(p, "right"), set: (p, v) => tallSetSide(p, "right", v) },
+];
 
 const generalTallCabinet = {
   id: "generalTallCabinet",
@@ -1248,9 +1461,10 @@ const generalTallCabinet = {
     }
     return fitTallCabinetHeight({ ...base, zones: zoneSets[2] }, H);
   },
-  generate(params) {
-    return generateGeneralTall(params);
+  generate(params, options) {
+    return generateGeneralTall(params, options);
   },
+  benchSwitches: TALL_BENCH_SWITCHES,
 
   /** Named cabinets from generators/generalTall/presets.json (`ui: true`, no fridge); every board is pinned there. */
   presets: TALL_STORAGE_PRESETS,
@@ -1515,9 +1729,10 @@ const tallFridgeCabinet = {
     };
     return fridgeFix(base, { H });
   },
-  generate(params) {
-    return generateGeneralTall(params);
+  generate(params, options) {
+    return generateGeneralTall(params, options);
   },
+  benchSwitches: TALL_BENCH_SWITCHES,
 
   presets: TALL_FRIDGE_PRESETS,
   applyPreset(params, presetId) {
@@ -1527,8 +1742,18 @@ const tallFridgeCabinet = {
     return tallPresetOf(TALL_FRIDGE_PRESETS, params);
   },
 
-  frontView(result, { selectedZoneId = null, gaps = "clear" } = {}) {
-    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true, gaps });
+  /**
+   * The fridge page's elevation: taller than the storage tall's (the cabinet is tall and narrow, so
+   * the height is what limits the drawing), and the numbers beside it are the Clearance / Centre to
+   * centre reading, typed in place for the zones you may resize.
+   */
+  frontView(result, { selectedZoneId = null, gaps = "clear", editable = false } = {}) {
+    return generateGTSvgPreview(result, { selectedZoneId, showDimensions: true, gaps, readout: true, editable, maxHeight: 820 });
+  },
+
+  /** Per zone: stored height, clearance and centre to centre (the fridge reads its own cut-out). */
+  zoneOpenings(result) {
+    return result?.boards?.length && typeof gtZoneOpenings === "function" ? gtZoneOpenings(result) : [];
   },
   envelope(params) {
     return { W: params.cabinetWidth, D: round1(params.cabinetDepth - tallDoorThickness(params)), H: params.cabinetHeight };
@@ -1609,9 +1834,24 @@ const loungeGenerator = {
       topLidEnabled: true,
     };
   },
-  generate(params) {
-    return generateLounge(params);
+  generate(params, options) {
+    return generateLounge(params, options);
   },
+  /** The classic construction was retired (2026-10-08): a saved one opens as the frame lounge. */
+  normalizeParams(params) {
+    if (!params || params.construction == null) return params;
+    const next = { ...params };
+    delete next.construction;
+    return next;
+  },
+  benchSwitches: [
+    { key: "style", label: "样式", options: [["I_SHAPE", "I"], ["L_SHAPE", "L"], ["PARALLEL", "平行"]], get: (p) => p.style || "L_SHAPE", set: (p, v) => ({ ...p, style: v }) },
+    { key: "lFrontAccess", label: "翼端", options: [["NONE", "无抽屉"], ["DRAWER", "抽屉"]], get: (p) => p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE", set: (p, v) => ({ ...p, lFrontAccess: v }) },
+    { key: "aisleAccess", label: "过道端", options: [["NONE", "无抽屉"], ["DRAWER", "抽屉"]], get: (p) => p.aisleAccess === "DRAWER" ? "DRAWER" : "NONE", set: (p, v) => ({ ...p, aisleAccess: v }) },
+    { key: "backPanel", label: "背板", options: [["off", "无"], ["on", "有"]], get: (p) => p.backPanel ? "on" : "off", set: (p, v) => ({ ...p, backPanel: v === "on" }) },
+    { key: "leftBackPanel", label: "左背板", options: [["off", "无"], ["on", "有"]], get: (p) => p.leftBackPanel ? "on" : "off", set: (p, v) => ({ ...p, leftBackPanel: v === "on" }) },
+    { key: "rightBackPanel", label: "右背板", options: [["off", "无"], ["on", "有"]], get: (p) => p.rightBackPanel ? "on" : "off", set: (p, v) => ({ ...p, rightBackPanel: v === "on" }) },
+  ],
   envelope(params) {
     if (params.style === "PARALLEL") {
       return { W: params.totalWidth ?? 4000, D: params.depth ?? 800, H: params.height ?? 420 };
@@ -1619,8 +1859,8 @@ const loungeGenerator = {
     if (params.style === "L_SHAPE") {
       return { W: params.mainWidth ?? 2000, D: params.lWidth ?? 1600, H: params.height ?? 420 };
     }
-    // I: the run's depth; U: the overall depth (the legs run from the room to the wall).
-    return { W: params.mainWidth ?? 2000, D: params.mainDepth ?? (params.style === "U_SHAPE" ? 1600 : 600), H: params.height ?? 420 };
+    // I: the run's depth.
+    return { W: params.mainWidth ?? 2000, D: params.mainDepth ?? 600, H: params.height ?? 420 };
   },
   footprintBoxes(params, result) {
     return loungeFootprintBoxes(params, result);
@@ -1662,10 +1902,6 @@ const loungeGenerator = {
       next.lWidth = round1(Math.max(env.D, seat + 400));
       next.lDepth = round1(Math.min(params.lDepth ?? seat, env.W - 400));
       next.lPosition = params.lPosition ?? "RIGHT";
-    } else if (style === "U_SHAPE") {
-      next.mainWidth = round1(env.W);
-      next.mainDepth = round1(Math.max(env.D, seat + 400));
-      next.lDepth = round1(Math.min(seat, env.W / 2 - 200, next.mainDepth - 200));
     } else if (style === "PARALLEL") {
       next.totalWidth = round1(Math.max(env.W, 2 * seat + 400));
       next.singleLoungeWidth = seat;
@@ -1692,14 +1928,20 @@ const loungeGenerator = {
         break;
       case "lWidth": next.lWidth = Math.max(400, v); break;
       case "lDepth": {
-        // L: the inner edge — LEFT wing measures from x=0, RIGHT from mainWidth. U: right leg's inner edge, from mainWidth.
+        // L: the inner edge — LEFT wing measures from x=0, RIGHT from mainWidth.
+        // A back panel has already moved that edge in by one thickness.
         const mw = params.mainWidth ?? 2000;
-        const raw = params.style === "L_SHAPE" && params.lPosition === "LEFT" ? v : mw - v;
+        const inset = params.backPanel === true ? (params.partitionPanelThickness ?? 18) : 0;
+        const raw = params.style === "L_SHAPE" && params.lPosition === "LEFT" ? v - inset : mw - v - inset;
         next.lDepth = Math.max(minRun, round1(raw));
         break;
       }
       case "totalWidth": next.totalWidth = Math.max(1600, v); break;
-      case "singleLoungeWidth": next.singleLoungeWidth = Math.max(400, round1((params.totalWidth ?? 4000) - v)); break;
+      case "singleLoungeWidth": {
+        const inset = params.rightBackPanel === true ? (params.partitionPanelThickness ?? 18) : 0;
+        next.singleLoungeWidth = Math.max(400, round1((params.totalWidth ?? 4000) - v - inset));
+        break;
+      }
       case "depth": next.depth = Math.max(400, v); break;
       default: return params;
     }
@@ -1767,7 +2009,10 @@ const bedroomEast = {
     return { ...params, ohcBottom: round1(Math.max(lim.min, Math.min(lim.max, value))) };
   },
   setOhcCount(params, count) { return { ...params, ohcZones: eastEqualBays(params, count) }; },
-  generate(params) { return generateBedroomEast(params); },
+  generate(params, options) { return generateBedroomEast(params, options); },
+  benchSwitches: [
+    { key: "ledGroove", label: "灯槽", options: [["on", "开"], ["off", "关"]], get: (p) => p.ledGroove === false ? "off" : "on", set: (p, v) => ({ ...p, ledGroove: v === "on" }) },
+  ],
   envelope(params) { return { W: params.width, D: EAST_RULES.MATTRESS_DEPTH_MM.value, H: params.height }; },
   setEnvelope(params, { W, H }) {
     const next = { ...params, depth: EAST_RULES.MATTRESS_DEPTH_MM.value };
@@ -1852,8 +2097,8 @@ const sketchBoard = {
     };
   },
 
-  generate(params) {
-    return generateSketchBoard(params);
+  generate(params, options) {
+    return generateSketchBoard(params, options);
   },
 
   envelope(params) {
@@ -1979,6 +2224,87 @@ export const MODULE_GROUPS = [
 
 /** Placeholders shown in the rail but not yet wired. */
 export const PLANNED_MODULES = [];
+
+/** Swap one rebuilt bundle into the running app. A new URL so the page does not keep the copy it loaded at launch. */
+const applyBundle = {
+  smallCabinet(m) {
+    generateSmallCabinet = m.generateSmallCabinet;
+    generateSmallCabinetSvgPreview = m.generateSmallCabinetSvgPreview;
+  },
+  bedroom(m) {
+    generateBedroom = m.generateBedroom;
+    generateBedroomSvgPreview = m.generateBedroomSvgPreview;
+    setBedroomLayout = m.setLayout;
+    bedroomLayoutLimits = m.layoutLimits;
+    bedBoxSizeFor = m.bedBoxSizeFor;
+    setBedroomOhcBoundary = m.setOhcBoundary;
+    bedroomEqualOhcZones = m.equalOhcZones;
+    BEDROOM_LAYOUT_KEYS = m.LAYOUT_KEYS;
+    BEDROOM_RULES = m.RULES;
+    BEDROOM_WARDROBE_STYLES = m.WARDROBE_STYLES;
+  },
+  bedroomEast(m) {
+    generateBedroomEast = m.generateBedroomEast;
+    eastWardrobeMax = m.eastWardrobeMax;
+    eastEqualBays = m.eastEqualBays;
+    eastSetBayBoundary = m.eastSetBayBoundary;
+    eastOhcBottomLimits = m.eastOhcBottomLimits;
+    EAST_RULES = m.RULES;
+  },
+  bedBox(m) {
+    generateBedBox = m.generateBedBox;
+    BED_BOX_DEFAULT_HEIGHT = m.BED_BOX_DEFAULT_HEIGHT;
+    BED_BOX_MIN = m.BED_BOX_MIN;
+    BED_BOX_RULES = m.RULES;
+  },
+  bedSideTable(m) {
+    generateBedSideTable = m.generateBedSideTable;
+    generateBedSideSvg = m.generateBedSideSvg;
+    bedSideShelfLimits = m.shelfLimits;
+    mirrorBedSideZone = m.mirrorZoneType;
+    BED_SIDE_RULES = m.RULES;
+  },
+  bunkBed(m) {
+    generateBunkBed = m.generateBunkBed;
+    bunkUpperLimits = m.bunkUpperLimits;
+    bunkMinSize = m.bunkMinSize;
+    BUNK_RULES = m.RULES;
+  },
+  overheadCabinet(m) {
+    generateOverheadCabinet = m.generateOverheadCabinet;
+    generateOHCSvgPreview = m.generateOHCSvgPreview;
+    generateOHCFrontView = m.generateOHCFrontView;
+    ohcZoneOpenings = m.ohcZoneOpenings;
+  },
+  uShapeOverhead(m) { generateUShapeOverhead = m.generateUShapeOverhead; },
+  kitchen(m) {
+    generateKitchenCabinet = m.generateKitchenCabinet;
+    generateKitchenSvgPreview = m.generateKitchenSvgPreview;
+    KITCHEN_RULES = m.RULES;
+  },
+  generalTall(m) {
+    fitTallCabinetHeight = m.fitTallCabinetHeight;
+    fridgeCabinetWidth = m.fridgeCabinetWidth;
+    generateGeneralTall = m.generateGeneralTall;
+    generateGTSvgPreview = m.generateGTSvgPreview;
+    gtZoneOpenings = m.gtZoneOpenings;
+    GT_UI_PRESETS = m.GT_UI_PRESETS;
+  },
+  lounge(m) {
+    generateLounge = m.generateLounge;
+    generateLoungeSvgPreview = m.generateLoungeSvgPreview;
+    loungeFootprintBoxes = m.loungeFootprintBoxes;
+  },
+  sketchBoard(m) { generateSketchBoard = m.generateSketchBoard; },
+};
+
+export async function reloadGeneratorDir(dir) {
+  const apply = applyBundle[dir];
+  if (!apply) return false;
+  const m = await import(`./gen/${dir}.js?v=${Date.now()}`);
+  apply(m);
+  return true;
+}
 
 export function getModule(id) {
   const m = MODULES[id];

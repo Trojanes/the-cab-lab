@@ -29,6 +29,7 @@ import { solidBoxes } from "./walls3d.js";
 import { buildFeatures, nearestEdge, projectOnEdge, pointOnEdge, featureUsOnEdge, distToEdge } from "./features2d.js";
 import { disarm, cancelMove, cancelOrient, evalDim, sideOfRotZ } from "./interact.js";
 import { log } from "./log.js";
+import { ARCH_MIN_MM } from "./wheelArch.js";
 
 const overlay = document.getElementById("floorplan");
 const canvas = document.getElementById("fpCanvas");
@@ -43,12 +44,14 @@ const wallBtn = overlay.querySelector('[data-fp-tool="wall"]');
 const doorBtn = overlay.querySelector('[data-fp-tool="door"]');
 const slideBtn = overlay.querySelector('[data-fp-tool="slide"]');
 const loungeBtn = overlay.querySelector('[data-fp-tool="lounge"]');
+const archBtn = overlay.querySelector('[data-fp-tool="arch"]');
 const cardEl = overlay.querySelector(".fp-card");
 const cardTitle = cardEl.querySelector(".fp-card-title");
 const cardBottom = cardEl.querySelector('[data-op="bottom"]');
 const cardTop = cardEl.querySelector('[data-op="top"]');
 const cardOverlap = cardEl.querySelector('[data-op="overlap"]');
 const cardHeight = cardEl.querySelector('[data-op="height"]');
+const cardArchHeight = cardEl.querySelector('[data-op="arch-height"]');
 const stCursor = document.getElementById("stCursor");
 
 const PAD = 40;
@@ -72,6 +75,8 @@ let pan = null;
 let mouse = null; // last plan point under the cursor
 let fitted = false;
 let selectedOpening = null; // opening id highlighted in the plan (its wall is the job selection)
+let selectedArch = null; // wheel-arch pair id highlighted on the plan
+let lastArchHeight = 250;
 let lastClearance = { bottom: OPENING_DEFAULT_CLEARANCE, top: OPENING_DEFAULT_CLEARANCE }; // the card remembers the last input
 let lastSliding = { top: OPENING_DEFAULT_CLEARANCE, overlap: SLIDING_DEFAULT_OVERLAP, doorHeight: SLIDING_DEFAULT_DOOR_HEIGHT };
 
@@ -120,6 +125,7 @@ overlay.querySelector('[data-fp="fit"]').addEventListener("click", () => { fit()
 wallBtn.addEventListener("click", () => setTool(tool && tool.kind === "wall" ? null : "wall"));
 doorBtn.addEventListener("click", () => setTool(isDoor("showerDoor") ? null : "door"));
 slideBtn.addEventListener("click", () => setTool(isDoor("slidingDoor") ? null : "slide"));
+if (archBtn) archBtn.addEventListener("click", () => setTool(tool && tool.kind === "arch" ? null : "arch"));
 if (loungeBtn) loungeBtn.addEventListener("click", () => setTool(tool && tool.kind === "lounge" ? null : "lounge"));
 for (const b of overlay.querySelectorAll("[data-fp-lounge]")) {
   b.addEventListener("click", () => setLoungeStyle(b.dataset.fpLounge));
@@ -259,7 +265,11 @@ function sourceFace(e, p) {
 // --- tool ------------------------------------------------------------------------------
 
 const HINTS = {
-  idle: "Click a wall or a door to select it · Delete removes it · Wall (W) / Shower door (D) / Sliding door (S) / Lounge (G) · wheel zooms · middle / right-drag pans · Esc closes",
+  idle: "Click a wall, a door or a wheel arch to select it · Delete removes it · Wall (W) / Shower door (D) / Sliding door (S) / Wheel arch (A) / Lounge (G) · wheel zooms · middle / right-drag pans · Esc closes",
+  "arch.rear": "Wheel arch — drag along the van from either rear corner · the first click is the rear edge of the pair · Tab / digits type the distance from the back wall · right-click leaves the tool",
+  "arch.length": "Wheel arch — pull toward the nose for the length · Tab / digits type L · click or Enter · right-click steps back",
+  "arch.width": "Wheel arch — pull in from the side wall for the width · the other side mirrors · Tab / digits type W · click or Enter · right-click steps back",
+  "arch.height": "Wheel arch — height from the floor (mm) · Enter creates the red pair · Esc / right-click steps back",
   "wall.pt1": "Wall — click the first point on a wall of the space, a partition or a cabinet side (a corner, a junction, 10 mm along it, or in line with another wall) · right-click leaves the tool",
   "wall.pt2": "Wall — click the second point on the same line · Tab / digits type L · Enter takes the far end · right-click restarts",
   "wall.offset": "Pull the wall out to either side · Tab / digits type Offset (clear distance to its near face) · click or Enter drops it · right-click restarts",
@@ -273,10 +283,10 @@ const HINTS = {
   "slidingDoor.side": "Sliding door — move to the side of the wall the door hangs on: the leaf and the pelmet follow · click or Enter · right-click restarts",
   "slidingDoor.clear": "Sliding door — top clearance (= pelmet height), leaf overlap and leaf height (mm) · Enter creates · Esc / right-click cancels",
 };
-const FIRST = { wall: "pt1", door: "end", lounge: "corner" };
+const FIRST = { wall: "pt1", door: "end", lounge: "corner", arch: "rear" };
 const LOUNGE_MIN = 50;
 let loungeStyle = "I";
-const DRAW_LOG = { wall: "wall.draw", door: "opening.draw", lounge: "lounge.place" };
+const DRAW_LOG = { wall: "wall.draw", door: "opening.draw", lounge: "lounge.place", arch: "wheelarch.draw" };
 /** Tool button → door type (the two door buttons drive one tool kind, "door"). */
 const DOOR_TYPE = { door: "showerDoor", slide: "slidingDoor" };
 
@@ -293,12 +303,14 @@ function freshLoungeTool() {
 function newTool(kind, type = null) {
   if (kind === "door") return { kind, type, step: "end", locked: null };
   if (kind === "lounge") return freshLoungeTool();
+  if (kind === "arch") return { kind, step: "rear", locked: null, side: null, yRear: null, length: null, width: null };
   return { kind, step: FIRST[kind], locked: null };
 }
 function syncToolButtons() {
   wallBtn.classList.toggle("active", !!tool && tool.kind === "wall");
   doorBtn.classList.toggle("active", isDoor("showerDoor"));
   slideBtn.classList.toggle("active", isDoor("slidingDoor"));
+  if (archBtn) archBtn.classList.toggle("active", !!tool && tool.kind === "arch");
   if (loungeBtn) loungeBtn.classList.toggle("active", !!tool && tool.kind === "lounge");
   for (const b of overlay.querySelectorAll("[data-fp-lounge]")) {
     b.classList.toggle("active", !!tool && tool.kind === "lounge" && tool.style === b.dataset.fpLounge);
@@ -353,9 +365,30 @@ function cancelTool(reason) {
   render();
 }
 /** Right-click / Esc: back one level — restart the tool, or leave it when nothing is in progress. */
+function archBack(reason) {
+  const order = ["rear", "length", "width", "height"];
+  const i = order.indexOf(tool.step);
+  log("wheelarch.draw.cancel", { step: tool.step, reason });
+  if (i <= 0) {
+    tool = null;
+    syncToolButtons();
+    hideDim();
+    hideCard();
+  } else {
+    tool.step = order[i - 1];
+    tool.locked = null;
+    hideCard();
+    if (tool.step === "rear") hideDim();
+  }
+  cur = mouse ? resolve(mouse) : null;
+  updateHint();
+  render();
+  return true;
+}
 function cancelStep(reason) {
   if (!tool) return false;
   if (tool.kind === "lounge") return loungeBack(reason);
+  if (tool.kind === "arch") return archBack(reason);
   if (tool.step === FIRST[tool.kind]) cancelTool(reason); else restartTool(reason);
   return true;
 }
@@ -720,6 +753,7 @@ function cardInputs() {
   return tool && tool.type === "slidingDoor" ? [cardTop, cardOverlap, cardHeight] : [cardBottom, cardTop];
 }
 function showCard(at) {
+  cardEl.classList.remove("arch");
   const sliding = tool.type === "slidingDoor";
   cardEl.classList.toggle("sliding", sliding);
   cardTitle.textContent = sliding ? "Sliding door · top clearance & leaf" : "Shower door · clearance";
@@ -742,6 +776,7 @@ function showCard(at) {
 }
 function hideCard() {
   cardEl.classList.add("hidden");
+  cardEl.classList.remove("arch");
   if (cardEl.contains(document.activeElement)) document.activeElement.blur();
 }
 function readCard() {
@@ -756,8 +791,20 @@ function readCard() {
     lastClearance = { bottom: num(cardBottom, OPENING_DEFAULT_CLEARANCE), top: num(cardTop, OPENING_DEFAULT_CLEARANCE) };
   }
 }
-cardEl.querySelector('[data-op="ok"]').addEventListener("click", () => { if (isDoor() && tool.step === "clear") { readCard(); commitDoor("ok"); } });
-cardEl.querySelector('[data-op="cancel"]').addEventListener("click", () => { if (isDoor()) restartTool("card cancel"); });
+cardEl.querySelector('[data-op="ok"]').addEventListener("click", () => {
+  if (tool && tool.kind === "arch" && tool.step === "height") { commitArch("ok"); return; }
+  if (isDoor() && tool.step === "clear") { readCard(); commitDoor("ok"); }
+});
+cardEl.querySelector('[data-op="cancel"]').addEventListener("click", () => {
+  if (tool && tool.kind === "arch") { archBack("card cancel"); return; }
+  if (isDoor()) restartTool("card cancel");
+});
+cardArchHeight.addEventListener("keydown", (e) => {
+  e.stopPropagation();
+  if (!tool || tool.kind !== "arch" || tool.step !== "height") return;
+  if (e.key === "Enter") { e.preventDefault(); commitArch("enter"); }
+  else if (e.key === "Escape") { e.preventDefault(); archBack("esc"); }
+});
 for (const input of [cardBottom, cardTop, cardOverlap, cardHeight]) {
   input.addEventListener("input", () => { readCard(); if (mouse) { cur = resolve(mouse); render(); } });
   input.addEventListener("keydown", (e) => {
@@ -776,6 +823,107 @@ for (const input of [cardBottom, cardTop, cardOverlap, cardHeight]) {
   });
 }
 
+function archAt(p) {
+  const boxes = job.getSpace()?.wheelArches || [];
+  for (let i = boxes.length - 1; i >= 0; i -= 1) {
+    const b = boxes[i];
+    if (p.x >= b.x0 && p.x <= b.x1 && p.y >= b.y0 && p.y <= b.y1) return b;
+  }
+  return null;
+}
+function resolveArch(p) {
+  const b = job.getSpace().bounds;
+  const out = { p, tip: [], tone: "" };
+  const fromBack = (y) => Math.round(b.maxY - y);
+  if (tool.step === "rear") {
+    const y = tool.locked != null ? b.maxY - tool.locked : snap(p.y);
+    out.yRear = Math.min(b.maxY, Math.max(b.minY + ARCH_MIN_MM, y));
+    out.side = Math.abs(p.x - b.minX) <= Math.abs(p.x - b.maxX) ? "left" : "right";
+    out.pt = { x: out.side === "left" ? b.minX : b.maxX, y: out.yRear };
+    out.tip.push(`Rear edge · ${fromBack(out.yRear)} from the back wall`);
+    return out;
+  }
+  if (tool.step === "length") {
+    const raw = tool.locked != null ? tool.locked : tool.yRear - snap(p.y);
+    const length = Math.min(tool.yRear - b.minY, Math.max(0, raw));
+    out.length = length;
+    out.yRear = tool.yRear;
+    out.side = tool.side;
+    out.pt = { x: tool.side === "left" ? b.minX : b.maxX, y: tool.yRear - length };
+    out.tip.push(length < ARCH_MIN_MM ? `Length ${Math.round(length)} · at least ${ARCH_MIN_MM}` : `Length ${Math.round(length)}`);
+    if (length < ARCH_MIN_MM) out.tone = "warn";
+    return out;
+  }
+  if (tool.step === "width") {
+    const inward = tool.side === "left" ? p.x - b.minX : b.maxX - p.x;
+    const raw = tool.locked != null ? tool.locked : snap(Math.max(0, inward));
+    const width = Math.min((b.maxX - b.minX) / 2, Math.max(0, raw));
+    out.width = width;
+    out.length = tool.length;
+    out.yRear = tool.yRear;
+    out.side = tool.side;
+    out.pt = { x: tool.side === "left" ? b.minX + width : b.maxX - width, y: tool.yRear - tool.length / 2 };
+    out.tip.push(width < ARCH_MIN_MM ? `Width ${Math.round(width)} · at least ${ARCH_MIN_MM}` : `Width ${Math.round(width)} · both sides`);
+    if (width < ARCH_MIN_MM) out.tone = "warn";
+    return out;
+  }
+  out.tip.push(`Height ${lastArchHeight} · Enter creates the pair`);
+  return out;
+}
+function clickArch() {
+  if (!cur) return;
+  if (tool.step === "rear") {
+    tool.yRear = cur.yRear;
+    tool.side = cur.side;
+    tool.locked = null;
+    tool.step = "length";
+    log("wheelarch.draw", { step: "rear", yRear: tool.yRear, side: tool.side, fromBack: Math.round(job.getSpace().bounds.maxY - tool.yRear) });
+    showDim("L", cur.pt);
+  } else if (tool.step === "length") {
+    if (!(cur.length >= ARCH_MIN_MM)) { log("wheelarch.draw.blocked", { step: "length", reason: `shorter than ${ARCH_MIN_MM}` }); flashTip(); return; }
+    tool.length = Math.round(cur.length);
+    tool.locked = null;
+    tool.step = "width";
+    log("wheelarch.draw", { step: "length", length: tool.length });
+    showDim("W", cur.pt);
+  } else if (tool.step === "width") {
+    if (!(cur.width >= ARCH_MIN_MM)) { log("wheelarch.draw.blocked", { step: "width", reason: `narrower than ${ARCH_MIN_MM}` }); flashTip(); return; }
+    tool.width = Math.round(cur.width);
+    tool.locked = null;
+    tool.step = "height";
+    log("wheelarch.draw", { step: "width", width: tool.width });
+    hideDim();
+    showArchCard(cur.pt);
+  }
+  updateHint();
+  render();
+}
+function commitArch(how) {
+  const h = Number(cardArchHeight.value);
+  if (!(h >= 1)) { log("wheelarch.draw.blocked", { step: "height", reason: "height under 1" }); flashTip(); return; }
+  lastArchHeight = Math.round(h);
+  const rec = job.addWheelArch({ yRear: tool.yRear, length: tool.length, width: tool.width, height: lastArchHeight }, { how });
+  selectedArch = rec ? rec.id : null;
+  tool = newTool("arch");
+  hideCard();
+  cur = mouse ? resolve(mouse) : null;
+  updateHint();
+  render();
+}
+function showArchCard(at) {
+  cardEl.classList.remove("sliding");
+  cardEl.classList.add("arch");
+  cardTitle.textContent = "Wheel arch · height";
+  cardArchHeight.value = String(lastArchHeight);
+  cardEl.classList.remove("hidden");
+  const s = S(at.x, at.y);
+  cardEl.style.left = `${Math.min(size.w - 230, Math.max(10, s.sx + 20))}px`;
+  cardEl.style.top = `${Math.min(size.h - 120, Math.max(44, s.sy - 40))}px`;
+  cardArchHeight.focus();
+  cardArchHeight.select();
+  log("wheelarch.draw", { step: "height", how: "card open" });
+}
+
 /** Everything the cursor means right now, for drawing and for the next click. */
 function resolve(p) {
   const F = feats();
@@ -787,12 +935,20 @@ function resolve(p) {
   const out = { p, tip: [], tone: "" };
   if (!tool) {
     const hit = hitSolid(p);
-    if (hit) {
-      const op = hit.kind === "wall" ? openingAt(hit, p) : null;
-      out.tip.push(op ? `${op.id} · ${(OPENING_TYPES[op.type] || "door").toLowerCase()} in ${hit.id}` : hit.kind === "wall" ? `${hit.id} · partition` : `${hit.id} · cabinet`);
+    const wallHit = hit && hit.kind === "wall" ? hit : null;
+    const arch = wallHit ? null : archAt(p);
+    if (wallHit) {
+      const op = openingAt(wallHit, p);
+      out.tip.push(op ? `${op.id} · ${(OPENING_TYPES[op.type] || "door").toLowerCase()} in ${wallHit.id}` : `${wallHit.id} · partition`);
       out.hoverOpening = op;
+      out.hover = wallHit;
+    } else if (arch) {
+      out.tip.push(`${arch.pair} · wheel arch · ${arch.side}`);
+      out.hoverArch = arch;
+    } else if (hit) {
+      out.tip.push(`${hit.id} · cabinet`);
+      out.hover = hit;
     }
-    out.hover = hit;
     return out;
   }
   if (tool.kind === "door") return resolveDoor(p);
@@ -819,6 +975,7 @@ function resolve(p) {
     }
     return out;
   }
+  if (tool.kind === "arch") return resolveArch(p);
   if (tool.step === "pt1") {
     const e = nearestEdge(p, F.edges, tol, drawable);
     if (e) {
@@ -1164,16 +1321,32 @@ function syncLoungeDim() {
 }
 
 
-function click(p) {
+function click(p, extend = false) {
   cur = resolve(p);
   if (!tool) {
     const hit = cur.hover;
     selectedOpening = cur.hoverOpening ? cur.hoverOpening.id : null;
-    job.select(hit ? (hit.cab?.cabId || hit.id) : null);
-    log("floorplan.select", { id: hit ? (hit.cab?.cabId || hit.id) : null, kind: hit ? hit.kind : null, opening: selectedOpening });
+    selectedArch = cur.hoverArch ? cur.hoverArch.pair : null;
+    const cabId = hit && hit.kind === "cabinet" ? hit.cab?.cabId : null;
+    if (extend) {
+      if (cabId) job.select(cabId, null, { extend: true });
+    } else if (!selectedArch) {
+      job.select(hit ? (hit.cab?.cabId || hit.id) : null);
+    } else {
+      job.select(null);
+    }
+    if (!extend || cabId) {
+      log("floorplan.select", {
+        id: selectedArch || (extend ? cabId : (hit ? (hit.cab?.cabId || hit.id) : null)),
+        kind: selectedArch ? "wheelarch" : (hit ? hit.kind : null),
+        opening: selectedOpening,
+        how: extend ? "ctrl" : undefined,
+      });
+    }
     render();
     return;
   }
+  if (tool.kind === "arch") { clickArch(); return; }
   if (tool.kind === "door") { clickDoor(p); return; }
   if (tool.kind === "lounge") {
     clickLounge(p);
@@ -1232,6 +1405,14 @@ function takeSecondPoint(u2, snapKind, how, alignTo = undefined) {
 /** Enter: second point = the far end of the edge (whole span) unless a length was typed; at the offset step, drop. */
 function enter() {
   if (!tool) return;
+  if (tool.kind === "arch") {
+    if (tool.step === "height") commitArch("enter");
+    else {
+      if (mouse) cur = resolve(mouse);
+      clickArch();
+    }
+    return;
+  }
   if (tool.kind === "door") {
     if (tool.step === "start" || tool.step === "width" || tool.step === "side") { if (mouse) clickDoor(mouse); }
     else if (tool.step === "clear") { readCard(); commitDoor("enter"); }
@@ -1350,12 +1531,28 @@ function currentDimValue() {
     if (tool.step === "width") return cur.width || 0;
     return 0;
   }
+  if (tool.kind === "arch") {
+    const b = job.getSpace()?.bounds;
+    if (!b) return 0;
+    if (tool.step === "rear") return cur.yRear != null ? b.maxY - cur.yRear : 0;
+    if (tool.step === "length") return cur.length || 0;
+    if (tool.step === "width") return cur.width || 0;
+    return 0;
+  }
   if (tool.step === "pt2") return cur.length || 0;
   if (tool.step === "offset") return cur.offset ? cur.offset.d : 0;
   return 0;
 }
 function maxDimValue() {
   if (!tool || !cur) return null;
+  if (tool.kind === "arch") {
+    const b = job.getSpace()?.bounds;
+    if (!b) return null;
+    if (tool.step === "rear") return b.maxY - b.minY - ARCH_MIN_MM;
+    if (tool.step === "length") return tool.yRear - b.minY;
+    if (tool.step === "width") return (b.maxX - b.minX) / 2;
+    return null;
+  }
   if (tool.kind === "door") {
     const s = tool.solid;
     if (!s) return null;
@@ -1436,7 +1633,7 @@ canvas.addEventListener("pointerdown", (e) => {
     if (v != null) setLocked(v);
     dimInput.blur();
   }
-  click(Wd(sx, sy));
+  click(Wd(sx, sy), e.ctrlKey || e.metaKey);
 });
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointermove", (e) => {
@@ -1457,6 +1654,11 @@ canvas.addEventListener("pointermove", (e) => {
   mouse.sy = sy;
   stCursor.textContent = `X ${Math.round(mouse.x)}  Y ${Math.round(mouse.y)}`;
   cur = resolve(mouse);
+  if (tool && tool.kind === "arch" && tool.step !== "height" && cur && cur.pt) {
+    const name = tool.step === "width" ? "W" : "L";
+    if (!dimOpen()) showDim(name, cur.pt);
+    else { dimName.textContent = name; placeDim(cur.pt); }
+  }
   render();
 });
 canvas.addEventListener("pointerup", (e) => {
@@ -1506,9 +1708,14 @@ window.addEventListener("keydown", (e) => {
       log("key.delete", { id: selectedOpening, wallId: w.id, where: "floorplan" });
       job.removeOpening(w.id, selectedOpening);
       selectedOpening = null;
+    } else if (selectedArch) {
+      log("key.delete", { id: selectedArch, where: "floorplan" });
+      job.removeWheelArch(selectedArch);
+      selectedArch = null;
     } else if (w) { log("key.delete", { id: w.id, where: "floorplan" }); job.removeWall(w.id); }
     return;
   }
+  if (e.key === "a" || e.key === "A") { setTool(tool && tool.kind === "arch" ? null : "arch"); return; }
   if (e.key === "f" || e.key === "F") { fit(); render(); return; }
   if (e.key === "w" || e.key === "W") { setTool(tool && tool.kind === "wall" ? null : "wall"); return; }
   if (e.key === "d" || e.key === "D") { setTool(isDoor("showerDoor") ? null : "door"); return; }
@@ -1532,6 +1739,7 @@ const C = {
   cab: "rgba(201,183,153,0.30)", cabLine: "#8a7d68", cabFront: "#9ec5d8", cabText: "#b8ad98",
   wall: "#dfe4ea", wallLine: "#8b93a0", wallSel: "#4f86e0", wallBad: "rgba(217,75,75,0.55)", wallBadLine: "#d94b4b",
   edge: "#7fb0ff", point: "#ffffff", text: "#9aa2ad", accent: "#4f86e0", warn: "#f0a050", bad: "#d94b4b",
+  arch: "rgba(217,75,75,0.42)", archLine: "#e23b3b", archSel: "#ffd0d0",
   preview: "rgba(79,134,224,0.35)", previewLine: "#7fb0ff", dim: "#f0c070", align: "#f0c070", door: "#9ec5d8",
 };
 
@@ -1598,6 +1806,48 @@ function lineMark(e) {
 function snapMark(pt, s) {
   if (s.guide) guideLine(s.guide);
   dot(pt.x, pt.y, s.kind === "grid" ? 4 : 5, s.kind === "feature" ? C.point : s.kind === "align" ? C.align : C.accent);
+}
+
+function drawArchBox(box, selected) {
+  rect(box.x0, box.y0, box.x1, box.y1, C.arch, selected ? C.archSel : C.archLine, selected ? 2.5 : 1.5);
+  const w = Math.abs(box.x1 - box.x0);
+  const h = Math.abs(box.y1 - box.y0);
+  if (w * view.k > 36 && h * view.k > 18) {
+    text((box.x0 + box.x1) / 2, (box.y0 + box.y1) / 2, "wheel", C.archSel, "center", 0, 0);
+  }
+}
+function drawWheelArches(sp) {
+  for (const box of sp.wheelArches || []) drawArchBox(box, selectedArch === box.pair || cur?.hoverArch?.id === box.id);
+}
+function ghostPair(b, yRear, length, width) {
+  const y1 = yRear;
+  const y0 = yRear - Math.max(0, length);
+  const w = Math.max(0, width);
+  if (!(y1 > y0) || !(w > 0)) return [];
+  return [
+    { x0: b.minX, x1: b.minX + w, y0, y1 },
+    { x0: b.maxX - w, x1: b.maxX, y0, y1 },
+  ];
+}
+function drawArchTool(sp) {
+  const b = sp.bounds;
+  dot(b.minX, b.maxY, 5, C.archLine);
+  dot(b.maxX, b.maxY, 5, C.archLine);
+  if (tool.step === "rear" && cur.yRear != null) {
+    line(b.minX, cur.yRear, b.maxX, cur.yRear, C.archLine, 1.5, [6, 4]);
+    return;
+  }
+  const yRear = tool.yRear;
+  if (yRear == null) return;
+  const length = tool.step === "length" ? (cur.length || 0) : tool.length;
+  const width = tool.step === "width" || tool.step === "height" ? (tool.step === "width" ? (cur.width || 0) : tool.width) : 0;
+  if (!(length > 0) || !(width > 0)) {
+    const y = yRear - Math.max(0, length || 0);
+    line(b.minX, yRear, b.minX, y, C.archLine, 3);
+    line(b.maxX, yRear, b.maxX, y, C.archLine, 3);
+    return;
+  }
+  for (const box of ghostPair(b, yRear, length, width)) drawArchBox(box, false);
 }
 
 function render() {
@@ -1705,8 +1955,12 @@ function render() {
     if (w.hidden) ctx.globalAlpha = 1;
   }
 
+  // Wheel arches sit on top of cabinets and partitions so the red pair stays visible.
+  drawWheelArches(sp);
+
   // Tool feedback.
-  if (cur && tool && tool.kind === "door") drawDoorTool();
+  if (cur && tool && tool.kind === "arch") drawArchTool(sp);
+  else if (cur && tool && tool.kind === "door") drawDoorTool();
   else if (cur && tool && tool.kind === "lounge") drawLoungeTool();
   else if (cur && tool) drawTool(F);
   else if (cur && cur.hover) {

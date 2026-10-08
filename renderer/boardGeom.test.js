@@ -142,3 +142,35 @@ console.log("boardGeom: hinge cups are cut 12 deep into the back, the front stay
 
 console.log("boardGeom: a lid's finger hole is open");
 
+/* A mitred bench is extruded along its depth, so the top and the waterfall's
+   outer face are edge sheets. They have to face outward or the colour is culled. */
+{
+  const { generateKitchenCabinet } = await import("./gen/kitchen.js");
+  const base = {
+    globalSettings: { length: 862, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70,
+    columns: [{ id: "c1", width: 862, zones: [{ id: "z1", height: 810, zoneType: "left_door" }] }],
+    benchTopColorName: "Chestnut",
+  };
+  const see = (board, face, from, dir) => {
+    const sheet = faceSheetGeometry(board, face, 0.6);
+    return new THREE.Raycaster(from, dir).intersectObject(new THREE.Mesh(sheet)).length;
+  };
+  for (const side of ["right", "left"]) {
+    const r = generateKitchenCabinet({ ...base, waterfall: side });
+    const bench = r.boards.find((q) => q.id === "BENCH");
+    const drop = r.boards.find((q) => q.id === "WATERFALL");
+    const top = bench.faces.find((f) => f.semantic === "top");
+    const outer = drop.faces.find((f) => f.semantic === "outer");
+    const midY = (bench.y0 + bench.y1) / 2;
+    const midX = (bench.x0 + bench.x1) / 2;
+    assert.ok(see(bench, top, new THREE.Vector3(midX, midY, bench.z1 + 40), new THREE.Vector3(0, 0, -1)) > 0, `${side} bench top faces up`);
+    const fromX = side === "right" ? drop.x1 + 40 : drop.x0 - 40;
+    const dirX = side === "right" ? -1 : 1;
+    const midZ = (drop.z0 + drop.z1) / 2;
+    assert.ok(see(drop, outer, new THREE.Vector3(fromX, midY, midZ), new THREE.Vector3(dirX, 0, 0)) > 0, `${side} waterfall faces out`);
+  }
+}
+
+console.log("boardGeom: a mitred bench top and waterfall face outward");
+

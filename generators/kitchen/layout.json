@@ -1,0 +1,26 @@
+{
+  "module": "kitchen",
+  "version": 1,
+  "boards": {
+    "B1": {
+      "axes": {
+        "y": {
+          "from": "lo",
+          "at": "kitchen.toeY - FPT - CPT",
+          "size": "(toeY + FPT) - (kitchen.toeY)",
+          "when": { "bottomClearanceStyle": "style_1" }
+        }
+      }
+    },
+    "B2": {
+      "axes": {
+        "y": {
+          "from": "lo",
+          "at": "toeY - CPT",
+          "size": "(toeY + FPT + CPT) - (toeY + FPT)",
+          "when": { "bottomClearanceStyle": "style_1" }
+        }
+      }
+    }
+  }
+}

@@ -15,6 +15,8 @@
  * profile comes from the space in the same local Y.
  */
 import { beginProvenance, dim, endProvenance, param, ref } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { applyDoorSides, carcassColourOf, doorColourBOf, doorColourOf } from "../_lib/finish.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { roofAt } from "../bedroom/generator.ts";
@@ -156,7 +158,7 @@ function box(y0: number, y1: number, z0: number, z1: number): P[] {
   return [{ y: y0, z: z0 }, { y: y1, z: z0 }, { y: y1, z: z1 }, { y: y0, z: z1 }, { y: y0, z: z0 }];
 }
 
-export function generateBedroomEast(raw: EastParams) {
+export function generateBedroomEast(raw: EastParams, options: { layout?: unknown } = {}) {
   const errors: string[] = [];
   const warnings: string[] = [];
   const W = round1(raw.width || 0);
@@ -228,6 +230,9 @@ export function generateBedroomEast(raw: EastParams) {
     const out = { id: b.id, width: b.width, x0: round1(x), x1: round1(x + b.width) };
     x += b.width;
     return out;
+  });
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+    ledGroove: raw.ledGroove === false ? "off" : "on",
   });
   const provenance = endProvenance();
 

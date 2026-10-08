@@ -85,11 +85,11 @@ const UI: GTParams = {
   assert.deepEqual(place(r, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 1900, z1: 2000 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
-  assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
+  assert.deepEqual(place(r, "H34_bottom"), { x0: 16, x1: 584, y0: 553, y1: 568, z0: 0, z1: 100 });
   // H mid 锚定 VD 区下沿隔板上沿：三件共面 [999,1099]（boundary-zone-3 z1=999，贴在隔板上）
   assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
   assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 999, z1: 1099 });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 16, x1: 584, y0: 553, y1: 568, z0: 999, z1: 1099 });
 
   // VD（§8.7）：core 心 300（mw=600）→ x[292.5,307.5]；底舌 991.5
   assert.deepEqual(place(r, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1944 });
@@ -197,9 +197,9 @@ const UI: GTParams = {
   assert.equal((b(r, "V3").profileVector as unknown[]).length, 17);
   assert.equal(r.ziSlots.length, 10); // 3×2（V1/V2）+ 2×2（V3/V4）
 
-  // H12（blank 400 ≥ 300 → 两条各 100）
-  assert.deepEqual(place(r, "H12_blank_top"), { x0: 0, x1: 664, y0: 0, y1: 15, z0: 1614, z1: 1714 });
-  assert.deepEqual(place(r, "H12_blank_bottom"), { x0: 0, x1: 664, y0: 0, y1: 15, z0: 1314, z1: 1414 });
+  // H12（blank 400 ≥ 300 → 两条各 100）：竖立的条，夹在 V1 / V2 内侧之间
+  assert.deepEqual(place(r, "H12_blank_top"), { x0: 16, x1: 648, y0: 0, y1: 15, z0: 1614, z1: 1714 });
+  assert.deepEqual(place(r, "H12_blank_bottom"), { x0: 16, x1: 648, y0: 0, y1: 15, z0: 1314, z1: 1414 });
 
   // H mid [1000,1100] 无冲突（half[984,999] 不冲突、full[1299,1314] 不冲突）；md=584 → y[150,434]
   assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 434, z0: 1000, z1: 1100 });
@@ -225,10 +225,10 @@ const UI: GTParams = {
   assert.deepEqual(place(r, "H24_top"), { x0: 669, x1: 684, y0: 150, y1: 434, z0: 2000, z1: 2100 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 16, x1: 31, y0: 150, y1: 434, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H24_bottom"), { x0: 669, x1: 684, y0: 150, y1: 434, z0: 0, z1: 100 });
-  assert.deepEqual(place(r, "H34_bottom"), { x0: 31, x1: 669, y0: 569, y1: 584, z0: 0, z1: 100 });
+  assert.deepEqual(place(r, "H34_bottom"), { x0: 32, x1: 668, y0: 569, y1: 584, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H13_mid"), { x0: 16, x1: 31, y0: 150, y1: 434, z0: 1000, z1: 1100 });
   assert.deepEqual(place(r, "H24_mid"), { x0: 669, x1: 684, y0: 150, y1: 434, z0: 1000, z1: 1100 });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 31, x1: 669, y0: 569, y1: 584, z0: 1000, z1: 1100 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 32, x1: 668, y0: 569, y1: 584, z0: 1000, z1: 1100 });
   assert.equal(r.boards.filter((x) => x.id.startsWith("H")).length, 8); // 无 H34_top（黄金行为）
   // 立梃在侧板内侧，前端 y=FPT
   assert.deepEqual(place(r, "V1"), { x0: 16, x1: 32, y0: 0, y1: 150, z0: 0, z1: 2100 });
@@ -261,7 +261,7 @@ const UI: GTParams = {
   assert.deepEqual(r.validation.errors, []);
   assert.deepEqual(place(r, "H13_bottom"), { x0: 16, x1: 31, y0: 150, y1: 418, z0: 400, z1: 500 });
   assert.deepEqual(place(r, "H24_bottom"), { x0: 569, x1: 584, y0: 150, y1: 418, z0: 400, z1: 500 });
-  assert.deepEqual(place(r, "H34_bottom"), { x0: 31, x1: 569, y0: 553, y1: 568, z0: 400, z1: 500 });
+  assert.deepEqual(place(r, "H34_bottom"), { x0: 32, x1: 568, y0: 553, y1: 568, z0: 400, z1: 500 });
   assert.deepEqual(place(r, "avoidance_horizontal"), { x0: 16, x1: 584, y0: 368, y1: 568, z0: 385, z1: 400 });
   assert.deepEqual(place(r, "Avoidance_Vertical"), { x0: 16, x1: 584, y0: 368, y1: 383, z0: 0, z1: 385 });
   // 避让高 400，边界在 z=669，不缩短
@@ -303,7 +303,7 @@ const UI: GTParams = {
   const zi = r.stack.find((i) => i.id === "boundary-drawer")!;
   // H13/H24_mid 贴在隔板下：[zi.z0−100, zi.z0]；H34_mid 坐在隔板上：[zi.z1, zi.z1+100]（贴合，不进隔板）
   assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 434, z0: r2(zi.z0 - 100), z1: r2(zi.z0) });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 649, y0: 569, y1: 584, z0: r2(zi.z1), z1: r2(zi.z1 + 100) });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 16, x1: 648, y0: 569, y1: 584, z0: r2(zi.z1), z1: r2(zi.z1 + 100) });
   assert.ok(r.validation.warnings.some((w) => w.includes("Stage 2 movement evaluated")));
 }
 
@@ -550,10 +550,10 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.deepEqual(place(r, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 2100, z1: 2200 });
   assert.deepEqual(place(r, "H24_top"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 2100, z1: 2200 });
   assert.deepEqual(place(r, "H13_bottom"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 0, z1: 100 });
-  assert.deepEqual(place(r, "H34_bottom"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 0, z1: 100 });
+  assert.deepEqual(place(r, "H34_bottom"), { x0: 16, x1: 584, y0: 553, y1: 568, z0: 0, z1: 100 });
   assert.deepEqual(place(r, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
   assert.deepEqual(place(r, "H24_mid"), { x0: 585, x1: 600, y0: 150, y1: 418, z0: 999, z1: 1099 });
-  assert.deepEqual(place(r, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
+  assert.deepEqual(place(r, "H34_mid"), { x0: 16, x1: 584, y0: 553, y1: 568, z0: 999, z1: 1099 });
 
   // H bridges in an ordinary tall: top ones banded underneath, bottom ones on top, mid ones on the free side of the Zi.
   const hb = (id: string) => b(r, id).faces!.filter((f) => f.finish?.edgeBand).map((f) => f.normal);
@@ -567,7 +567,7 @@ function hasPoint(prof: { y: number; z: number }[] | undefined, y: number, z: nu
   assert.deepEqual(place(rs, "VD_zone-3"), { x0: 292.5, x1: 307.5, y0: 0, y1: 568, z0: 999, z1: 1744 });
   assert.deepEqual(place(rs, "H13_top"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 1700, z1: 1800 });
   assert.deepEqual(place(rs, "H13_mid"), { x0: 0, x1: 15, y0: 150, y1: 418, z0: 999, z1: 1099 });
-  assert.deepEqual(place(rs, "H34_mid"), { x0: 15, x1: 585, y0: 553, y1: 568, z0: 999, z1: 1099 });
+  assert.deepEqual(place(rs, "H34_mid"), { x0: 16, x1: 584, y0: 553, y1: 568, z0: 999, z1: 1099 });
 
   const crushed = fitTallCabinetHeight(UI, 1000);
   assert.equal(crushed.zones?.find((z) => z.id === "zone-3")?.height, 300);

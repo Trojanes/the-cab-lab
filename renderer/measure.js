@@ -40,11 +40,62 @@ export function planeAngle(n1, n2) {
   return (Math.acos(c) * 180) / Math.PI;
 }
 
+function sub3(a, b) {
+  return [a.x - b.x, a.y - b.y, a.z - b.z];
+}
+
+function cross(a, b) {
+  return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+}
+
+/** Straight length, or the arc length when `bulge` is tan(sweep / 4). Not the chord. */
+export function segmentLength(ax, ay, bx, by, bulge) {
+  const chord = Math.hypot(bx - ax, by - ay);
+  if (!bulge || Math.abs(bulge) < 1e-9) return chord;
+  const sweep = 4 * Math.atan(bulge);
+  const s = Math.sin(sweep / 2);
+  if (Math.abs(s) < 1e-6) return chord;
+  return Math.abs((chord / (2 * s)) * sweep);
+}
+
+function edgeSamples(edge) {
+  return edge.samples && edge.samples.length > 1 ? edge.samples : [edge.a, edge.b];
+}
+
+/** Closest point on an edge (the arc samples, or the straight chord) and the distance. */
+export function closestOnEdge(edge, p) {
+  const samples = edgeSamples(edge);
+  let best = samples[0];
+  let bestD = Infinity;
+  for (let i = 1; i < samples.length; i += 1) {
+    const a = samples[i - 1];
+    const b = samples[i];
+    const ab = sub3(b, a);
+    const l2 = dot(ab, ab) || 1;
+    let t = dot(sub3(p, a), ab) / l2;
+    t = Math.max(0, Math.min(1, t));
+    const q = { x: a.x + ab[0] * t, y: a.y + ab[1] * t, z: a.z + ab[2] * t };
+    const d = Math.hypot(q.x - p.x, q.y - p.y, q.z - p.z);
+    if (d < bestD) { bestD = d; best = q; }
+  }
+  return { point: best, distance: bestD };
+}
+
+function edgeDir(edge) {
+  return unit(sub3(edge.b, edge.a));
+}
+
+function faceGap(face, p) {
+  const n = unit(face.normal);
+  const o = xyz(face.point);
+  return { n, gap: dot(n, [p.x - o[0], p.y - o[1], p.z - o[2]]) };
+}
+
 /**
  * Distance or angle between two picks.
- * A pick is `{ kind: "point", x, y, z }` or
- * `{ kind: "face", point: [x,y,z], normal: [nx,ny,nz], at: {x,y,z} }`.
- * `at` is where the user clicked; `point` is any point on the plane.
+ * `point` is `{ kind, x, y, z }`.
+ * `face` is `{ kind, point, normal, at }`. The plane is infinite.
+ * `edge` is `{ kind, a, b, samples, length }`. `length` is the arc length when the edge is a fillet.
  */
 export function measureBetween(a, b) {
   if (!a || !b) return null;
@@ -52,26 +103,50 @@ export function measureBetween(a, b) {
     const d = [b.x - a.x, b.y - a.y, b.z - a.z];
     return { kind: "point-point", distance: Math.hypot(d[0], d[1], d[2]), delta: d, angle: null };
   }
+  if (a.kind === "edge" && b.kind === "edge") {
+    const d1 = edgeDir(a);
+    const d2 = edgeDir(b);
+    if (parallel(d1, d2)) {
+      const gap = Math.hypot(...cross(d1, sub3(b.a, a.a)));
+      return { kind: "edge-edge", distance: gap, delta: null, angle: null };
+    }
+    return { kind: "angle", distance: null, delta: null, angle: planeAngle(d1, d2), between: "edges" };
+  }
+  if (a.kind === "edge" && b.kind === "point" || b.kind === "edge" && a.kind === "point") {
+    const edge = a.kind === "edge" ? a : b;
+    const pt = a.kind === "point" ? a : b;
+    const hit = closestOnEdge(edge, pt);
+    return { kind: "edge-point", distance: hit.distance, delta: null, angle: null, foot: hit.point };
+  }
+  if (a.kind === "edge" && b.kind === "face" || b.kind === "edge" && a.kind === "face") {
+    const edge = a.kind === "edge" ? a : b;
+    const face = a.kind === "face" ? a : b;
+    const dir = edgeDir(edge);
+    const n = unit(face.normal);
+    if (Math.abs(dot(dir, n)) < 0.03) {
+      return { kind: "edge-face", distance: Math.abs(faceGap(face, edge.a).gap), delta: null, angle: null };
+    }
+    return { kind: "angle", distance: null, delta: null, angle: (Math.asin(Math.min(1, Math.abs(dot(dir, n)))) * 180) / Math.PI, between: "edge-face" };
+  }
   if (a.kind === "face" && b.kind === "face") {
     if (parallel(a.normal, b.normal)) {
       const n = unit(a.normal);
       const gap = Math.abs(dot(n, [b.point[0] - a.point[0], b.point[1] - a.point[1], b.point[2] - a.point[2]]));
       return { kind: "face-face", distance: gap, delta: null, angle: null };
     }
-    return { kind: "angle", distance: null, delta: null, angle: planeAngle(a.normal, b.normal) };
+    return { kind: "angle", distance: null, delta: null, angle: planeAngle(a.normal, b.normal), between: "faces" };
   }
   const face = a.kind === "face" ? a : b;
   const pt = a.kind === "point" ? a : b;
-  const n = unit(face.normal);
-  const p = xyz(face.point);
-  const gap = Math.abs(dot(n, [pt.x - p[0], pt.y - p[1], pt.z - p[2]]));
-  return { kind: "point-face", distance: gap, delta: null, angle: null };
+  if (!face || face.kind !== "face" || !pt || pt.kind !== "point") return null;
+  return { kind: "point-face", distance: Math.abs(faceGap(face, pt).gap), delta: null, angle: null };
 }
 
-/** The world point a pick names: the point itself, or the click on a face. */
+/** The world point a pick names: the point, the edge midpoint, or the click on a face. */
 export function pickPoint(p) {
   if (!p) return null;
   if (p.kind === "point") return { x: p.x, y: p.y, z: p.z };
+  if (p.kind === "edge") return p.at || p.a;
   if (p.at) return { x: p.at.x, y: p.at.y, z: p.at.z };
   return null;
 }
@@ -88,16 +163,27 @@ function mid(a, b) {
 export function measureEnds(a, b, result) {
   if (!result || result.kind === "angle") return null;
   if (result.kind === "point-point") return [pickPoint(a), pickPoint(b)];
+  if (result.kind === "edge-point") {
+    const edge = a.kind === "edge" ? a : b;
+    const pt = a.kind === "point" ? a : b;
+    return [pt, result.foot || closestOnEdge(edge, pt).point];
+  }
+  if (result.kind === "edge-edge") {
+    const q = closestOnEdge(b, a.at || a.a).point;
+    return [a.at || a.a, q];
+  }
+  if (result.kind === "edge-face") {
+    const edge = a.kind === "edge" ? a : b;
+    const face = a.kind === "face" ? a : b;
+    const from = edge.at || edge.a;
+    const { n, gap } = faceGap(face, from);
+    return [from, { x: from.x - n[0] * gap, y: from.y - n[1] * gap, z: from.z - n[2] * gap }];
+  }
   if (result.kind === "point-face") {
     const pt = a.kind === "point" ? a : b;
     const face = a.kind === "face" ? a : b;
-    const n = unit(face.normal);
-    const p = xyz(face.point);
-    const d = dot(n, [pt.x - p[0], pt.y - p[1], pt.z - p[2]]);
-    return [
-      { x: pt.x, y: pt.y, z: pt.z },
-      { x: pt.x - n[0] * d, y: pt.y - n[1] * d, z: pt.z - n[2] * d },
-    ];
+    const { n, gap } = faceGap(face, pt);
+    return [pt, { x: pt.x - n[0] * gap, y: pt.y - n[1] * gap, z: pt.z - n[2] * gap }];
   }
   const n = unit(a.normal);
   const d = dot(n, [b.point[0] - a.point[0], b.point[1] - a.point[1], b.point[2] - a.point[2]]);
@@ -114,8 +200,16 @@ export function measureSummary(result) {
       detail: `ΔX ${fmtMm(dx)}   ΔY ${fmtMm(dy)}   ΔZ ${fmtMm(dz)}`,
     };
   }
-  if (result.kind === "angle") return { title: `${fmtMm(result.angle)}°`, detail: "Between the two faces" };
+  if (result.kind === "angle") {
+    const detail = result.between === "edges" ? "Between the two edges"
+      : result.between === "edge-face" ? "Between the edge and the face"
+        : "Between the two faces";
+    return { title: `${fmtMm(result.angle)}°`, detail };
+  }
   if (result.kind === "face-face") return { title: `${fmtMm(result.distance)} mm`, detail: "Parallel, along the normal" };
+  if (result.kind === "edge-edge") return { title: `${fmtMm(result.distance)} mm`, detail: "Parallel edges" };
+  if (result.kind === "edge-face") return { title: `${fmtMm(result.distance)} mm`, detail: "Edge parallel to the face" };
+  if (result.kind === "edge-point") return { title: `${fmtMm(result.distance)} mm`, detail: "To the edge" };
   return { title: `${fmtMm(result.distance)} mm`, detail: "Perpendicular to the face" };
 }
 
@@ -212,6 +306,11 @@ export function measureLogPick(p) {
     o.x = r(p.x);
     o.y = r(p.y);
     o.z = r(p.z);
+  } else if (p.kind === "edge") {
+    o.length = r(p.length);
+    o.x = r(p.a.x);
+    o.y = r(p.a.y);
+    o.z = r(p.a.z);
   } else {
     o.x = r(p.at.x);
     o.y = r(p.at.y);

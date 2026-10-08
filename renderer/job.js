@@ -1,13 +1,15 @@
 // job.json in memory. Everything visible traces back to this object.
 // Undo/redo = whole-job snapshots. Generation results are cached per cabinet
 // and rebuilt whenever params change.
-import { getModule } from "./modules.js";
+import { getModule, isBaseCabinet } from "./modules.js";
+import { baseAvoidances, loungePlanArches } from "./wheelArch.js";
 import { resolveSpace } from "./spaces.js";
 import { log } from "./log.js";
-import { colorSlotOf, defaultMaterials, doorColors, normalizeFinish, normalizeStock, withColorSlot } from "./materials.js";
-import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
+import { applyCatalogue, colorSlotOf, defaultMaterials, doorColors, normalizeFinish, normalizeStock, withColorSlot } from "./materials.js";
+import { normalizeWall, normalizeOpening, normalizeControlPanel, wallSolid, placeSplit, bindCabinets, wallControlPanelsFor } from "./walls.js";
 import { applyUserGrooves } from "./gen/userGrooves.js";
 import { keepCorner } from "./pose.js";
+import { waterfallPlan, partitionPlan } from "./waterfall.js";
 
 const SNAP = 10;
 export const snap = (v, s = SNAP) => Math.round(v / s) * s;
@@ -65,8 +67,12 @@ function migrate(obj) {
 
 let job = newJob();
 let selectedId = null;
+// Cabinets in the current set, primary last. Empty when the selection is a wall, a plane, or nothing.
+// A plain click replaces this with one cabinet. Ctrl+click toggles one in or out (`select` extend).
+let selectedIds = [];
 // Board / face under the selected cabinet (module → board → face). Display only: the
 // cabinet stays the selected object; this narrows the highlight and the panel's read-out.
+// Only the primary cabinet has one, and only while it is the sole selection.
 let subSel = null; // null | { boardId, faceId: null | "A" | "B" | "E<i>" }
 let dirty = false;
 let filePath = null;
@@ -98,6 +104,20 @@ export function getSpace() {
 }
 export function getSelectedId() { return selectedId; }
 export function getSelected() { return job.cabinets.find((c) => c.id === selectedId) || null; }
+
+function isCabinetId(id) {
+  return !!id && job.cabinets.some((c) => c.id === id);
+}
+
+/** Cabinets in the selection, primary last. One id after a plain click. */
+export function getSelectedIds() {
+  const live = new Set(job.cabinets.map((c) => c.id));
+  const ids = selectedIds.filter((id) => live.has(id));
+  if (selectedId && live.has(selectedId) && ids[ids.length - 1] !== selectedId) {
+    return [...ids.filter((id) => id !== selectedId), selectedId];
+  }
+  return ids;
+}
 /**
  * The board / face selected inside the selected cabinet, validated against the current
  * generator result (role ids are stable, so a re-sized cabinet keeps its selection; a board
@@ -154,6 +174,17 @@ function invalidate(id) {
   else results.clear();
 }
 
+/** Drop cached results for these modules so the next draw uses a generator that was just rebuilt. */
+export function invalidateModules(moduleIds) {
+  const ids = new Set(moduleIds || []);
+  let n = 0;
+  for (const cab of job.cabinets) {
+    if (ids.has(cab.moduleId)) { results.delete(cab.id); n += 1; }
+  }
+  if (n) emit("job");
+  return n;
+}
+
 // --- history ---------------------------------------------------------------
 
 /** Call before a committed mutation. Drag previews call commit() once at drag end instead. */
@@ -182,16 +213,28 @@ export function undo() {
   redoStack.push(JSON.stringify(job));
   job = JSON.parse(undoStack.pop());
   invalidate();
-  if (!selectionExists()) { selectedId = null; subSel = null; }
+  pruneSelection();
   dirty = true;
   emit("job");
 }
 
-function selectionExists() {
-  if (!selectedId) return true;
-  return job.cabinets.some((c) => c.id === selectedId)
-    || (job.planes || []).some((p) => p.id === selectedId)
-    || (job.walls || []).some((w) => w.id === selectedId);
+/** Drop ids the job no longer has. A removed primary leaves the previous cabinet selected. */
+function pruneSelection() {
+  const live = new Set(job.cabinets.map((c) => c.id));
+  selectedIds = selectedIds.filter((id) => live.has(id));
+  if (selectedId && live.has(selectedId)) {
+    if (selectedIds[selectedIds.length - 1] !== selectedId) {
+      selectedIds = [...selectedIds.filter((id) => id !== selectedId), selectedId];
+    }
+    return;
+  }
+  const object = selectedId && (
+    (job.planes || []).some((p) => p.id === selectedId)
+    || (job.walls || []).some((w) => w.id === selectedId)
+  );
+  if (object) { selectedIds = []; return; }
+  subSel = null;
+  selectedId = selectedIds.length ? selectedIds[selectedIds.length - 1] : null;
 }
 
 export function redo() {
@@ -200,7 +243,7 @@ export function redo() {
   undoStack.push(JSON.stringify(job));
   job = JSON.parse(redoStack.pop());
   invalidate();
-  if (!selectionExists()) { selectedId = null; subSel = null; }
+  pruneSelection();
   dirty = true;
   emit("job");
 }
@@ -239,6 +282,57 @@ function bindAllToSpace() {
   for (const cab of job.cabinets) bindToSpace(cab);
   for (const cab of job.cabinets) bindToJob(cab);
 }
+
+const PLAN_ARCH = /^wa-\d+-[LR]$/;
+
+/**
+ * A base takes the floor-plan pair only while Wheel arch avoidance is on.
+ * Off clears the cut. On, with no pair drawn yet, leaves a hand-entered list.
+ */
+function syncWheelArch(cab) {
+  if (!isBaseCabinet(cab.moduleId)) return false;
+  const boxes = getSpace()?.wheelArches || [];
+  const prev = cab.params.wheelAvoidances || [];
+  let next;
+  if (cab.params.wheelArchAvoidance === false) {
+    next = [];
+  } else if (cab.params.wheelArchAvoidance === true && boxes.length) {
+    const env = getModule(cab.moduleId).envelope(cab.params);
+    const door = Number(cab.params.frontThickness);
+    const frontThickness = Number.isFinite(door) && door > 0 ? door : (cab.params.frontPanelThickness ?? 16);
+    next = baseAvoidances({ pose: cab.pose, W: env.W, D: env.D, H: env.H, frontThickness }, boxes);
+  } else {
+    next = prev.filter((a) => !PLAN_ARCH.test(a.id));
+  }
+  if (JSON.stringify(prev) === JSON.stringify(next)) return false;
+  cab.params = { ...cab.params, wheelAvoidances: next };
+  invalidate(cab.id);
+  return true;
+}
+/** A lounge takes whatever part of a floor-plan pair it stands in. Outside every pair, the cut is cleared. */
+function syncLoungeArch(cab) {
+  if (cab.moduleId !== "loungeGenerator") return false;
+  const world = getSpace()?.wheelArches || [];
+  const env = getModule(cab.moduleId).envelope(cab.params);
+  const next = world.length ? loungePlanArches(cab.pose, env, world) : [];
+  const prev = cab.params.planWheelArches || [];
+  if (JSON.stringify(prev) === JSON.stringify(next)) return false;
+  const params = { ...cab.params };
+  if (next.length) params.planWheelArches = next;
+  else delete params.planWheelArches;
+  cab.params = params;
+  invalidate(cab.id);
+  return true;
+}
+function syncWheelArches() {
+  const changed = [];
+  for (const cab of job.cabinets) {
+    if (syncWheelArch(cab)) changed.push(cab.id);
+    if (syncLoungeArch(cab)) changed.push(cab.id);
+  }
+  for (const id of syncControlPanels()) if (!changed.includes(id)) changed.push(id);
+  return changed;
+}
 function bindAttached() {
   for (const cab of job.cabinets) bindToJob(cab);
 }
@@ -246,10 +340,12 @@ function bindAttached() {
 /** Define or redefine the space. Cabinets are never moved; checks report any that no longer fit. */
 export function defineSpace(kind, params, { history = true, finish, stock } = {}) {
   if (history) pushHistory();
-  job.space = { kind, params: { ...params } };
+  const keptArches = params.wheelArches ?? job.space?.params?.wheelArches;
+  job.space = { kind, params: { ...params, ...(keptArches ? { wheelArches: keptArches } : {}) } };
   if (finish) job.finish = normalizeFinish(finish);
   if (stock) job.stock = normalizeStock(stock);
   bindAllToSpace();
+  syncWheelArches();
   log("space.define", {
     spaceKind: kind,
     params: job.space.params,
@@ -261,7 +357,42 @@ export function defineSpace(kind, params, { history = true, finish, stock } = {}
   emit("job");
 }
 
-/** Replace the job catalogue. Existing cabinets keep the thicknesses they already copied. */
+function nextWheelArchId() {
+  const taken = new Set((job.space?.params?.wheelArches || []).map((a) => a.id));
+  let n = 1;
+  while (taken.has(`wa-${n}`)) n += 1;
+  return `wa-${n}`;
+}
+
+/** One symmetric pair. `arch` is { yRear, length, width, height } in world mm. */
+export function addWheelArch(arch, { how = "ok" } = {}) {
+  if (!job.space) return null;
+  pushHistory();
+  const id = nextWheelArchId();
+  const rec = { id, yRear: arch.yRear, length: arch.length, width: arch.width, height: arch.height };
+  const list = [...(job.space.params.wheelArches || []), rec];
+  job.space = { kind: job.space.kind, params: { ...job.space.params, wheelArches: list } };
+  const changed = syncWheelArches();
+  log("wheelarch.add", { ...rec, how, changed });
+  dirty = true;
+  emit("job");
+  return rec;
+}
+
+export function removeWheelArch(id) {
+  if (!job.space) return false;
+  const list = job.space.params.wheelArches || [];
+  if (!list.some((a) => a.id === id)) return false;
+  pushHistory();
+  job.space = { kind: job.space.kind, params: { ...job.space.params, wheelArches: list.filter((a) => a.id !== id) } };
+  const changed = syncWheelArches();
+  log("wheelarch.remove", { id, changed });
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+/** Replace the job catalogue. Placed cabinets take the new colour for their group. Thicknesses stay as copied. */
 export function setMaterials(finish, stock, { history = true } = {}) {
   const nextFinish = normalizeFinish(finish);
   const nextStock = normalizeStock(stock);
@@ -269,7 +400,16 @@ export function setMaterials(finish, stock, { history = true } = {}) {
   if (history) pushHistory();
   job.finish = nextFinish;
   job.stock = nextStock;
-  log("materials.set", { finish: job.finish, stock: job.stock });
+  const cabinets = [];
+  for (const cab of job.cabinets) {
+    const next = applyCatalogue(cab.params, job.finish);
+    if (next === cab.params) continue;
+    cab.params = next;
+    invalidate(cab.id);
+    cabinets.push(cab.id);
+  }
+  for (const id of syncControlPanels()) if (!cabinets.includes(id)) cabinets.push(id);
+  log("materials.set", { finish: job.finish, stock: job.stock, cabinets });
   dirty = true;
   emit("job");
   return true;
@@ -303,9 +443,12 @@ export function addCabinet(moduleId, pose, size, extra) {
   const drawn = anchoredPose(cab, mod, { ...cab.params, cabinetWidth: s.W }, cab.params);
   if (drawn) cab.pose = drawn;
   bindToSpace(cab);
+  syncWheelArch(cab);
+  syncLoungeArch(cab);
   job.cabinets.push(cab);
   bindAttached();
   selectedId = cab.id;
+  selectedIds = [cab.id];
   subSel = null;
   log("cabinet.add", { id: cab.id, moduleId, pose: cab.pose, size: s, params: cab.params, placeCorner: cab.placeCorner ?? null });
   dirty = true;
@@ -329,6 +472,7 @@ export function addPlane({ axis, value, dir, offset, from }) {
   const plane = { id: makePlaneId(), axis, value, dir, offset, from: from || null };
   job.planes.push(plane);
   selectedId = plane.id;
+  selectedIds = [];
   subSel = null;
   log("plane.add", plane);
   dirty = true;
@@ -342,7 +486,7 @@ export function removePlane(id) {
   pushHistory();
   log("plane.remove", { id });
   job.planes.splice(i, 1);
-  if (selectedId === id) { selectedId = null; subSel = null; }
+  if (selectedId === id) { selectedId = null; selectedIds = []; subSel = null; }
   dirty = true;
   emit("job");
 }
@@ -365,7 +509,9 @@ export function addWall(wall, meta = {}) {
   w.id = makeWallId();
   job.walls.push(w);
   selectedId = w.id;
+  selectedIds = [];
   subSel = null;
+  syncControlPanels();
   log("wall.add", { ...w, ...meta });
   dirty = true;
   emit("job");
@@ -395,6 +541,7 @@ export function addOpening(wallId, opening, meta = {}) {
   if (!Array.isArray(wall.openings)) wall.openings = [];
   wall.openings.push(op);
   selectedId = wall.id;
+  selectedIds = [];
   subSel = null;
   log("opening.add", { wallId, ...op, ...meta });
   dirty = true;
@@ -460,6 +607,7 @@ export function setWallFit(id, fit, how = "ok") {
   pushHistory();
   if (next) wall.fit = next;
   else delete wall.fit;
+  syncControlPanels();
   log(next ? "wall.fit" : "wall.fit.clear", { id, how, overheadId: next && next.overheadId, kitchenId: next && next.kitchenId, radius: next && next.radius });
   dirty = true;
   emit("job");
@@ -471,9 +619,257 @@ export function removeWall(id) {
   pushHistory();
   log("wall.remove", { id, wall: job.walls[i] });
   job.walls.splice(i, 1);
-  if (selectedId === id) { selectedId = null; subSel = null; }
+  if (selectedId === id) { selectedId = null; selectedIds = []; subSel = null; }
+  syncControlPanels();
   dirty = true;
   emit("job");
+}
+
+// --- control panels (a screen recessed through a partition / an overhead end) -------------
+
+let nextControlPanelCounter = 1;
+function makeControlPanelId() {
+  const taken = new Set([
+    ...(job.walls || []).flatMap((w) => (w.controlPanels || []).map((p) => p.id)),
+    ...job.cabinets.flatMap((c) => (c.params.controlPanels || []).map((p) => p.id)),
+  ]);
+  let id;
+  do {
+    id = `cp-${nextControlPanelCounter++}`;
+  } while (taken.has(id));
+  return id;
+}
+
+/**
+ * Every overhead takes the control panels of the partitions standing against
+ * its ends (`host: "wall"`, derived — the wall is cut by walls.js, the overhead
+ * cuts its end divider and adds the backing boards). Its own panels
+ * (`host: "endPanel"`) are kept as stored. Returns the cabinets that changed.
+ */
+function syncControlPanels() {
+  const changed = [];
+  const walls = (job.walls || []).filter((w) => (w.controlPanels || []).length);
+  for (const cab of job.cabinets) {
+    if (cab.moduleId !== "overheadCabinet") continue;
+    const own = (cab.params.controlPanels || []).filter((p) => p.host !== "wall");
+    const derived = walls.flatMap((w) => wallControlPanelsFor(w, cab, getSpace(), job.stock));
+    const next = [...own, ...derived];
+    if (JSON.stringify(next) === JSON.stringify(cab.params.controlPanels || [])) continue;
+    const params = { ...cab.params };
+    if (next.length) params.controlPanels = next;
+    else delete params.controlPanels;
+    cab.params = params;
+    invalidate(cab.id);
+    changed.push(cab.id);
+  }
+  return changed;
+}
+
+/** Add a control panel to a partition (`host` wall) or to an overhead with an end panel. One undo step. */
+export function addControlPanel(target, rec, meta = {}) {
+  const panel = normalizeControlPanel({ ...rec, id: "pending" });
+  if (!panel) return null;
+  const wall = getWall(target);
+  const cab = wall ? null : job.cabinets.find((c) => c.id === target);
+  if (!wall && !(cab && cab.moduleId === "overheadCabinet" && cab.params.endPanel)) return null;
+  pushHistory();
+  panel.id = makeControlPanelId();
+  if (wall) {
+    wall.controlPanels = [...(wall.controlPanels || []), panel];
+    const changed = syncControlPanels();
+    log("cpanel.add", { host: "wall", id: wall.id, panel, changed, ...meta });
+  } else {
+    const list = [...(cab.params.controlPanels || []), { ...panel, host: "endPanel" }];
+    cab.params = { ...cab.params, controlPanels: list };
+    invalidate(cab.id);
+    log("cpanel.add", { host: "endPanel", id: cab.id, panel, ...meta });
+  }
+  dirty = true;
+  emit("job");
+  return panel;
+}
+
+export function setControlPanel(target, panelId, patch) {
+  const wall = getWall(target);
+  const cab = wall ? null : job.cabinets.find((c) => c.id === target);
+  const list = wall ? (wall.controlPanels || []) : (cab && cab.params.controlPanels) || [];
+  const i = list.findIndex((p) => p.id === panelId);
+  if (i < 0) return false;
+  const next = normalizeControlPanel({ ...list[i], ...patch, id: panelId });
+  if (!next) return false;
+  const kept = wall ? next : { ...next, host: list[i].host || "endPanel", side: list[i].side, wallThickness: list[i].wallThickness, wall: list[i].wall };
+  if (JSON.stringify(kept) === JSON.stringify(list[i])) return false;
+  pushHistory();
+  const from = list[i];
+  if (wall) {
+    wall.controlPanels = list.map((p, j) => (j === i ? kept : p));
+    const changed = syncControlPanels();
+    log("cpanel.set", { host: "wall", id: wall.id, panel: panelId, patch, from, to: kept, changed });
+  } else {
+    cab.params = { ...cab.params, controlPanels: list.map((p, j) => (j === i ? kept : p)) };
+    invalidate(cab.id);
+    log("cpanel.set", { host: "endPanel", id: cab.id, panel: panelId, patch, from, to: kept });
+  }
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+export function removeControlPanel(target, panelId) {
+  const wall = getWall(target);
+  const cab = wall ? null : job.cabinets.find((c) => c.id === target);
+  const list = wall ? (wall.controlPanels || []) : (cab && cab.params.controlPanels) || [];
+  const i = list.findIndex((p) => p.id === panelId);
+  if (i < 0) return false;
+  pushHistory();
+  const rest = list.filter((_, j) => j !== i);
+  if (wall) {
+    if (rest.length) wall.controlPanels = rest;
+    else delete wall.controlPanels;
+    const changed = syncControlPanels();
+    log("cpanel.remove", { host: "wall", id: wall.id, panel: list[i], changed });
+  } else {
+    const params = { ...cab.params };
+    if (rest.length) params.controlPanels = rest;
+    else delete params.controlPanels;
+    cab.params = params;
+    invalidate(cab.id);
+    log("cpanel.remove", { host: "endPanel", id: cab.id, panel: list[i] });
+  }
+  dirty = true;
+  emit("job");
+  return true;
+}
+
+// --- partition ↔ waterfall + overhead end panel ----------------------------------------
+
+const r1 = (v) => Math.round(v * 10) / 10;
+
+/** The partition's control panels carried over to the overhead end panel, and back. */
+function carryPanels(list, host, extra = {}) {
+  return (list || []).filter((p) => p.host !== "wall").map((p) => {
+    const rec = normalizeControlPanel(p);
+    if (!rec) return null;
+    return host === "wall" ? rec : { ...rec, host, ...extra };
+  }).filter(Boolean);
+}
+
+/**
+ * Change to waterfall: `wallId` (fitted to a kitchen and an overhead) is removed;
+ * the kitchen gets a waterfall on that end and the overhead a door-stock end
+ * panel, both with their outer face where the partition's was. `column` gives
+ * the thickness difference on the kitchen, `zone` takes it on the overhead.
+ * One undo step. Returns the plan that was applied, or { ok: false, reason }.
+ */
+export function changeToWaterfall(wallId, { column = 0, zone = 0, how = "menu" } = {}) {
+  const wall = getWall(wallId);
+  const plan = waterfallPlan(wall, { stock: job.stock, cabinets: job.cabinets });
+  if (!plan.ok) { log("wall.waterfall.blocked", { id: wallId, reason: plan.reason }); return plan; }
+  const kit = job.cabinets.find((c) => c.id === plan.kitchen.id);
+  const ohc = job.cabinets.find((c) => c.id === plan.overhead.id);
+  const col = kit.params.columns[column] && plan.kitchen.columns[column]?.ok ? column : plan.kitchen.columns.findIndex((c) => c.ok);
+  const zn = ohc.params.zones[zone] && plan.overhead.zones[zone]?.ok ? zone : plan.overhead.zones.findIndex((z) => z.ok);
+  pushHistory();
+  // Kitchen: the waterfall takes the end; the chosen column gives (waterfall − partition).
+  const kp = structuredClone(kit.params);
+  kp.waterfall = plan.kitchen.side;
+  kp.columns[col].width = r1(kp.columns[col].width + plan.kitchen.delta);
+  kp.globalSettings.length = r1(kp.globalSettings.length + plan.kitchen.delta);
+  if (plan.kitchen.side === "left") {
+    // The box frame moved onto the partition's outer face; hand-drawn arches are world-fixed.
+    kp.wheelAvoidances = (kp.wheelAvoidances || []).map((a) => (/^wa-\d+-[LR]$/.test(String(a.id)) ? a : { ...a, x0: r1(a.x0 + plan.kitchen.shift), x1: r1(a.x1 + plan.kitchen.shift) }));
+  }
+  kit.params = kp;
+  kit.pose = plan.kitchen.pose;
+  bindToSpace(kit);
+  syncWheelArch(kit);
+  invalidate(kit.id);
+  // Overhead: the end panel; the chosen zone gains (partition − door). The partition's control panels move onto it.
+  const op = { ...ohc.params, endPanel: plan.overhead.side, zones: ohc.params.zones.map((z) => ({ ...z })) };
+  op.zones[zn].width = r1(op.zones[zn].width + plan.overhead.delta);
+  op.cabinetWidth = r1(op.cabinetWidth + plan.overhead.delta);
+  const carried = carryPanels(wall.controlPanels, "endPanel", { side: plan.overhead.side });
+  const own = (ohc.params.controlPanels || []).filter((p) => p.host !== "wall");
+  const panels = [...own, ...carried];
+  if (panels.length) op.controlPanels = panels;
+  else delete op.controlPanels;
+  ohc.params = op;
+  ohc.pose = plan.overhead.pose;
+  invalidate(ohc.id);
+  // The partition goes.
+  const i = job.walls.findIndex((w) => w.id === wallId);
+  const removed = job.walls[i];
+  job.walls.splice(i, 1);
+  if (selectedId === wallId) { selectedId = kit.id; selectedIds = [kit.id]; subSel = null; }
+  syncControlPanels();
+  bindAttached();
+  log("wall.waterfall", {
+    id: wallId, how, wall: removed, axis: plan.axis, outer: plan.outer,
+    kitchen: { id: kit.id, side: plan.kitchen.side, column: col, delta: plan.kitchen.delta, pose: kit.pose, length: kp.globalSettings.length },
+    overhead: { id: ohc.id, side: plan.overhead.side, zone: zn, delta: plan.overhead.delta, pose: ohc.pose, cabinetWidth: op.cabinetWidth },
+    controlPanels: carried.map((p) => p.id),
+  });
+  dirty = true;
+  emit("job");
+  return { ...plan, column: col, zone: zn };
+}
+
+/**
+ * Change to partition: from a kitchen with a waterfall or an overhead with an
+ * end panel whose outer faces lie in one plane. Both boards go; a partition
+ * (fitted to the two) stands on that plane. `column` gains (waterfall −
+ * partition) on the kitchen, `zone` gives (partition − door) on the overhead.
+ */
+export function changeToPartition(cabId, { column = 0, zone = 0, how = "menu" } = {}) {
+  const cab = job.cabinets.find((c) => c.id === cabId);
+  const plan = partitionPlan(cab, { stock: job.stock, cabinets: job.cabinets });
+  if (!plan.ok) { log("waterfall.partition.blocked", { id: cabId, reason: plan.reason }); return plan; }
+  const kit = job.cabinets.find((c) => c.id === plan.kitchen.id);
+  const ohc = job.cabinets.find((c) => c.id === plan.overhead.id);
+  const col = kit.params.columns[column] && plan.kitchen.columns[column]?.ok ? column : plan.kitchen.columns.findIndex((c) => c.ok);
+  const zn = ohc.params.zones[zone] && plan.overhead.zones[zone]?.ok ? zone : plan.overhead.zones.findIndex((z) => z.ok);
+  pushHistory();
+  const kp = structuredClone(kit.params);
+  delete kp.waterfall;
+  kp.columns[col].width = r1(kp.columns[col].width + plan.kitchen.delta);
+  kp.globalSettings.length = r1(kp.globalSettings.length + plan.kitchen.delta);
+  if (plan.kitchen.side === "left") {
+    const shift = -plan.partitionThickness;
+    kp.wheelAvoidances = (kp.wheelAvoidances || []).map((a) => (/^wa-\d+-[LR]$/.test(String(a.id)) ? a : { ...a, x0: r1(a.x0 + shift), x1: r1(a.x1 + shift) }));
+  }
+  kit.params = kp;
+  kit.pose = plan.kitchen.pose;
+  bindToSpace(kit);
+  syncWheelArch(kit);
+  invalidate(kit.id);
+  const op = { ...ohc.params, zones: ohc.params.zones.map((z) => ({ ...z })) };
+  delete op.endPanel;
+  op.zones[zn].width = r1(op.zones[zn].width + plan.overhead.delta);
+  op.cabinetWidth = r1(op.cabinetWidth + plan.overhead.delta);
+  const carried = carryPanels(ohc.params.controlPanels, "wall");
+  delete op.controlPanels;
+  ohc.params = op;
+  ohc.pose = plan.overhead.pose;
+  invalidate(ohc.id);
+  const w = normalizeWall({ ...plan.wall, id: "pending" });
+  w.id = makeWallId();
+  if (carried.length) w.controlPanels = carried;
+  if (!Array.isArray(job.walls)) job.walls = [];
+  job.walls.push(w);
+  selectedId = w.id;
+  selectedIds = [];
+  subSel = null;
+  syncControlPanels();
+  bindAttached();
+  log("waterfall.partition", {
+    id: cabId, how, wall: w, axis: plan.axis, outer: plan.outer,
+    kitchen: { id: kit.id, side: plan.kitchen.side, column: col, delta: plan.kitchen.delta, pose: kit.pose, length: kp.globalSettings.length },
+    overhead: { id: ohc.id, side: plan.overhead.side, zone: zn, delta: plan.overhead.delta, pose: ohc.pose, cabinetWidth: op.cabinetWidth },
+    controlPanels: carried.map((p) => p.id),
+  });
+  dirty = true;
+  emit("job");
+  return { ...plan, column: col, zone: zn, wallId: w.id };
 }
 
 export function removeCabinet(id) {
@@ -486,9 +882,53 @@ export function removeCabinet(id) {
   job.cabinets = job.cabinets.filter((c) => c.id !== id && (!twin || c.id !== twin.id));
   invalidate(id);
   if (twin) invalidate(twin.id);
-  if (selectedId === id || (twin && selectedId === twin.id)) { selectedId = null; subSel = null; }
+  dropCabinetsFromSelection([id, twin ? twin.id : null]);
   dirty = true;
   emit("job");
+}
+
+/**
+ * Remove every cabinet in `ids`, plus a pair's twin when one of the pair is listed.
+ * One undo step. The previous cabinet in the set stays selected.
+ */
+export function removeCabinets(ids) {
+  const want = new Set((ids || []).filter(Boolean));
+  for (const id of [...want]) {
+    const cab = job.cabinets.find((c) => c.id === id);
+    if (!cab) { want.delete(id); continue; }
+    const mod = getModule(cab.moduleId);
+    if (mod && mod.pair) {
+      for (const other of job.cabinets) {
+        if (other.moduleId === cab.moduleId && other.id !== cab.id) want.add(other.id);
+      }
+    }
+  }
+  const removing = job.cabinets.filter((c) => want.has(c.id));
+  if (!removing.length) return;
+  pushHistory();
+  const logged = new Set();
+  for (const cab of removing) {
+    if (logged.has(cab.id)) continue;
+    const mod = getModule(cab.moduleId);
+    const twin = mod && mod.pair ? removing.find((c) => c.moduleId === cab.moduleId && c.id !== cab.id) : null;
+    log("cabinet.remove", { id: cab.id, moduleId: cab.moduleId, twin: twin ? twin.id : null });
+    logged.add(cab.id);
+    if (twin) logged.add(twin.id);
+  }
+  job.cabinets = job.cabinets.filter((c) => !want.has(c.id));
+  for (const id of want) invalidate(id);
+  dropCabinetsFromSelection([...want]);
+  dirty = true;
+  emit("job");
+}
+
+function dropCabinetsFromSelection(ids) {
+  const drop = new Set(ids.filter(Boolean));
+  selectedIds = selectedIds.filter((id) => !drop.has(id));
+  if (selectedId && drop.has(selectedId)) {
+    subSel = null;
+    selectedId = selectedIds.length ? selectedIds[selectedIds.length - 1] : null;
+  }
 }
 
 /** Apply a preview mutation (no history). Used during drags. */
@@ -497,9 +937,12 @@ export function updateCabinet(id, fn) {
   if (!cab) return;
   const before = cab.params;
   fn(cab);
-  if (cab.params !== before) invalidate(id);
   bindToSpace(cab);
+  syncWheelArch(cab);
+  syncLoungeArch(cab);
+  if (cab.params !== before) invalidate(id);
   bindAttached();
+  if (cab.moduleId === "overheadCabinet") syncControlPanels();
   dirty = true;
   emit("job");
 }
@@ -698,21 +1141,44 @@ export function setPose(id, pose, { history = true } = {}) {
  * Select a job object (cabinet / wall / plane id, or null) — optionally a board and a face
  * inside a cabinet: `select("cab-1", { boardId: "BP", faceId: "A" })`. Selecting the cabinet
  * alone clears any board / face selection.
+ * `{ extend: true }` (Ctrl+click) toggles that cabinet in the set. The last one stays primary:
+ * the panel, the handles and Move / Face / Rotate follow it. A plain click keeps only that one.
  */
-export function select(id, sub = null) {
+export function select(id, sub = null, opts = null) {
+  if (opts && opts.extend) {
+    if (!isCabinetId(id)) return;
+    const set = getSelectedIds();
+    const next = set.includes(id) ? set.filter((x) => x !== id) : [...set, id];
+    selectedIds = next;
+    selectedId = next.length ? next[next.length - 1] : null;
+    subSel = null;
+    log("select", { id: selectedId, ids: next, board: null, face: null, region: null, how: "ctrl" });
+    emit("selection");
+    return;
+  }
   // A region (`{ regionId }`) is the volume-only counterpart of a board: one of the bedroom
   // body's layout regions, selected in the front view or by a second click in 3D.
   const nextSub = id && sub && sub.boardId
     ? { boardId: sub.boardId, faceId: sub.faceId || null }
     : id && sub && sub.regionId ? { regionId: sub.regionId } : null;
+  const nextIds = isCabinetId(id) ? [id] : [];
   const same = selectedId === id
     && (subSel?.boardId ?? null) === (nextSub?.boardId ?? null)
     && (subSel?.faceId ?? null) === (nextSub?.faceId ?? null)
-    && (subSel?.regionId ?? null) === (nextSub?.regionId ?? null);
+    && (subSel?.regionId ?? null) === (nextSub?.regionId ?? null)
+    && nextIds.length === selectedIds.length
+    && nextIds.every((x, i) => x === selectedIds[i]);
   if (same) return;
   selectedId = id;
+  selectedIds = nextIds;
   subSel = nextSub;
-  log("select", { id, board: nextSub?.boardId ?? null, face: nextSub?.faceId ?? null, region: nextSub?.regionId ?? null });
+  log("select", {
+    id,
+    ids: nextIds.length ? nextIds : undefined,
+    board: nextSub?.boardId ?? null,
+    face: nextSub?.faceId ?? null,
+    region: nextSub?.regionId ?? null,
+  });
   emit("selection");
 }
 
@@ -731,12 +1197,51 @@ export function resetJob() {
   job = newJob();
   conflict = null;
   selectedId = null;
+  selectedIds = [];
   subSel = null;
   undoStack.length = 0;
   redoStack.length = 0;
   invalidate();
   dirty = false;
   filePath = null;
+  emit("job");
+}
+
+/** The open job, so a window reload can bring it back. */
+export function captureSession() {
+  return {
+    job: JSON.parse(JSON.stringify(job)),
+    path: filePath,
+    dirty,
+    selectedId,
+    selectedIds: [...selectedIds],
+    subSel: subSel ? { ...subSel } : null,
+  };
+}
+
+/** Put a captured job back. The file stays unsaved when it was unsaved. */
+export function resumeSession(data) {
+  const obj = data && data.job;
+  if (!obj || !/^job\.v[12]$/.test(obj.version || "") || !Array.isArray(obj.cabinets)) {
+    throw new Error("Not a Cab Lab job");
+  }
+  job = migrate(obj);
+  conflict = null;
+  selectedId = data.selectedId || null;
+  selectedIds = Array.isArray(data.selectedIds) ? data.selectedIds.filter((id) => typeof id === "string") : [];
+  const sub = data.subSel && typeof data.subSel === "object" ? data.subSel : null;
+  subSel = sub && (sub.boardId || sub.regionId)
+    ? { boardId: sub.boardId, faceId: sub.faceId || null, regionId: sub.regionId }
+    : null;
+  undoStack.length = 0;
+  redoStack.length = 0;
+  invalidate();
+  bindAllToSpace();
+  syncWheelArches();
+  pruneSelection();
+  dirty = !!data.dirty;
+  filePath = typeof data.path === "string" ? data.path : null;
+  log("file.refresh", { path: filePath, cabinets: job.cabinets.length, dirty, id: selectedId });
   emit("job");
 }
 
@@ -748,11 +1253,13 @@ export function loadJob(obj, path) {
   conflict = null;
   log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space, finish: job.finish, stock: job.stock });
   selectedId = null;
+  selectedIds = [];
   subSel = null;
   undoStack.length = 0;
   redoStack.length = 0;
   invalidate();
   bindAllToSpace();
+  syncWheelArches();
   dirty = false;
   filePath = path || null;
   emit("job");

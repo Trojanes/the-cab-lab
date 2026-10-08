@@ -4,6 +4,7 @@ contextBridge.exposeInMainWorld("cablab", {
   openJob: () => ipcRenderer.invoke("job:open"),
   saveJob: (filePath, text) => ipcRenderer.invoke("job:save", filePath, text),
   saveCnjob: (filePath, snapshotJson) => ipcRenderer.invoke("cnjob:save", filePath, snapshotJson),
+  saveStep: (filePath, text) => ipcRenderer.invoke("step:save", filePath, text),
   openDxf: () => ipcRenderer.invoke("dxf:open"),
   readSettings: () => ipcRenderer.invoke("settings:read"),
   writeSettings: (text) => ipcRenderer.invoke("settings:write", text),
@@ -11,6 +12,9 @@ contextBridge.exposeInMainWorld("cablab", {
   logDump: (text) => ipcRenderer.invoke("log:dump", text),
   openLogs: () => ipcRenderer.invoke("log:open"),
   onSketchAid: (cb) => { ipcRenderer.on("sketch:aid", (_e, key) => cb(key)); },
+  onGeneratorsUpdated: (cb) => { ipcRenderer.on("generators:updated", (_e, info) => cb(info)); },
+  reloadApp: () => ipcRenderer.invoke("app:reload"),
+  onRefresh: (cb) => { ipcRenderer.on("app:refresh", () => cb()); },
   versions: { electron: process.versions.electron, chrome: process.versions.chrome },
 
   // Generator bench (see docs/bench-spec.md). Main window: openBench().

@@ -23,7 +23,9 @@
         <button class="tb" data-action="new" title="New job (Ctrl+N)">New</button>
         <button class="tb" data-action="open" title="Open job (Ctrl+O)">Open</button>
         <button class="tb" data-action="save" title="Save job (Ctrl+S)">Save</button>
+        <button class="tb" data-action="refresh" title="Reload the program and keep this job (F5)">Refresh</button>
         <button class="tb" data-action="export" title="Export .cnjob for OmniCAM">Export</button>
+        <button class="tb" data-action="export3d" title="Export cabinets as STEP for Fusion">Export 3D</button>
       </div>
       <div class="sep"></div>
       <div class="group">
@@ -129,6 +131,7 @@
             <button class="tb seg" data-fp-tool="wall" title="Wall (W) — two points on one feature edge fix the span (Enter = the far end), pull the wall into the room, Tab / digits type the clear distance · left-click confirms · right-click cancels">Wall</button>
             <button class="tb seg" data-fp-tool="door" title="Shower door (D) — click the end of a partition, then the door's first edge along it, then its other edge (Tab / digits type the numbers); a card asks the bottom / top clearance · left-click confirms · right-click cancels">Shower door</button>
             <button class="tb seg" data-fp-tool="slide" title="Sliding door (S) — click the end of a partition, the door's first edge, its other edge, then the side of the wall the door hangs on; a card asks the top clearance, how much wider the leaf is and its height · the hole goes to the floor; the leaf and the pelmet (track cover) are built from the Partition stock · left-click confirms · right-click cancels">Sliding door</button>
+            <button class="tb seg" data-fp-tool="arch" title="Wheel arch (A) — from either rear corner, drag along the van to the rear edge, then the length toward the nose, then the width in from the side wall (the other side mirrors). A card asks the height. The pair is red. A base whose back sits in it, and a partition that crosses it, are cut around it.">Wheel arch</button>
             <button class="tb seg" data-fp-tool="lounge" title="Lounge (G) — I: corner, opposite corner, height. L: those, then which end, then the side width, then height. I / L switches the kind.">Lounge</button>
             <button class="tb seg" data-fp-lounge="I" title="I — one run. Corner, opposite corner, then height.">I</button>
             <button class="tb seg" data-fp-lounge="L" title="L — corner, opposite corner, which end, side width, then height.">L</button>
@@ -147,6 +150,7 @@
             <label><span>Top (mm)</span><input type="number" min="0" step="1" data-op="top"></label>
             <label data-for="sliding"><span>Leaf wider by (mm)</span><input type="number" min="0" step="1" data-op="overlap"></label>
             <label data-for="sliding"><span>Leaf height (mm)</span><input type="number" min="1" step="1" data-op="height"></label>
+            <label data-for="arch"><span>Height (mm)</span><input type="number" min="1" step="1" data-op="arch-height"></label>
             <div class="fp-card-actions">
               <button class="tb" data-op="cancel">Cancel</button>
               <button class="tb primary" data-op="ok">Create</button>
@@ -226,11 +230,17 @@
     <div class="modal-card">
       <div class="modal-title">Define the space</div>
       <div class="modal-sub">Origin is the front-left floor corner. X right, Y back, Z up.</div>
-      <div class="kind-list"></div>
-      <div class="kind-fields"></div>
-      <div class="materials-fields"></div>
-      <div class="kind-errors"></div>
+      <div class="modal-scroll">
+        <div class="kind-list"></div>
+        <div class="kind-fields"></div>
+        <div class="materials-fields"></div>
+        <div class="kind-errors"></div>
+      </div>
+      <div class="nose-note" data-default-note></div>
       <div class="modal-actions">
+        <button type="button" class="tb" data-set-default data-role="set-default" title="New spaces of this kind start with these values (saved to settings.json now)">Set current as default</button>
+        <button type="button" class="tb subtle" data-reset-default>Reset to built-in</button>
+        <span class="spacer"></span>
         <button class="tb" data-cancel>Later</button>
         <button class="tb primary" data-ok>Create space</button>
       </div>

@@ -3,7 +3,7 @@
 import assert from "node:assert/strict";
 import { nameTable, toDisplay, fromDisplay, withOffset, sizeFormula, addParam, removeParam, formulaPieces } from "./ruleText.js";
 import { flatFormula } from "./provenance.js";
-import { createDraft, isDirty, commitEdit, undo, redo, discard, rebase, setFace, setRelation, setCorner, setFeatureDepth, diffLayouts, movedBoards, ensureBoard, relationAt } from "./draft.js";
+import { createDraft, isDirty, commitEdit, undo, redo, discard, rebase, setFace, setRelation, setCorner, setFeatureDepth, diffLayouts, movedBoards, ensureBoard, ensureAxis, relationAt } from "./draft.js";
 
 const INPUTS = [{ group: "g", fields: [
   { sym: "Cw", label: "柜宽" }, { sym: "Cd", label: "柜身深度（不含门）" }, { sym: "CPT", label: "柜身板厚" }, { sym: "clearance", label: "门缝" },
@@ -23,6 +23,8 @@ const N = nameTable(INPUTS, RULES);
   assert.equal(fromDisplay("T1.后表面", N), "T1.y1");
   assert.equal(fromDisplay("2 × 柜身板厚", N), "2 * CPT");
   assert.equal(fromDisplay("Cd - CPT", N), "Cd - CPT", "symbols pass through");
+  assert.equal(fromDisplay("= kitchen.toeY - FPT", N), "kitchen.toeY - FPT");
+  assert.equal(fromDisplay("= = V0.x1", N), "V0.x1");
   assert.equal(fromDisplay("T4 高度 + 5", N), "T4_HEIGHT_MM + 5");
   for (const e of ["Cd - CPT - clearance", "T1.y1 + 2 * CPT", "max(Cw, T3_DEPTH_MM) / 2"]) assert.equal(fromDisplay(toDisplay(e, N), N).replace(/\s/g, ""), e.replace(/\s/g, ""), `round trip ${e}`);
   assert.equal(withOffset("T3.xSize", 12.4), "T3.xSize + 12.5");
@@ -55,12 +57,31 @@ const N = nameTable(INPUTS, RULES);
   assert.equal(removeParam("CPT", "CPT"), "0");
   assert.equal(removeParam("2 * CPT", "CPT"), "0");
   assert.equal(removeParam("max(0, 1333.4 - CPT / 2)", "CPT"), "max(0, 1333.4)");
-  assert.deepEqual(formulaPieces("Cd - CPT", ["CPT", "Cd"]).map((p) => p.sym || p.text), ["Cd", " - ", "CPT"]);
+  assert.equal(removeParam("T1.y1 + CPT", "T1.y1"), "CPT");
+  assert.equal(removeParam("toeY + FPT", "toeY"), "FPT");
+  assert.deepEqual(formulaPieces("Cd - CPT").map((p) => p.sym || p.text), ["Cd", " - ", "CPT"]);
+  assert.deepEqual(formulaPieces("toeY + FPT").filter((p) => p.kind === "param").map((p) => p.sym), ["toeY", "FPT"]);
+  assert.deepEqual(formulaPieces("T1.y1 + CPT").filter((p) => p.kind === "param").map((p) => p.sym), ["T1.y1", "CPT"]);
+  assert.deepEqual(formulaPieces("max(0, H - CPT)").filter((p) => p.kind === "param").map((p) => p.sym), ["H", "CPT"]);
   const bare = { module: "t", version: 1, boards: {} };
   const seeded = ensureBoard(bare, "D2", { x: { from: "lo", at: "0", size: "CPT" }, y: { from: "lo", at: "0", size: "Cd" }, z: { from: "lo", at: "CPT", size: "H - CPT" } });
   assert.equal(seeded.boards.D2.axes.y.size, "Cd");
   assert.equal(ensureBoard(seeded, "D2", { x: { from: "hi", at: "1", size: "2" } }).boards.D2.axes.x.at, "0", "an existing rule is left alone");
+  const onlyY = ensureAxis(bare, "B1", "y", { from: "lo", at: "toeY - FPT - CPT", size: "FPT" });
+  assert.equal(onlyY.boards.B1.axes.x, undefined);
+  assert.equal(onlyY.boards.B1.axes.y.at, "toeY - FPT - CPT");
   assert.equal(bare.boards.D2, undefined);
+  const recessed = ensureAxis(bare, "B1", "y", { from: "lo", at: "toeY - FPT - CPT", size: "FPT" }, { bottomClearanceStyle: "style_1" });
+  const both = ensureAxis(recessed, "B1", "y", { from: "lo", at: "-FPT", size: "FPT" }, { bottomClearanceStyle: "style_2" });
+  assert.equal(both.boards.B1.axes.y.cases.length, 2);
+  assert.equal(ensureAxis(both, "B1", "y", { from: "lo", at: "nope", size: "FPT" }, { bottomClearanceStyle: "style_1" }), both);
+  const edited = setFace(both, "B1", "y0", "toeY - FPT", { bottomClearanceStyle: "style_1" });
+  assert.equal(edited.boards.B1.axes.y.cases[0].at, "toeY - FPT");
+  assert.equal(edited.boards.B1.axes.y.cases[1].at, "-FPT");
+  const all = setFace(both, "B1", "y0", "-FPT", undefined, true);
+  assert.equal(all.boards.B1.axes.y.at, "-FPT");
+  assert.equal(all.boards.B1.axes.y.when, undefined);
+  assert.equal(all.boards.B1.axes.y.cases, undefined);
 }
 
 /* ---- drafts ---- */

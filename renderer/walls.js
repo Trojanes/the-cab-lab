@@ -20,9 +20,12 @@
 // bottom = floor + floorClearance, top = roof − ceilingClearance, so a change
 // in the catalogue moves every wall.
 import { clearHeightAt, minClearHeight, pointInsideOrOn } from "./spaces.js";
+import { notchFloor, wallNotches } from "./wheelArch.js";
 import { thickness, partitionClearance } from "./materials.js";
-import { worldOf } from "./pose.js";
+import { localAxes, localOf, worldOf } from "./pose.js";
 import { getModule, isBaseCabinet } from "./modules.js";
+import { segPart, segPointAt } from "./sketchCurves.js";
+import { CONTROL_PANEL_DEFAULTS } from "./gen/overheadCabinet.js";
 
 export const WALL_MIN_LENGTH = 50;
 export const WALL_MIN_HEIGHT = 50;
@@ -116,7 +119,133 @@ export function normalizeWall(raw) {
       radius: Number.isFinite(radius) && radius >= 0 ? Math.round(radius * 10) / 10 : FIT_CORNER_RADIUS_MM,
     };
   }
+  const panels = (Array.isArray(raw.controlPanels) ? raw.controlPanels : []).map(normalizeControlPanel).filter(Boolean);
+  if (panels.length) wall.controlPanels = panels;
   return wall;
+}
+
+// --- control panels --------------------------------------------------------------------
+// A screen recessed through the wall: { id, fromCeiling, fromBack, width, height, depth }.
+// The opening's centre is `fromCeiling` under the roof and `fromBack` from the
+// wall's back end (the end at the cabinets' back — the fitted base's back, else
+// the end nearest the space boundary). Width runs along the wall. The wall is
+// cut through (depth ≥ its thickness); the overhead standing against this wall
+// end takes the rest of the depth (job.js syncControlPanels → the generator's
+// `controlPanels` with host "wall": end divider through, backing boards, 10 mm half slot).
+export const CONTROL_PANEL_MIN_MM = 1;
+
+export function normalizeControlPanel(raw) {
+  if (!raw || typeof raw !== "object") return null;
+  const num = (v, d) => (Number.isFinite(Number(v)) ? Math.round(Number(v) * 10) / 10 : d);
+  const rec = {
+    id: String(raw.id || ""),
+    fromCeiling: num(raw.fromCeiling, 200),
+    fromBack: num(raw.fromBack, 200),
+    width: num(raw.width, CONTROL_PANEL_DEFAULTS.width),
+    height: num(raw.height, CONTROL_PANEL_DEFAULTS.height),
+    depth: num(raw.depth, CONTROL_PANEL_DEFAULTS.depth),
+  };
+  if (!(rec.width >= CONTROL_PANEL_MIN_MM && rec.height >= CONTROL_PANEL_MIN_MM && rec.depth >= CONTROL_PANEL_MIN_MM)) return null;
+  return rec;
+}
+
+/** The wall end the panel distances are measured from, and the direction toward the other end. */
+export function wallBackU(wall, resolved) {
+  const fit = readFit(wall);
+  if (fit && fit.kitchen && Number.isFinite(fit.backU)) return { backU: fit.backU, sign: fit.sign };
+  const pts = resolved && Array.isArray(resolved.floor) ? resolved.floor : [];
+  const k = wall.axis === "y" ? 0 : 1;
+  if (pts.length) {
+    const vals = pts.map((p) => (Array.isArray(p) ? p[k] : (k === 0 ? p.x : p.y))).filter(Number.isFinite);
+    const lo = Math.min(...vals);
+    const hi = Math.max(...vals);
+    const d0 = Math.min(Math.abs(wall.u0 - lo), Math.abs(wall.u0 - hi));
+    const d1 = Math.min(Math.abs(wall.u1 - lo), Math.abs(wall.u1 - hi));
+    if (d1 < d0) return { backU: wall.u1, sign: -1 };
+  }
+  return { backU: wall.u0, sign: 1 };
+}
+
+/**
+ * Control panel openings on a wall in its (u, z) plane:
+ * [{ id, panel, u0, u1, zBottom, zTop, centreU, centreZ, roof }]. `topZ(u)` is the
+ * wall's top (roof − ceiling clearance) as wallSolid computes it.
+ */
+export function controlPanelHoles(wall, resolved, stock, topZ) {
+  const panels = wall.controlPanels || [];
+  if (!panels.length) return [];
+  const cl = partitionClearance(stock);
+  const { backU, sign } = wallBackU(wall, resolved);
+  return panels.map((p) => {
+    const centreU = backU + sign * p.fromBack;
+    const roof = (typeof topZ === "function" ? topZ(centreU) : Infinity) + cl.ceiling;
+    const centreZ = roof - p.fromCeiling;
+    return {
+      id: p.id, panel: p, centreU, centreZ, roof,
+      u0: round1(centreU - p.width / 2), u1: round1(centreU + p.width / 2),
+      zBottom: round1(centreZ - p.height / 2), zTop: round1(centreZ + p.height / 2),
+    };
+  });
+}
+
+/** The two faces of a partition along its normal axis, and its thickness. */
+export function wallFaces(wall, stock) {
+  const t = thickness(stock, "partition");
+  const lo = wall.side > 0 ? wall.at : wall.at - t;
+  return { axis: wall.axis, lo, hi: lo + t, t };
+}
+
+/** A cabinet this far from a partition's face still counts as standing against it. */
+export const ABUT_TOLERANCE_MM = 5;
+
+/**
+ * Which end of `cab` (its local x0 or x1 face) stands against the plane pair
+ * lo..hi along `axis`. `box` is the cabinet's local box.
+ * Returns { side, near, gap, dirIn, inner, outer } or { reason }:
+ *   dirIn  ±1 along `axis`, from the partition toward the cabinet
+ *   gap    the cabinet's end face from the partition's inner face (− = into it)
+ */
+export function endAgainst(cab, box, axis, lo, hi) {
+  const [ex] = localAxes(cab.pose);
+  const k = axis === "x" ? 0 : 1;
+  if (Math.abs(ex[k]) < 0.985) return { reason: `${cab.id} does not run square to the partition` };
+  const face0 = worldOf(cab.pose, [box.x0, 0, 0])[k];
+  const face1 = worldOf(cab.pose, [box.x1, 0, 0])[k];
+  const centre = (face0 + face1) / 2;
+  const dirIn = centre >= (lo + hi) / 2 ? 1 : -1;
+  const inner = dirIn > 0 ? hi : lo;
+  const outer = dirIn > 0 ? lo : hi;
+  const side = Math.abs(face0 - inner) <= Math.abs(face1 - inner) ? "left" : "right";
+  const near = side === "left" ? face0 : face1;
+  return { side, near, gap: round1((near - inner) * dirIn), dirIn, inner, outer };
+}
+
+/**
+ * The control panels of `wall` as the overhead `ohc` must cut them (generator
+ * `controlPanels` records with host "wall"), or [] when the overhead does not
+ * stand against this wall's end plane or the opening misses its carcass.
+ */
+export function wallControlPanelsFor(wall, ohc, resolved, stock) {
+  if (!wall || !(wall.controlPanels || []).length || !ohc || ohc.moduleId !== "overheadCabinet") return [];
+  const { lo, hi, t } = wallFaces(wall, stock);
+  const mod = getModule(ohc.moduleId);
+  const box = mod.localBox(ohc.params);
+  const e = endAgainst(ohc, box, wall.axis, lo, hi);
+  if (e.reason || Math.abs(e.gap) > ABUT_TOLERANCE_MM) return [];
+  const env = mod.envelope(ohc.params);
+  const solid = wallSolid(wall, resolved, stock);
+  const out = [];
+  for (const h of controlPanelHoles(wall, resolved, stock, solid.topZ)) {
+    const world = wall.axis === "y" ? [h.centreU, e.inner, h.centreZ] : [e.inner, h.centreU, h.centreZ];
+    const local = localOf(ohc.pose, world);
+    if (local[1] < -1 || local[1] > env.D + 1 || local[2] < -1 || local[2] > env.H + 1) continue;
+    out.push({
+      id: h.id, host: "wall", side: e.side, wall: wall.id, wallThickness: t,
+      fromCeiling: round1(env.H - local[2]), fromBack: round1(env.D - local[1]),
+      width: h.panel.width, height: h.panel.height, depth: h.panel.depth,
+    });
+  }
+  return out;
 }
 
 export function wallLength(wall) {
@@ -156,7 +285,10 @@ export function openingSpan(wall, op) {
 // Back edge = the cabinets' back. Depths are the outer front-to-back size.
 
 export const FIT_OHC_DEPTH_EXTRA_MM = 20;
-export const FIT_OHC_BOTTOM_GAP_MM = 20;
+/** The up-flap hangs this far below the overhead carcass. */
+export const FIT_OHC_DOOR_DROP_MM = 30;
+/** The overhead step continues this far past the door's underside. */
+export const FIT_OHC_BELOW_DOOR_MM = 15;
 export const FIT_NECK_DEPTH_MM = 100;
 export const FIT_KITCHEN_HEIGHT_EXTRA_MM = 50;
 export const FIT_KITCHEN_DEPTH_EXTRA_MM = 30;
@@ -216,14 +348,11 @@ function filletCorner(prev, corner, next, radius) {
   let sweep = a1 - a0;
   while (sweep <= -Math.PI) sweep += Math.PI * 2;
   while (sweep > Math.PI) sweep -= Math.PI * 2;
-  const steps = Math.max(2, Math.ceil(Math.abs(sweep) / (Math.PI / 8)));
-  const pts = [{ u: round1(t1.u), z: round1(t1.z) }];
-  for (let i = 1; i < steps; i += 1) {
-    const a = a0 + sweep * (i / steps);
-    pts.push({ u: round1(center.u + Math.cos(a) * r), z: round1(center.z + Math.sin(a) * r) });
-  }
-  pts.push({ u: round1(t2.u), z: round1(t2.z) });
-  return pts;
+  // One true arc (bulge = tan(sweep/4)), not a chain of straight chords.
+  return [
+    { u: round1(t1.u), z: round1(t1.z), bulge: Math.round(Math.tan(sweep / 4) * 1e6) / 1e6 },
+    { u: round1(t2.u), z: round1(t2.z) },
+  ];
 }
 
 function roundMarkedCorners(pts, radius) {
@@ -247,7 +376,7 @@ export function fitOutline({ backU, sign, z0, topAt, kitchenTop, kitchenDepth, o
   const kDepth = kitchenDepth + FIT_KITCHEN_DEPTH_EXTRA_MM;
   const oDepth = ohcDepth + FIT_OHC_DEPTH_EXTRA_MM;
   const kTop = kitchenTop + FIT_KITCHEN_HEIGHT_EXTRA_MM;
-  const oBot = ohcBottom + FIT_OHC_BOTTOM_GAP_MM;
+  const oBot = ohcBottom - FIT_OHC_DOOR_DROP_MM - FIT_OHC_BELOW_DOOR_MM;
   const warnings = [];
   const bands = [];
   if (oBot - kTop >= 1) {
@@ -285,7 +414,10 @@ export function fitOutline({ backU, sign, z0, topAt, kitchenTop, kitchenDepth, o
   const outline = [];
   for (const p of rounded) {
     const prev = outline[outline.length - 1];
-    if (prev && Math.abs(prev.u - p.u) < 0.05 && Math.abs(prev.z - p.z) < 0.05) continue;
+    if (prev && Math.abs(prev.u - p.u) < 0.05 && Math.abs(prev.z - p.z) < 0.05) {
+      if (!prev.bulge && p.bulge) prev.bulge = p.bulge;
+      continue;
+    }
     outline.push(p);
   }
   const steps = {
@@ -420,9 +552,11 @@ export function wallSolid(wall, resolved, stock) {
       }
     }
   }
-  const z1 = Math.max(...outline.map((p) => p.z));
   const uSpan0 = Math.min(...outline.map((p) => p.u));
   const uSpan1 = Math.max(...outline.map((p) => p.u));
+  const cuts = wallNotches({ axis: wall.axis, ...box, z0, u0: uSpan0, u1: uSpan1, z1: Math.max(...outline.map((p) => p.z)) }, resolved && resolved.wheelArches);
+  if (cuts.length) outline = notchFloor(outline, cuts);
+  const z1 = Math.max(...outline.map((p) => p.z));
   const zMin = wall.axis === "y" ? topZ() : Math.min(topZ(uSpan0), topZ(uSpan1));
   // Openings: rectangles in the face plane. The hole top sits `top` under the lowest roof over the hole's span.
   const openings = (wall.openings || []).map((op) => {
@@ -435,7 +569,29 @@ export function wallSolid(wall, resolved, stock) {
     if (!(o.zTop - o.zBottom >= 1 && o.u1 - o.u0 >= 1 && o.u0 >= uSpan0 - EPS && o.u1 <= uSpan1 + EPS)) continue;
     holes.push([{ u: o.u0, z: o.zBottom }, { u: o.u1, z: o.zBottom }, { u: o.u1, z: o.zTop }, { u: o.u0, z: o.zTop }, { u: o.u0, z: o.zBottom }]);
   }
-  return { id: wall.id, axis: wall.axis, along, ...box, z0, z1, zTopMin: zMin, thickness: t, outline, holes, topZ, openings, at: wall.at, side: wall.side, u0: wall.u0, u1: wall.u1, fitWarnings, fitSteps };
+  // Control panels: through holes in the face plane; one that misses the board is reported, not cut.
+  const controlHoles = [];
+  for (const h of controlPanelHoles(wall, resolved, stock, topZ)) {
+    const inside = h.u0 >= uSpan0 - EPS && h.u1 <= uSpan1 + EPS && h.zBottom >= z0 - EPS
+      && [h.u0, h.u1].every((u) => h.zTop <= outlineTopAt(outline, u) + EPS);
+    if (!inside) { fitWarnings.push(`control panel ${h.id} is outside the board`); continue; }
+    controlHoles.push(h);
+    holes.push([{ u: h.u0, z: h.zBottom }, { u: h.u1, z: h.zBottom }, { u: h.u1, z: h.zTop }, { u: h.u0, z: h.zTop }, { u: h.u0, z: h.zBottom }]);
+  }
+  return { id: wall.id, axis: wall.axis, along, ...box, z0, z1, zTopMin: zMin, thickness: t, outline, holes, topZ, openings, controlHoles, at: wall.at, side: wall.side, u0: wall.u0, u1: wall.u1, fitWarnings, fitSteps };
+}
+
+/** Highest z of a closed (u, z) outline at `u` (straight edges; an arc's chord is close enough for a bounds check). */
+function outlineTopAt(outline, u) {
+  let top = -Infinity;
+  for (let i = 1; i < outline.length; i += 1) {
+    const a = outline[i - 1];
+    const b = outline[i];
+    if ((u - a.u) * (u - b.u) > EPS * EPS) continue;
+    const z = Math.abs(b.u - a.u) < 1e-9 ? Math.max(a.z, b.z) : a.z + ((u - a.u) / (b.u - a.u)) * (b.z - a.z);
+    if (z > top) top = z;
+  }
+  return Number.isFinite(top) ? top : Math.max(...outline.map((p) => p.z));
 }
 
 const SPACE_END_LABEL = { x: ["left wall", "right wall"], y: ["front wall", "back wall"] };
@@ -824,6 +980,10 @@ function distToSpan(p, a, b) {
 function showerHoles(solid) {
   return (solid.openings || []).filter((o) => o.type !== "slidingDoor");
 }
+/** Holes a cut must not run through: shower doors and control panel openings. */
+function wholeHoles(solid) {
+  return [...showerHoles(solid), ...(solid.controlHoles || [])];
+}
 
 /**
  * The automatic cut, or null when the wall is already one legal board.
@@ -840,7 +1000,7 @@ function autoSplit(solid) {
   const vLegal = legalCutInterval(L, H);
   const hLegal = legalCutInterval(H, L);
   const sliding = (solid.openings || []).filter((o) => o.type === "slidingDoor");
-  const showers = showerHoles(solid);
+  const showers = wholeHoles(solid);
 
   if (sliding.length && vLegal) {
     const lo = solid.u0 + vLegal[0];
@@ -910,7 +1070,7 @@ export function placeSplit(solid, split) {
   for (let n = 0; n < 4; n += 1) {
     if (axis === "u") at = clamp(at, solid.u0 + margin, solid.u1 - margin);
     else at = clamp(at, solid.z0 + margin, solid.z1 - margin);
-    for (const o of showerHoles(solid)) {
+    for (const o of wholeHoles(solid)) {
       if (axis === "u" && at > o.u0 + EPS && at < o.u1 - EPS) {
         at = (at - o.u0) <= (o.u1 - at) ? o.u0 : o.u1;
       } else if (axis === "z" && at > o.zBottom + EPS && at < o.zTop - EPS) {
@@ -923,24 +1083,80 @@ export function placeSplit(solid, split) {
   return { axis, at: Math.round(at * 10) / 10 };
 }
 
-function clipHalf(poly, inside, intersect) {
+function edgeSeg(a, b) {
+  return { a: [a.u, a.z], b: [b.u, b.z], bulge: a.bulge || 0 };
+}
+
+function putBulge(p, bulge) {
+  if (bulge) p.bulge = bulge;
+  else delete p.bulge;
+}
+
+/** Where an edge crosses a constant-u or constant-z cut, as a fraction from a to b. */
+function cutFrac(a, b, axis, value) {
+  const seg = edgeSeg(a, b);
+  const coord = (f) => {
+    const p = segPointAt(seg, f);
+    return axis === "u" ? p[0] : p[1];
+  };
+  if (!seg.bulge) {
+    const d = coord(1) - coord(0);
+    if (Math.abs(d) < 1e-9) return 0;
+    return (value - coord(0)) / d;
+  }
+  let best = 0;
+  let err = Infinity;
+  const consider = (f) => {
+    const e = Math.abs(coord(f) - value);
+    if (e < err) { err = e; best = f; }
+  };
+  for (let i = 0; i <= 48; i += 1) consider(i / 48);
+  let span = 1 / 48;
+  for (let n = 0; n < 12; n += 1) {
+    consider(Math.max(0, best - span));
+    consider(Math.min(1, best + span));
+    span /= 2;
+  }
+  return best;
+}
+
+function clipHalf(poly, inside, axis, value) {
   const ring = poly.length > 1 && poly[0].u === poly[poly.length - 1].u && poly[0].z === poly[poly.length - 1].z
     ? poly.slice(0, -1) : poly.slice();
   if (ring.length < 3) return null;
   const out = [];
+  const startAt = (p, bulge) => {
+    if (!out.length) out.push({ u: p.u, z: p.z });
+    putBulge(out[out.length - 1], bulge);
+  };
   for (let i = 0; i < ring.length; i += 1) {
     const a = ring[i];
     const b = ring[(i + 1) % ring.length];
     const ain = inside(a);
     const bin = inside(b);
-    if (ain && bin) out.push({ u: b.u, z: b.z });
-    else if (ain && !bin) out.push(intersect(a, b));
-    else if (!ain && bin) { out.push(intersect(a, b)); out.push({ u: b.u, z: b.z }); }
+    if (ain && bin) {
+      startAt(a, a.bulge || 0);
+      out.push({ u: b.u, z: b.z });
+    } else if (ain && !bin) {
+      const f = Math.min(1, Math.max(0, cutFrac(a, b, axis, value)));
+      const part = segPart(edgeSeg(a, b), 0, f);
+      startAt(a, part.bulge || 0);
+      out.push({ u: part.b[0], z: part.b[1] });
+    } else if (!ain && bin) {
+      const f = Math.min(1, Math.max(0, cutFrac(a, b, axis, value)));
+      const part = segPart(edgeSeg(a, b), f, 1);
+      out.push({ u: part.a[0], z: part.a[1] });
+      putBulge(out[out.length - 1], part.bulge || 0);
+      out.push({ u: b.u, z: b.z });
+    }
   }
   const clean = [];
   for (const p of out) {
     const prev = clean[clean.length - 1];
-    if (prev && Math.abs(prev.u - p.u) < 1e-4 && Math.abs(prev.z - p.z) < 1e-4) continue;
+    if (prev && Math.abs(prev.u - p.u) < 1e-4 && Math.abs(prev.z - p.z) < 1e-4) {
+      if (!prev.bulge && p.bulge) prev.bulge = p.bulge;
+      continue;
+    }
     clean.push(p);
   }
   if (clean.length >= 2 && Math.abs(clean[0].u - clean[clean.length - 1].u) < 1e-4 && Math.abs(clean[0].z - clean[clean.length - 1].z) < 1e-4) clean.pop();
@@ -950,27 +1166,11 @@ function clipHalf(poly, inside, intersect) {
 }
 
 function clipU(poly, side, s) {
-  return clipHalf(
-    poly,
-    (p) => (side < 0 ? p.u <= s + 1e-4 : p.u >= s - 1e-4),
-    (a, b) => {
-      const d = b.u - a.u;
-      const t = Math.abs(d) < 1e-9 ? 0 : (s - a.u) / d;
-      return { u: s, z: a.z + t * (b.z - a.z) };
-    },
-  );
+  return clipHalf(poly, (p) => (side < 0 ? p.u <= s + 1e-4 : p.u >= s - 1e-4), "u", s);
 }
 
 function clipZ(poly, side, z) {
-  return clipHalf(
-    poly,
-    (p) => (side < 0 ? p.z <= z + 1e-4 : p.z >= z - 1e-4),
-    (a, b) => {
-      const d = b.z - a.z;
-      const t = Math.abs(d) < 1e-9 ? 0 : (z - a.z) / d;
-      return { u: a.u + t * (b.u - a.u), z };
-    },
-  );
+  return clipHalf(poly, (p) => (side < 0 ? p.z <= z + 1e-4 : p.z >= z - 1e-4), "z", z);
 }
 
 function holeRect(u0, u1, z0, z1) {

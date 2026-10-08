@@ -1,10 +1,12 @@
 // Step one: define the space. A modal with the space kinds (Box, Vehicle;
 // Floor plan is a placeholder) and the kind's fields. Field types:
 //   number   plain mm input
+//   totalLength  vehicle only: rear length + the grafted nose. Not stored.
 //   walls    Front / Right / Back / Left checkboxes
 //   choice   segmented buttons (e.g. how the vehicle nose is defined)
-//   nose     side-view preview + feature-point table or DXF import, and
-//            "Set current as default" (persisted in settings.json)
+//   nose     side-view preview + feature-point table or DXF import
+// "Set current as default" sits on the dialog footer and saves the selected
+// kind's whole form (settings.json). Cabinets below have their own button.
 // Below the kind fields: job-level catalogue — carcass/partition colour
 // (White Stipple), door series (Acrylic / HPL) and one or two door colours,
 // one HPL bench-top colour, plus the three board stocks (carcass / partition / door).
@@ -88,9 +90,43 @@ function renderKinds() {
 
 function numberField(f) {
   const input = el("input", { type: "number", step: 10, min: f.min, value: values[f.key] });
+  input.dataset.key = f.key;
   input.addEventListener("input", () => { values[f.key] = Number(input.value); refresh(); });
   input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
   return el("label", { class: "field" }, [el("span", { text: f.label }), input]);
+}
+
+/** Grafted nose length along the van. 0 when the nose does not resolve yet. */
+function noseFrontLen() {
+  const pts = nosePoints(values);
+  const g = pts ? graftNose(pts, Number(values.height) || 0) : null;
+  return g && !g.error ? g.frontLen : 0;
+}
+
+/** Total length = rear length + nose. Typing either one writes the other. Only rear length is stored. */
+function totalLengthField(f) {
+  const input = el("input", { type: "number", step: 10, min: 0 });
+  input.dataset.key = f.key;
+  input.value = String(Math.round((Number(values.rearDepth) || 0) + noseFrontLen()));
+  input.addEventListener("input", () => {
+    values.rearDepth = Number(input.value) - noseFrontLen();
+    const rearInput = fieldsEl.querySelector('[data-key="rearDepth"]');
+    if (rearInput) rearInput.value = String(values.rearDepth);
+    refresh();
+  });
+  input.addEventListener("keydown", (e) => { if (e.key === "Enter") submit(); });
+  return el("label", { class: "field" }, [el("span", { text: f.label }), input]);
+}
+
+/** Keep the two length fields in step when the nose or the height changes. A field being typed is left alone. */
+function syncVehicleLengths() {
+  if (currentKind !== "vehicle") return;
+  const rear = Number(values.rearDepth) || 0;
+  const total = Math.round(rear + noseFrontLen());
+  const rearInput = fieldsEl.querySelector('[data-key="rearDepth"]');
+  const totalInput = fieldsEl.querySelector('[data-key="totalLength"]');
+  if (rearInput && document.activeElement !== rearInput) rearInput.value = String(rear);
+  if (totalInput && document.activeElement !== totalInput) totalInput.value = String(total);
 }
 
 function wallsField(f) {
@@ -126,7 +162,7 @@ function choiceField(f) {
   return el("label", { class: "field" }, [el("span", { text: f.label }), seg]);
 }
 
-/** Nose block: preview canvas + (points table | DXF picker) + default buttons. */
+/** Nose block: preview canvas + (points table | DXF picker). */
 function noseField(f) {
   if (!values.front || typeof values.front !== "object") values.front = { points: [], dxf: null };
   if (!Array.isArray(values.front.points)) values.front.points = [];
@@ -139,15 +175,6 @@ function noseField(f) {
   if (values.frontMode === "dxf") wrap.append(dxfBlock());
   else wrap.append(pointsBlock());
 
-  const kind = getSpaceKind(currentKind);
-  const saved = kind.settingsKey ? getSetting(kind.settingsKey) : undefined;
-  const setBtn = el("button", { type: "button", class: "tb", text: "Set current as default", title: "New Vehicle spaces start with these values (saved to settings.json now)" });
-  setBtn.dataset.role = "set-default";
-  setBtn.addEventListener("click", saveAsDefault);
-  const resetBtn = el("button", { type: "button", class: "tb subtle", text: "Reset to built-in", disabled: !saved });
-  resetBtn.addEventListener("click", resetDefault);
-  noteEl = el("div", { class: "nose-note", text: saved ? "A saved default is in use for new Vehicle spaces." : "" });
-  wrap.append(el("div", { class: "nose-actions" }, [setBtn, resetBtn]), noteEl);
   return el("div", { class: "field nose-field" }, [el("span", { text: f.label }), wrap]);
 }
 
@@ -249,7 +276,7 @@ async function saveAsDefault() {
   log("space.default.set", { spaceKind: currentKind, ok: !!res.ok, path: res.path, error: res.error || undefined, values });
   if (res.ok) {
     showNote(`Saved as default for new ${kind.label} spaces · ${res.path}`, "ok");
-    const reset = fieldsEl.querySelector(".nose-actions .subtle");
+    const reset = overlay.querySelector("[data-reset-default]");
     if (reset) reset.disabled = false;
   } else showNote(`Could not save default: ${res.error}`, "err");
 }
@@ -266,9 +293,29 @@ async function resetDefault() {
 }
 
 function showNote(text, tone = "") {
+  noteEl = overlay.querySelector("[data-default-note]");
   if (!noteEl) return;
   noteEl.textContent = text;
   noteEl.className = `nose-note ${tone}`;
+}
+
+/** Footer buttons follow the selected kind. The saved copy is settings.json. */
+function syncDefaultButtons() {
+  const kind = getSpaceKind(currentKind);
+  const setBtn = overlay.querySelector("[data-set-default]");
+  const resetBtn = overlay.querySelector("[data-reset-default]");
+  noteEl = overlay.querySelector("[data-default-note]");
+  const saved = kind.settingsKey ? getSetting(kind.settingsKey) : undefined;
+  if (setBtn) {
+    setBtn.hidden = !kind.settingsKey;
+    setBtn.title = `New ${kind.label} spaces start with these values (saved to settings.json now)`;
+  }
+  if (resetBtn) {
+    resetBtn.hidden = !kind.settingsKey;
+    resetBtn.disabled = !saved;
+  }
+  if (noteEl) noteEl.textContent = saved ? `A saved default is in use for new ${kind.label} spaces.` : "";
+  if (noteEl) noteEl.className = "nose-note";
 }
 
 // --- preview -------------------------------------------------------------------------
@@ -560,8 +607,10 @@ function renderFields() {
     if (f.type === "walls") fieldsEl.append(wallsField(f));
     else if (f.type === "choice") fieldsEl.append(choiceField(f));
     else if (f.type === "nose") fieldsEl.append(noseField(f));
+    else if (f.type === "totalLength") fieldsEl.append(totalLengthField(f));
     else fieldsEl.append(numberField(f));
   }
+  syncDefaultButtons();
   refresh();
   const first = fieldsEl.querySelector("input");
   if (first && !fieldsEl.contains(document.activeElement)) { first.focus(); first.select(); }
@@ -569,6 +618,7 @@ function renderFields() {
 
 function refresh() {
   validate();
+  syncVehicleLengths();
   drawPreview();
 }
 
@@ -579,7 +629,7 @@ function validate() {
   ];
   errorsEl.replaceChildren(...errors.map((m) => el("div", { class: "msg err", text: m })));
   okBtn.disabled = errors.length > 0;
-  const setBtn = fieldsEl.querySelector('[data-role="set-default"]');
+  const setBtn = overlay.querySelector('[data-role="set-default"]');
   if (setBtn) setBtn.disabled = getSpaceKind(currentKind).validate(values).length > 0;
   const matBtn = materialsEl.querySelector('[data-role="set-materials-default"]');
   if (matBtn) matBtn.disabled = validateMaterials(materials.finish, materials.stock).length > 0;
@@ -634,4 +684,6 @@ export function isOpen() {
 
 okBtn.addEventListener("click", submit);
 cancelBtn.addEventListener("click", close);
+overlay.querySelector("[data-set-default]").addEventListener("click", saveAsDefault);
+overlay.querySelector("[data-reset-default]").addEventListener("click", resetDefault);
 overlay.addEventListener("keydown", (e) => { if (e.key === "Escape") { e.stopPropagation(); close(); } });

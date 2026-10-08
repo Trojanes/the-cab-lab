@@ -4,6 +4,7 @@
 //   armed      (module picked) hover shows the face under the cursor and snaps to corners · click → anchor
 //   face       a zero-thickness rectangle is drawn on that face (floor, ceiling, wall, cabinet face) · click → corner
 //   extrude    the rectangle is pulled along the face normal, away from the solid only · click / Enter → create
+//   A typed size locks that dimension, and a face change keeps it. Clear the field and Tab to follow the mouse again.
 //   move       (M) one command. The card picks Free (arrows and rings), Face
 //              (two faces, same direction) or Point (a corner onto a point).
 //              Module moves the cabinet, Panel moves one board. Enter confirms.
@@ -18,7 +19,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine, floorPointAt, frame, beginFaceView, endFaceView } from "./space.js";
 import * as job from "./job.js";
-import { getModule, isBaseCabinet, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, DIM_OF_AXIS } from "./modules.js";
+import { getModule, isBaseCabinet, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, DIM_OF_AXIS, getKitchenWidthColumn, setKitchenWidthColumn } from "./modules.js";
 import { loungeFootprintBoxes, loungeFromDrawnRun } from "./gen/lounge.js";
 import { RULES as BUNK_RULES, bunkUpperLimits } from "./gen/bunkBed.js";
 import { getPreset } from "./presets.js";
@@ -650,10 +651,9 @@ function applyCeilingTerm() {
   rb.backWall = wall;
   setDimNames(DIM_ORDER.map((k) => rb.term[AXIS_OF[k]]));
 }
-/** Door side of a finished overhead box: away from its back wall. */
-function ceilingSide(b, walls, plane) {
-  const wall = backWallFor(walls, plane, b) || walls[0];
-  return wall ? { axis: wall.axis, dir: wall.dir, wall: wall.label } : defaultSide(b);
+/** Door side of a finished overhead box: into the vehicle, the same rule as a floor cabinet. */
+function ceilingSide(b) {
+  return inwardSide(b);
 }
 
 /** Room from a point to the space boundary along each axis, both ways. */
@@ -688,12 +688,158 @@ function clampToRoof(sp, anchor, size, sign, clamped, max) {
 }
 const WALL_NAME = { x: ["left wall", "right wall"], y: ["front wall", "back wall"], z: ["floor", "ceiling"] };
 
+/** Kitchen / ensuite: the first two clicks are an edge, then a face, not a face picked up front. */
+function kitchenPlace() {
+  return isBaseCabinet(placing) && !ceilingMode() && !bunkMode() && !lshape;
+}
+/** The straight overhead is drawn like the kitchen rectangle: on the ceiling, then the height is pulled down. */
+function overheadPlace() {
+  return placing === "overheadCabinet" && ceilingMode();
+}
+/** The fridge cabinet is drawn like the kitchen too: a rectangle on the floor, then the height. */
+function fridgePlace() {
+  return placing === "tallFridgeCabinet" && !ceilingMode() && !bunkMode() && !lshape;
+}
+/**
+ * Kitchen, overhead and fridge: nothing follows the cursor while the box is drawn (the rectangle
+ * still stops on walls, partitions and cabinets; the text does not say so), and Enter on the
+ * rectangle only steps to the pull — the box is created by the next click or Enter.
+ */
+function quietPlace() {
+  return kitchenPlace() || overheadPlace() || fridgePlace();
+}
+function axisOfDir(dir) {
+  return Math.abs(dir[0]) > 0.5 ? "x" : Math.abs(dir[1]) > 0.5 ? "y" : "z";
+}
+/** Closest allowed world axis to the cursor, once it has left the start point. */
+function pickKitchenAxis(cx, cy, from, allowed) {
+  const a = toClient(from.x, from.y, from.z);
+  if (a.behind || Math.hypot(cx - a.x, cy - a.y) < 8) return null;
+  const dirs = [];
+  for (const axis of allowed) {
+    const i = AXES.indexOf(axis);
+    const pos = [0, 0, 0]; pos[i] = 1;
+    const neg = [0, 0, 0]; neg[i] = -1;
+    dirs.push(pos, neg);
+  }
+  const near = nearestInference(cx, cy, { x: from.x, y: from.y, z: from.z, dirs }, { band: 1e9 });
+  return near ? axisOfDir(near.dir) : null;
+}
+/** Screen px from the cursor to the line through `from` along `axis`. */
+function axisScreenDist(cx, cy, from, axis) {
+  const i = AXES.indexOf(axis);
+  const pos = [0, 0, 0]; pos[i] = 1;
+  const neg = [0, 0, 0]; neg[i] = -1;
+  const near = nearestInference(cx, cy, { x: from.x, y: from.y, z: from.z, dirs: [pos, neg] }, { band: 1e9 });
+  return near ? near.distPx : Infinity;
+}
+/**
+ * Second axis of a kitchen face. It engages only when the cursor is near that
+ * axis line, then sticks until the other one is clearly closer — so continuing
+ * along the locked edge does not throw out a face.
+ */
+function pickSweepAxis(cx, cy, from, allowed, current) {
+  const a = toClient(from.x, from.y, from.z);
+  if (a.behind || Math.hypot(cx - a.x, cy - a.y) < 8) return null;
+  const scored = allowed.map((axis) => ({ axis, d: axisScreenDist(cx, cy, from, axis) })).sort((p, q) => p.d - q.d);
+  const best = scored[0];
+  if (!best) return null;
+  if (!current) return best.d <= 40 * uiScale() ? best.axis : null;
+  const cur = scored.find((s) => s.axis === current);
+  if (best.axis !== current && best.d + 14 < (cur ? cur.d : Infinity)) return best.axis;
+  return current;
+}
+/** End coordinate of an axis-aligned pull. A face or corner along that axis wins. */
+function kitchenAxisEnd(cx, cy, from, axis) {
+  const i = AXES.indexOf(axis);
+  const pos = [0, 0, 0]; pos[i] = 1;
+  const neg = [0, 0, 0]; neg[i] = -1;
+  const near = nearestInference(cx, cy, { x: from.x, y: from.y, z: from.z, dirs: [pos, neg] }, { band: 1e9 });
+  const dir = near ? near.dir : pos;
+  const al = nearestAxisAlign(cx, cy, from, axis, dir[i]);
+  if (al) return { value: al.value, label: al.label };
+  return { value: pointOnLine(cx, cy, from, dir)[axis], label: null };
+}
+function kitchenFaceWord(a, b) {
+  return a === "z" || b === "z" ? "an upright face" : "a flat face";
+}
+/** Direction that leaves the solid the rectangle sits on. Space and cabinet faces win over raw room. */
+function kitchenPullDir(axis, value, anchor) {
+  const on = facePlanes().filter((f) => {
+    if (f.axis !== axis || Math.abs(f.value - value) > 0.5 || !f.pickable) return false;
+    return inPlaneAxes(axis).every((a) => anchor[a] >= f.ext[a][0] - 1 && anchor[a] <= f.ext[a][1] + 1);
+  });
+  if (on.length) {
+    const best = on.slice().sort((a, b) => extrudeRoom(b) - extrudeRoom(a))[0];
+    if (extrudeRoom(best) > 1) return { dir: best.dir, label: best.label };
+  }
+  const up = extrudeRoom({ axis, value, dir: 1 });
+  const down = extrudeRoom({ axis, value, dir: -1 });
+  const dir = up >= down ? 1 : -1;
+  const label = dir > 0 ? (axis === "z" ? "Up" : axis === "y" ? "Toward the back" : "Toward the right") : (axis === "z" ? "Down" : axis === "y" ? "Toward the front" : "Toward the left");
+  return { dir, label };
+}
+
+/**
+ * Box while the kitchen edge or face is still open. Only the axes already
+ * chosen have a size; the rest stay 0 so the ghost is a line, then a sheet.
+ */
+function kitchenBox() {
+  const { anchor } = rb;
+  const room = roomFrom(anchor);
+  const sp = job.getSpace();
+  const size = { x: 0, y: 0, z: 0 };
+  const sign = { x: 1, y: 1, z: 1 };
+  const clamped = {};
+  const max = {};
+  const live = rb.step === "edge" ? (rb.axis1 ? [rb.axis1] : []) : [rb.axis1, rb.axis2].filter(Boolean);
+  for (const a of AXES) {
+    const k = DIM_OF[a];
+    const r = room[a];
+    max[k] = Math.max(r.pos, r.neg);
+    if (!live.includes(a)) continue;
+    const raw = rb.corner[a];
+    const lo = a === "z" ? 0 : sp ? sp.bounds[a === "x" ? "minX" : "minY"] : -Infinity;
+    const hi = a === "z" ? (sp ? clearHeightAt(sp, anchor.x, anchor.y) : Infinity) : sp ? sp.bounds[a === "x" ? "maxX" : "maxY"] : Infinity;
+    const c = Math.min(hi, Math.max(lo, raw));
+    let s;
+    if (rb.fixedSign && rb.fixedSign[a] != null) s = rb.fixedSign[a];
+    else if (c < anchor[a] - 0.5) s = -1;
+    else if (c > anchor[a] + 0.5) s = 1;
+    else s = r.pos >= r.neg ? 1 : -1;
+    let v = rb.locked[k] ?? Math.abs(c - anchor[a]);
+    const roomHere = s > 0 ? r.pos : r.neg;
+    if (v > roomHere || c !== raw) {
+      v = Math.min(v, roomHere);
+      const hitSide = c !== raw ? (raw < anchor[a] ? 0 : 1) : (s > 0 ? 1 : 0);
+      clamped[k] = WALL_NAME[a][hitSide];
+    }
+    size[a] = Math.max(0, v);
+    sign[a] = s;
+    max[k] = roomHere;
+  }
+  const idle = AXES.find((a) => !live.includes(a)) || "z";
+  if (live.length) {
+    // A line or a sheet still has to stop on a cabinet it runs into. Give the
+    // unset axes a 1 mm slab so the overlap test has something to catch.
+    const probe = { ...size };
+    for (const a of AXES) if (!live.includes(a)) probe[a] = Math.max(probe[a], 1);
+    const blocked = stopAtCabinets(anchor, probe, sign, idle, live);
+    for (const a of AXES) if (blocked[a]) { size[a] = blocked[a].size; clamped[DIM_OF[a]] = blocked[a].id; max[DIM_OF[a]] = Math.min(max[DIM_OF[a]], blocked[a].size); }
+  }
+  clampToRoof(sp, anchor, size, sign, clamped, max);
+  const min0 = {};
+  for (const a of AXES) min0[a] = sign[a] > 0 ? anchor[a] : anchor[a] - size[a];
+  return { x0: min0.x, y0: min0.y, z0: min0.z, W: size.x, D: size.y, H: size.z, size, sign, clamped, max };
+}
+
 /**
  * Current placement box as a min-corner AABB. The two in-plane sizes come
  * from anchor → corner (clamped inside the space, never mirrored past a
  * wall); the size along the face normal is the extrusion, one way only.
  */
 function placementBox() {
+  if (rb.kitchen && rb.step !== "extrude") return kitchenBox();
   const mod = getModule(placing);
   const min = minSizes(mod);
   const { anchor, plane, locked } = rb;
@@ -772,11 +918,20 @@ function stopAtCabinets(anchor, size, sign, n, order) {
     return sign[a] > 0 ? [anchor[a], anchor[a] + len] : [anchor[a] - len, anchor[a]];
   };
   const overlap = (r, s) => r[0] < s[1] - 0.5 && r[1] > s[0] + 0.5;
+  // A partition stands up to 100 mm off the floor. A rectangle drawn on the floor
+  // is only 1 mm thick, so it would miss the board and could be pulled through
+  // to the far face. Treat that gap as solid for the overlap test.
+  const meets = (a, b) => {
+    const span = range(a);
+    if (overlap(span, b[a])) return true;
+    return a === "z" && a === n && b.kind === "wall"
+      && span[1] <= b.z[0] + 0.5 && b.z[0] - span[1] <= 100 && b.z[1] > anchor.z + 0.5;
+  };
   const out = {};
   for (const a of order) {
     const others = AXES.filter((o) => o !== a);
     for (const b of boxes) {
-      if (!others.every((o) => overlap(range(o), b[o]))) continue;
+      if (!others.every((o) => meets(o, b))) continue;
       // Distance from the anchor to the cabinet's near face along the growth side.
       let room = null;
       if (sign[a] > 0 && b[a][0] >= anchor[a] - 0.5) room = Math.max(0, b[a][0] - anchor[a]);
@@ -795,22 +950,29 @@ function updatePlacement(tipAt) {
   const clampedKeys = Object.keys(b.clamped);
   const n = rb.plane.axis;
   // Step "face": a zero-thickness rectangle; step "extrude": the box.
+  // Kitchen "edge" / "sweep": a line, then a sheet (the unused sizes are 0).
   showGhost(b.x0, b.y0, b.z0, b.W, b.D, b.H, { clamped: clampedKeys.length > 0 });
   for (const k of DIM_ORDER) {
     if (document.activeElement !== dimInputs[k]) dimInputs[k].value = Math.round(b[k]);
     dimLabels[k].classList.toggle("locked", rb.locked[k] != null);
-    dimLabels[k].classList.toggle("hidden", rb.step === "face" && AXIS_OF[k] === n);
+    const kitchenHidden = rb.kitchen && rb.step !== "extrude" && (rb.axis1 || rb.axis2) && AXIS_OF[k] !== rb.axis1 && AXIS_OF[k] !== rb.axis2;
+    dimLabels[k].classList.toggle("hidden", kitchenHidden || (rb.step === "face" && AXIS_OF[k] === n));
   }
   positionDimInputs(b);
   if (tipAt) {
-    const lines = [...(tipAt.tip || [])];
-    for (const k of clampedKeys) lines.push(`${k} stopped at ${b.clamped[k]}`);
-    for (const k of DIM_ORDER) if (rb.locked[k] != null) lines.push(`${k} locked ${Math.round(rb.locked[k])}`);
-    const term = currentTerm();
-    if (rb.backWall) lines.push(`Back on the ${rb.backWall.label.toLowerCase()} · W along it · doors toward the room`);
-    if (rb.step === "face") lines.push(`Enter: create with ${term[n]} ${Math.round(presetSize(placing, n))} (preset)`);
-    else if (rb.ext && rb.ext.len <= 0 && rb.locked[DIM_OF[n]] == null) lines.push(`Pull ${term[n]} ${rb.plane.dir > 0 ? "+" : "−"}${n.toUpperCase()} · Enter uses preset ${Math.round(presetSize(placing, n))}`);
-    showTip(tipAt.clientX, tipAt.clientY, lines, clampedKeys.length || (tipAt.tone === "warn") ? "warn" : Object.values(rb.locked).some((v) => v != null) ? "lock" : "");
+    // Kitchen and overhead: nothing follows the cursor. The rectangle still stops on a wall; the text does not.
+    if (quietPlace()) hideTip();
+    else {
+      const lines = [...(tipAt.tip || [])];
+      for (const k of clampedKeys) lines.push(`${k} stopped at ${b.clamped[k]}`);
+      for (const k of DIM_ORDER) if (rb.locked[k] != null) lines.push(`${k} locked ${Math.round(rb.locked[k])}`);
+      const term = currentTerm();
+      if (rb.backWall) lines.push(`Back on the ${rb.backWall.label.toLowerCase()} · W along it · doors toward the room`);
+      if (rb.step === "face") lines.push(`Enter: create with ${term[n]} ${Math.round(presetSize(placing, n))} (preset)`);
+      else if (rb.ext && rb.ext.len <= 0 && rb.locked[DIM_OF[n]] == null) lines.push(`Pull ${term[n]} ${rb.plane.dir > 0 ? "+" : "−"}${n.toUpperCase()} · Enter uses preset ${Math.round(presetSize(placing, n))}`);
+      if (lines.length) showTip(tipAt.clientX, tipAt.clientY, lines, clampedKeys.length || (tipAt.tone === "warn") ? "warn" : Object.values(rb.locked).some((v) => v != null) ? "lock" : "");
+      else hideTip();
+    }
   }
   if (bunkMode()) showBunkLower(b);
 }
@@ -833,8 +995,214 @@ function setDimNames(names) {
   DIM_ORDER.forEach((k, i) => { dimNames[k].textContent = names[i]; });
 }
 
+/** A typed size survives a face change. Preset locks do not replace it. */
+function keepTypedLocks() {
+  if (!rb.typed) return;
+  for (const k of DIM_ORDER) if (rb.typed[k] != null) rb.locked[k] = rb.typed[k];
+}
+
 function planeOf(face) {
   return { axis: face.axis, value: face.value, dir: face.dir, label: face.label, source: face.source };
+}
+
+/** First click of a kitchen: a point. The edge follows the cursor along one world axis. */
+function beginKitchen(p) {
+  rb = {
+    step: "edge",
+    kitchen: true,
+    axis1: null,
+    axis2: null,
+    fixedSign: {},
+    plane: { axis: "z", value: p.z, dir: 1, label: "edge", source: "kitchen" },
+    candidates: null,
+    walls: [],
+    term: null,
+    backWall: null,
+    anchorClient: null,
+    anchor: { x: p.x, y: p.y, z: p.z },
+    corner: { x: p.x, y: p.y, z: p.z },
+    locked: { W: null, D: null, H: null },
+    ext: null,
+    ctx: {
+      plane: { axis: "z", value: p.z, label: "edge" }, free3d: true, exclude: null,
+      anchorPoint: { x: p.x, y: p.y, z: p.z, dirs: AXIS_DIRS, sources: ["anchor"] },
+      lastPoint: null, inference: null,
+    },
+  };
+  setDimNames(["W", "D", "H"]);
+  dimBox.classList.remove("hidden");
+  for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked");
+  hideFaceHint();
+  hideAlignLines();
+  hideTip();
+  clearTrace();
+  log("place.anchor", { moduleId: placing, anchor: rb.anchor, feature: !!p.feature, plane: null });
+  updatePlacement(null);
+  emitMode();
+}
+
+function kitchenWarn(text) {
+  const at = rb.lastClient;
+  showTip(at ? at.x : 0, at ? at.y : 0, [text], "warn");
+}
+
+/** Click or Enter on the edge: lock that one length and start sweeping a face. Does not create. */
+function advanceKitchenEdge(how) {
+  const typed = AXES.find((a) => rb.locked[DIM_OF[a]] != null);
+  if (typed) rb.axis1 = typed;
+  const axis = rb.axis1;
+  if (!axis) { kitchenWarn("Pull the first edge along X, Y or Z"); return; }
+  const b = kitchenBox();
+  const len = b.size[axis];
+  if (!(len >= 1)) { kitchenWarn("Pull the first edge, or type its length"); return; }
+  rb.locked[DIM_OF[axis]] = len;
+  rb.fixedSign[axis] = b.sign[axis];
+  rb.corner = { ...rb.anchor, [axis]: rb.anchor[axis] + b.sign[axis] * len };
+  rb.axis2 = null;
+  rb.step = "sweep";
+  log("place.edge", { moduleId: placing, how, axis, len: Math.round(len), sign: b.sign[axis], anchor: rb.anchor });
+  hideInference();
+  updatePlacement(rb.lastClient ? { clientX: rb.lastClient.x, clientY: rb.lastClient.y, tip: [`Edge along ${axis.toUpperCase()} locked ${Math.round(len)}`, "Pull it into a face"] } : null);
+  emitMode();
+}
+
+/** Click or Enter on the face: lock the second axis and start the thickness pull. Does not create. */
+function advanceKitchenSweep(how) {
+  const typed = AXES.find((a) => a !== rb.axis1 && rb.locked[DIM_OF[a]] != null);
+  if (typed) rb.axis2 = typed;
+  const axis = rb.axis2;
+  if (!axis) { kitchenWarn("Pull the edge out into a face"); return; }
+  const b = kitchenBox();
+  const len = b.size[axis];
+  if (!(len >= 1)) { kitchenWarn("Pull the face out, or type its size"); return; }
+  rb.locked[DIM_OF[axis]] = len;
+  rb.fixedSign[axis] = b.sign[axis];
+  rb.corner[rb.axis1] = rb.anchor[rb.axis1] + rb.fixedSign[rb.axis1] * rb.locked[DIM_OF[rb.axis1]];
+  rb.corner[axis] = rb.anchor[axis] + b.sign[axis] * len;
+  const n = AXES.find((a) => a !== rb.axis1 && a !== axis);
+  rb.corner[n] = rb.anchor[n];
+  const pull = kitchenPullDir(n, rb.anchor[n], rb.anchor);
+  rb.plane = { axis: n, value: rb.anchor[n], dir: pull.dir, label: pull.label, source: "kitchen" };
+  rb.ctx.plane = { axis: n, value: rb.anchor[n], label: pull.label };
+  rb.ctx.free3d = false;
+  const e = rb.lastClient || { x: 0, y: 0 };
+  beginExtrude({ clientX: e.x, clientY: e.y });
+  log("place.face", {
+    moduleId: placing, how, axes: [rb.axis1, axis],
+    plane: { axis: rb.plane.axis, value: rb.plane.value, dir: rb.plane.dir, label: rb.plane.label },
+    locked: { ...rb.locked },
+  });
+  updatePlacement(rb.lastClient ? { clientX: rb.lastClient.x, clientY: rb.lastClient.y, tip: ["Pull the thickness — only away from the wall"] } : null);
+  emitMode();
+}
+
+function confirmPlacement(how) {
+  if (rb && rb.kitchen && rb.step === "edge") { advanceKitchenEdge(how); return; }
+  if (rb && rb.kitchen && rb.step === "sweep") { advanceKitchenSweep(how); return; }
+  // Kitchen / overhead rectangle: Enter locks the face and starts the pull (depth / height). It does not create.
+  if (rb && quietPlace() && rb.step === "face") {
+    if (!faceDrawn()) return;
+    rb.candidates = null;
+    const at = rb.lastClient || { x: 0, y: 0 };
+    beginExtrude({ clientX: at.x, clientY: at.y });
+    return;
+  }
+  finishPlacement(how);
+}
+
+/** Esc steps back one kitchen phase. From the edge it cancels the box. */
+function kitchenBack() {
+  if (!rb || !rb.kitchen) { cancelPlacement(); return; }
+  if (rb.step === "extrude") {
+    rb.locked[DIM_OF[rb.plane.axis]] = null;
+    if (rb.axis2) {
+      rb.locked[DIM_OF[rb.axis2]] = null;
+      delete rb.fixedSign[rb.axis2];
+    }
+    rb.ext = null;
+    rb.step = "sweep";
+    rb.ctx.free3d = true;
+    log("place.back", { moduleId: placing, step: "sweep" });
+    updatePlacement(rb.lastClient ? { clientX: rb.lastClient.x, clientY: rb.lastClient.y, tip: ["Face again — pull the second side"] } : null);
+    emitMode();
+    return;
+  }
+  if (rb.step === "sweep") {
+    if (rb.axis2) rb.locked[DIM_OF[rb.axis2]] = null;
+    rb.axis2 = null;
+    rb.locked[DIM_OF[rb.axis1]] = null;
+    rb.fixedSign = {};
+    rb.step = "edge";
+    log("place.back", { moduleId: placing, step: "edge" });
+    updatePlacement(rb.lastClient ? { clientX: rb.lastClient.x, clientY: rb.lastClient.y, tip: ["First edge again"] } : null);
+    emitMode();
+    return;
+  }
+  cancelPlacement();
+}
+
+function moveKitchenEdge(e) {
+  rb.lastClient = { x: e.clientX, y: e.clientY };
+  const typed = AXES.find((a) => rb.locked[DIM_OF[a]] != null);
+  const axis = typed || pickKitchenAxis(e.clientX, e.clientY, rb.anchor, AXES);
+  if (!axis) {
+    rb.axis1 = null;
+    rb.corner = { ...rb.anchor };
+    hideInference();
+    hideSnapMarker();
+    updatePlacement({ clientX: e.clientX, clientY: e.clientY, tip: ["Pull the first edge along X, Y or Z"] });
+    return;
+  }
+  rb.axis1 = axis;
+  const end = kitchenAxisEnd(e.clientX, e.clientY, rb.anchor, axis);
+  rb.corner = { ...rb.anchor, [axis]: end.value };
+  const b = kitchenBox();
+  const at = rb.anchor[axis] + b.sign[axis] * b.size[axis];
+  const far = { ...rb.anchor, [axis]: at };
+  const dir = [0, 0, 0];
+  dir[AXES.indexOf(axis)] = b.sign[axis];
+  showInference(rb.anchor, far, dir);
+  showSnapMarker(far.x, far.y, far.z, { feature: !!end.label });
+  traceSample({ cx: Math.round(e.clientX), cy: Math.round(e.clientY), x: Math.round(far.x), y: Math.round(far.y), z: Math.round(far.z), kind: end.label ? "align" : "inference", shift: e.shiftKey || undefined });
+  updatePlacement({ clientX: e.clientX, clientY: e.clientY, tip: [`Edge along ${axis.toUpperCase()} · ${DIM_OF[axis]} ${Math.round(b.size[axis])}`, ...(end.label ? [end.label] : [])] });
+}
+
+function moveKitchenSweep(e) {
+  rb.lastClient = { x: e.clientX, y: e.clientY };
+  const allowed = AXES.filter((a) => a !== rb.axis1);
+  const typed = allowed.find((a) => rb.locked[DIM_OF[a]] != null);
+  const axis = typed || pickSweepAxis(e.clientX, e.clientY, rb.anchor, allowed, rb.axis2);
+  rb.axis2 = axis;
+  const c = { ...rb.anchor };
+  c[rb.axis1] = rb.anchor[rb.axis1] + (rb.fixedSign[rb.axis1] || 1) * (rb.locked[DIM_OF[rb.axis1]] || 0);
+  let label = null;
+  if (axis) {
+    const end = kitchenAxisEnd(e.clientX, e.clientY, rb.anchor, axis);
+    c[axis] = end.value;
+    label = end.label;
+    rb.corner = c;
+    const b = kitchenBox();
+    const far = {
+      x: rb.anchor.x + b.sign.x * b.size.x,
+      y: rb.anchor.y + b.sign.y * b.size.y,
+      z: rb.anchor.z + b.sign.z * b.size.z,
+    };
+    const from = { ...rb.anchor, [rb.axis1]: far[rb.axis1] };
+    const dir = [0, 0, 0];
+    dir[AXES.indexOf(axis)] = b.sign[axis];
+    showInference(from, far, dir);
+    showSnapMarker(far.x, far.y, far.z, { feature: !!label });
+  } else {
+    hideInference();
+    hideSnapMarker();
+  }
+  rb.corner = c;
+  const rest = allowed.map((a) => `${a.toUpperCase()} for ${kitchenFaceWord(rb.axis1, a)}`);
+  const tip = axis
+    ? [`Edge along ${rb.axis1.toUpperCase()} · sweeping ${axis.toUpperCase()} · ${kitchenFaceWord(rb.axis1, axis)}`, ...(label ? [label] : [])]
+    : [`Pull in ${rest.join(", or ")}`];
+  traceSample({ cx: Math.round(e.clientX), cy: Math.round(e.clientY), x: Math.round(c.x), y: Math.round(c.y), z: Math.round(c.z), kind: label ? "align" : "inference" });
+  updatePlacement({ clientX: e.clientX, clientY: e.clientY, tip });
 }
 
 function beginFace(p) {
@@ -855,6 +1223,8 @@ function beginFace(p) {
     corner: { x: p.x, y: p.y, z: p.z },
     // Typed / preset locks; the normal-axis size is never preset-locked here (Enter applies it).
     locked: { W: preset.W, D: preset.D, H: null },
+    // Sizes the user typed. A face change restores preset locks, then these.
+    typed: { W: null, D: null, H: null },
     ext: null,
     ctx: {
       plane: { axis: plane.axis, value: plane.value, label: plane.label }, free3d: false, exclude: null,
@@ -881,6 +1251,7 @@ function beginFace(p) {
   dimBox.classList.remove("hidden");
   for (const k of DIM_ORDER) dimLabels[k].classList.remove("focused", "locked");
   showFaceHint(face);
+  if (quietPlace()) hideTip();
   clearTrace();
   log("place.anchor", { moduleId: placing, anchor: rb.anchor, feature: !!p.feature, plane: { axis: plane.axis, value: plane.value, dir: plane.dir, label: plane.label }, walls: ceiling ? rb.walls.map((w) => w.label) : undefined, term: rb.term || undefined });
   updatePlacement(null);
@@ -944,9 +1315,11 @@ function chooseFace(e) {
     rb.locked = { W: null, D: null, H: null };
     for (const a of AXES) if (a !== face.axis && rb.term[a] !== "H") rb.locked[DIM_OF[a]] = preset[rb.term[a]] ?? null;
     rb.presetLocks = { ...rb.locked };
+    keepTypedLocks();
   } else {
     rb.locked = { ...rb.presetLocks };
     if (!bunkMode()) rb.locked[DIM_OF[face.axis]] = null;
+    keepTypedLocks();
   }
   showFaceHint(face);
   log("place.face", { moduleId: placing, plane: { axis: face.axis, value: face.value, dir: face.dir, label: face.label }, term: rb.term || undefined });
@@ -997,7 +1370,7 @@ function beginExtrude(e) {
   hideInference();
   hideAlignLines();
   hideSnapMarker();
-  log("place.corner", { moduleId: placing, corner, plane: { axis: n, value: plane.value }, locked: rb.locked });
+  if (!rb.kitchen) log("place.corner", { moduleId: placing, corner, plane: { axis: n, value: plane.value }, locked: rb.locked });
   updatePlacement({ clientX: e.clientX, clientY: e.clientY, tip: [] });
   emitMode();
 }
@@ -1031,7 +1404,7 @@ function extrudeCursor(e) {
   return { tip: [`${currentTerm()[n]} ${Math.round(ext.len)} ${plane.dir > 0 ? "+" : "−"}${n.toUpperCase()}`] };
 }
 
-function createFromBox(b, how, side = defaultSide(b)) {
+function createFromBox(b, how, side = placeSide(b)) {
   const mod = getModule(placing);
   flushTrace("place.trace");
   // The box is the envelope; the door side decides which edge is W and where the origin (front carcass face) sits.
@@ -1078,6 +1451,10 @@ function finishPlacement(how) {
   const n = rb.plane.axis;
   const kn = DIM_OF[n];
   if (rb.locked[kn] == null && !(rb.ext && rb.ext.len > 0)) {
+    if (rb.kitchen) {
+      kitchenWarn("Pull the thickness, or type it — Enter does not place a preset");
+      return;
+    }
     rb.ext = rb.ext || { t0: 0, len: 0, label: null };
     rb.ext.len = Math.max(minSizes(getModule(placing))[kn], presetSize(placing, n));
     how += ".preset";
@@ -1092,7 +1469,7 @@ function finishPlacement(how) {
   if (bunkMode()) { beginBunkUpper(b, how); return; }
   // Minimums in module terms: W/D depend on which side gets the doors.
   const mod = getModule(placing);
-  const side = ceilingMode() ? ceilingSide(b, rb.walls, rb.plane) : defaultSide(b);
+  const side = ceilingMode() ? ceilingSide(b) : placeSide(b);
   const fit = fitBoxFacing(b, side, FRONT_THICKNESS_DEFAULT);
   const small = DIM_ORDER.filter((k) => fit[k] < mod.minSize[k]);
   if (small.length) {
@@ -1122,7 +1499,7 @@ function repeatLastSize(anchor) {
     x0: sx > 0 ? anchor.x : anchor.x - W, y0: sy > 0 ? anchor.y : anchor.y - D, z0: sz > 0 ? anchor.z : anchor.z - H,
     W, D, H, clamped,
   };
-  createFromBox(b, "repeat", ceilingMode() ? ceilingSide(b, wallsAt(anchor), null) : defaultSide(b));
+  createFromBox(b, "repeat", ceilingMode() ? ceilingSide(b) : placeSide(b));
   return true;
 }
 
@@ -3804,6 +4181,97 @@ function sideBlocked(b, side, excludeId = null) {
   return false;
 }
 
+/** Kitchen left / right end, in the cabinet frame, flush against a wall or another solid. */
+export function kitchenEndBlocked(cab, end) {
+  if (!cab) return false;
+  const fp = envelopeFootprint(cab, cab.pose || {});
+  const b = {
+    x0: fp.minX, y0: fp.minY, z0: fp.z0,
+    W: Math.max(fp.maxX - fp.minX, 0.1), D: Math.max(fp.maxY - fp.minY, 0.1), H: Math.max(fp.z1 - fp.z0, 0.1),
+  };
+  const turns = (((cab.pose?.rotZ || 0) % 360) + 360) % 360;
+  const localDir = end === "right" ? 1 : -1;
+  const side = turns === 90 ? { axis: "y", dir: localDir }
+    : turns === 180 ? { axis: "x", dir: -localDir }
+    : turns === 270 ? { axis: "y", dir: -localDir }
+    : { axis: "x", dir: localDir };
+  return sideBlocked(b, side, cab.id);
+}
+
+/** Which column a kitchen width change uses. Asks once, then remembers it. */
+function askKitchenColumn(client, columns, onPick) {
+  document.querySelectorAll(".column-ask").forEach((n) => n.remove());
+  const pop = document.createElement("div");
+  pop.className = "size-pop column-ask";
+  pop.style.position = "fixed";
+  pop.style.left = `${Math.min(client.x + 12, window.innerWidth - 280)}px`;
+  pop.style.top = `${Math.min(client.y + 12, window.innerHeight - 80)}px`;
+  pop.style.zIndex = "30";
+  const label = document.createElement("span");
+  label.textContent = "Which column changes?";
+  pop.append(label);
+  columns.forEach((col, i) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tb";
+    button.textContent = `Column ${i + 1}`;
+    button.title = `${Math.round(col.width)} mm. Drag the width after this.`;
+    button.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      pop.remove();
+      onPick(i);
+    });
+    pop.append(button);
+  });
+  document.body.append(pop);
+}
+
+function kitchenWidthIndex(cab, faceDir) {
+  const cols = cab.params?.columns || [];
+  if (cols.length < 2) return 0;
+  const remembered = getKitchenWidthColumn(cab.id);
+  if (remembered != null && remembered >= 0 && remembered < cols.length) return remembered;
+  return faceDir < 0 ? 0 : cols.length - 1;
+}
+
+/**
+ * Back toward the outside of the vehicle, door face toward the inside.
+ * Left half, or flush with the left wall: back on the left, doors +X.
+ * Right half, or flush with the right wall: back on the right, doors −X.
+ * A rear corner (flush with the back wall and a side wall) is the exception:
+ * the back sits on the rear and the doors face forward, toward the front of the vehicle.
+ */
+function inwardSide(b) {
+  const sp = job.getSpace();
+  let doorsPositiveX = true;
+  if (sp) {
+    const walls = new Set(sp.walls || []);
+    const onLeft = walls.has(3) && Math.abs(b.x0 - sp.bounds.minX) < 0.5;
+    const onRight = walls.has(1) && Math.abs(b.x0 + b.W - sp.bounds.maxX) < 0.5;
+    const onRear = walls.has(2) && Math.abs(b.y0 + b.D - sp.bounds.maxY) < 0.5;
+    if (onRear && (onLeft || onRight)) return { axis: "y", dir: -1, wall: "Back wall" };
+    const mid = (sp.bounds.minX + sp.bounds.maxX) / 2;
+    const cx = b.x0 + b.W / 2;
+    doorsPositiveX = cx <= mid;
+    if (onLeft && !onRight) doorsPositiveX = true;
+    else if (onRight && !onLeft) doorsPositiveX = false;
+    else if (onLeft && onRight) {
+      const ax = rb && rb.anchor ? rb.anchor.x : cx;
+      doorsPositiveX = Math.abs(ax - sp.bounds.minX) <= Math.abs(ax - sp.bounds.maxX);
+    }
+  }
+  return doorsPositiveX
+    ? { axis: "x", dir: 1, wall: "Left wall" }
+    : { axis: "x", dir: -1, wall: "Right wall" };
+}
+
+/** Door side for a floor cabinet: back outside, face inside. */
+function placeSide(b) {
+  return inwardSide(b);
+}
+
 /**
  * Door side for a new box: never against a wall or a neighbour; a blocked
  * side puts the doors opposite; otherwise the long horizontal edge is the
@@ -4097,6 +4565,13 @@ function resizeClick(e) {
 function beginResizeDrag(e, hit, ud) {
   const cab = job.getJob().cabinets.find((c) => c.id === ud.cabId);
   if (!cab) return;
+  if (ud.handle.axis === "x" && isBaseCabinet(cab.moduleId)) {
+    const cols = cab.params?.columns || [];
+    if (cols.length > 1 && getKitchenWidthColumn(cab.id) == null) {
+      askKitchenColumn(e, cols, (index) => setKitchenWidthColumn(cab.id, index));
+      return;
+    }
+  }
   const group = groupFor(cab.id);
   const face = { axis: ud.handle.axis, dir: ud.handle.dir };
   const dir = localAxisWorld(group, face.axis).multiplyScalar(face.dir);
@@ -4114,6 +4589,7 @@ function beginResizeDrag(e, hit, ud) {
     overlaps0: new Set(overlaps(cab, cab.pose)),
     lastGood: { params: cab.params, pose: { ...cab.pose } },
     stopped: null,
+    column: ud.handle.axis === "x" && isBaseCabinet(cab.moduleId) ? kitchenWidthIndex(cab, ud.handle.dir) : null,
   };
   canvas.setPointerCapture(e.pointerId);
   canvas.style.cursor = "grabbing";
@@ -4161,7 +4637,7 @@ function resizeDragMove(e) {
     job.updateCabinet(d.cabId, (c) => { c.pose = pose; });
     job.setParams(d.cabId, params, { history: false });
   };
-  const params = mod.resizeFace ? mod.resizeFace(d.params0, d.face, L) : mod.setEnvelope(d.params0, { [dim]: L });
+  const params = mod.resizeFace ? mod.resizeFace(d.params0, d.face, L, { column: d.column }) : mod.setEnvelope(d.params0, { [dim]: L });
   if (!params) {
     d.stopped = "a zone at its minimum";
   } else {
@@ -4400,7 +4876,7 @@ canvas.addEventListener("pointerdown", (e) => {
     } else if (rb.step === "face") {
       if (!faceDrawn()) return; // a second click on the anchor is a no-op
       rb.candidates = null; // the face is settled by the second click
-      if (rb.locked[DIM_OF[rb.plane.axis]] != null && !bunkMode()) finishPlacement("click.locked");
+      if (!quietPlace() && rb.locked[DIM_OF[rb.plane.axis]] != null && !bunkMode()) finishPlacement("click.locked");
       else beginExtrude(e);
     } else {
       finishPlacement("click");
@@ -4409,18 +4885,27 @@ canvas.addEventListener("pointerdown", (e) => {
   }
 
   const hit = pick(e.clientX, e.clientY);
+  const extend = e.ctrlKey || e.metaKey;
   if (!hit) {
-    job.select(null);
+    if (!extend) job.select(null);
     return;
   }
   const { kind, cabId, handle, planeId, wallId } = hit.object.userData;
   if (kind === "handle" && handle && handle.type === "wallSplit") { beginWallSplit(e, hit); return; }
-  if (kind === "cplane") { job.select(planeId); return; }
-  if (kind === "wall") { job.select(wallId); return; }
+  if (kind === "cplane") { if (!extend) job.select(planeId); return; }
+  if (kind === "wall") { if (!extend) job.select(wallId); return; }
   const cab = job.getJob().cabinets.find((c) => c.id === cabId);
   if (!cab) return;
 
+  // Ctrl+click toggles this cabinet in the set. It does not drill into a board and does not drag a handle.
+  if (extend) { job.select(cabId, null, { extend: true }); return; }
+
   if (kind === "handle") {
+    const cols = cab.params?.columns || [];
+    if (handle.type === "W" && isBaseCabinet(cab.moduleId) && cols.length > 1 && getKitchenWidthColumn(cab.id) == null) {
+      askKitchenColumn(e, cols, (index) => setKitchenWidthColumn(cab.id, index));
+      return;
+    }
     const group = groupFor(cabId);
     const axis = handle.type === "W" ? "x" : handle.type === "D" ? "y" : handle.type === "divider" ? (handle.axis || "z") : "z";
     const dir = localAxisWorld(group, axis);
@@ -4433,6 +4918,7 @@ canvas.addEventListener("pointerdown", (e) => {
       pose0: { ...cab.pose },
       result0: job.resultFor(cabId),
       grain0: (job.resultFor(cabId)?.grain?.issues || []).length,
+      column: handle.type === "W" && isBaseCabinet(cab.moduleId) ? kitchenWidthIndex(cab, 1) : null,
     };
     // OrbitControls ignores the left button, so the middle button still orbits mid-drag.
     canvas.setPointerCapture(e.pointerId);
@@ -4444,8 +4930,9 @@ canvas.addEventListener("pointerdown", (e) => {
 
   // Drill down module → board → face: the first click takes the cabinet, a click on a board of
   // the selected cabinet takes that board, a click on the selected board takes the face under
-  // the cursor. Esc (or the cabinet row in the tree) climbs back up.
-  if (cabId === job.getSelectedId() && hit.object.userData.boardId) {
+  // the cursor. Esc (or the cabinet row in the tree) climbs back up. A set of several cabinets
+  // stays at cabinet level: a plain click keeps only the one under the cursor.
+  if (job.getSelectedIds().length === 1 && cabId === job.getSelectedId() && hit.object.userData.boardId) {
     const sub = job.getSubSelection();
     const under = faceUnderHit(hit);
     if (!sub || sub.boardId !== under.boardId) job.select(cabId, { boardId: under.boardId });
@@ -4453,7 +4940,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   // A volume-only module laid out in regions (bedroom body): the second click takes the region.
-  if (cabId === job.getSelectedId() && hit.object.userData.regionId) {
+  if (job.getSelectedIds().length === 1 && cabId === job.getSelectedId() && hit.object.userData.regionId) {
     job.select(cabId, { regionId: hit.object.userData.regionId });
     return;
   }
@@ -4629,7 +5116,9 @@ function handleDragMove(e) {
 
   if (h.type === "W") {
     const W = Math.max(mod.minSize.W, job.snap(env0.W + delta));
-    applyIfFits(mod.setEnvelope(drag.params0, { W }), cab.pose);
+    const sized = mod.setEnvelope(drag.params0, { W }, { column: drag.column });
+    if (!sized) { stopped = true; stoppedBy = "a column at its minimum"; }
+    else applyIfFits(sized, cab.pose);
   } else if (h.type === "D") {
     // Front face is pulled; keep the back (local y = D) where it is.
     const D = Math.max(mod.minSize.D, job.snap(env0.D - delta));
@@ -4643,10 +5132,12 @@ function handleDragMove(e) {
     if (mod.growsDown) {
       // Top glued to the ceiling: the bottom is pulled; a lower bottom = a taller box.
       const H = Math.max(mod.minSize.H, job.snap(env0.H - delta));
-      applyIfFits(mod.setEnvelope(drag.params0, { H }), { ...drag.pose0, z: drag.pose0.z + (env0.H - H) });
+      const sized = mod.setEnvelope(drag.params0, { H });
+      if (sized) applyIfFits(sized, { ...drag.pose0, z: drag.pose0.z + (env0.H - H) });
     } else {
       const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
-      applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
+      const sized = mod.setEnvelope(drag.params0, { H });
+      if (sized) applyIfFits(sized, cab.pose);
     }
   } else if (h.type === "divider") {
     const prev = { params: cab.params, pose: { ...cab.pose } };
@@ -4747,6 +5238,11 @@ function typableDims() {
   }
   if (lshape && lshape.step !== "box") return lshape.step === "pull" || lshape.step === "wide" || lshape.step === "seat" ? ["D"] : [];
   if (bunk) return ["H"];
+  if (rb && rb.kitchen && rb.step === "edge") return rb.axis1 ? [DIM_OF[rb.axis1]] : DIM_ORDER;
+  if (rb && rb.kitchen && rb.step === "sweep") {
+    const open = AXES.filter((a) => a !== rb.axis1);
+    return (rb.axis2 ? [rb.axis2] : open).map((a) => DIM_OF[a]);
+  }
   if (rb && rb.step === "face") return DIM_ORDER.filter((k) => AXIS_OF[k] !== rb.plane.axis && !(bunkMode() && k === "W"));
   if (rb && bunkMode()) return DIM_ORDER.filter((k) => k !== "W");
   return DIM_ORDER;
@@ -4876,7 +5372,14 @@ function setTyped(k, v) {
   } else if (rb) {
     if (bunkMode() && k === "W") return; // wall to wall
     const min = minSizes(getModule(placing))[k];
-    rb.locked[k] = v != null && v >= min ? v : null;
+    if (!rb.typed) rb.typed = { W: null, D: null, H: null };
+    if (v == null) {
+      rb.locked[k] = null;
+      rb.typed[k] = null;
+    } else if (v >= min) {
+      rb.locked[k] = v;
+      rb.typed[k] = v;
+    }
     log("place.typein", { dim: k, value: dimInputs[k].value, locked: rb.locked[k] });
     updatePlacement(null);
   } else if (retype) {
@@ -4890,8 +5393,11 @@ function commitDim(k) {
   const parts = dimInputs[k].value.split(",");
   let kk = k;
   for (let i = 0; i < parts.length; i += 1) {
-    const v = evalDim(parts[i], currentDim(kk), maxDim(kk));
-    if (v != null) { setTyped(kk, v); dimInputs[kk].value = Math.round(v); }
+    if (parts[i].trim() === "" && rb) setTyped(kk, null);
+    else {
+      const v = evalDim(parts[i], currentDim(kk), maxDim(kk));
+      if (v != null) { setTyped(kk, v); dimInputs[kk].value = Math.round(v); }
+    }
     if (i < parts.length - 1) kk = nextDim(kk);
   }
   return nextDim(kk);
@@ -4903,13 +5409,14 @@ for (const k of DIM_ORDER) {
     // Plain numbers apply live; expressions wait for Tab / Enter.
     const s = input.value.trim();
     if (/^\d+(?:\.\d+)?$/.test(s)) setTyped(k, Number(s));
-    else if (s === "") setTyped(k, null);
+    else if (s === "" && !rb) setTyped(k, null);
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Tab") {
       e.preventDefault();
       const next = commitDim(k);
       focusDim(e.shiftKey ? nextDim(k, true) : next);
+      if (rb) updatePlacement(null);
     } else if (e.key === "Enter") {
       e.preventDefault();
       commitDim(k);
@@ -4920,7 +5427,7 @@ for (const k of DIM_ORDER) {
       else if (lshape && lshape.step === "pull") finishLoungeL("enter");
       else if (lshape && lshape.step === "wide") loungeLClick(null);
       else if (bunk) finishBunk("enter");
-      else if (rb) finishPlacement("enter");
+      else if (rb) confirmPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else if (retype) endRetype(true);
     } else if (e.key === "Escape") {
@@ -4931,7 +5438,7 @@ for (const k of DIM_ORDER) {
       else if (lounge) loungeBack();
       else if (lshape && lshape.step !== "box") loungeLBack();
       else if (bunk) bunkBack();
-      else if (rb) cancelPlacement();
+      else if (rb) kitchenBack();
       else if (move) cancelMove();
       else if (retype) endRetype(false);
     }
@@ -5006,7 +5513,7 @@ window.addEventListener("keydown", (e) => {
       else if (lounge) loungeConfirm("enter");
       else if (lWing) { if (lshape.step === "pull") finishLoungeL("enter"); else loungeLClick(null); }
       else if (bunk) finishBunk("enter");
-      else if (rb) finishPlacement("enter");
+      else if (rb) confirmPlacement("enter");
       else if (move) finishMove(e.ctrlKey);
       else endRetype(true);
       return;
@@ -5018,7 +5525,7 @@ window.addEventListener("keydown", (e) => {
       else if (lounge) loungeBack();
       else if (lWing) loungeLBack();
       else if (bunk) bunkBack();
-      else if (rb) cancelPlacement();
+      else if (rb) kitchenBack();
       else if (move) cancelMove();
       else endRetype(false);
       return;
@@ -5076,6 +5583,7 @@ window.addEventListener("keydown", (e) => {
   }
 
   const sel = job.getSelected();
+  const selectedIds = job.getSelectedIds();
   if (e.key === "f" || e.key === "F") {
     if (sel) {
       const env = envelopeBox(sel, job.resultFor(sel.id));
@@ -5098,8 +5606,13 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "m" || e.key === "M") {
     startMove(sel.id);
   } else if (e.key === "Delete" || e.key === "Backspace") {
-    log("key.delete", { id: sel.id });
-    job.removeCabinet(sel.id);
+    if (selectedIds.length > 1) {
+      log("key.delete", { id: sel.id, ids: selectedIds });
+      job.removeCabinets(selectedIds);
+    } else {
+      log("key.delete", { id: sel.id });
+      job.removeCabinet(sel.id);
+    }
   } else if (e.key === "r" || e.key === "R") {
     if (getModule(sel.moduleId).noOrient) {
       const why = getModule(sel.moduleId).noOrient;

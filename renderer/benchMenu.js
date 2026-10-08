@@ -11,6 +11,10 @@ import { otherDoorColor } from "./materials.js";
 import * as job from "./job.js";
 import { log } from "./log.js";
 import { startFitPick, cancelFitPick, isFitPicking, boardRightClick } from "./interact.js";
+import { exportStep } from "./export3d.js";
+import { waterfallPlan, partitionPlan } from "./waterfall.js";
+import { showChoice, showControlPanelForm } from "./quickCard.js";
+import { overheadEndPanel, kitchenWaterfallSide } from "./modules.js";
 
 const bridge = window.cablab || null;
 
@@ -33,6 +37,8 @@ function show(x, y, items) {
     const b = document.createElement("button");
     b.textContent = it.label;
     b.disabled = !!it.disabled;
+    if (it.tip) b.title = it.tip;
+    if (it.danger) b.classList.add("danger");
     b.addEventListener("click", () => { hide(); it.run(); });
     return b;
   }));
@@ -52,6 +58,23 @@ export function openBench(moduleId, { params = null, cabinetId = null, from = "r
   bridge.openBench({ moduleId, params, cabinetId, from });
 }
 
+/** Delete from the right-click menu. A multi-selection that contains this cabinet goes in one step, same as the Delete key. */
+export function deleteCabinetItem(cab, where) {
+  return {
+    label: "Delete",
+    danger: true,
+    run: () => {
+      const ids = job.getSelectedIds();
+      if (ids.length > 1 && ids.includes(cab.id)) {
+        log("key.delete", { id: cab.id, ids, how: "menu", where });
+        job.removeCabinets(ids);
+      } else {
+        log("key.delete", { id: cab.id, how: "menu", where });
+        job.removeCabinet(cab.id);
+      }
+    },
+  };
+}
 /** "Use the other door colour", or null when the job has only one. */
 export function doorColorMenuItem(cab) {
   const choice = otherDoorColor(cab.params, job.getFinish());
@@ -60,6 +83,78 @@ export function doorColorMenuItem(cab) {
     label: `Door colour ${choice.other} · ${choice.name}`,
     run: () => job.setColorSlot(cab.id, choice.other),
   };
+}
+
+const mm = (v) => `${Math.round(Math.abs(v) * 10) / 10} mm`;
+
+/** Which column / zone takes a thickness difference: asked only when there is a choice. */
+async function pickShare(x, y, who, items, delta, noun) {
+  const okIdx = items.findIndex((it) => it.ok);
+  if (items.length < 2 || Math.abs(delta) < 0.05) return okIdx;
+  const verb = delta < 0 ? "gives" : "gains";
+  const v = await showChoice(x, y, `${who}: which ${noun} ${verb} ${mm(delta)}?`, items.map((it, i) => ({
+    label: `${noun[0].toUpperCase()}${noun.slice(1)} ${i + 1} · ${Math.round(it.width)} mm`,
+    value: i,
+    disabled: !it.ok,
+    title: it.ok ? `${Math.round(it.width)} → ${Math.round(it.width + delta)} mm` : `This ${noun} cannot give ${mm(delta)} and stay at least 150`,
+  })));
+  return v == null ? null : v;
+}
+
+/**
+ * Change to waterfall: the fitted partition becomes the kitchen's waterfall and
+ * the overhead's end panel. The thickness differences come from the stock; the
+ * user picks the column that gives and the zone that gains when there is more than one.
+ */
+async function runChangeToWaterfall(wall, x, y) {
+  const plan = waterfallPlan(wall, { stock: job.getStock(), cabinets: job.getJob().cabinets });
+  if (!plan.ok) return;
+  const column = await pickShare(x, y, plan.kitchen.id, plan.kitchen.columns, plan.kitchen.delta, "column");
+  if (column == null) return;
+  const zone = await pickShare(x, y, plan.overhead.id, plan.overhead.zones, plan.overhead.delta, "zone");
+  if (zone == null) return;
+  job.changeToWaterfall(wall.id, { column, zone, how: "menu" });
+}
+
+/** Change to partition: from the kitchen waterfall or the overhead end panel; the other must line up. */
+async function runChangeToPartition(cab, x, y) {
+  const plan = partitionPlan(cab, { stock: job.getStock(), cabinets: job.getJob().cabinets });
+  if (!plan.ok) return;
+  const column = await pickShare(x, y, plan.kitchen.id, plan.kitchen.columns, plan.kitchen.delta, "column");
+  if (column == null) return;
+  const zone = await pickShare(x, y, plan.overhead.id, plan.overhead.zones, plan.overhead.delta, "zone");
+  if (zone == null) return;
+  job.changeToPartition(cab.id, { column, zone, how: "menu" });
+}
+
+/** "Add Control Panel…" on a partition, or on an overhead's end panel. */
+async function runAddControlPanel(targetId, title, x, y) {
+  const rec = await showControlPanelForm(x, y, { title: `Control panel · ${title}` });
+  if (!rec) return;
+  job.addControlPanel(targetId, rec, { how: "menu" });
+}
+
+/** The partition menu items for the waterfall conversion and the control panel. */
+export function wallExtraItems(wall, x, y) {
+  const plan = waterfallPlan(wall, { stock: job.getStock(), cabinets: job.getJob().cabinets });
+  return [
+    { label: "Change to waterfall", disabled: !plan.ok, tip: plan.ok ? "The partition becomes the kitchen's waterfall and the overhead's end panel; its outer face stays." : plan.reason, run: () => runChangeToWaterfall(wall, x, y) },
+    { label: "Add Control Panel…", tip: "A screen recessed through this partition and the overhead behind it.", run: () => runAddControlPanel(wall.id, wall.id, x, y) },
+  ];
+}
+
+/** The cabinet menu items for the reverse conversion and the control panel ([] when the module has neither). */
+export function cabinetExtraItems(cab, x, y) {
+  const kitchenFall = kitchenWaterfallSide(cab.params);
+  const endPanel = cab.moduleId === "overheadCabinet" ? overheadEndPanel(cab.params) : null;
+  if (!kitchenFall && !endPanel) return [];
+  const plan = partitionPlan(cab, { stock: job.getStock(), cabinets: job.getJob().cabinets });
+  const items = [
+    { label: "Change to partition", disabled: !plan.ok, tip: plan.ok ? "The waterfall and the end panel become one fitted partition on the same outer face." : plan.reason, run: () => runChangeToPartition(cab, x, y) },
+  ];
+  if (endPanel) items.push({ label: "Add Control Panel…", tip: "A screen recessed through the end panel, the end divider and backing boards.", run: () => runAddControlPanel(cab.id, `${cab.id} end panel`, x, y) });
+  else items.push({ label: "Add Control Panel…", disabled: true, tip: "The waterfall is bench stock mitred to the bench top; a control panel goes on the overhead's end panel or a partition." });
+  return items;
 }
 
 /** Attach the right-click menu to a rail module button. */
@@ -101,6 +196,15 @@ canvas.addEventListener("contextmenu", (e) => {
       { label: "Fit to cabinets", disabled: !ready, run: () => startFitPick(wall.id) },
     ];
     if (wall.fit) items.push({ label: "Clear cabinet fit", run: () => job.setWallFit(wall.id, null, "clear") });
+    items.push(...wallExtraItems(wall, e.clientX, e.clientY));
+    items.push({
+      label: "Delete",
+      danger: true,
+      run: () => {
+        log("key.delete", { id: wall.id, how: "menu", where: "3d" });
+        job.removeWall(wall.id);
+      },
+    });
     showContextMenu(e.clientX, e.clientY, items);
     return;
   }
@@ -112,7 +216,13 @@ canvas.addEventListener("contextmenu", (e) => {
   showContextMenu(e.clientX, e.clientY, [
     { title: `${cab.id} · ${mod ? mod.label : cab.moduleId}` },
     doorColorMenuItem(cab),
+    ...cabinetExtraItems(cab, e.clientX, e.clientY),
+    { label: "Export 3D as STEP…", run: () => {
+      const ids = job.getSelectedIds();
+      exportStep(ids.includes(cab.id) ? ids : [cab.id]);
+    } },
     { label: "Open in bench with these params", run: () => openBench(cab.moduleId, { params: cab.params, cabinetId: cab.id, from: "cabinet" }) },
     { label: "Generator rules…", run: () => openBench(cab.moduleId, { from: "cabinet" }) },
+    deleteCabinetItem(cab, "3d"),
   ].filter(Boolean));
 });

@@ -235,6 +235,31 @@ export function otherDoorColor(params, finish) {
   return { slot, other, name: other === "A" ? colors.a.name : colors.b.name, enabled: colors.two };
 }
 
+/**
+ * The cabinet's colour group filled from the job catalogue: series, sides,
+ * colour A and B, and a bench top it already has. Thicknesses stay.
+ * A board drawn by hand (no colour group) is left alone.
+ */
+export function applyCatalogue(params, finish) {
+  if (!params || (params.colorSlot == null && params.doorSeries == null && params.doorColorName == null && params.doorColor == null
+    && params.benchTopColorName == null && params.benchTopColor == null)) return params;
+  const next = { ...params };
+  let changed = false;
+  const catalogue = params.colorSlot != null || params.doorSeries != null;
+  if (catalogue) {
+    const color = cabinetColor(finish, colorSlotOf(params, finish));
+    for (const key of ["doorSeries", "doorSides", "doorColor", "doorColorName", "doorColorB", "doorColorNameB", "colorSlot"]) {
+      if (next[key] !== color[key]) { next[key] = color[key]; changed = true; }
+    }
+  }
+  if (params.benchTopColorName != null || params.benchTopColor != null) {
+    const name = benchTopColor(finish).name;
+    if (next.benchTopColor !== name) { next.benchTopColor = name; changed = true; }
+    if (next.benchTopColorName !== name) { next.benchTopColorName = name; changed = true; }
+  }
+  return changed ? next : params;
+}
+
 /** Copy of `params` whose door colour is the job's colour A or B. Series and sides stay. */
 export function withColorSlot(params, finish, slot) {
   const color = cabinetColor(finish, slot);

@@ -46,8 +46,20 @@ export interface KitchenZone {
   hingeSettings?: HingeSettings;
   lockEnabled?: boolean;
   lockSideCenterOffset?: number;
+  /**
+   * A sink sits in the bench above this left or right door. The upper hinge
+   * drops by SINK_HINGE_DROP_MM. A bench sink will set this itself later.
+   */
+  withSink?: boolean;
   /** Ensuite only: washer deck behind B3 on this column's bottom side-door zone. */
   applianceFloorEnabled?: boolean;
+  /**
+   * Stove opening the user typed. While set, the column width (and, for one
+   * column, the run length) stays locked to this opening. Clear it to drag again.
+   */
+  cutoutWidth?: number;
+  /** Stove opening height. While set, this zone's height stays locked. */
+  cutoutHeight?: number;
 }
 
 export interface KitchenColumn {
@@ -101,6 +113,12 @@ export interface KitchenParams {
    */
   benchTopColor?: string;
   benchTopColorName?: string;
+  /**
+   * Waterfall bench end, kitchen only. The outer width includes this 25 mm
+   * drop; the carcass and columns sit inboard of it. Absent: no drop.
+   * The joint with the bench top is a 45° miter.
+   */
+  waterfall?: "left" | "right";
   /** Door series (acrylic | hpl); only HPL has a grain and the sheet-size check. */
   doorSeries?: string;
   /** Door stock single-sided (default: back = carcass colour) or double-sided (_lib/finish.ts). */
@@ -108,6 +126,13 @@ export interface KitchenParams {
   /** Wood grain per group; missing = module default (fronts horizontal). */
   grain?: GrainParams;
   columns: KitchenColumn[];
+  /**
+   * Split Kitchen: the run is two carcasses butted on the column boundary
+   * after this column (0 = between the first and second column). Each side
+   * is its own end panel (one CPT). Fronts on that line each keep half of
+   * `frontClearance`. Absent: one carcass. Never the outer ends.
+   */
+  splitAfter?: number;
   wheelAvoidances?: WheelAvoidance[];
   vPanelMachiningPreferences?: MachiningPreference[];
   /**

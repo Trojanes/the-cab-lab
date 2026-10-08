@@ -5,7 +5,7 @@ import * as THREE from "three";
 import { scene, camera, activeCamera, canvas } from "./space.js";
 import { doorBodyMaterial, grainAxisOf } from "./doorFinish.js";
 import { carcassDimMat, carcassMat } from "./carcassFinish.js";
-import { getJob, getSelectedId, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden, conflictIds } from "./job.js";
+import { getJob, getSelectedId, getSelectedIds, getSubSelection, getSelectedRegion, getSpace, getPlanes, resultFor, isBoardHidden, conflictIds } from "./job.js";
 import { getModule } from "./modules.js";
 import { footprintFits, minClearHeight, clearHeightAt, slicePlane } from "./spaces.js";
 import { prismYZ, boardGeometry, boxMesh, boxEdges, boardEdges, faceSheetGeometry } from "./boardGeom.js";
@@ -24,6 +24,7 @@ const coreDimMat = new THREE.MeshStandardMaterial({ color: 0xc4b29a, roughness: 
 const boardSelMat = new THREE.MeshStandardMaterial({ color: 0x6fa0f0, emissive: 0x1e3a6e, roughness: 0.5 });
 const frontDimMat = new THREE.MeshStandardMaterial({ color: 0x9ec5d8, roughness: 0.6, transparent: true, opacity: 0.22, depthWrite: false });
 // A board past the HPL sheet limit for its grain (result.grain.issues) or with milling issues: red until fixed.
+// A bench top past the sheet stays its colour; the red line stays in the right-panel checks.
 const grainBadMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.8 });
 const edgeDimMat = new THREE.LineBasicMaterial({ color: 0x4a4034, transparent: true, opacity: 0.3 });
 // A face is selected: a translucent sheet just proud of that face (faceSheetGeometry offsets it;
@@ -157,6 +158,7 @@ function buildGroup(cab) {
   const result = resultFor(cab.id);
   const env = envelopeBox(cab, result);
   const selected = cab.id === getSelectedId();
+  const inMulti = getSelectedIds().length > 1 && getSelectedIds().includes(cab.id);
   const group = new THREE.Group();
   group.name = cab.id;
   group.userData = { cabId: cab.id };
@@ -213,7 +215,12 @@ function buildGroup(cab) {
     // A region selected in a mixed module (bedroom body): its boards light up, the rest fades.
     const selRegion = selected && allRegions.length ? getSelectedRegion() : null;
     // Red: past the HPL sheet for its grain, or needing CNC work on both faces.
-    const grainBad = new Set([...(result.grain?.issues || []), ...(result.milling?.issues || [])].map((i) => i.board));
+    // The bench top is the exception for sheet length: it keeps its colour.
+    const benchTop = new Set(result.boards.filter((b) => b.boardType === "bench_top").map((b) => b.id));
+    const grainBad = new Set([
+      ...(result.grain?.issues || []).filter((i) => !benchTop.has(i.board)),
+      ...(result.milling?.issues || []),
+    ].map((i) => i.board));
     for (const b of result.boards) {
       if (isBoardHidden(cab, b.id)) continue;
       const isSel = (sub && sub.boardId === b.id) || (!sub && selRegion && b.zoneId === selRegion);
@@ -251,12 +258,15 @@ function buildGroup(cab) {
     group.add(ghost);
   }
 
+  addSplitMark(group, result, env);
+
   // A neighbour another cabinet grew into (renderer/yield.js) is red until it yields or the other one goes back.
   const fits = poseFits(cab, cab.pose) && !conflictIds().has(cab.id);
   const mod = getModule(cab.moduleId);
   // The blue envelope is only there while this box is being dragged. A box that
   // does not fit keeps its red frame so the error stays visible.
-  if ((!fits || envelopeDragId === cab.id) && !(allBoardsHidden && !selected)) {
+  // A set of cabinets draws a blue box on each. The primary still carries the handles.
+  if ((!fits || envelopeDragId === cab.id || inMulti) && !(allBoardsHidden && !selected && !inMulti)) {
     const envMatNow = !fits ? envMatBad : envMat;
     const envLines = mod.envelopeProfile
       ? new THREE.LineSegments(new THREE.EdgesGeometry(prismYZ(slabOutline(mod.envelopeProfile(cab.params), env.D), env.x0, env.x1)), envMatNow)
@@ -338,6 +348,25 @@ function boardPivot(holder, b, cab) {
   holder.position.set(-c[0], -c[1], -c[2]);
   pivot.add(holder);
   return pivot;
+}
+
+/**
+ * Split Kitchen / split overhead: the two carcasses meet flush, so the cut
+ * looked like one board. A line on the room face marks the joint. The boards
+ * stay at the sizes the generator wrote — the line is not a gap.
+ */
+const splitMarkMat = new THREE.LineBasicMaterial({ color: 0x7eb6ff, depthTest: false });
+function addSplitMark(group, result, env) {
+  const x = result?.debug?.split?.x;
+  if (!Number.isFinite(x)) return;
+  const geo = new THREE.BufferGeometry();
+  geo.setAttribute("position", new THREE.Float32BufferAttribute([
+    x, env.y0 - 0.6, env.z0, x, env.y0 - 0.6, env.z1,
+  ], 3));
+  const line = new THREE.Line(geo, splitMarkMat);
+  line.renderOrder = 12;
+  line.userData = { kind: "splitMark" };
+  group.add(line);
 }
 
 /**
@@ -497,6 +526,7 @@ export function setSketchEditing(id) {
 function buildKey(cab) {
   const selected = cab.id === getSelectedId();
   const sub = selected ? getSubSelection() : null;
+  const inMulti = getSelectedIds().length > 1 && getSelectedIds().includes(cab.id);
   return [
     refId(cab.params),
     refId(resultFor(cab.id)),
@@ -505,6 +535,7 @@ function buildKey(cab) {
     JSON.stringify(cab.hidden || null),
     JSON.stringify(cab.overrides || null),
     selected ? `sel:${sub ? `${sub.boardId}.${sub.face ? sub.face.id : ""}` : ""}:${getSelectedRegion() || ""}:${moveOpen}:${resizeOpen}` : "",
+    inMulti ? "multi" : "",
     resizeFace && resizeFace.cabId === cab.id ? `${resizeFace.axis}${resizeFace.dir}` : "",
     armedHandle && armedHandle.cabId === cab.id ? armedHandle.type : "",
     envelopeDragId === cab.id ? "drag" : "",
@@ -748,7 +779,7 @@ function addGrooveMarks(group, b) {
   }
 }
 
-/** Colour sheets on A and B only. An edge stays the core unless it carries edge tape. */
+/** Colour sheets on A and B. An edge is coloured only when it carries a show colour (a mitred bench top). */
 function addBigFaceSheets(group, b, dim) {
   const carcass = b.stock?.kind !== "door";
   for (const id of ["A", "B"]) {
@@ -762,6 +793,19 @@ function addBigFaceSheets(group, b, dim) {
     const mat = doorName
       ? doorBodyMaterial(doorName, { dim: !!dim, grainAxis: grainAxisOf(b, face) })
       : (dim ? carcassDimMat : carcassMat);
+    const sheet = new THREE.Mesh(geo, mat);
+    sheet.renderOrder = 2;
+    sheet.userData = { kind: "faceColour" };
+    group.add(sheet);
+  }
+  for (const face of b.faces || []) {
+    if (face.id === "A" || face.id === "B" || !face.edge) continue;
+    const name = face.finish && face.finish.colour;
+    const doorName = name && !/stipple/i.test(name) ? name : null;
+    if (!doorName) continue;
+    const geo = faceSheetGeometry(b, face, 0.6);
+    if (!geo) continue;
+    const mat = doorBodyMaterial(doorName, { dim: !!dim, grainAxis: grainAxisOf(b, face) });
     const sheet = new THREE.Mesh(geo, mat);
     sheet.renderOrder = 2;
     sheet.userData = { kind: "faceColour" };

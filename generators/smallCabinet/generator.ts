@@ -17,6 +17,8 @@
  */
 
 import { computeFrontPanelBounds, frontPanelIsValid } from "./frontPanelCalculator.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { applyDoorSides } from "../_lib/finish.ts";
@@ -159,7 +161,7 @@ function emptyParamsResult(
   };
 }
 
-export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetResult {
+export function generateSmallCabinet(params: SmallCabinetParams, options: { layout?: unknown } = {}): SmallCabinetResult {
   const errors: string[] = [];
   const warnings: string[] = [];
 
@@ -490,6 +492,10 @@ export function generateSmallCabinet(params: SmallCabinetParams): SmallCabinetRe
   }
 
   // Face layer: A / B / E<i> on every board, grooves on the side faces, tongue tags, lock slots, joints.
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+    leftSide: leftSideDoorColor ? "door" : "carcass",
+    rightSide: rightSideDoorColor ? "door" : "carcass",
+  });
   attachFaces(boards);
   const doorColorName = params.doorColorName || params.doorColor;
   const joints = buildSmallCabinetFaces({

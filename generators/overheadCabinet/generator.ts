@@ -14,18 +14,21 @@ import {
 } from "./geometry.ts";
 import { alias, beginProvenance, dim, endProvenance, ex, Outline, param, provenanceActive, ref, same, type Term } from "../_lib/dim.ts";
 import { generateOHCSvgPreview } from "./svgPreview.ts";
+import { applyOverheadSplit } from "./split.ts";
 import type { Board, OverheadCabinetParams, OverheadCabinetResult } from "./types.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { attachFaces } from "../_lib/model.ts";
 import { applyDoorSides, doorColourOf } from "../_lib/finish.ts";
 import { applyGrain } from "../_lib/grain.ts";
 import { applyMilling } from "../_lib/milling.ts";
-import { CORNERS, LayoutError, placeBoards, recordExpr, validateLayout, type BoardRule, type LayoutFile } from "../_lib/layout.ts";
+import { CORNERS, LayoutError, applyLayoutDraft, placeBoards, recordExpr, validateLayout, type BoardRule, type LayoutFile } from "../_lib/layout.ts";
 import { buildOverheadFaces } from "./faces.ts";
 import { LAYOUT } from "./layout.ts";
+import { addEndPanel, applyControlPanelCuts, controlPanelsOf, endPanelSide, finishEndPanel, planControlPanels, type ControlPanelPlan } from "./controlPanel.ts";
 
 export * from "./geometry.ts";
 export * from "./svgPreview.ts";
+export { CONTROL_PANEL_DEFAULTS, CONTROL_PANEL_EDGE_PAST_MM, CONTROL_PANEL_GROOVE_MM, controlPanelLayers } from "../_lib/controlPanel.ts";
 
 /** Match General Tall / Kitchen / Fridge LED insert groove (mm). */
 const LED_GROOVE_WIDTH = R.LED_GROOVE_WIDTH_MM.value;
@@ -407,6 +410,7 @@ function legacyToBoards(
   rangehood: RangehoodGroup | null,
   layout: LayoutFile,
   warnings: string[],
+  situation: Record<string, string>,
 ): Board[] {
   const { cabinetWidth, cabinetDepth, cabinetHeight, bottomThickness, featureWidth, topClearanceHeight, frontPanelThickness, clearance } = {
     cabinetWidth: inputs.cabinetWidth,
@@ -461,6 +465,7 @@ function legacyToBoards(
     ["T1", "T2", ...(hasT3 ? ["T3"] : []), ...(hasT4 ? ["T4"] : [])],
     scope,
     warnings,
+    situation,
   );
   let t3Outline = geometry.trimmed_vectors.T3;
   if (hasT3 && layout.boards.T3?.outline) {
@@ -694,14 +699,6 @@ function legacyToBoards(
     });
   }
 
-  // Only boards placed above follow their box (T3 / T4 outlines are rebuilt from it).
-  // A rule for a divider or a door would move the box and leave the tongue, notches and grooves.
-  for (const id of Object.keys(layout.boards)) {
-    const axes = layout.boards[id]?.axes;
-    if (!axes?.x || !axes?.y || !axes?.z || placed[id] || RULE_BOARDS.has(id)) continue;
-    throw new LayoutError(`layout: ${id} 的缺口和槽由代码算，这条位置没有写上`);
-  }
-
   return boards;
 }
 
@@ -805,7 +802,7 @@ function buildInsertBoardLedGroovePath(
   const halfWidth = LED_GROOVE_WIDTH / 2;
   if (boardWidth <= LED_GROOVE_BRANCH_END_INSET * 2 + LED_GROOVE_WIDTH) {
     warnings.push(
-      `${boardId} LED groove skipped: board width ${boardWidth.toFixed(1)} too narrow for 80 mm end insets.`,
+      `${boardId} LED groove skipped: board width ${boardWidth.toFixed(1)} too narrow for ${LED_GROOVE_BRANCH_END_INSET} mm end insets.`,
     );
     return null;
   }
@@ -872,15 +869,15 @@ function applyLedDepth(
   warnings: string[],
 ): void {
   const rule = layout.boards.T3?.features?.LED;
-  const led = ledFeatures.find((f) => f.type === "t3_groove");
-  if (!rule || !led) return;
+  const leds = ledFeatures.filter((f) => f.type === "t3_groove");
+  if (!rule || !leds.length) return;
   const depth = recordExpr("T3.feat.LED.depth", rule.depth, ruleScope(inputs), "T3 LED depth");
-  const t3 = boards.find((b) => b.id === "T3");
+  const t3 = boards.find((b) => b.boardType === "T3");
   const thick = t3 ? t3.z1 - t3.z0 : Infinity;
   if (!(depth > 0)) throw new LayoutError(`layout: the T3 LED groove depth is ${depth}; it must be above 0`);
   if (depth > thick + 1e-9) throw new LayoutError(`layout: T3 灯槽深度 ${depth} 深过板厚 ${thick}`);
   if (Math.abs(depth - thick) < 1e-9) warnings.push(`T3: 灯槽深度等于板厚 ${thick}，这一刀切穿了`);
-  led.depth = depth;
+  for (const led of leds) led.depth = depth;
 }
 
 function generateT3LedGrooveFeatures(
@@ -891,28 +888,27 @@ function generateT3LedGrooveFeatures(
   // Overhead Style 1/2 only changes divider front notches; gate on checkbox.
   if (params.ledGroove === false) return [];
 
-  const t3 = boards.find((board) => board.id === "T3" && board.boardType === "T3");
-  if (!t3) {
+  const t3s = boards.filter((board) => board.boardType === "T3");
+  if (!t3s.length) {
     warnings.push("T3 LED groove skipped: T3 board missing.");
     return [];
   }
 
   // Front land (edge → groove) = 18 mm → centerline = 18 + 14.5/2 = 25.25.
   const frontOffset = LED_GROOVE_FRONT_OFFSET;
-  const { width, depth } = t3LedBoardExtents(t3);
-  const path = buildInsertBoardLedGroovePath(width, depth, "T3", warnings);
-  if (!path) return [];
-
-  t3.notes = [
-    ...(t3.notes ?? []).filter((note) => !note.toLowerCase().includes("led groove")),
-    `T3 LED groove path on top face (${LED_GROOVE_FRONT_LAND_MM} mm front land)`,
-  ];
-
-  return [
-    {
-      id: "T3_led_groove",
+  const features: Array<Record<string, unknown>> = [];
+  for (const t3 of t3s) {
+    const { width, depth } = t3LedBoardExtents(t3);
+    const path = buildInsertBoardLedGroovePath(width, depth, t3.id, warnings);
+    if (!path) continue;
+    t3.notes = [
+      ...(t3.notes ?? []).filter((note) => !note.toLowerCase().includes("led groove")),
+      `T3 LED groove path on top face (${LED_GROOVE_FRONT_LAND_MM} mm front land)`,
+    ];
+    features.push({
+      id: t3.id === "T3" ? "T3_led_groove" : `${t3.id}_led_groove`,
       type: "t3_groove",
-      targetBoardId: "T3",
+      targetBoardId: t3.id,
       face: "top",
       width: LED_GROOVE_WIDTH,
       depth: LED_GROOVE_DEPTH,
@@ -928,10 +924,11 @@ function generateT3LedGrooveFeatures(
       notes: [
         "T3 LED groove on top face (opens upward)",
         `Main channel along X, ${LED_GROOVE_FRONT_LAND_MM} mm land from T3 front then ${LED_GROOVE_WIDTH} mm groove (centerline ${frontOffset} mm)`,
-        "Two rear T-branches parallel to Y, extend to T3 back edge, centers inset 80 mm from each X end",
+        `Two rear T-branches parallel to Y, extend to T3 back edge, centers inset ${LED_GROOVE_BRANCH_END_INSET} mm from each X end`,
       ],
-    },
-  ];
+    });
+  }
+  return features;
 }
 
 function resolveCarcassColor(params: OverheadCabinetParams): { carcassColor: string; carcassColorName: string } {
@@ -1002,6 +999,11 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options:
     ...carcassColor,
   });
 
+  const situation = {
+    style: String(inputs.style || "style_1"),
+    ledGroove: rawParams.ledGroove === false ? "off" : "on",
+    rangehoodAlignment: String(rawParams.rangehoodAlignment || "left") === "right" ? "right" : "left",
+  };
   let layout: LayoutFile = LAYOUT;
   if (options.layout != null) {
     try {
@@ -1012,11 +1014,28 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options:
   }
   let boards: Board[] = [];
   let ledFeatures: Array<Record<string, unknown>> = [];
+  let splitInfo: { after: number; x: number } | null = null;
+  const endSide = endPanelSide(rawParams.endPanel);
+  let cpPlan: ControlPanelPlan = { cuts: [], suppressed: [], hoodFeatures: [] };
   if (geometry && validation.errors.length === 0) {
     try {
-      boards = legacyToBoards(geometry, inputs, rangehood, layout, validation.warnings);
+      boards = legacyToBoards(geometry, inputs, rangehood, layout, validation.warnings, situation);
+      splitInfo = applyOverheadSplit(boards, geometry, inputs, rawParams.splitAfter, rangehood, validation.warnings);
+      if (endSide) addEndPanel(boards, inputs, endSide);
+      cpPlan = planControlPanels(
+        boards, geometry, inputs, controlPanelsOf(rawParams.controlPanels, endSide), rangehood,
+        () => ({
+          z0: (inputs.featureWidth ?? DIVIDER_THICKNESS_MM) * 2 + (rangehood?.clearHeight ?? 0),
+          cutProfileVector: internalRangehoodDividerProfile(inputs, rangehood?.clearHeight ?? 0).map(([y, z]) => ({ y, z })),
+        }),
+        validation.warnings,
+      );
+      if (!splitInfo && rawParams.splitAfter == null && inputs.cabinetWidth > R.RUN_SHEET_MAX_MM.value) {
+        validation.warnings.push(`This run is ${inputs.cabinetWidth} mm long. A board over ${R.RUN_SHEET_MAX_MM.value} mm cannot be cut — split the overhead.`);
+      }
       ledFeatures = generateT3LedGrooveFeatures(boards, validation.warnings, rawParams);
       applyLedDepth(ledFeatures, layout, inputs, boards, validation.warnings);
+      applyLayoutDraft(boards, layout, ruleScope(inputs), validation.errors, validation.warnings, situation, (id) => RULE_BOARDS.has(id));
     } catch (err) {
       if (!(err instanceof LayoutError)) throw err;
       validation.errors.push(err.message);
@@ -1044,9 +1063,10 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options:
     throw new Error("Overhead geometry was not resolved after validation.");
   }
   const relationshipDeclarations = relationshipDeclarationsForBoards(boards);
-  const rangehoodFeatures = generateRangehoodFeatures(geometry, rangehood);
+  const rangehoodFeatures = [...generateRangehoodFeatures(geometry, rangehood), ...cpPlan.hoodFeatures];
+  const suppressed = [...(rangehood?.internalDividerIndices ?? []), ...cpPlan.suppressed];
   const dividerFeatures = geometry.divider_features.map((feature, index) => {
-    if (!rangehood?.internalDividerIndices.includes(index)) return feature;
+    if (!suppressed.includes(index)) return feature;
     return { ...feature, bp_groove: undefined };
   });
 
@@ -1056,15 +1076,22 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options:
     boards,
     geometry,
     inputs,
-    suppressedGrooves: rangehood?.internalDividerIndices ?? [],
+    suppressedGrooves: suppressed,
     ledFeatures,
     rangehoodFeatures,
     declarations: relationshipDeclarations,
     carcassColorName: carcassColor.carcassColorName,
     doorColour: doorColourOf(rawParams),
   });
-  // Flap fronts and T1: one group, horizontal unless chosen otherwise.
-  const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? "front" : null), rawParams, { front: "horizontal" });
+  finishEndPanel(boards, endSide, doorColourOf(rawParams));
+  applyControlPanelCuts(boards, cpPlan, validation.warnings);
+  // Flap fronts and T1: one group, horizontal unless chosen otherwise. The end panel: vertical.
+  const grain = applyGrain(
+    boards,
+    (b) => (b.id === "END_PANEL" ? "side" : b.stock?.kind === "door" ? "front" : null),
+    rawParams,
+    endSide ? { front: "horizontal", side: "vertical" } : { front: "horizontal" },
+  );
   applyDoorSides(boards, { ...rawParams, carcassColorName: carcassColor.carcassColorName });
   const milling = applyMilling(boards);
 
@@ -1091,11 +1118,12 @@ function generateOverheadCabinetInner(rawParams: OverheadCabinetParams, options:
         boards.filter((b) => layout.boards[b.id]).map((b) => [b.id, layout.boards[b.id]!]),
       ),
       legacyGeometry: geometry,
+      split: splitInfo,
       svgPreview: generateOHCSvgPreview(geometry, {
         selectedZoneIndex: Number((rawParams as { selectedZoneIndex?: number }).selectedZoneIndex ?? -1),
+        splitX: splitInfo?.x,
       }),
       provenance: endProvenance(),
-      ruleBoards: [...RULE_BOARDS],
     },
   };
 }

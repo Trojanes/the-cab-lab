@@ -7,11 +7,12 @@
 //              across X: the clear height at any point is the profile's z at
 //              that y (see clearHeightAt). A box is [[0, H], [D, H]].
 //   flatFromY  y from which the roof is flat at `height` (the pickable ceiling)
-//   obstacles  boxes inside the floor that cabinets must not overlap
-//              (wheel arches, columns) – empty for a plain box
+//   obstacles  boxes cabinets must not overlap (columns) – empty today
+//   wheelArches  symmetric pairs from the floor plan; cabinets may stand in them
 //   bounds     XY AABB of the floor, for quick clamping
 // The renderer never branches on `kind`; vehicle / floorplan only differ here.
 import { getSetting } from "./settings.js";
+import { archesToBoxes } from "./wheelArch.js";
 
 const WALL_KEYS = { key: "walls", type: "walls", label: "Walls" };
 
@@ -31,11 +32,23 @@ function wallList(p) {
 
 // --- box ---------------------------------------------------------------------------
 
+const BOX_SETTINGS_KEY = "space.box.defaults";
+
+function builtInBoxDefaults() {
+  return { width: 4000, depth: 3000, height: 2400, walls: [0, 1, 2, 3] };
+}
+
 const box = {
   id: "box",
   label: "Box",
   sub: "W × D × H room",
-  defaults: () => ({ width: 4000, depth: 3000, height: 2400, walls: [0, 1, 2, 3] }),
+  defaults() {
+    const saved = getSetting(BOX_SETTINGS_KEY);
+    if (saved && typeof saved === "object" && this.validate(saved).length === 0) return saved;
+    return builtInBoxDefaults();
+  },
+  builtInDefaults: builtInBoxDefaults,
+  settingsKey: BOX_SETTINGS_KEY,
   fields: [
     { key: "width", label: "Width (mm)", min: 300 },
     { key: "depth", label: "Depth (mm)", min: 300 },
@@ -164,7 +177,8 @@ const vehicle = {
   settingsKey: SETTINGS_KEY,
   fields: [
     { key: "width", label: "Width (mm)", min: 300 },
-    { key: "rearDepth", label: "Rear depth (mm)", min: 300 },
+    { key: "rearDepth", label: "Rear length (mm)", min: 300 },
+    { key: "totalLength", type: "totalLength", label: "Total length (mm)" },
     { key: "height", label: "Height (mm)", min: 300 },
     WALL_KEYS,
     { key: "frontMode", type: "choice", label: "Front (nose)", options: [{ id: "points", label: "Points" }, { id: "dxf", label: "DXF" }] },
@@ -187,7 +201,15 @@ const vehicle = {
     const nose = !g || g.error
       ? "—"
       : `${p.frontMode === "dxf" ? (p.front.dxf.name || "DXF") : `${pts.length} points`} · ${Math.round(g.frontLen)} mm${Math.abs(g.scale - 1) > 0.001 ? ` · ×${g.scale.toFixed(3)}` : ""}`;
-    return [["Width", `${p.width} mm`], ["Rear depth", `${p.rearDepth} mm`], ["Height", `${p.height} mm`], ["Nose", nose]];
+    const rear = Number(p.rearDepth) || 0;
+    const noseLen = g && !g.error ? g.frontLen : 0;
+    return [
+      ["Width", `${p.width} mm`],
+      ["Rear length", `${rear} mm`],
+      ["Total length", `${Math.round(rear + noseLen)} mm`],
+      ["Height", `${p.height} mm`],
+      ["Nose", nose],
+    ];
   },
   resolve(p) {
     const W = Number(p.width);
@@ -228,7 +250,10 @@ export function getSpaceKind(id) {
 
 export function resolveSpace(space) {
   if (!space) return null;
-  return getSpaceKind(space.kind).resolve(space.params);
+  const resolved = getSpaceKind(space.kind).resolve(space.params);
+  if (!resolved) return null;
+  resolved.wheelArches = archesToBoxes(space.params && space.params.wheelArches, resolved.bounds);
+  return resolved;
 }
 
 // --- roof helpers ---------------------------------------------------------------------

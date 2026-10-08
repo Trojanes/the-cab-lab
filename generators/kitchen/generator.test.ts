@@ -5,6 +5,7 @@
  */
 import assert from "node:assert/strict";
 import { generateKitchenCabinet } from "./generator.ts";
+import { columnOpenings } from "../_lib/preview.ts";
 
 const PARAMS = {
   globalSettings: { length: 887, depth: 270, height: 880 },
@@ -58,6 +59,23 @@ assert.deepEqual(r.validation.errors, []);
 assert.deepEqual(r.validation.warnings, []);
 assert.deepEqual(r.xBoundaries, [0, 444, 887]);
 
+/* ---------- column openings: clearance and centre distance, converted from the same width ---------- */
+{
+  const open = columnOpenings(r.debug.columns, r.boards);
+  assert.equal(open.length, 2);
+  // Door end 16, divider 15 centred on 444: clear 444 - 16 - 7.5, centre 444 - 8.
+  assert.equal(open[0].width, 444);
+  assert.equal(open[0].clear, 420.5);
+  assert.equal(open[0].center, 436);
+  // Divider centre 444 to carcass end centre 887 - 7.5; clear from 451.5 to 872.
+  assert.equal(open[1].width, 443);
+  assert.equal(open[1].clear, 420.5);
+  assert.equal(open[1].center, 435.5);
+  const typedClear = 400;
+  const nextWidth = Math.round((open[0].width + (typedClear - open[0].clear)) * 10) / 10;
+  assert.equal(nextWidth, 423.5);
+}
+
 /* ---------- 计数：7 骨架 + 3 V + 2 功能 + 1 加强条 + 3 门板 = 16 ---------- */
 assert.equal(r.boards.length, 16);
 assert.equal(r.slots.length, 3); // V1 drawer slot became screws
@@ -93,9 +111,9 @@ assert.ok(r.joints.length >= 6, "V↔B3 and top rails declared");
 }
 
 /* ---------- B 系统骨架 ---------- */
-assert.deepEqual(place("B1"), { x0: 16, x1: 887, y0: 70, y1: 86, z0: 0, z1: 55 });
+assert.deepEqual(place("B1"), { x0: 16, x1: 887, y0: 39, y1: 55, z0: 0, z1: 55 });
 assert.equal(b("B1").materialThickness, 16);
-assert.deepEqual(place("B2"), { x0: 16, x1: 887, y0: 86, y1: 101, z0: 0, z1: 55 });
+assert.deepEqual(place("B2"), { x0: 16, x1: 887, y0: 55, y1: 70, z0: 0, z1: 55 });
 assert.deepEqual(place("B3"), { x0: 16, x1: 887, y0: 0, y1: 100, z0: 55, z1: 70 });
 // B3 V 缺口：V1 [436,452]、V2 [871.5,887]（V0 零宽自然消失）
 {
@@ -132,10 +150,11 @@ assert.deepEqual(place("B4-1"), { x0: 0, x1: 887, y0: 239, y1: 254, z0: 0, z1: 1
 
 /* ---------- 功能板 ---------- */
 assert.deepEqual(place("c1-door-door-shelf"), { x0: 1, x1: 444, y0: 0, y1: 254, z0: 440, z1: 455 });
+// The front-left corner is notched round the strengthening strip (x 16..32 = CPT + 1, y up to the tongue at 84.667).
 assert.deepEqual(b("c1-door-door-shelf").profileVector, [
-  { x: 16, y: 0 }, { x: 436.5, y: 0 }, { x: 436.5, y: 84.667 }, { x: 444, y: 84.667 },
+  { x: 32, y: 0 }, { x: 436.5, y: 0 }, { x: 436.5, y: 84.667 }, { x: 444, y: 84.667 },
   { x: 444, y: 169.333 }, { x: 436.5, y: 169.333 }, { x: 436.5, y: 254 }, { x: 16, y: 254 },
-  { x: 16, y: 169.333 }, { x: 1, y: 169.333 }, { x: 1, y: 84.667 }, { x: 16, y: 84.667 }, { x: 16, y: 0 },
+  { x: 16, y: 169.333 }, { x: 1, y: 169.333 }, { x: 1, y: 84.667 }, { x: 32, y: 84.667 }, { x: 32, y: 0 },
 ].map((q) => ({ x: r2(q.x), y: r2(q.y) })));
 // No tongue into V1 (screwed): the board stops flush on V1's right face (451.5).
 assert.deepEqual(place("k-col-2-c2-drawer-bottom"), { x0: 451.5, x1: 887, y0: 0, y1: 150, z0: 572.5, z1: 587.5 });
@@ -181,6 +200,14 @@ assert.equal(b("c1-door-front-panel").stock?.kind, "door");
   assert.deepEqual(right.map((h) => h.centerX), [862, 862]); // 距右侧 22.5
   assert.deepEqual(right.map((h) => r2(h.centerZ)).sort((a, c) => c - a), [485.104, 148.646]); // sd = 93.6458
   assert.equal(r.hinges.filter((h) => h.panelId === "c2-drawer-front-panel").length, 0); // 抽屉面板无铰链
+  const sink = generateKitchenCabinet({
+    ...PARAMS,
+    columns: PARAMS.columns.map((c) => c.id === "k-col-1"
+      ? { ...c, zones: c.zones.map((z) => ({ ...z, withSink: true })) }
+      : c),
+  });
+  const sunk = sink.hinges.filter((h) => h.panelId === "c1-door-front-panel").map((h) => h.centerZ).sort((a, c) => c - a);
+  assert.deepEqual(sunk, [777.5 - 130, 155], "upper hinge drops 130 mm for a sink; the lower hinge stays");
 }
 
 /* ---------- 锁 ---------- */
@@ -315,6 +342,110 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.ok(ensuiteStove.boards.some((b) => b.id.startsWith("T1-")), "the stove zone is not rewritten as a door");
 }
 
+/* ---------- 灶台：半深隔板的槽和门板色前边，侧板，贴踢脚的满深底板 ---------- */
+{
+  const pair = generateKitchenCabinet({
+    globalSettings: { length: 1200, depth: 500, height: 880 },
+    materialThickness: 15,
+    frontThickness: 16,
+    frontClearance: 2.5,
+    bottomClearanceHeight: 70,
+    doorColorName: "Gloss White",
+    columns: [
+      { id: "stove-col", width: 600, zones: [
+        { id: "st", height: 400, zoneType: "stove" },
+        { id: "dr", height: 410, zoneType: "drawer" },
+      ] },
+      { id: "door-col", width: 600, zones: [
+        { id: "d", height: 810, zoneType: "left_door", shelfEnabled: false },
+      ] },
+    ],
+  });
+  assert.deepEqual(pair.validation.errors, [], pair.validation.errors.join("; "));
+  const full = pair.boards.find((b) => b.id === "stove-col-st-bottom")!;
+  const half = pair.boards.find((b) => b.id === "stove-col-st-stove-half")!;
+  assert.ok(full && half, "stove shelf and half divider");
+  assert.equal(half.boardType, "stove_half_divider");
+  assert.equal(half.y0, 0);
+  assert.equal(half.y1, 150);
+  assert.equal(half.z1, full.z0, "half top touches the shelf underside");
+  const halfSlots = pair.slots.filter((s) => s.forBoard === half.id);
+  assert.equal(halfSlots.length, 2, "both ends slotted");
+  const leftSlot = halfSlots.find((s) => s.vPanelId === "V0")!;
+  const rightSlot = halfSlots.find((s) => s.vPanelId === "V1")!;
+  assert.equal(leftSlot.through, true, "end beside the room is a through slot");
+  assert.equal(rightSlot.through, false, "end beside the door is a half slot");
+  assert.equal(leftSlot.y0, 45, "drawer slot starts 5 mm in front of the tongue");
+  assert.equal(leftSlot.y1, 155, "drawer slot runs 5 mm past the tongue");
+  assert.equal(leftSlot.z0, half.z0 - 0.5, "slot is 0.5 mm above the board");
+  assert.equal(leftSlot.z1, half.z1 + 0.5, "slot is 0.5 mm below the board");
+  const lip = (full.profileVector as { x: number; y: number }[]);
+  assert.equal(full.y0, -16, "full shelf lip is one door thickness proud");
+  assert.equal(full.boardType, "stove_full_shelf");
+  const lipBand = (full.faces ?? []).filter((f) => f.finish?.edgeBand?.colour === "Gloss White");
+  assert.ok(lipBand.length >= 1, "the proud front edge is the door colour");
+  const bands = (half.faces ?? []).filter((f) => f.id.startsWith("E") && f.finish?.edgeBand).map((f) => ({ n: String(f.normal), c: f.finish!.edgeBand!.colour }));
+  assert.ok(bands.some((x) => x.n === "-Y" && x.c === "Gloss White"), `front edge is the door colour ${JSON.stringify(bands)}`);
+  assert.ok(bands.filter((x) => x.n === "+Y").every((x) => x.c === "White Stipple"), `back edge stays carcass ${JSON.stringify(bands)}`);
+  const left = pair.boards.find((b) => b.id === "stove-col-st-stove-side-left")!;
+  const right = pair.boards.find((b) => b.id === "stove-col-st-stove-side-right")!;
+  assert.equal(left.x1 - left.x0, 100);
+  assert.equal(right.x1 - right.x0, 100);
+  assert.ok(lip.some((p) => p.y === -16 && Math.abs(p.x - left.x1) < 0.05), `lip starts at the left side panel ${JSON.stringify(lip.filter((p) => p.y === -16))}`);
+  assert.ok(lip.some((p) => p.y === -16 && Math.abs(p.x - right.x0) < 0.05), `lip ends at the right side panel ${JSON.stringify(lip.filter((p) => p.y === -16))}`);
+  assert.ok(lip.some((p) => Math.abs(p.x - (left.x1 - 5.5)) < 0.05 && Math.abs(p.y - 5.5) < 0.05), "left corner relief is a 5.5 mm semicircle into the shelf");
+  assert.ok(lip.some((p) => Math.abs(p.x - (right.x0 + 5.5)) < 0.05 && Math.abs(p.y - 5.5) < 0.05), "right corner relief is a 5.5 mm semicircle into the shelf");
+  assert.equal(left.y0, -16);
+  assert.equal(left.z0, half.z0 + (half.z1 - half.z0) / 2, "side panel starts at the half divider's centre");
+  assert.equal(left.z1, 880 - 2.5);
+  const notch = (left.profileVector as { x: number; z: number }[]).map((p) => [p.x, p.z]);
+  assert.ok(notch.some((p) => p[0] === left.x1 - 20 && p[1] === left.z1 - 30), `left inner top notch ${JSON.stringify(notch)}`);
+  const below = pair.boards.find((b) => b.id === "dr-front-panel")!;
+  assert.equal(below.z1, (half.z0 + half.z1) / 2 - 2.5, "drawer front stops under the half divider");
+  const opening = (pair.debug as { stoves: { openingWidth: number; openingHeight: number }[] }).stoves[0];
+  assert.ok(Math.abs(opening.openingWidth - (right.x0 - left.x1)) < 0.05, `opening ${opening.openingWidth} vs ${right.x0 - left.x1}`);
+  assert.equal(opening.openingHeight, 400 + 15 - 2.5);
+
+  const lone = generateKitchenCabinet({
+    globalSettings: { length: 700, depth: 500, height: 880 },
+    materialThickness: 15,
+    frontThickness: 16,
+    bottomClearanceHeight: 55,
+    columns: [{ id: "c", width: 700, zones: [{ id: "st", height: 825, zoneType: "stove" }] }],
+  });
+  assert.deepEqual(lone.validation.errors, [], lone.validation.errors.join("; "));
+  const deck = lone.boards.find((b) => b.id === "c-st-stove-deck")!;
+  const b3 = lone.boards.find((b) => b.id === "B3")!;
+  assert.ok(deck, "lone stove rear deck");
+  assert.equal(lone.boards.some((b) => b.boardType === "stove_side_panel"), false);
+  assert.equal(lone.boards.some((b) => b.boardType === "stove_half_divider"), false);
+  assert.equal(deck.y0, 100);
+  assert.equal(deck.y1, 500 - 16 - 15);
+  assert.equal(deck.z0, b3.z0);
+  assert.equal(deck.z1, b3.z1);
+
+  const openBelow = generateKitchenCabinet({
+    globalSettings: { length: 700, depth: 500, height: 880 },
+    bottomClearanceHeight: 70,
+    columns: [{ id: "c", width: 700, zones: [
+      { id: "st", height: 400, zoneType: "stove" },
+      { id: "op", height: 410, zoneType: "open" },
+    ] }],
+  });
+  assert.equal(openBelow.boards.some((b) => b.boardType === "stove_half_divider"), false);
+  assert.equal(openBelow.boards.some((b) => b.boardType === "stove_side_panel"), false);
+
+  const notTop = generateKitchenCabinet({
+    globalSettings: { length: 700, depth: 500, height: 880 },
+    bottomClearanceHeight: 70,
+    columns: [{ id: "c", width: 700, zones: [
+      { id: "up", height: 200, zoneType: "drawer" },
+      { id: "st", height: 610, zoneType: "stove" },
+    ] }],
+  });
+  assert.ok(notTop.validation.errors.some((e) => e.includes("must be the top zone")), notTop.validation.errors.join("; "));
+}
+
 /* ---------- 封边：门板颜色 / 柜体颜色，缺口和短边不封 ---------- */
 {
   const colours = (id: string) => (b(id).faces ?? [])
@@ -386,8 +517,8 @@ assert.equal(r.debug?.boardFrame, "final");
   assert.deepEqual(ledOf(generateKitchenCabinet({ ...base, bottomClearanceStyle: "style_2" })), []);
   const narrow = generateKitchenCabinet({
     ...base,
-    globalSettings: { ...base.globalSettings, length: 160 },
-    columns: [{ id: "c1", width: 160, zones: [{ id: "z1", height: 810, zoneType: "left_door" }] }],
+    globalSettings: { ...base.globalSettings, length: 70 },
+    columns: [{ id: "c1", width: 70, zones: [{ id: "z1", height: 810, zoneType: "left_door" }] }],
   });
   assert.ok(narrow.validation.warnings.some((w) => w.includes("too narrow")), narrow.validation.warnings.join("; "));
 
@@ -459,6 +590,262 @@ assert.equal(r.debug?.boardFrame, "final");
     benchTopColorName: "Chestnut",
   });
   assert.ok(long.grain?.issues.some((i) => i.board === "BENCH" && i.side === "along"), JSON.stringify(long.grain?.issues));
+}
+
+/* ---------- waterfall: 25 mm drop, 45° mitre, carcass inboard of the outer width ---------- */
+{
+  const base = {
+    globalSettings: { length: 862, depth: 270, height: 880 },
+    materialThickness: 15, frontThickness: 16, bottomClearanceHeight: 70,
+    columns: [{ id: "c1", width: 862, zones: [{ id: "z1", height: 810, zoneType: "left_door" as const }] }],
+    benchTopColorName: "Chestnut",
+  };
+  const right = generateKitchenCabinet({ ...base, waterfall: "right" });
+  assert.deepEqual(right.validation.errors, [], right.validation.errors.join("; "));
+  const bench = right.boards.find((b) => b.id === "BENCH")!;
+  const drop = right.boards.find((b) => b.id === "WATERFALL")!;
+  assert.equal(bench.profilePlane, "XZ");
+  assert.equal(bench.x0, 0);
+  assert.equal(bench.x1, 887);
+  assert.equal(bench.z0, 880);
+  assert.equal(bench.z1, 905);
+  assert.equal(drop.x0, 862);
+  assert.equal(drop.x1, 887);
+  assert.equal(drop.z0, 0);
+  assert.equal(drop.z1, 905);
+  assert.equal(drop.y0, bench.y0);
+  assert.equal(drop.y1, bench.y1);
+  const xz = (b: { profileVector?: Array<Record<string, number>> }) =>
+    (b.profileVector ?? []).map((p) => `${p.x},${p.z}`);
+  const shared = ["862,880", "887,905"];
+  for (const p of shared) {
+    assert.ok(xz(bench).includes(p), `bench missing ${p}`);
+    assert.ok(xz(drop).includes(p), `drop missing ${p}`);
+  }
+  const col = right.debug?.columns?.[0];
+  assert.equal(col?.x0, 0);
+  assert.equal(col?.x1, 862);
+  const top = bench.faces?.find((f) => f.semantic === "top");
+  assert.equal(top?.finish?.colour, "Chestnut");
+  const outer = drop.faces?.find((f) => f.semantic === "outer");
+  assert.equal(outer?.finish?.colour, "Chestnut");
+
+  const left = generateKitchenCabinet({ ...base, waterfall: "left" });
+  const leftDrop = left.boards.find((b) => b.id === "WATERFALL")!;
+  const leftBench = left.boards.find((b) => b.id === "BENCH")!;
+  assert.equal(leftDrop.x0, 0);
+  assert.equal(leftDrop.x1, 25);
+  assert.equal(leftBench.x1, 887);
+  assert.equal(left.debug?.columns?.[0]?.x0, 25);
+  for (const p of ["0,905", "25,880"]) {
+    assert.ok(xz(leftBench).includes(p), `left bench missing ${p}`);
+    assert.ok(xz(leftDrop).includes(p), `left drop missing ${p}`);
+  }
+
+  const ensuite = generateKitchenCabinet({ ...base, baseKind: "ensuite", waterfall: "right" });
+  assert.ok(ensuite.validation.errors.some((e) => e.includes("Waterfall is only on a kitchen")));
+  assert.equal(ensuite.boards.some((b) => b.id === "WATERFALL"), false);
+}
+
+/* ---------- 放置草稿：空文件不改板；写上的板按规则挪盒子，尺寸不变 ---------- */
+{
+  const empty = generateKitchenCabinet(PARAMS, { layout: { module: "kitchen", version: 1, boards: {} } });
+  assert.deepEqual(empty.validation.errors, []);
+  const b2 = b("B2");
+  const e2 = empty.boards.find((x) => x.id === "B2")!;
+  assert.equal(e2.y0, 86, "an empty draft leaves the code position");
+  assert.equal(e2.y1, 101);
+  const size = (board: { x0: number; x1: number; y0: number; y1: number; z0: number; z1: number }, axis: "x" | "y" | "z") =>
+    String(Math.round((board[`${axis}1`] - board[`${axis}0`]) * 1000) / 1000);
+  const y1 = 120;
+  const moved = generateKitchenCabinet(PARAMS, {
+    layout: {
+      module: "kitchen", version: 1,
+      boards: {
+        B2: {
+          axes: {
+            x: { from: "lo", at: String(b2.x0), size: size(b2, "x") },
+            y: { from: "hi", at: String(y1), size: size(b2, "y") },
+            z: { from: "lo", at: String(b2.z0), size: size(b2, "z") },
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(moved.validation.errors, []);
+  const m2 = moved.boards.find((x) => x.id === "B2")!;
+  assert.equal(m2.y1, y1);
+  assert.equal(Math.round((m2.y1 - m2.y0) * 1000) / 1000, Math.round((b2.y1 - b2.y0) * 1000) / 1000);
+  assert.equal(m2.x0, b2.x0);
+  assert.equal(m2.z0, b2.z0);
+
+  const v2 = b("V2");
+  const notchY = r.debug?.provenance?.entries?.["V2.pv[0].y"]?.value;
+  assert.equal(typeof notchY, "number");
+  const contact = generateKitchenCabinet(PARAMS, {
+    layout: {
+      module: "kitchen", version: 1,
+      boards: {
+        B2: {
+          axes: {
+            x: { from: "lo", at: String(b2.x0), size: size(b2, "x") },
+            y: { from: "hi", at: "V2.pv[0].y", size: size(b2, "y"), relation: { kind: "contact", ref: "V2.pv[0].y" } },
+            z: { from: "lo", at: String(b2.z0), size: size(b2, "z") },
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(contact.validation.errors, [], JSON.stringify(contact.validation.errors));
+  const c2 = contact.boards.find((x) => x.id === "B2")!;
+  assert.equal(c2.y1, notchY);
+  // toeY is the 70 mm constant. The front can move by FPT + CPT; the thickness stays FPT.
+  const b1 = b("B1");
+  const shifted = generateKitchenCabinet(PARAMS, {
+    layout: {
+      module: "kitchen", version: 1,
+      boards: {
+        B1: {
+          axes: {
+            x: { from: "lo", at: String(b1.x0), size: size(b1, "x") },
+            y: { from: "lo", at: "toeY - FPT - CPT", size: "(toeY + FPT) - kitchen.toeY" },
+            z: { from: "lo", at: String(b1.z0), size: size(b1, "z") },
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(shifted.validation.errors, [], JSON.stringify(shifted.validation.errors));
+  const s1 = shifted.boards.find((x) => x.id === "B1")!;
+  assert.equal(s1.y0, 70 - 16 - 15);
+  assert.equal(s1.y1, s1.y0 + 16);
+  const still = shifted.boards.find((x) => x.id === "B2")!;
+  assert.equal(still.y0, 86, "a rule for B1 does not move B2");
+  assert.equal(Math.round((c2.y1 - c2.y0) * 1000) / 1000, Math.round((b2.y1 - b2.y0) * 1000) / 1000);
+
+  const vBefore = v2.profileVector?.map((p) => ("y" in p ? p.y : null)) ?? [];
+  const slid = generateKitchenCabinet(PARAMS, {
+    layout: {
+      module: "kitchen", version: 1,
+      boards: {
+        V2: {
+          axes: {
+            x: { from: "lo", at: String(v2.x0), size: size(v2, "x") },
+            y: { from: "lo", at: String(Math.round((v2.y0 + 10) * 1000) / 1000), size: size(v2, "y") },
+            z: { from: "lo", at: String(v2.z0), size: size(v2, "z") },
+          },
+        },
+      },
+    },
+  });
+  assert.deepEqual(slid.validation.errors, []);
+  const sv = slid.boards.find((x) => x.id === "V2")!;
+  assert.equal(Math.round((sv.y0 - v2.y0) * 1000) / 1000, 10);
+  const vAfter = sv.profileVector?.map((p) => ("y" in p ? p.y : null)) ?? [];
+  assert.equal(vAfter.length, vBefore.length);
+  assert.ok(vBefore.every((y, i) => y == null || Math.abs((vAfter[i] as number) - (y as number) - 10) < 1e-6), "YZ outline follows the box");
+
+  const bad = generateKitchenCabinet(PARAMS, {
+    layout: { module: "kitchen", version: 1, boards: { NOPE: { axes: { x: { from: "lo", at: "0", size: "10" }, y: { from: "lo", at: "0", size: "10" }, z: { from: "lo", at: "0", size: "10" } } } } },
+  });
+  assert.ok(bad.validation.warnings.some((e) => e.includes("NOPE")));
+  assert.equal(bad.boards.find((x) => x.id === "B2")!.y1, 101, "a rule for a board that is not in this cabinet does not move the others");
+}
+
+/* ---------- Split Kitchen: two CPT end panels, half a front clearance, rails meet ---------- */
+{
+  const xb = 444;
+  const cpt = 15;
+  const fc = 2.5;
+  const split = generateKitchenCabinet({ ...PARAMS, splitAfter: 0 });
+  assert.deepEqual(split.validation.errors, []);
+  assert.equal(split.debug?.split?.x, xb);
+  const mates = split.boards.filter((x) => x.boardType === "vertical_panel" && x.x1 > xb - cpt - 0.1 && x.x0 < xb + cpt + 0.1 && x.id !== "V0");
+  const leftV = mates.find((x) => Math.abs(x.x1 - xb) < 0.01 && Math.abs(x.x0 - (xb - cpt)) < 0.01);
+  const rightV = mates.find((x) => Math.abs(x.x0 - xb) < 0.01 && Math.abs(x.x1 - (xb + cpt)) < 0.01);
+  assert.ok(leftV && rightV, "two CPT panels meet on the column line");
+  assert.equal(leftV!.materialThickness, cpt);
+  assert.equal(rightV!.materialThickness, cpt);
+  assert.equal(leftV!.stock?.kind, "carcass");
+  const doorL = split.boards.find((x) => x.id === "c1-door-front-panel")!;
+  const doorR = split.boards.find((x) => x.id === "c2-drawer-front-panel")!;
+  assert.equal(doorL.x1, r2(xb - fc / 2));
+  assert.equal(doorR.x0, r2(xb + fc / 2));
+  const b1s = split.boards.filter((x) => x.boardType === "bottom_front").sort((a, b) => a.x0 - b.x0);
+  assert.equal(b1s.length, 2);
+  assert.equal(b1s[0].x1, xb);
+  assert.equal(b1s[1].x0, xb);
+  assert.equal(b1s[0].y0, 39, "split kick keeps the style 1 placement");
+  const crossing = split.boards.filter((x) => x.x0 < xb - 0.01 && x.x1 > xb + 0.01 && x.boardType !== "bench_top");
+  assert.deepEqual(crossing.map((x) => x.id), [], "no carcass board crosses the split");
+  const shelfSlot = split.slots.find((x) => x.vPanelId === leftV!.id && x.forBoard === "c1-door-door-shelf");
+  const drawerSlot = split.slots.find((x) => x.vPanelId === rightV!.id && x.forBoard === "k-col-2-c2-drawer-bottom");
+  assert.equal(shelfSlot?.through, true, "split end takes a through slot");
+  assert.equal(drawerSlot?.through, true);
+  assert.equal(split.screws.some((x) => x.vPanelId === leftV!.id || x.vPanelId === rightV!.id), false);
+  // The notch of the V across the cut overlaps this piece by 0.5 mm. Keeping it
+  // draws a diagonal. Each piece notches only the V whose centre it contains.
+  const slanted = (id: string) => {
+    const pts = split.boards.find((x) => x.id === id)?.profileVector as { x: number; y?: number; z?: number }[] | undefined;
+    assert.ok(pts, id);
+    for (let i = 1; i < pts!.length; i += 1) {
+      const a = pts![i - 1], b = pts![i];
+      const sameX = Math.abs(a.x - b.x) < 0.02;
+      const av = a.y ?? a.z ?? 0, bv = b.y ?? b.z ?? 0;
+      assert.ok(sameX || Math.abs(av - bv) < 0.02, `${id} edge ${a.x},${av} → ${b.x},${bv} is not rectangular`);
+    }
+  };
+  for (const id of ["B3-1", "B3-2", "T1-1", "T1-2", "T2-1", "T2-2", "T3-1", "T3-2", "B4-1", "B4-2"]) slanted(id);
+
+  // An open neighbour would normally cover the shared V. On a split it still stops half a clearance short.
+  const openRight = generateKitchenCabinet({
+    ...PARAMS,
+    splitAfter: 0,
+    columns: [
+      PARAMS.columns[0],
+      { id: "k-col-2", width: 443, zones: [{ id: "open-1", height: 825, zoneType: "open" as const }] },
+    ],
+  });
+  assert.equal(openRight.boards.find((x) => x.id === "c1-door-front-panel")!.x1, r2(xb - fc / 2));
+
+  const long = generateKitchenCabinet({
+    ...PARAMS,
+    globalSettings: { length: 2460, depth: 270, height: 880 },
+    columns: [
+      { ...PARAMS.columns[0], width: 1200 },
+      { ...PARAMS.columns[1], width: 1260 },
+    ],
+  });
+  assert.ok(long.validation.warnings.some((w) => w.includes("2400")), JSON.stringify(long.validation.warnings));
+  const cut = generateKitchenCabinet({
+    ...long.params ? {} : {},
+    ...PARAMS,
+    splitAfter: 0,
+    globalSettings: { length: 2460, depth: 270, height: 880 },
+    columns: [
+      { ...PARAMS.columns[0], width: 1200 },
+      { ...PARAMS.columns[1], width: 1260 },
+    ],
+  });
+  assert.equal(cut.validation.warnings.some((w) => w.includes("2400")), false, JSON.stringify(cut.validation.warnings));
+
+  // A wheel arch on one side is cut only on that side.
+  const archL = generateKitchenCabinet({
+    ...PARAMS,
+    splitAfter: 0,
+    wheelAvoidances: [{ id: "wa", x0: 0, x1: 300, height: 200, depth: 120 }],
+  });
+  const coversL = archL.boards.filter((x) => x.boardType === "avoidance_top" || x.boardType === "avoidance_front" || x.boardType === "raised_b4");
+  assert.ok(coversL.length > 0);
+  assert.ok(coversL.every((x) => x.x1 <= xb + 0.01), coversL.map((x) => `${x.id} ${x.x0}-${x.x1}`).join(", "));
+  const archR = generateKitchenCabinet({
+    ...PARAMS,
+    splitAfter: 0,
+    wheelAvoidances: [{ id: "wa", x0: 500, x1: 800, height: 200, depth: 120 }],
+  });
+  const coversR = archR.boards.filter((x) => x.boardType === "avoidance_top" || x.boardType === "avoidance_front" || x.boardType === "raised_b4");
+  assert.ok(coversR.length > 0);
+  assert.ok(coversR.every((x) => x.x0 >= xb - 0.01), coversR.map((x) => `${x.id} ${x.x0}-${x.x1}`).join(", "));
 }
 
 console.log("kitchen: all golden tests passed");

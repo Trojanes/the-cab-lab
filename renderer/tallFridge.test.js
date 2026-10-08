@@ -85,4 +85,18 @@ const stock = (carcass, door) => ({ stock: { carcass: { thickness: carcass }, do
   assert(moved.zones[0].height === 192 && moved.zones[1].height === 227 && moved.cabinetHeight === 1965, "flap / drawer trade 20");
 }
 
+// A preset that changes the depth keeps the back on the wall (the corner that was drawn there).
+{
+  const { keepCorner, worldOf } = await import("./pose.js");
+  const pose = { x: 634, y: 4459, z: 0, rotZ: 90 };
+  const before = { x0: 0, x1: 593, y0: -16, y1: 634, z0: 0, z1: 1965 };
+  const after = { x0: 0, x1: 593, y0: -16, y1: 624, z0: 0, z1: 1965 };
+  const corner = { x: 1, y: 1, z: -1 };
+  const back0 = worldOf(pose, [593, 634, 0]);
+  const next = keepCorner(pose, before, after, corner);
+  const back1 = worldOf(next, [593, 624, 0]);
+  assert(Math.abs(back0[0] - back1[0]) < 0.01 && Math.abs(back0[1] - back1[1]) < 0.01, `back left the wall: ${back0} → ${back1}`);
+  assert(Math.abs(next.x - 624) < 0.01, `front should come back to 624, got ${next.x}`);
+}
+
 console.log("tallFridge ok");

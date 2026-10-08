@@ -5,16 +5,40 @@
 // the pocket is just how that face feature is drawn.
 import * as THREE from "three";
 import { mergeGeometries, mergeVertices } from "three/addons/utils/BufferGeometryUtils.js";
+import { arcOf } from "./sketchCurves.js";
 
-function closedPath(points, map) {
-  const pts = points.map(map);
-  if (pts.length > 2 && pts[0].distanceTo(pts[pts.length - 1]) < 1e-6) pts.pop();
-  return pts;
+function addLoop(path, rawPoints, map, bulgeSign) {
+  let raw = rawPoints.slice();
+  if (raw.length > 2) {
+    const a = map(raw[0]);
+    const b = map(raw[raw.length - 1]);
+    if (a.distanceTo(b) < 1e-6) raw.pop();
+  }
+  if (raw.length < 2) return;
+  const v0 = map(raw[0]);
+  path.moveTo(v0.x, v0.y);
+  for (let i = 0; i < raw.length; i += 1) {
+    const a = raw[i];
+    const b = raw[(i + 1) % raw.length];
+    const vb = map(b);
+    const bulge = (Number(a.bulge) || 0) * bulgeSign;
+    if (!bulge) { path.lineTo(vb.x, vb.y); continue; }
+    const va = map(a);
+    const arc = arcOf([va.x, va.y], [vb.x, vb.y], bulge);
+    if (!arc) { path.lineTo(vb.x, vb.y); continue; }
+    path.absarc(arc.c[0], arc.c[1], arc.r, arc.a0, arc.a0 + arc.sweep, arc.sweep < 0);
+  }
 }
-/** `holes` = closed outlines (same plane) cut out of the shape (a door in a partition, a notch). */
-function shapeWithHoles(outline, holes, map) {
-  const shape = new THREE.Shape(closedPath(outline, map));
-  for (const h of holes || []) shape.holes.push(new THREE.Path(closedPath(h, map)));
+
+/** `holes` = closed outlines (same plane) cut out of the shape (a door in a partition, a notch). A point `bulge` is a true arc to the next point. */
+function shapeWithHoles(outline, holes, map, bulgeSign = 1) {
+  const shape = new THREE.Shape();
+  addLoop(shape, outline, map, bulgeSign);
+  for (const h of holes || []) {
+    const path = new THREE.Path();
+    addLoop(path, h, map, bulgeSign);
+    shape.holes.push(path);
+  }
   return shape;
 }
 
@@ -23,8 +47,8 @@ function shapeWithHoles(outline, holes, map) {
  * (a board cut to the roof, the nose slab, a partition along the van).
  */
 export function prismYZ(outline, x0, x1, holes = []) {
-  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.y, p.z));
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(x1 - x0, 0.1), bevelEnabled: false });
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.y, p.z), 1);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(x1 - x0, 0.1), bevelEnabled: false, curveSegments: 32 });
   // Shape (u, v, w) → world (x0 + w, u, v): u along Y, v up, extrusion along X.
   geo.applyMatrix4(new THREE.Matrix4().set(0, 0, 1, x0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1));
   return geo;
@@ -32,8 +56,8 @@ export function prismYZ(outline, x0, x1, holes = []) {
 
 /** Solid from a closed XY outline [{x, y}, ...] extruded up Z from z0 to z1 (an OHC T3 with its LED notch). */
 export function prismXY(outline, z0, z1, holes = []) {
-  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.x, p.y));
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(z1 - z0, 0.1), bevelEnabled: false });
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.x, p.y), 1);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(z1 - z0, 0.1), bevelEnabled: false, curveSegments: 32 });
   geo.translate(0, 0, z0);
   return geo;
 }
@@ -41,8 +65,9 @@ export function prismXY(outline, z0, z1, holes = []) {
 /** Solid from a closed XZ outline [{x, z}, ...] extruded along Y from y0 to y1 (an OHC T4 with its notches, a door). */
 export function prismXZ(outline, y0, y1, holes = []) {
   // Shape (u, v) = (z, x) so the extrusion axis maps onto +Y without mirroring the solid.
-  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.z, p.x));
-  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(y1 - y0, 0.1), bevelEnabled: false });
+  // (z, x) swaps the axes, so a counter-clockwise bulge in (x, z) is clockwise here.
+  const shape = shapeWithHoles(outline, holes, (p) => new THREE.Vector2(p.z, p.x), -1);
+  const geo = new THREE.ExtrudeGeometry(shape, { depth: Math.max(y1 - y0, 0.1), bevelEnabled: false, curveSegments: 32 });
   // Shape (u, v, w) → world (v, y0 + w, u).
   geo.applyMatrix4(new THREE.Matrix4().set(0, 1, 0, 0, 0, 0, 1, y0, 1, 0, 0, 0, 0, 0, 0, 1));
   return geo;
@@ -197,18 +222,19 @@ function pointInPoly(poly, u, v) {
 }
 
 /**
- * LED channels that run out to a board edge. The rectangle is extended past
+ * Channels that run out to a board edge. The rectangle is extended past
  * that edge so the pocket is a notch, not a closed hole with a skin at the end.
+ * LED runs 2 mm past; a control-panel wiring slot runs 0.5 mm past.
  */
 function ledBreakouts(b, faceId) {
   const face = (b.faces || []).find((f) => f.id === faceId);
   if (!face) return [];
   const [U, V] = planeOf(b);
   const U0 = b[`${U}0`], U1 = b[`${U}1`], V0 = b[`${V}0`], V1 = b[`${V}1`];
-  const past = 2;
   const rects = [];
   for (const ft of face.features || []) {
-    if (ft.for !== "led" || (ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
+    const past = ft.for === "led" ? 2 : ft.for === "control_panel" ? 0.5 : 0;
+    if (!past || (ft.kind !== "groove" && ft.kind !== "tgroove") || ft.through) continue;
     if (!Number.isFinite(ft.u0) || !Number.isFinite(ft.v0) || !(ft.depth > 0.2)) continue;
     let u0 = U0 + Math.min(ft.u0, ft.u1);
     let u1 = U0 + Math.max(ft.u0, ft.u1);
@@ -246,7 +272,7 @@ function grooveLoops(b, faceId, outline = null) {
     let v0 = V0 + Math.min(ft.v0, ft.v1);
     let v1 = V0 + Math.max(ft.v0, ft.v1);
     const touches = u0 <= U0 + 0.3 || u1 >= U1 - 0.3 || v0 <= V0 + 0.3 || v1 >= V1 - 0.3;
-    if (ft.for === "led" && touches) continue;
+    if ((ft.for === "led" || ft.for === "control_panel") && touches) continue;
     // A closed hole that touches the board edge is not a hole. Pull it just inside.
     const land = 0.4;
     if (u0 <= U0 + 0.3) u0 = U0 + land;
@@ -548,8 +574,16 @@ export function faceSheetGeometry(b, face, thick = 1.5) {
   const a1 = toCab(face.edge.to[0], face.edge.to[1], t0 - push);
   const b1 = toCab(face.edge.to[0], face.edge.to[1], t1 + push);
   const b0 = toCab(face.edge.from[0], face.edge.from[1], t1 + push);
+  // The outline walks either way. The quad has to face the outward normal, or a
+  // view from that side sees the back and the colour is culled (the mitred bench top).
+  const ax = a1[0] - a0[0], ay = a1[1] - a0[1], az = a1[2] - a0[2];
+  const bx = b0[0] - a0[0], by = b0[1] - a0[1], bz = b0[2] - a0[2];
+  const facesOut = (ay * bz - az * by) * n.x + (az * bx - ax * bz) * n.y + (ax * by - ay * bx) * n.z >= 0;
+  const pos = facesOut
+    ? [...a0, ...a1, ...b1, ...a0, ...b1, ...b0]
+    : [...a0, ...b0, ...b1, ...a0, ...b1, ...a1];
   const geo = new THREE.BufferGeometry();
-  geo.setAttribute("position", new THREE.Float32BufferAttribute([...a0, ...a1, ...b1, ...a0, ...b1, ...b0], 3));
+  geo.setAttribute("position", new THREE.Float32BufferAttribute(pos, 3));
   geo.computeVertexNormals();
   return geo;
 }

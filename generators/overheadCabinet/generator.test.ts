@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import {
   calculateOverheadGeometry,
+  generateOHCFrontView,
   generateOHCSvgPreview,
   generateOverheadCabinet,
+  ohcZoneOpenings,
 } from "./generator.ts";
 import { checkPins, countPins, type PresetsFile } from "../_lib/pins.ts";
 import presetsRaw from "./presets.json" with { type: "json" };
@@ -477,6 +479,29 @@ function testSvgPreviewUsesResolvedGeometry() {
   assert.ok(svg.includes("<circle"));
 }
 
+function testFrontViewOpeningsFollowTheBoards() {
+  // Dividers are CPT 15 on each zone line; the end dividers sit inside the cabinet.
+  const result = generateOverheadCabinet(baseParams);
+  const open = ohcZoneOpenings(result);
+  assert.deepEqual(open.map((o) => o.width), [650, 750, 600]);
+  assert.deepEqual(open.map((o) => o.clear), [627.5, 735, 577.5]);
+  assert.deepEqual(open.map((o) => o.center), [642.5, 750, 592.5]);
+
+  const clear = generateOHCFrontView(result, { selectedZoneIndex: 1 }) ?? "";
+  assert.ok(clear.includes('data-zone-index="2"'));
+  assert.ok(clear.includes('class="col-dim editable" data-col="1" data-width="750" data-clear="735" data-center="750"'));
+  assert.ok(clear.includes(">627.5<"));
+  const center = generateOHCFrontView(result, { gaps: "center" }) ?? "";
+  assert.ok(center.includes(">642.5<"));
+  assert.ok(!center.includes(">627.5<"), "one readout at a time");
+
+  // A split puts two dividers back to back; each side's opening stops on its own divider.
+  const split = generateOverheadCabinet({ ...baseParams, splitAfter: 0 });
+  const s = ohcZoneOpenings(split);
+  assert.deepEqual(s.map((o) => o.clear), [620, 727.5, 577.5]);
+  assert.ok((generateOHCFrontView(split) ?? "").includes('stroke-dasharray="3 3"'));
+}
+
 function testInvalidWidthReportsError() {
   const result = generateOverheadCabinet({
     cabinetWidth: 0,
@@ -623,7 +648,7 @@ function testRangehoodValidation() {
   assert.ok(nonContiguous.validation.errors.some((error) => error.includes("one contiguous rangehood group")));
 }
 
-function testPlacementRuleRefusesADivider() {
+function testPlacementRuleMovesADivider() {
   const preset = presets.presets.find((p) => p.id === "golden-2000-3")!;
   const base = generateOverheadCabinet(preset.params as never);
   const d2 = base.boards.find((b) => b.id === "D2")!;
@@ -636,15 +661,168 @@ function testPlacementRuleRefusesADivider() {
     },
   };
   const moved = generateOverheadCabinet(preset.params as never, { layout });
-  assert.ok(moved.validation.errors.some((error) => error.includes("D2 的缺口和槽由代码算")), moved.validation.errors.join("; "));
-  assert.equal(moved.boards.length, 0);
+  assert.deepEqual(moved.validation.errors, []);
+  const next = moved.boards.find((b) => b.id === "D2")!;
+  assert.ok(Math.abs(next.x0 - (d2.x0 + 20)) < 0.05, `D2 moved to ${next.x0}`);
+  assert.ok(Math.abs((next.x1 - next.x0) - (d2.x1 - d2.x0)) < 0.05, "the divider keeps its thickness");
   const plain = generateOverheadCabinet(preset.params as never);
   const again = plain.boards.find((b) => b.id === "D2")!;
   assert.ok(Math.abs(again.x0 - d2.x0) < 0.05, "without the rule the divider stays where the generator put it");
-  assert.deepEqual(plain.debug.ruleBoards, ["T1", "T2", "T3", "T4"]);
+}
+
+function testSplitOnAZoneLineButtsTwoDividers() {
+  const split = generateOverheadCabinet({ ...baseParams, splitAfter: 0 });
+  assert.deepEqual(split.validation.errors, []);
+  assert.equal(split.debug.split?.x, 650);
+  const cpt = 15;
+  const xb = 650;
+  const mates = split.boards.filter((b) => b.category === "divider" && b.x1 > xb - cpt - 0.1 && b.x0 < xb + cpt + 0.1);
+  const left = mates.find((b) => Math.abs(b.x0 - (xb - cpt)) < 0.01 && Math.abs(b.x1 - xb) < 0.01);
+  const right = mates.find((b) => Math.abs(b.x0 - xb) < 0.01 && Math.abs(b.x1 - (xb + cpt)) < 0.01);
+  assert.ok(left && right, "two CPT dividers meet on the zone line");
+  const flap = split.boards.find((b) => b.id === "FP0")!;
+  const next = split.boards.find((b) => b.id === "FP1")!;
+  assert.equal(flap.x1, xb - 1.25);
+  assert.equal(next.x0, xb + 1.25);
+  const bp = split.boards.filter((b) => b.boardType === "BP").sort((a, b) => a.x0 - b.x0);
+  assert.equal(bp.length, 2);
+  assert.equal(bp[0]!.x1, xb);
+  assert.equal(bp[1]!.x0, xb);
+  const slanted = (board: { id: string; profileVector?: { x: number; y?: number; z?: number }[] | null }) => {
+    const pts = board.profileVector ?? [];
+    for (let i = 1; i < pts.length; i += 1) {
+      const a = pts[i - 1]!, b = pts[i]!;
+      const sameX = Math.abs(a.x - b.x) < 0.02;
+      const av = a.y ?? a.z ?? 0;
+      const bv = b.y ?? b.z ?? 0;
+      assert.ok(sameX || Math.abs(av - bv) < 0.02, `${board.id} edge is not rectangular`);
+    }
+  };
+  for (const id of ["T3", "T3-2", "T4", "T4-2"]) slanted(split.boards.find((b) => b.id === id)!);
+  const crossing = split.boards.filter((b) => b.x0 < xb - 0.01 && b.x1 > xb + 0.01);
+  assert.deepEqual(crossing.map((b) => b.id), []);
+  const refused = generateOverheadCabinet({
+    ...baseParams,
+    splitAfter: 0,
+    zones: [
+      { id: "h1", type: "rangehood_flap", width: 1000 },
+      { id: "h2", type: "rangehood_flap", width: 1000 },
+    ],
+  });
+  assert.ok(refused.validation.warnings.some((w) => w.includes("rangehood")));
+  assert.equal(refused.debug.split, null);
+}
+
+function testEndPanelIsDoorStockOutsideTheCarcass() {
+  const left = generateOverheadCabinet({ ...baseParams, endPanel: "left" });
+  assert.deepEqual(left.validation.errors, []);
+  const ep = left.boards.find((b) => b.id === "END_PANEL")!;
+  assert.ok(ep, "END_PANEL built");
+  assert.equal(ep.stock?.kind, "door");
+  assert.deepEqual([ep.x0, ep.x1], [-16, 0], "left: just outside the end divider");
+  assert.deepEqual([ep.y0, ep.y1], [-16, 400], "flush with the door face, back on the wall");
+  assert.equal(ep.z0, left.boards.find((b) => b.id === "FP0")!.z0, "from the door underside");
+  assert.equal(ep.z1, 400, "to the top");
+  const outside = ep.faces!.find((f) => f.id === "B")!;
+  assert.equal(outside.semantic, "outside");
+  assert.equal(outside.visible, true);
+  assert.equal(ep.faces!.find((f) => f.id === "A")!.visible, false);
+  assert.equal(left.grain?.boards?.END_PANEL ?? left.boards.find((b) => b.id === "END_PANEL")!.faces!.find((f) => f.id === "B")!.finish?.grain, "v", "vertical grain");
+  // The carcass frame did not move.
+  assert.equal(left.boards.find((b) => b.id === "D0")!.x0, 0);
+  const right = generateOverheadCabinet({ ...baseParams, endPanel: "right" });
+  const epR = right.boards.find((b) => b.id === "END_PANEL")!;
+  assert.deepEqual([epR.x0, epR.x1], [2000, 2016]);
+  assert.equal(epR.faces!.find((f) => f.id === "A")!.semantic, "outside");
+  assert.ok(generateOverheadCabinet(baseParams).boards.every((b) => b.id !== "END_PANEL"), "no end panel unless asked");
+}
+
+function testControlPanelCutsThroughTheStackAndStopsOnAHalfSlot() {
+  // 35 deep: end panel 16 through, D0 15 through (31), 4 left → a 10 mm half slot on one backing divider.
+  const cp = { id: "cp-1", fromCeiling: 150, fromBack: 200, width: 175, height: 105, depth: 35 };
+  const r = generateOverheadCabinet({ ...baseParams, endPanel: "left", controlPanels: [cp] });
+  assert.deepEqual(r.validation.errors, []);
+  // A through cut is listed on the board's milling face (the end panel's inside, away from the colour);
+  // a half slot stays on the face it is cut into (−X, toward the room on the left end).
+  const feat = (id: string, face: "A" | "B") => {
+    const b = r.boards.find((x) => x.id === id)!;
+    assert.ok(b, `${id} built`);
+    const f = b.faces!.find((x) => x.id === face)!.features.find((x) => String(x.id).startsWith("CP_cp-1"));
+    const other = b.faces!.find((x) => x.id === (face === "A" ? "B" : "A"))!.features.filter((x) => String(x.id).startsWith("CP_"));
+    assert.deepEqual(other, [], `${id}: the cut is on one face only`);
+    return { b, f };
+  };
+  const ep = feat("END_PANEL", "A");
+  assert.equal(ep.f?.kind, "cutout");
+  assert.equal(ep.f?.through, true);
+  assert.equal(r.milling?.issues?.length ?? 0, 0, "no milling issue: the through cut sits on the inside face");
+  // Opening: centre y = 400 − 200 = 200, z = 400 − 150 = 250; local u = y − y0 (y0 = −16), v = z − z0.
+  assert.deepEqual([ep.f!.u0, ep.f!.u1], [200 - 87.5 + 16, 200 + 87.5 + 16]);
+  assert.deepEqual([ep.f!.v0, ep.f!.v1], [250 - 52.5 - ep.b.z0, 250 + 52.5 - ep.b.z0]);
+  const d0 = feat("D0", "B");
+  assert.equal(d0.f?.kind, "cutout");
+  assert.deepEqual([d0.f!.u0, d0.f!.u1], [112.5, 287.5]);
+  const back = feat("D_CP_L1", "B");
+  assert.deepEqual([back.b.x0, back.b.x1], [15, 30], "backing divider right behind D0");
+  assert.equal(back.b.z0, 15);
+  assert.equal(back.f?.kind, "groove");
+  assert.equal(back.f?.depth, 10);
+  assert.deepEqual([back.f!.u0, back.f!.u1], [112.5, 400.5], "the half slot runs 0.5 mm past the back edge so the wiring cut breaks through");
+  assert.ok(r.boards.every((b) => b.id !== "D_CP_L2"), "one backing board is enough");
+  // The backing divider is built like a divider: BP groove, T3 / T4 notches, screw holes.
+  const bp = r.boards.find((b) => b.id === "BP")!;
+  assert.ok(bp.faces!.find((f) => f.id === "A")!.features.some((f) => f.kind === "groove" && f.for === "D_CP_L1"));
+  assert.ok(back.b.faces!.some((f) => f.features.some((x) => x.id === "D_CP_L1_T3_STEP")));
+  const t3 = r.boards.find((b) => b.id === "T3")!;
+  assert.ok(t3.faces!.find((f) => f.id === "A")!.features.some((f) => f.kind === "hole" && f.for === "D_CP_L1"), "T3 screw holes into it");
+  assert.ok((t3.profileVector ?? []).some((p) => Math.abs(p.x - 30) < 1.3 || Math.abs(p.x - 15) < 1.3), "T3 notched round the backing divider");
+
+  // A wall host, 55 deep on the right: wall 18 through, D3 15 through (33), D_CP_R1 15 through (48), D_CP_R2 half slot.
+  const wall = { ...cp, id: "cp-2", host: "wall", side: "right", wallThickness: 18, depth: 55 };
+  const w = generateOverheadCabinet({ ...baseParams, controlPanels: [wall] });
+  assert.deepEqual(w.validation.errors, []);
+  const on = (id: string) => w.boards.find((x) => x.id === id)!.faces!.find((f) => f.id === "A")!.features.find((x) => String(x.id).startsWith("CP_cp-2"));
+  assert.equal(on("D3")?.kind, "cutout");
+  assert.equal(on("D_CP_R1")?.kind, "cutout");
+  assert.equal(on("D_CP_R2")?.kind, "groove");
+  const r2 = w.boards.find((x) => x.id === "D_CP_R2")!;
+  assert.deepEqual([r2.x0, r2.x1], [2000 - 45, 2000 - 30]);
+  assert.ok(w.boards.every((b) => b.id !== "END_PANEL"));
+
+  // Off the carcass → warned, nothing cut.
+  const off = generateOverheadCabinet({ ...baseParams, endPanel: "left", controlPanels: [{ ...cp, fromCeiling: 30 }] });
+  assert.ok(off.validation.warnings.some((x) => x.includes("runs past the overhead carcass")));
+  assert.ok(off.boards.every((b) => b.id !== "D_CP_L1"));
+}
+
+function testControlPanelOnARangehoodEndUsesTheShortDivider() {
+  const r = generateOverheadCabinet({
+    ...baseParams,
+    cabinetWidth: 1700,
+    zones: [
+      { id: "h", type: "rangehood_flap", width: 1000 },
+      { id: "z", type: "up_flap", width: 700 },
+    ],
+    endPanel: "left",
+    controlPanels: [{ id: "cp-1", fromCeiling: 100, fromBack: 200, width: 175, height: 60, depth: 35 }],
+  });
+  assert.deepEqual(r.validation.errors, []);
+  const back = r.boards.find((b) => b.id === "D_CP_L1")!;
+  assert.ok(back, "backing divider built");
+  const hoodTop = r.boards.find((b) => b.id === "RGHD_TOP")!;
+  assert.equal(back.z0, hoodTop.z1, "stands on RGHD_TOP");
+  const groove = r.features.find((f) => f.id === "RGHD_TOP_D_CP_L1_GROOVE");
+  assert.ok(groove, "RGHD_TOP gets the groove for it");
+  assert.equal(groove!.type, "rangehood_top_divider_groove");
+  const bp = r.boards.find((b) => b.id === "BP")!;
+  assert.ok(!bp.faces!.find((f) => f.id === "A")!.features.some((f) => f.for === "D_CP_L1"), "no BP groove under a short divider");
+  assert.equal(back.faces!.find((f) => f.id === "B")!.features.find((f) => String(f.id).startsWith("CP_"))?.kind, "groove");
 }
 
 const tests = [
+  testEndPanelIsDoorStockOutsideTheCarcass,
+  testControlPanelCutsThroughTheStackAndStopsOnAHalfSlot,
+  testControlPanelOnARangehoodEndUsesTheShortDivider,
   testV7DividerCenterlinesFromZoneBoundaries,
   testV7ManufacturingRules,
   testV7GroovesUseSlotWidthAndClampEdges,
@@ -655,7 +833,7 @@ const tests = [
   testOpenZoneDoesNotShiftFollowingPanelDividerIndices,
   testDividerZBaseSitsOnBottomPanelTop,
   testPresetPinsHold,
-  testPlacementRuleRefusesADivider,
+  testPlacementRuleMovesADivider,
   testBoardsAreEmittedInFinalAssembledPose,
   testProvenanceCoversEveryFaceAndPoint,
   testFaceLayer,
@@ -664,11 +842,13 @@ const tests = [
   testGenerateOverheadCabinetBoardsAndFeatures,
   testRelationshipDeclarationsEmbeddedInResult,
   testSvgPreviewUsesResolvedGeometry,
+  testFrontViewOpeningsFollowTheBoards,
   testInvalidWidthReportsError,
   testT3LedGrooveOption,
   testNceSingleRangehoodZoneGeometry,
   testAdjacentRangehoodZonesMergeAndMoveInternalDivider,
   testRangehoodValidation,
+  testSplitOnAZoneLineButtsTwoDividers,
 ];
 
 for (const test of tests) {

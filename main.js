@@ -28,6 +28,7 @@ if (gotSingleInstanceLock) {
 
 const JOB_FILTERS = [{ name: "Cab Lab job", extensions: ["json"] }];
 const CNJOB_FILTERS = [{ name: "OmniCAM job", extensions: ["cnjob"] }];
+const STEP_FILTERS = [{ name: "STEP", extensions: ["stp", "step"] }];
 const DXF_FILTERS = [{ name: "DXF drawing", extensions: ["dxf"] }];
 
 // --- user settings -------------------------------------------------------------
@@ -151,6 +152,17 @@ ipcMain.handle("cnjob:save", async (event, defaultPath, snapshotJson) => {
   return target;
 });
 
+ipcMain.handle("step:save", async (event, defaultPath, text) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  const res = await dialog.showSaveDialog(win, { defaultPath: defaultPath || "job.stp", filters: STEP_FILTERS });
+  if (res.canceled || !res.filePath) return null;
+  let target = res.filePath;
+  const lower = target.toLowerCase();
+  if (!lower.endsWith(".stp") && !lower.endsWith(".step")) target += ".stp";
+  fs.writeFileSync(target, String(text), "utf8");
+  return target;
+});
+
 // --- generator bench -----------------------------------------------------------
 // Second window (renderer/bench) that shows one generator type per tab with
 // the provenance of every board face / point. Developer tool: hidden unless
@@ -159,6 +171,7 @@ ipcMain.handle("cnjob:save", async (event, defaultPath, snapshotJson) => {
 // usage log — never board geometry. See docs/bench-spec.md.
 const GENERATORS_DIR = path.join(__dirname, "generators");
 const BENCH_LOG_DIR = path.join(LOG_DIR, "bench");
+let mainWin = null;
 let benchWin = null;
 const benchQueue = [];
 
@@ -238,6 +251,11 @@ function flushBenchQueue(force = false) {
   while (benchQueue.length) benchWin.webContents.send("bench:show", benchQueue.shift());
 }
 
+ipcMain.handle("app:reload", (event) => {
+  const win = BrowserWindow.fromWebContents(event.sender);
+  if (win && !win.isDestroyed()) win.webContents.reloadIgnoringCache();
+  return true;
+});
 ipcMain.handle("bench:open", (_event, request) => { openBench(request); return true; });
 // The bench tells us when it is ready to receive requests (after a load or a reload).
 ipcMain.handle("bench:ready", () => { benchReady = true; flushBenchQueue(); return true; });
@@ -317,7 +335,10 @@ ipcMain.handle("bench:rebuild", async (_event, moduleId) => {
   const t0 = Date.now();
   try {
     const { buildGenerators } = require("./build-generators.js");
-    const built = await buildGenerators([generatorDirOf(String(moduleId))]);
+    const dir = generatorDirOf(String(moduleId));
+    const built = await buildGenerators([dir]);
+    const moduleIds = moduleIdsOfDir(dir);
+    if (mainWin && !mainWin.isDestroyed()) mainWin.webContents.send("generators:updated", { dir, moduleIds });
     return { ok: true, built, ms: Date.now() - t0 };
   } catch (err) {
     return { ok: false, error: err.message, ms: Date.now() - t0 };
@@ -372,6 +393,12 @@ function createWindow() {
       win.webContents.toggleDevTools();
       return;
     }
+    const refreshKey = input.key === "F5" || ((input.control || input.meta) && String(input.key).toLowerCase() === "r");
+    if (input.type === "keyDown" && refreshKey && !input.alt && !input.isAutoRepeat) {
+      event.preventDefault();
+      win.webContents.send("app:refresh");
+      return;
+    }
     // F8 (and F3 / F10) never reach the page on Windows: the menu bar takes the
     // function key before keydown. Deliver it here, and don't also let it through.
     const aid = input.key === "F3" || input.key === "F8" || input.key === "F10"
@@ -381,6 +408,14 @@ function createWindow() {
     win.webContents.send("sketch:aid", input.code || input.key);
   });
 
+  win.on("closed", () => {
+    mainWin = null;
+    // The bench is a tool of this window. Leave it open and the process stays
+    // up, and the next launch still shows the old screen.
+    if (benchWin && !benchWin.isDestroyed()) benchWin.destroy();
+  });
+
+  mainWin = win;
   win.loadFile(path.join(__dirname, "renderer", "index.html"));
   return win;
 }

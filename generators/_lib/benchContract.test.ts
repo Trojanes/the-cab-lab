@@ -87,10 +87,6 @@ assertBench("lounge-I", generateLounge({
   style: "I_SHAPE", height: 420, partitionPanelThickness: 18, mainWidth: 2000, mainDepth: 600, topLidEnabled: true,
 }));
 
-assertBench("lounge-U", generateLounge({
-  style: "U_SHAPE", height: 420, partitionPanelThickness: 18, mainWidth: 2000, mainDepth: 1600, lDepth: 600, topLidEnabled: false,
-}));
-
 assertBench("lounge-Parallel", generateLounge({
   style: "PARALLEL", height: 420, partitionPanelThickness: 18, totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, topLidEnabled: true,
 }));

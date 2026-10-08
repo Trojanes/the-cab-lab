@@ -24,10 +24,11 @@ export type AxisLower = "x" | "y" | "z";
 export type AxisDir = "+X" | "-X" | "+Y" | "-Y" | "+Z" | "-Z";
 export type FaceId = "A" | "B" | `E${number}`;
 
-export type ProfilePoint =
+export type ProfilePoint = (
   | { x: number; y: number }
   | { y: number; z: number }
-  | { x: number; z: number };
+  | { x: number; z: number }
+) & { bulge?: number };
 
 /**
  * Which sheet a board is cut from. `kind` matches job.stock (carcass / partition / door).
@@ -167,26 +168,79 @@ export function planeAxes(plane: Plane): [AxisLower, AxisLower, AxisLower] {
   return ["x", "y", "z"];
 }
 
+const ARC_CHORD_MM = 0.05;
+const ARC_STEP_MAX = (5 * Math.PI) / 180;
+
+function bulgeOf(p: object): number {
+  const b = Number((p as { bulge?: number }).bulge);
+  return Number.isFinite(b) ? b : 0;
+}
+
+/**
+ * A closed ring (no repeated first point). A point `b` is the bulge of the edge
+ * that starts there (tan(sweep / 4), counter-clockwise positive), same as a sketch.
+ * An arc becomes chords at most ARC_CHORD_MM off the curve so a cut follows the radius.
+ */
+export function expandBulgeRing(pts: Array<{ u: number; v: number; b?: number }>): Array<{ u: number; v: number }> {
+  if (!pts.some((p) => p.b && Math.abs(p.b) > 1e-9)) return pts.map((p) => ({ u: p.u, v: p.v }));
+  const n = pts.length;
+  const out: Array<{ u: number; v: number }> = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i]!;
+    const c = pts[(i + 1) % n]!;
+    out.push({ u: a.u, v: a.v });
+    const bulge = a.b ?? 0;
+    const chord = Math.hypot(c.u - a.u, c.v - a.v);
+    if (!bulge || chord < 1e-9) continue;
+    const sweep = 4 * Math.atan(bulge);
+    const du = (c.u - a.u) / chord;
+    const dv = (c.v - a.v) / chord;
+    const h = chord / 2 / Math.tan(sweep / 2);
+    const cu = (a.u + c.u) / 2 - dv * h;
+    const cv = (a.v + c.v) / 2 + du * h;
+    const r = Math.hypot(a.u - cu, a.v - cv);
+    if (!(r > 1e-6)) continue;
+    const a0 = Math.atan2(a.v - cv, a.u - cu);
+    const step = Math.min(ARC_STEP_MAX, 2 * Math.acos(Math.max(-1, 1 - ARC_CHORD_MM / r)));
+    const k = Math.max(2, Math.ceil(Math.abs(sweep) / step));
+    for (let j = 1; j < k; j += 1) {
+      const t = a0 + (sweep * j) / k;
+      out.push({ u: cu + r * Math.cos(t), v: cv + r * Math.sin(t) });
+    }
+  }
+  return out;
+}
+
 /** Board-local (u, v) outline without the closing duplicate, or null for a plain box. */
 export function localOutline(b: Board): [number, number][] | null {
   const [U, V] = planeAxes(b.profilePlane);
-  let pts: [number, number][] | null = null;
+  let raw: Array<{ u: number; v: number; b?: number }> | null = null;
+  // A YZ cutProfileVector is already board-local (origin = the box corner; a tongue dips below 0).
+  let local = false;
   const pv = b.profileVector && b.profileVector.length >= 4 ? (b.profileVector as Array<Record<string, number>>) : null;
   if (b.profilePlane === "YZ") {
-    if (pv) pts = pv.map((p) => [Number(p.y) - b.y0, Number(p.z) - b.z0]);
-    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) pts = b.cutProfileVector.map((p) => [p.y, p.z]);
+    if (pv) raw = pv.map((p) => ({ u: Number(p.y), v: Number(p.z), b: bulgeOf(p) }));
+    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) {
+      raw = b.cutProfileVector.map((p) => ({ u: p.y, v: p.z }));
+      local = true;
+    }
   } else if (pv) {
-    // XY / XZ outlines are aligned so their minimum meets the box (boardGeom.js does the same when drawing).
-    const mu = Math.min(...pv.map((p) => Number(p[U])));
-    const mv = Math.min(...pv.map((p) => Number(p[V])));
-    pts = pv.map((p) => [Number(p[U]) - mu, Number(p[V]) - mv]);
+    raw = pv.map((p) => ({ u: Number(p[U]), v: Number(p[V]), b: bulgeOf(p) }));
   }
-  if (!pts) return null;
-  const out = pts.slice();
-  const first = out[0]!;
-  const last = out[out.length - 1]!;
-  if (out.length > 2 && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) out.pop();
-  return out.length >= 3 ? out : null;
+  if (!raw) return null;
+  if (raw.length > 2) {
+    const a = raw[0]!;
+    const c = raw[raw.length - 1]!;
+    if (Math.abs(a.u - c.u) < 1e-9 && Math.abs(a.v - c.v) < 1e-9) raw.pop();
+  }
+  const expanded = expandBulgeRing(raw);
+  if (expanded.length < 3) return null;
+  // XY / XZ outlines are aligned so their minimum meets the box (boardGeom.js does the same when drawing).
+  // YZ profileVectors are cabinet-local: shift by the board origin.
+  if (local) return expanded.map((p) => [p.u, p.v]);
+  const ou = b.profilePlane === "YZ" ? b.y0 : Math.min(...expanded.map((p) => p.u));
+  const ov = b.profilePlane === "YZ" ? b.z0 : Math.min(...expanded.map((p) => p.v));
+  return expanded.map((p) => [p.u - ou, p.v - ov]);
 }
 
 /** Rectangle outline (u0 .. u1, v0 .. v1 local) for a board without one. */

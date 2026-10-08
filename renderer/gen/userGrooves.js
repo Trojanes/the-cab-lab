@@ -6,6 +6,7 @@ function planeAxes(plane) {
   if (plane === "XZ") return ["x", "z", "y"];
   return ["x", "y", "z"];
 }
+var ARC_STEP_MAX = 5 * Math.PI / 180;
 
 // generators/_lib/milling.ts
 var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
@@ -29,7 +30,8 @@ function slabRebateFace(b) {
   return null;
 }
 function colourFaceOf(b, A, B) {
-  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  const coloured = b.stock?.kind === "door" || b.stock?.kind === "bench";
+  if (!coloured || b.stock?.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
 function reportFace(A, B, colour) {

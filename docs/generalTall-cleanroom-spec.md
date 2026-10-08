@@ -106,7 +106,7 @@
 | avoidance_support | Avoidance_Vertical | 15 | XZ/Y | x 同上；y[CD−avoidDepth, CD−avoidDepth+15]；z[0, avoidH−15] |
 | top_system (style_1) | T1 前轨 | 16 | XZ/Y | x core[0,midWidth]；y[0,16]；z[CH−railH, CH] |
 | top_system (style_1) | T2 二轨 | 15 | XZ/Y | y[16,31]；z 同 T1 |
-| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−frontRail−CPT, CH−frontRail]（挂在 T1/T2 下；V1/V2 插口仍高 16）；ledGroove：顶面 A 开 LED T 形槽（主槽宽 14.5 深 6.5、前留边 18，两支槽中心距两端 80、通到后缘）； 轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
+| top_system (style_1) | T3 插板 | CPT | XY/Z | x core[0,midWidth]；y[0,150]；z[CH−frontRail−CPT, CH−frontRail]（挂在 T1/T2 下；V1/V2 插口仍高 16）；ledGroove：顶面 A 开 LED T 形槽（主槽宽 14.5 深 6.5、前留边 18，两支槽中心距两端 30、通到后缘）； 轮廓 [[0,0],[0,75],[CPT,75],[CPT,150],[midWidth−CPT,150],[midWidth−CPT,75],[midWidth,75],[midWidth,0]]（前耳全宽，后段左右收进 CPT，避开立梃台阶） |
 | bottom_system (style_1) | B1/B2/B3 | 16/15/CPT | XZ/Y·XY/Z | B1 y[0,16] z[0,railH]；B2 y[16,31]；B3 y[0,150] z[frontRail, frontRail+CPT]（坐在 B1/B2 上），轮廓同 T3；ledGroove：底面 B 开同样的 LED 槽（照亮踢脚空间） |
 | top_system (style_2) | TH1 固定前脸 | 15 | XY/Z | y[0,100]；z[CH−16, CH−1]（= CH − 厚 − inset，实测 [2084,2099]，15 厚留 1 mm 缝） |
 | top_system (style_2) | TopStyle2FixedFrontPanel 固定板 | FPT（门板料） | XZ/Y | 一般：门面上的盖板 x[leftT+sideClearance, leftT+midWidth−sideClearance]，y[−FPT,0]，z[CH−sysH, CH]。**冰箱紧贴顶**：嵌板，填冰箱开口——x 在 V1（或 V2）内侧面与 V5 之间（= 冰箱宽），y[0,FPT]（前脸与柜身前缘齐平），z[CH−sysH, TH1 底面]；TH1 前边外露（21 Bunk 冰箱柜：532 × 85 × 16） |
@@ -115,9 +115,9 @@
 | bottom_system (style_2) | BH1 固定前脸 | 15 | XY/Z | y[0,100]；z[1,16]（留 1 mm 缝） |
 | boundary_panel | Zi（boundary-{上}-{下}） | ziT | XY/Z | x core[0,midWidth]；z = 堆叠边界段；full_zi y[0,midDepth] 前后 105 缺口（宽 CPT）、half_zi y[0,150] 前 45 缺口、shortened_zi y[0, CD−avoidDepth]（避让缩深，仅 generator 层产生） |
 | h_support | H13_left / H24_right | 15 | YZ/X | 竖桥贴 V1/V2 内侧：H13 x core[0,15]、H24 x core[midWidth−15, midWidth]；y[150, midDepth−150]；z：top [CH−100,CH]、bottom [0,100]、mid [居中区段]（见 §8.5） |
-| h_support | H34 后横桥 | 15 | XZ/Y | x core[15, midWidth−15]；**y[midDepth−15, midDepth]**；z 同 H13/H24 系列；只有 V5 伸到柜后时才停在 V5 侧面 |
+| h_support | H34 后横桥 | 15 | XZ/Y | x core[max(15, CPT), midWidth−max(15, CPT)]（停在后立梃 V3/V4 内侧面；CPT 16 时不再插进立梃 1 mm）；**y[midDepth−15, midDepth]**；z 同 H13/H24 系列；只有 V5 伸到柜后时才停在 V5 侧面 |
 | h_support | H13/H24/H34_fridge | 15 | 同上 | raised 模式：z 起于冰箱底之上（H13_fridge/H24_fridge/H34_fridge 三件），且 H*_bottom 省略 |
-| blank_panel_support | H12（H12_blank…） | 15 | — | blank_panel 区支撑：区高 ≥300 → 顶/底两条各高 100；<300 → 单块整高；深 15 |
+| blank_panel_support | H12（H12_blank…） | 15 | XZ/Y | 竖立的条，x 在 V1/V2 内侧面之间，y[0,15]；blank_panel 区支撑：区高 ≥300 → 顶/底两条各高 100；<300 → 单块整高；深 15 |
 | vertical_divider | VD_{zoneId} | dividerT | YZ/X | y[0, midDepth]（实测 [0,584]）；z = 所属 double_door 区段；x = 心线 ±dividerT/2（**core 坐标后再平移**；默认心 midWidth/2） |
 | door_shelf | DS_{zoneId}(_L/_R) | CPT | XY/Z | 门板区 shelfEnabled 且区高 ≥350：shelfTopZ = zone.z0 + shelfHeight；双门带 VD 时拆 _L/_R 两段 |
 | frontPanels（非 Board） | FP_{zoneId}(_L/_R) | FPT | XZ/Y | y∈[−FPT,0]；定位见 §4.2 |
@@ -171,7 +171,7 @@
 
 | 特征 | 归属 | 类型 | 尺寸/定位 |
 |---|---|---|---|
-| zi_slot | V1/V2 profileFeatures + features | 槽 | V1/V2 局部 y[100,150]；V3/V4 y[0,50]（仅 full_zi 边界）；z = 边界心 ±(ziT+1)/2（15+1 → ±8）；depth 50 |
+| zi_slot | V1/V2 profileFeatures + features；面层是 V 板边上的 notch 标签（槽已在轮廓里，不是 A/B 面上的 50 深槽） | 槽 | V1/V2 局部 y[100,150]；V3/V4 y[0,50]（仅 full_zi 边界）；z = 边界心 ±(ziT+1)/2（15+1 → ±8）；depth 50 |
 | zi_groove | full_zi 边界板（face top/bottom） | 槽 | 宽 dividerT+1、深 CPT/2（16/2=8）；x = VD 心 ±(dividerT+1)/2（**core 坐标** [326,342]）；y[2midDepth/3−(−5)… 即 midDepth/3−5, 2·midDepth/3+5]（舌区 ±5 悬出）；只挂 full_zi（half 无） |
 | divider_tongue | VD 顶/底 | 舌 | 插入 CPT/2−0.5（7.5）；y[midDepth/3, 2·midDepth/3]；顶舌 z[VD.z1−7.5, VD.z1]、底舌 z[VD.z0, VD.z0+7.5]；底舌烘焙进 cutProfile（z0 = VD.z0−7.5=991.5 黄金值） |
 | h34_clearance_slot | VD profileFeatures | 让位槽 | y[midDepth−16, midDepth]（后带 16）；z = [H34.z0−5, H34.z0+105]；越界保留 placeholder（z[−5,105]），有效切夹取到 VD z 范围；T5 版 z = [T5.z0, T5.z1]（"contact height only"，黄金 [1895,1944]，y[608,624]） |

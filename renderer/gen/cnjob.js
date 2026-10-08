@@ -6,24 +6,67 @@ function planeAxes(plane) {
   if (plane === "XZ") return ["x", "z", "y"];
   return ["x", "y", "z"];
 }
+var ARC_CHORD_MM = 0.05;
+var ARC_STEP_MAX = 5 * Math.PI / 180;
+function bulgeOf(p) {
+  const b = Number(p.bulge);
+  return Number.isFinite(b) ? b : 0;
+}
+function expandBulgeRing(pts) {
+  if (!pts.some((p) => p.b && Math.abs(p.b) > 1e-9)) return pts.map((p) => ({ u: p.u, v: p.v }));
+  const n = pts.length;
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i];
+    const c = pts[(i + 1) % n];
+    out.push({ u: a.u, v: a.v });
+    const bulge = a.b ?? 0;
+    const chord = Math.hypot(c.u - a.u, c.v - a.v);
+    if (!bulge || chord < 1e-9) continue;
+    const sweep = 4 * Math.atan(bulge);
+    const du = (c.u - a.u) / chord;
+    const dv = (c.v - a.v) / chord;
+    const h = chord / 2 / Math.tan(sweep / 2);
+    const cu = (a.u + c.u) / 2 - dv * h;
+    const cv = (a.v + c.v) / 2 + du * h;
+    const r = Math.hypot(a.u - cu, a.v - cv);
+    if (!(r > 1e-6)) continue;
+    const a0 = Math.atan2(a.v - cv, a.u - cu);
+    const step = Math.min(ARC_STEP_MAX, 2 * Math.acos(Math.max(-1, 1 - ARC_CHORD_MM / r)));
+    const k = Math.max(2, Math.ceil(Math.abs(sweep) / step));
+    for (let j = 1; j < k; j += 1) {
+      const t = a0 + sweep * j / k;
+      out.push({ u: cu + r * Math.cos(t), v: cv + r * Math.sin(t) });
+    }
+  }
+  return out;
+}
 function localOutline(b) {
   const [U, V] = planeAxes(b.profilePlane);
-  let pts = null;
+  let raw = null;
+  let local = false;
   const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
   if (b.profilePlane === "YZ") {
-    if (pv) pts = pv.map((p) => [Number(p.y) - b.y0, Number(p.z) - b.z0]);
-    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) pts = b.cutProfileVector.map((p) => [p.y, p.z]);
+    if (pv) raw = pv.map((p) => ({ u: Number(p.y), v: Number(p.z), b: bulgeOf(p) }));
+    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) {
+      raw = b.cutProfileVector.map((p) => ({ u: p.y, v: p.z }));
+      local = true;
+    }
   } else if (pv) {
-    const mu = Math.min(...pv.map((p) => Number(p[U])));
-    const mv = Math.min(...pv.map((p) => Number(p[V])));
-    pts = pv.map((p) => [Number(p[U]) - mu, Number(p[V]) - mv]);
+    raw = pv.map((p) => ({ u: Number(p[U]), v: Number(p[V]), b: bulgeOf(p) }));
   }
-  if (!pts) return null;
-  const out = pts.slice();
-  const first = out[0];
-  const last = out[out.length - 1];
-  if (out.length > 2 && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) out.pop();
-  return out.length >= 3 ? out : null;
+  if (!raw) return null;
+  if (raw.length > 2) {
+    const a = raw[0];
+    const c = raw[raw.length - 1];
+    if (Math.abs(a.u - c.u) < 1e-9 && Math.abs(a.v - c.v) < 1e-9) raw.pop();
+  }
+  const expanded = expandBulgeRing(raw);
+  if (expanded.length < 3) return null;
+  if (local) return expanded.map((p) => [p.u, p.v]);
+  const ou = b.profilePlane === "YZ" ? b.y0 : Math.min(...expanded.map((p) => p.u));
+  const ov = b.profilePlane === "YZ" ? b.z0 : Math.min(...expanded.map((p) => p.v));
+  return expanded.map((p) => [p.u - ou, p.v - ov]);
 }
 function rectOutline(b) {
   const [U, V] = planeAxes(b.profilePlane);
@@ -194,9 +237,16 @@ function grainAxis(board, grained) {
   if (axis === "v") return "Y";
   return void 0;
 }
+function sheetOutline(board) {
+  if (board.profilePlane !== "XZ" || board.boardType !== "bench_top" && board.boardType !== "bench_waterfall") return null;
+  const along = board.boardType === "bench_waterfall" ? Math.abs(board.z1 - board.z0) : Math.abs(board.x1 - board.x0);
+  const across = Math.abs(board.y1 - board.y0);
+  if (!(along > 0) || !(across > 0)) return null;
+  return [[0, 0], [along, 0], [along, across], [0, across]];
+}
 function buildBoard(jobId, cab, board, reasons) {
   const where = `${cab.id}/${board.id}`;
-  const outline0 = localOutline(board) ?? rectOutline(board);
+  const outline0 = sheetOutline(board) ?? localOutline(board) ?? rectOutline(board);
   if (outline0.length < 3) {
     reasons.push(`${where}: the outline has fewer than 3 points`);
     return null;

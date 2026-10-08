@@ -1,10 +1,10 @@
 // Shell wiring: top bar, module rail, drawer, status bar, file actions.
-import { setView, drawSpace, floorPointAt, canvas } from "./space.js";
+import { setView, drawSpace, floorPointAt, canvas, captureView, restoreView } from "./space.js";
 import * as job from "./job.js";
-import { MODULES, MODULE_GROUPS, PLANNED_MODULES } from "./modules.js";
+import { MODULES, MODULE_GROUPS, PLANNED_MODULES, isBaseCabinet, reloadGeneratorDir } from "./modules.js";
 import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
 import { syncWalls, statusOf } from "./walls3d.js";
-import "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
+import { floorPlanOpen, openFloorPlan } from "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
 import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, startMeasure, boardUndoKey, overlaps } from "./interact.js";
 import { renderPanel } from "./panel.js";
 import { render as renderTree } from "./tree.js";
@@ -14,6 +14,7 @@ import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
 import { railContext } from "./benchMenu.js";
 import { buildCnjob } from "./gen/cnjob.js";
+import { openExport3d } from "./export3d.js";
 import { cabinetHits } from "./yield.js";
 
 attachJob(job);
@@ -176,8 +177,8 @@ function refreshRail() {
     "plane.offset": "Plane — pull a parallel copy into the room · type Offset · snaps to faces · click or Enter to place · Esc cancels",
     "groove.pick": "Groove — click the big face of any board · Esc ends",
     "groove.draw": "Groove — Line: two ends of the centreline · Rectangle: two corners · T switches Groove / T groove · Esc steps back",
-    "measure": "Measure — click a point or a face, then another · distance, or the angle between two faces · Shift continues · Esc clears",
-    "measure.anchor": "Measure — click the second point or face · a board face also shows its size · Shift on a later click continues · Esc clears",
+    "measure": "Measure — a point, an edge, or a face lights up under the cursor · an edge alone is its length · two faces or two edges give the distance or the angle · Esc clears",
+    "measure.anchor": "Measure — click the second point, edge, or face · an edge already shows its length · Shift on a later click continues · Esc clears",
     "board.pick": "Board — click the face to sketch on · Esc cancels",
     "board.sketch": "Sketch — pick a tool on the sketch bar, then click where it starts · Finish sketch turns the closed shapes into boards",
     "board.stock": "Board — pick the stock · a single-sided colour shows on the preview · Enter creates · Esc back to the sketch",
@@ -194,12 +195,23 @@ function refreshRail() {
     extrude: "Bunk bed · lower box — pull the last size · click or Enter · Enter without a pull takes depth 748 / deck top 418 · Esc cancels",
     "bunk.upper": "Bunk bed · upper base — move up and down, the number is its underside · snaps where both bunks get the same clear height · type it · click or Enter creates · Esc back to the lower box",
   };
+  const KITCHEN_HINT = {
+    armed: "click a corner, then drag the rectangle · type a size to lock it · clear the field and Tab to follow the mouse again · Esc to stop",
+    face: "Drag the rectangle on this face · a typed size stays put · clear the field and Tab to follow the mouse · Enter or a click starts the depth",
+    extrude: "Pull the rectangle off the face · a typed size stays put · clear the field and Tab to follow the mouse · click or Enter to create · Esc cancels",
+  };
+  const kitchenStep = placing && isBaseCabinet(placing) && KITCHEN_HINT[mode]
+    ? `${MODULES[placing].label} — ${KITCHEN_HINT[mode]}`
+    : null;
   const bunkStep = placing && MODULES[placing]?.placement === "bunk" ? BUNK_HINT[mode] : null;
-  $("#modeHint").textContent = bunkStep || (loungeStep
+  const nSel = mode === "idle" ? job.getSelectedIds().length : 0;
+  $("#modeHint").textContent = bunkStep || kitchenStep || (loungeStep
     ? `Lounge ${style} — ${LOUNGE_HINT[loungeStep] || ""}`
     : lBox
       ? `Lounge ${style} · ${boxWhat} — ${mode === "armed" ? "click a corner to start · Esc to stop" : HINTS[mode]}`
-      : (HINTS[mode] || ""));
+      : nSel > 1
+        ? `${nSel} cabinets selected · Ctrl+click adds or removes one · Delete removes them`
+        : (HINTS[mode] || ""));
 }
 
 // --- view buttons ---------------------------------------------------------------
@@ -323,6 +335,22 @@ async function doOpen() {
     window.alert(`Could not open: ${err.message}`);
   }
 }
+const REFRESH_KEY = "cablab.session";
+
+async function doRefresh() {
+  if (!bridge?.reloadApp) return;
+  try {
+    const session = job.captureSession();
+    session.view = captureView();
+    session.plan = floorPlanOpen();
+    sessionStorage.setItem(REFRESH_KEY, JSON.stringify(session));
+  } catch (err) {
+    window.alert(`Could not keep this job across refresh: ${err.message}`);
+    return;
+  }
+  await bridge.reloadApp();
+}
+
 async function doSave(forceDialog = false) {
   if (!bridge) return console.warn("[ui] file bridge unavailable");
   const path = await bridge.saveJob(forceDialog ? null : job.getFilePath(), job.serialize());
@@ -386,7 +414,9 @@ const ACTIONS = {
   new: doNew,
   open: doOpen,
   save: () => doSave(false),
+  refresh: () => doRefresh(),
   export: doExport,
+  export3d: () => openExport3d(),
   undo: () => job.undo(),
   redo: () => job.redo(),
   move: () => startMove(),
@@ -416,10 +446,12 @@ window.addEventListener("keydown", (e) => {
 // --- sync --------------------------------------------------------------------------
 let panelPending = false;
 const rightpanel = $("#rightpanel");
-/** A number / text field keeps its focus across a job edit. A button does not: Add / Remove must redraw at once. */
+/** A number / text field keeps its focus across a job edit. A checkbox and a button redraw at once, so a tick shows or hides its fields immediately. */
 function panelFieldFocused() {
   const el = document.activeElement;
-  return !!el && rightpanel.contains(el) && /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
+  if (!el || !rightpanel.contains(el)) return false;
+  if (el.tagName === "INPUT" && (el.type === "checkbox" || el.type === "radio")) return false;
+  return /^(INPUT|SELECT|TEXTAREA)$/.test(el.tagName);
 }
 function maybeRenderPanel() {
   if (panelFieldFocused()) {
@@ -457,9 +489,32 @@ function refreshAll() {
 $("[data-define-space]").addEventListener("click", () => openSpaceDialog());
 
 job.onChange(refreshAll);
+window.cablab?.onGeneratorsUpdated?.(async ({ dir, moduleIds }) => {
+  const ok = await reloadGeneratorDir(dir);
+  if (!ok) return;
+  const cabinets = job.invalidateModules(moduleIds);
+  log("generator.reload", { dir, moduleIds, cabinets });
+});
 onModeChange(() => { refreshRail(); refreshStatus(); });
 refreshAll();
-setView("3d");
 // User defaults (settings.json) must be in memory before the dialog offers them.
 await loadSettings();
+let keptView = null;
+try {
+  const raw = sessionStorage.getItem(REFRESH_KEY);
+  if (raw) {
+    sessionStorage.removeItem(REFRESH_KEY);
+    const data = JSON.parse(raw);
+    keptView = data.view ? { ...data.view, plan: !!data.plan } : null;
+    job.resumeSession(data);
+  }
+} catch (err) {
+  log("file.refresh.failed", { message: err.message });
+}
+if (keptView && restoreView(keptView)) {
+  if (keptView.plan && job.hasSpace()) openFloorPlan("refresh");
+} else {
+  setView("3d");
+}
+bridge?.onRefresh?.(() => { doRefresh(); });
 if (!job.hasSpace()) openSpaceDialog();

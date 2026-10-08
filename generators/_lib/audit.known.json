@@ -1,0 +1,14 @@
+{
+  "about": "Audit errors that are known and waiting for a decision. scripts/audit.ts marks them [known] and does not count them as new. Remove a line once it is fixed or decided.",
+  "known": [
+    { "case": "overhead", "check": "overlap", "contains": "T4", "why": "D rear notch sits at y Cd-16..Cd, T4 at Cd-CPT-clearance: which one moves is open (2026-10-08 #10)" },
+    { "case": "uShapeOverhead", "check": "overlap", "contains": "T4", "why": "same T4 / D rear notch question as the straight overhead (#10)" },
+    { "case": "overheadCabinet/style2", "check": "overlap", "contains": "and D", "why": "style 2 front notch 31 vs T1/T2 at y 39..70 (#11)" },
+    { "case": "bedroom", "check": "overlap", "contains": "_STRIP and WARD_", "why": "wall strip runs through T3; T3's notch is at the other end (#12)" },
+    { "case": "bedroomEast", "check": "overlap", "contains": "BB_CHAMFER", "why": "bed-box chamfer panel ends are square-cut at the corners (#13)" },
+    { "case": "bedroom", "check": "outline", "contains": "OHC_D", "why": "roof cut ends 0.1 mm below the divider's bottom edge (#14)" },
+    { "case": "generalTall/base-params", "check": "overlap", "contains": "Zi_boundary-drawer-b", "why": "half Zi tabs are at y 0..45 (spec) but the V1/V2 slot is at 100..150 (spec): the spec disagrees with itself" },
+    { "case": "scenario/kitchen-2460", "check": "size", "why": "an unsplit 2460 run is expected to exceed the sheet; the app tells the user to split" },
+    { "case": "scenario/kitchen", "check": "size", "contains": "BENCH", "why": "bench top longer than a sheet: not designed yet" }
+  ]
+}

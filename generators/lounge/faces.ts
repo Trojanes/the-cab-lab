@@ -156,6 +156,15 @@ function bandFrameEdges(boards: Board[], colour: string, doorColour: string) {
     for (const id of d.supports) band(by(id), "-Y");
   }
   for (const id of ["main_rail_back", "main_rail_front", "back_rail"]) band(by(id), "-Z");
+  // Back panel: the top, the room end and the rounded corner. The wall end and the floor stay bare.
+  for (const id of ["l_back", "left_back", "right_back"]) {
+    const b = by(id);
+    if (!b) continue;
+    for (const f of edgeFaces(b)) {
+      if (f.normal === "+Y" || f.normal === "-Z") continue;
+      setEdgeBand(b, Number(f.id.slice(1)), tape);
+    }
+  }
   for (const lid of boards.filter((b) => b.boardType === "lid")) {
     for (const f of edgeFaces(lid)) setEdgeBand(lid, Number(f.id.slice(1)), tape);
   }
