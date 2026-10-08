@@ -1,0 +1,23 @@
+name: verify
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  gate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # electron's postinstall downloads a binary we never run here.
+      - env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: 1
+        run: npm ci
+      # The gate: layering + tags + size budgets, module map freshness,
+      # job/app contracts, all renderer suites, audit, generator suite.
+      # E2E (real Electron) and cross-repo replay stay local/verify:full.
+      - run: npm run verify:ci

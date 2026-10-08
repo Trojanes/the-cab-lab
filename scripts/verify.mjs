@@ -3,6 +3,7 @@
  *
  *   node scripts/verify.mjs --quick   deps+map+job+app contract   (~15 s)
  *   node scripts/verify.mjs           all renderer suites + audit  (~1–2 min)
+ *   node scripts/verify.mjs --ci      + generators (CI: no Electron / no sibling repo)
  *   node scripts/verify.mjs --full    + generators + replay + E2E  (~4 min)
  *
  * Which tier the change owes (rule: cab-lab-dev-loop.mdc):
@@ -18,6 +19,7 @@ import { argv } from "node:process";
 
 const quick = process.argv.includes("--quick");
 const full = process.argv.includes("--full");
+const ci = process.argv.includes("--ci");
 
 const STEPS = [
   ["check:deps", "layering / import direction"],
@@ -41,9 +43,10 @@ const STEPS = [
     ["test:commands", "command registry"],
     ["audit", "geometry audit (known-bad allowed)"],
   ]),
-  ...(full ? [
+  ...(full || ci ? [
     ["test:generators", "generator golden/pin suite"],
-    ["test:replay", "cross-repo cnjob replay"],
+    // test:replay needs the sibling OmniCam repo + dotnet — local/CI-gated via --full only.
+    ...(full ? [["test:replay", "cross-repo cnjob replay"]] : []),
   ] : []),
 ];
 
