@@ -1,5 +1,8 @@
 # Application API
 
+> 原子指令集契约见 `docs/AGENT-COMMANDS.md`（T05：每个操作源一条指令 + CLI）。
+> 本文件描述其下的结构化 JS 调用面。
+
 `renderer/appApi.js` — the UI-free surface for driving a job. The same module
 runs inside the Electron renderer and headless under Node (tests today, an
 Agent Tool layer next). Every command returns a structured outcome:
