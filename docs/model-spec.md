@@ -100,11 +100,17 @@ keep `doorColorNameB`).
 **Bench top.** `job.finish.benchTop.name` is one HPL decor. Acrylic is not a
 choice. A new kitchen or ensuite copies it as `benchTopColorName`. The generator
 emits board `BENCH` only when that name is present, so a cabinet saved before
-this stays without one. The slab is 25 mm thick, the full cabinet width, its
-back on the carcass back and its front 20 mm past the door face, sitting on the
-carcass top. Face A (the top) carries the colour and grain along the width; the
-underside is the carcass colour. The front edge is banded 1 mm in the same
-colour. The other edges are not banded. Bedside and lounge are not covered yet.
+this stays without one. The slab is 25 mm thick. The height of the box includes it:
+the carcass top is 25 mm under the top of the bench. Without a waterfall the
+slab is the full carcass width, its back on the carcass back and its front
+20 mm past the door face. A kitchen waterfall (`waterfall` `left` | `right`)
+is a second 25 mm board from the floor to the bench top. The outer width
+includes it and the carcass sits inboard. The two boards meet on a 45° mitre.
+It is only offered on an end that is not against a wall. Face A of a plain
+slab (the top) carries the colour and grain along the width; the underside is
+the carcass colour. The front edge is banded 1 mm in the same colour. The
+other edges are not banded. On a waterfall the show colour is the top of the
+slab and the outer face of the drop. Bedside and lounge are not covered yet.
 
 **Sheet id.** Not stored. `sheetMaterial(board, params)` (`_lib/material.ts`) builds
 `{series}-{decor}-{1s|2s}-{thickness}` for the nest: carcass and partition are
@@ -122,6 +128,13 @@ through openings clockwise, the closing point is not repeated. Lock slots with a
 corner radius are tessellated arcs; a T-groove is a groove (centreline + width).
 `edgeBands` is empty until that module's edges are confirmed. A job with any red
 check is not written.
+
+**Export 3D** (`.stp`, `generators/_lib/step.ts`). One STEP assembly for the
+cabinets the user ticked (or the current selection, from a right-click). Each
+board is one solid in the space: the outline through the thickness, with
+grooves, LED channels, hinge cups, through holes and lock slots cut in it.
+Coordinates are millimetres, Z up. Red CNC checks do not block this file.
+Hidden boards are included. Partitions and the space shell are not.
 
 **Board‑local frame.** `planeAxes(plane)` gives `(u, v, t)`:
 `XY → (x, y, z)`, `XZ → (x, z, y)`, `YZ → (y, z, x)`. Local `(u, v)` is

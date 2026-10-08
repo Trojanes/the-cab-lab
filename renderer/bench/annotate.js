@@ -5,6 +5,7 @@
 // never sit on each other (the two faces of a thin board are a few mm apart).
 // Display only: built from the generator result and the placement rule.
 import * as THREE from "three";
+import { acceptChip, beginFormula, bindFormulaBar } from "./formulaBar.js";
 
 const LINE = { pos: "#4f86e0", drive: "#7fb0ff", size: "#e0a34f" };
 
@@ -81,37 +82,24 @@ export function disposeAnnotations(group) {
 
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-/** The formula line of a blue label: primary parameters are chips that can be dragged back out. */
-function formulaLine(it) {
+/** The formula line: click the blue label to edit. Chips stay whole; operators are text. */
+function formulaLine(overlay, it, edit) {
   const row = document.createElement("div");
   row.className = "l2 formula-chips";
   const eq = document.createElement("span");
+  eq.className = "formula-op";
   eq.textContent = "= ";
-  row.append(eq);
-  for (const piece of it.pieces) {
-    if (piece.kind !== "param") {
-      const t = document.createElement("span");
-      t.textContent = piece.text;
-      row.append(t);
-      continue;
-    }
-    const chip = document.createElement("span");
-    chip.className = "param-chip";
-    chip.textContent = piece.sym;
-    chip.draggable = true;
-    chip.title = "拖回下面的一级参数";
-    chip.addEventListener("pointerdown", (e) => e.stopPropagation());
-    chip.addEventListener("dragstart", (e) => {
-      e.stopPropagation();
-      e.dataTransfer.setData("text/plain", piece.sym);
-      e.dataTransfer.setData("text/cablab-param", piece.sym);
-      e.dataTransfer.setData("text/cablab-face", it.key);
-      e.dataTransfer.effectAllowed = "move";
-      this.onChipDrag?.({ sym: piece.sym, face: it.key });
-    });
-    chip.addEventListener("dragend", () => this.onChipDrag?.(null));
-    row.append(chip);
-  }
+  const bar = document.createElement("div");
+  row.append(eq, bar);
+  bindFormulaBar(bar, {
+    expr: it.formula || "",
+    edit,
+    face: it.key,
+    dragging: () => !!overlay.dragFromFace?.(),
+    onEdit: (on) => { it.editing = on; },
+    onDragStart: (e, sym) => overlay.onChipDrag?.(e, { sym, face: it.key }),
+    onCommit: (text) => overlay.onCommit?.(it.key, text),
+  });
   return row;
 }
 
@@ -134,9 +122,10 @@ export class LabelOverlay {
       const el = document.createElement("div");
       el.className = `anno-label ${it.tone}`;
       el.dataset.key = it.key;
+      const edit = !!it.editable && it.tone !== "size";
       it.lines.forEach((l, i) => {
-        if (i === 1 && it.editable && it.pieces) {
-          el.append(formulaLine(it));
+        if (i === 1 && it.pieces) {
+          el.append(formulaLine(this, it, edit));
           return;
         }
         const d = document.createElement("div");
@@ -144,29 +133,19 @@ export class LabelOverlay {
         d.textContent = l;
         el.append(d);
       });
-      if (it.editable && it.tone !== "size") {
-        el.classList.add("edit");
+      if (edit) {
+        el.classList.add("can-edit");
+        el.title = "点击编辑这条公式";
+        const bar = el.querySelector(".formula-bar");
         el.addEventListener("pointerdown", (e) => {
-          if (e.target.closest(".param-chip")) return;
+          if (e.target.closest(".formula-bar, .param-chip")) return;
           e.stopPropagation();
           e.preventDefault();
-          this.edit(it.key);
+          beginFormula(bar);
         });
-        el.addEventListener("dragover", (e) => {
-          if (![...e.dataTransfer.types].includes("text/cablab-param")) return;
-          e.preventDefault();
-          el.classList.add("drop");
-        });
-        el.addEventListener("dragleave", () => el.classList.remove("drop"));
-        el.addEventListener("drop", (e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          el.classList.remove("drop");
-          const sym = e.dataTransfer.getData("text/cablab-param");
-          const from = e.dataTransfer.getData("text/cablab-face");
-          if (!sym || from === it.key) return;
-          this.onDrop?.(it.key, sym);
-        });
+        el.addEventListener("dragover", (e) => acceptChip(bar, e));
+        el.addEventListener("dragleave", () => bar.classList.remove("drop"));
+        el.addEventListener("drop", (e) => acceptChip(bar, e));
       }
       this.root.append(el);
       const leader = document.createElementNS(SVG_NS, "line");
@@ -175,34 +154,6 @@ export class LabelOverlay {
       return { ...it, el, leader, w: 0, h: 0 };
     });
     this.root.classList.toggle("hidden", !this.items.length);
-  }
-
-  /** Replace one blue label with a formula field. Enter commits, Esc restores. */
-  edit(key) {
-    const it = this.items.find((x) => x.key === key);
-    if (!it || it.editing) return;
-    it.editing = true;
-    const input = document.createElement("input");
-    input.className = "anno-edit";
-    input.value = it.formula || "";
-    input.spellcheck = false;
-    it.el.replaceChildren(input);
-    input.focus();
-    input.select();
-    let done = false;
-    const finish = (commit) => {
-      if (done) return;
-      done = true;
-      it.editing = false;
-      if (commit && input.value !== it.formula) this.onCommit?.(key, input.value);
-      else this.onCancel?.();
-    };
-    input.addEventListener("keydown", (e) => {
-      e.stopPropagation();
-      if (e.key === "Enter") { e.preventDefault(); finish(true); }
-      if (e.key === "Escape") { e.preventDefault(); finish(false); }
-    });
-    input.addEventListener("blur", () => finish(true));
   }
 
   /** @param offset THREE.Vector3 the board group's display offset (explode), added to every anchor */

@@ -4,9 +4,9 @@ import { log } from "../log.js";
 import { FRIDGE_BELOW_TYPES, FRIDGE_ZONE_LABEL, MIN_ZONE_HEIGHT, fridgeFix, fridgeParts, fridgeRuleIssues, getModule } from "../modules.js";
 import { applyYield, conflictLines, declineYield, noteGrowth } from "../yield.js";
 import { cabinetHits } from "../fit.js";
-import { localAxes } from "../pose.js";
+import { localAxes, keepCorner } from "../pose.js";
 import { thickness } from "../materials.js";
-import { el, doorLine, grainIssueLines, numField, section, frontSection, kv, panel, repaint, gapMode } from "./widgets.js";
+import { el, doorLine, grainIssueLines, numField, section, frontSection, kv, panel, repaint, gapMode, outerSizeFields, cabinetBox } from "./widgets.js";
 // --- tall fridge cabinet editor -----------------------------------------------------------
 //
 // The fridge's cut-out is fixed and everything follows it: the outer width is
@@ -82,12 +82,53 @@ export function renderTallFridge(cab, mod, result, shared) {
   }
   const front = el("div", { class: "bedroom-front" });
   const drawFront = () => {
-    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: fridgeSelected(cab.id), gaps: gapMode }) || "";
+    front.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneId: fridgeSelected(cab.id), gaps: gapMode, editable: true }) || "";
     if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
   };
   drawFront();
+  // The number beside a zone is its clearance or centre distance (the dropdown); typing it moves the
+  // stored height by the difference. The fridge's own height is its cut-out and is not typed here.
+  const editZoneHeight = (dim) => {
+    if (front.querySelector(".col-dim-input")) return;
+    const id = dim.getAttribute("data-zone");
+    const shown = Number(gapMode === "center" ? dim.dataset.center : dim.dataset.clear);
+    if (!id || !Number.isFinite(shown)) return;
+    const box = dim.getBoundingClientRect();
+    const host = front.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "col-dim-input";
+    input.step = "1";
+    input.value = String(shown);
+    input.style.left = `${box.left - host.left + 30}px`;
+    input.style.top = `${box.top - host.top}px`;
+    front.append(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply) => {
+      if (done) return;
+      done = true;
+      const typed = Number(input.value);
+      input.remove();
+      const z = zones.find((zz) => zz.id === id);
+      if (apply && z) setShownHeight(z, typed, "front view");
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
   front.addEventListener("click", (e) => {
     if (fridgeDrag) return;
+    const dim = e.target.closest?.(".zone-dim.editable");
+    if (dim) {
+      e.stopPropagation();
+      editZoneHeight(dim);
+      return;
+    }
+    if (e.target.closest?.(".zone-dim")) return;
     const zoneEl = e.target.closest?.("[data-zone]");
     if (!zoneEl) return;
     const id = zoneEl.getAttribute("data-zone");
@@ -200,14 +241,38 @@ export function renderTallFridge(cab, mod, result, shared) {
     }
     commit(next, "above", { from: now, to: type });
   };
-  const setAboveHeight = (v) => {
+  const setAboveHeight = (v, extra = {}) => {
     const h = Math.max(MIN_ZONE_HEIGHT, Math.round(v));
     const next = zones.map((z) => (z === aboveZone ? { ...z, height: h } : z));
-    commit(fridgeFix({ ...p, zones: next }, { H: env.H + h - aboveZone.height }), "above", { zone: aboveZone.id, height: h });
+    commit(fridgeFix({ ...p, zones: next }, { H: env.H + h - aboveZone.height }), "above", { zone: aboveZone.id, height: h, ...extra });
+  };
+
+  // Heights as the front view reads them: clearance (face to face) or centre to centre, from the
+  // emitted boards. A typed reading moves the stored height by the same difference. No reading
+  // (checks failing) falls back to the stored height, labelled as such.
+  const openings = typeof mod.zoneOpenings === "function" ? mod.zoneOpenings(result) : [];
+  const readOf = (id) => openings.find((o) => o.id === id) || null;
+  const shownHeight = (z) => {
+    const o = readOf(z.id);
+    return o ? (gapMode === "center" ? o.center : o.clear) : z.height;
+  };
+  const heightWord = openings.length ? (gapMode === "center" ? "Centre height" : "Clear height") : "Height";
+  const setShownHeight = (z, typed, where) => {
+    const shown = shownHeight(z);
+    if (!Number.isFinite(typed) || Math.abs(typed - shown) < 0.05) { repaint(); return; }
+    const h = Math.round(z.height + (typed - shown));
+    if (h < MIN_ZONE_HEIGHT) {
+      log("tallFridge.zone.blocked", { id: cab.id, zone: z.id, reason: `a zone stays at least ${MIN_ZONE_HEIGHT} mm`, typed, mode: gapMode, where });
+      repaint(); // the field goes back to the value the cabinet still has
+      return;
+    }
+    const extra = { mode: gapMode, shown: typed, where };
+    if (aboveZone && z.id === aboveZone.id) setAboveHeight(h, extra);
+    else setBelow(z.id, { height: h }, "below.height", extra);
   };
   const aboveSec = section("Above the fridge", [
     seg([["none", "None", "The fridge runs up to the top system"], ["top_flap", "Up flap"], ["fixed_panel", "Fixed panel", "A front that does not open (later: a microwave)"]], aboveZone ? aboveZone.type : "none", setAbove),
-    aboveZone ? numField("Height (mm)", aboveZone.height, setAboveHeight, { step: 10, min: MIN_ZONE_HEIGHT }) : null,
+    aboveZone ? numField(`${heightWord} (mm)`, shownHeight(aboveZone), (v) => setShownHeight(aboveZone, Number(v), "above field"), { step: 1, min: 0 }) : null,
     el("div", { class: "empty small", text: "Only an up flap or a fixed panel: nobody reaches a drawer above a fridge. Adding one makes the cabinet taller by its height and the board on the fridge." }),
   ].filter(Boolean));
 
@@ -222,11 +287,12 @@ export function renderTallFridge(cab, mod, result, shared) {
       FRIDGE_BELOW_TYPES.map((t) => el("option", { value: t, text: FRIDGE_ZONE_LABEL[t], selected: t === z.type }))
         .concat(FRIDGE_BELOW_TYPES.includes(z.type) ? [] : [el("option", { value: z.type, text: `${z.type} (not allowed here)`, selected: true, disabled: true })])),
     (() => {
-      const input = el("input", { type: "number", value: z.height, step: 1, min: MIN_ZONE_HEIGHT });
+      const shown = shownHeight(z);
+      const input = el("input", { type: "number", value: shown, step: 1, min: 0, title: `${heightWord} (mm) — the same reading as the front view` });
       input.addEventListener("change", () => {
         const v = Number(input.value);
-        if (!Number.isFinite(v) || v < MIN_ZONE_HEIGHT) { input.value = z.height; return; }
-        setBelow(z.id, { height: Math.round(v) }, "below.height");
+        if (!Number.isFinite(v)) { input.value = shown; return; }
+        setShownHeight(z, v, "below row");
       });
       return input;
     })(),
@@ -239,6 +305,7 @@ export function renderTallFridge(cab, mod, result, shared) {
     commit(fridgeFix({ ...p, zones: [zone, ...zones] }), "below.add", { zone: zone.id });
   } });
   const belowSec = section("Below the fridge · from the fridge down", [
+    el("div", { class: "empty small", text: `Type · ${heightWord.toLowerCase()} (mm)${openings.length ? ", as the front view reads it" : ""}` }),
     ...belowRows,
     addBelow,
     el("div", { class: "empty small", text: "Drawers and down flaps. A drawer right under the fridge carries the fridge base." }),
@@ -253,7 +320,18 @@ export function renderTallFridge(cab, mod, result, shared) {
         const id = e.target.value;
         e.target.blur();
         if (!id) return;
-        commit(mod.applyPreset(p, id), "preset", { preset: id });
+        // The back stays on the wall. The side away from the side panel stays too. The front moves.
+        const next = mod.applyPreset(p, id);
+        const corner = { x: mod.widthAnchor(next, cab), y: 1, z: -1 };
+        const fromPose = { ...cab.pose };
+        const pose = keepCorner(fromPose, cabinetBox(mod, p), cabinetBox(mod, next), corner);
+        job.setParams(cab.id, next);
+        job.setPose(cab.id, pose, { history: false });
+        const now = job.getJob().cabinets.find((c) => c.id === cab.id);
+        log("tallFridge.preset", {
+          id: cab.id, preset: id, from: env, to: now ? mod.envelope(now.params) : null,
+          corner, fromPose, toPose: pose,
+        });
       },
     }, [
       el("option", { value: "", text: "Custom", selected: !presetNow }),
@@ -284,8 +362,12 @@ export function renderTallFridge(cab, mod, result, shared) {
     el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
     section("Outer size (= box)", [
       numField("Width (mm)", env.W, () => {}, { readOnly: "From the fridge cut-out and the side panel" }),
-      numField("Depth (mm)", env.D, (v) => commit(mod.setEnvelope(p, { D: Math.max(mod.minSize.D, v) }), "size", { key: "D", value: v })),
-      numField("Height (mm)", env.H, (v) => commit(mod.setEnvelope(p, { H: Math.max(mod.minSize.H, v) }), "size", { key: "H", value: v })),
+      ...outerSizeFields(cab, mod, env, p, {
+        logKind: "tallFridge.size",
+        show: { W: false },
+        grow: true,
+        finish: (next) => mod.normalizeParams ? mod.normalizeParams(next) : next,
+      }),
     ]),
     section("Systems", [
       el("label", { class: "field" }, [el("span", { text: "Top" }), seg([["style_1", "Style 1 · rail"], ["style_2", "Style 2 · fixed panel"]], top.style || "style_1", setTop)]),
@@ -308,7 +390,11 @@ export function renderTallFridge(cab, mod, result, shared) {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Fridge cabinet" }),
-      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · cut-out ${fridge ? `${fridge.applianceWidthMm} × ${fridge.applianceHeightMm}` : "—"} · ${result?.boards?.length || 0} boards` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · cut-out ${fridge ? `${fridge.applianceWidthMm} × ${fridge.applianceHeightMm}` : "—"} · ${result?.boards?.length || 0} boards` }),
+      el("div", { class: "panel-sizes" }, [
+        numField("Width (mm)", env.W, () => {}, { readOnly: "From the fridge cut-out and the side panel" }),
+        ...outerSizeFields(cab, mod, env, p, { logKind: "tallFridge.size", show: { W: false }, grow: true }),
+      ]),
     ]),
     yieldCard,
     shared.board,

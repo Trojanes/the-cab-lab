@@ -35,7 +35,7 @@ export const LOUNGE_RUN_LABELS: Record<string, string> = {
   right: "Right leg",
 };
 
-const STYLE_LABEL: Record<string, string> = { I_SHAPE: "I", L_SHAPE: "L", U_SHAPE: "U", PARALLEL: "Parallel" };
+const STYLE_LABEL: Record<string, string> = { I_SHAPE: "I", L_SHAPE: "L", PARALLEL: "Parallel" };
 
 export function generateLoungeSvgPreview(result: LoungeResult, options: LoungeSvgPreviewOptions = {}): string | null {
   if (!result || !result.boards.length) return null;
@@ -46,15 +46,19 @@ export function generateLoungeSvgPreview(result: LoungeResult, options: LoungeSv
   if (!runs.length) return null;
   const style = result.params.style;
   const planW = Math.max(...runs.map((it) => it.r.x1), ...result.boards.map((b) => b.x1));
-  const planH = Math.max(...runs.map((it) => it.r.y1));
-  if (!(planW > 0) || !(planH > 0)) return null;
+  const yMax = Math.max(...runs.map((it) => it.r.y1));
+  const yMin = Math.min(0, ...runs.map((it) => it.r.y0));
+  const planH = yMax;
+  const span = yMax - yMin;
+  if (!(planW > 0) || !(span > 0)) return null;
 
   const width = options.width ?? 520;
   const showDimensions = options.showDimensions ?? true;
   const selected = options.selectedRun ?? null;
-  const { scale, ox, oy, height } = fitCanvas(planW, planH, width, options.maxHeight ?? 460, { l: 40, r: 16, t: 22, b: showDimensions ? 34 : 14 });
+  const { scale, ox, oy, height } = fitCanvas(planW, span, width, options.maxHeight ?? 460, { l: 40, r: 16, t: 22, b: showDimensions ? 34 : 14 });
   const toX = (x: number) => ox + x * scale;
-  const toY = (y: number) => oy + (planH - y) * scale; // wall (+y) at the top
+  // y = 0 stays at the bottom when nothing hangs past the room face, so a drag still reads y from data-h.
+  const toY = (y: number) => oy + (yMax - y) * scale; // wall (+y) at the top
   const rect = (r: XYRect) =>
     `x="${px(toX(r.x0))}" y="${px(toY(r.y1))}" width="${px(Math.max((r.x1 - r.x0) * scale, 0.8))}" height="${px(Math.max((r.y1 - r.y0) * scale, 0.8))}"`;
   const parts: string[] = [];
@@ -127,10 +131,6 @@ export function generateLoungeSvgPreview(result: LoungeResult, options: LoungeSv
   if (style === "I_SHAPE" && fp.i) {
     vline("mainWidth", fp.i.x1, fp.i.y0, fp.i.y1);
     hline("mainDepth", fp.i.y1, fp.i.x0, fp.i.x1);
-  } else if (style === "U_SHAPE" && fp.left && fp.right) {
-    vline("mainWidth", fp.right.x1, fp.right.y0, fp.right.y1);
-    vline("lDepth", fp.right.x0, fp.right.y0, fp.main ? fp.main.y0 : fp.right.y1);
-    hline("mainDepth", fp.right.y1, fp.left.x0, fp.right.x1);
   } else if (style === "PARALLEL" && fp.left && fp.right) {
     vline("totalWidth", fp.right.x1, fp.right.y0, fp.right.y1);
     vline("singleLoungeWidth", fp.right.x0, fp.right.y0, fp.right.y1);

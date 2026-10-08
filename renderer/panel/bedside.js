@@ -1,7 +1,7 @@
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";
-import { el, numField, section, panel, repaint } from "./widgets.js";
+import { el, numField, section, panel, repaint, outerSizeFields } from "./widgets.js";
 function bedSideChoice(side, type) {
   if (type === "drawer") return "drawer";
   const towardWall = side === "left" ? "right_door" : "left_door";
@@ -98,8 +98,11 @@ export function renderBedSide(cab, mod, result, shared) {
     ]),
     section("Layout", [
       numField("Width (mm)", env.W, () => {}, { readOnly: "The body's wardrobe width: the door-stock side panel stands under the colour panel." }),
-      numField("Into the room (mm)", env.D, shared.setEnv("D")),
-      numField("Top (mm)", env.H, shared.setEnv("H")),
+      ...outerSizeFields(cab, mod, env, p, {
+        logKind: "bedside.size",
+        show: { W: false },
+        labels: { D: "Into the room (mm)", H: "Top (mm)" },
+      }),
       numField("Middle shelf centre (mm)", p.shelfCenter, setShelf, { step: 10, min: lim ? lim.min : 0, max: lim ? lim.max : env.H }),
       zoneSelect(0, "Lower"),
       zoneSelect(1, "Upper"),

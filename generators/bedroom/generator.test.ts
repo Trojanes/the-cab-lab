@@ -424,20 +424,20 @@ function testLedChannels() {
   const by = new Map(r.boards.map((b) => [b.id, b]));
   const ledOn = (id: string) => by.get(id)!.faces!.find((f) => f.id === "A")!.features.filter((f) => f.for === "led");
   // Wardrobe T3 (left, 330 wide): main channel 20 → 34.5 (T1 front 35 − 0.5), full width; two 20 mm branches
-  // centred 80 from each end, from the channel's back wall to the rear edge 188.
+  // centred 30 from each end, from the channel's back wall to the rear edge 188.
   const l = ledOn("WARD_L_T3");
   assert.deepEqual(l.map((f) => [f.id, f.kind, f.u0, f.u1, f.v0, f.v1, f.depth]), [
     ["WARD_L_T3_LED_MAIN", "tgroove", 0, 330, 20, 34.5, 6.5],
-    ["WARD_L_T3_LED_BRANCH_1", "tgroove", 70, 90, 34.5, 188, 6.5],
-    ["WARD_L_T3_LED_BRANCH_2", "tgroove", 240, 260, 34.5, 188, 6.5],
+    ["WARD_L_T3_LED_BRANCH_1", "tgroove", 20, 40, 34.5, 188, 6.5],
+    ["WARD_L_T3_LED_BRANCH_2", "tgroove", 290, 310, 34.5, 188, 6.5],
   ]);
   assert.ok(l.every((f) => f.through === false));
   // Right T3 mirrors in cabinet x (board x0 1945): the branches stay in its full-depth part (x ≥ 1961).
   const rr = ledOn("WARD_R_T3");
-  assert.deepEqual(rr.map((f) => [f.u0, f.u1, f.v1]), [[0, 330, 34.5], [70, 90, 188], [240, 260, 188]]);
-  // Middle T3 (1615 wide): same channel, branches 80 from its own ends, clear of the rear notches.
+  assert.deepEqual(rr.map((f) => [f.u0, f.u1, f.v1]), [[0, 330, 34.5], [20, 40, 188], [290, 310, 188]]);
+  // Middle T3 (1615 wide): branches 30 from its own ends land in the end-upright notches, so they stop at the notch front (77).
   const m = ledOn("OHC_T3");
-  assert.deepEqual(m.map((f) => [f.u0, f.u1, f.v0, f.v1]), [[0, 1615, 20, 34.5], [70, 90, 34.5, 188], [1525, 1545, 34.5, 188]]);
+  assert.deepEqual(m.map((f) => [f.u0, f.u1, f.v0, f.v1]), [[0, 1615, 20, 34.5], [20, 40, 34.5, 77], [1575, 1595, 34.5, 77]]);
   assert.equal(by.get("OHC_T3")!.faces!.find((f) => f.id === "B")!.features.some((f) => f.for === "led"), false);
   // Provenance: the channel is placed from T1's front and the rule constants.
   const e = r.debug.provenance.entries;

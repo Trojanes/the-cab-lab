@@ -5,7 +5,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, closestTOnLine } from "../space.js";
 import * as job from "../job.js";
-import { getModule, isBaseCabinet, DIM_OF_AXIS } from "../modules.js";
+import { getModule, isBaseCabinet, DIM_OF_AXIS, getKitchenWidthColumn, setKitchenWidthColumn } from "../modules.js";
 import {
   groupFor, setResizeState, pickEnvelopeFace, envelopeFaceWorld, setEnvelopeDrag,
   showFaceHint, hideFaceHint, setHandleHover,
@@ -17,7 +17,7 @@ import { log } from "../log.js";
 import { cancelBoard } from "../boardSketch.js";
 import { endGroove } from "../grooveTool.js";
 import { cancelMeasure } from "../measureTool.js";
-import { S, host, emitMode, pick, localAxisWorld, clearPreview, registerMode, stopAll } from "./shared.js";
+import { S, host, emitMode, pick, localAxisWorld, clearPreview, registerMode, stopAll, askKitchenColumn, kitchenWidthIndex } from "./shared.js";
 
 let resize = null; // { face: { cabId, axis, dir } | null, drag: null | {...} }
 
@@ -114,6 +114,13 @@ function resizeClick(e) {
 function beginResizeDrag(e, hit, ud) {
   const cab = job.getJob().cabinets.find((c) => c.id === ud.cabId);
   if (!cab) return;
+  if (ud.handle.axis === "x" && isBaseCabinet(cab.moduleId)) {
+    const cols = cab.params?.columns || [];
+    if (cols.length > 1 && getKitchenWidthColumn(cab.id) == null) {
+      askKitchenColumn(e, cols, (index) => setKitchenWidthColumn(cab.id, index));
+      return;
+    }
+  }
   const group = groupFor(cab.id);
   const face = { axis: ud.handle.axis, dir: ud.handle.dir };
   const dir = localAxisWorld(group, face.axis).multiplyScalar(face.dir);
@@ -131,6 +138,7 @@ function beginResizeDrag(e, hit, ud) {
     overlaps0: new Set(overlaps(cab, cab.pose)),
     lastGood: { params: cab.params, pose: { ...cab.pose } },
     stopped: null,
+    column: ud.handle.axis === "x" && isBaseCabinet(cab.moduleId) ? kitchenWidthIndex(cab, ud.handle.dir) : null,
   };
   canvas.setPointerCapture(e.pointerId);
   canvas.style.cursor = "grabbing";
@@ -178,7 +186,7 @@ function resizeDragMove(e) {
     job.updateCabinet(d.cabId, (c) => { c.pose = pose; });
     job.setParams(d.cabId, params, { history: false });
   };
-  const params = mod.resizeFace ? mod.resizeFace(d.params0, d.face, L) : mod.setEnvelope(d.params0, { [dim]: L });
+  const params = mod.resizeFace ? mod.resizeFace(d.params0, d.face, L, { column: d.column }) : mod.setEnvelope(d.params0, { [dim]: L });
   if (!params) {
     d.stopped = "a zone at its minimum";
   } else {

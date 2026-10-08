@@ -5,7 +5,7 @@ import { MIN_ZONE_HEIGHT } from "../modules.js";
 import { envelopeBox } from "../fit.js";
 import { keepCorner } from "../pose.js";
 import { thickness } from "../materials.js";
-import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode } from "./widgets.js";
+import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode, outerSizeFields } from "./widgets.js";
 // --- tall cabinet editor --------------------------------------------------------------
 //
 // Wide page while a general tall cabinet is selected: the generator's 2D front
@@ -269,16 +269,12 @@ export function renderTall(cab, mod, result, shared) {
   }
 
   // Cabinet-level fields, folded.
-  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
   const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
   const setNested = (group, key) => (v) => job.setParams(cab.id, { ...p, [group]: { ...(p[group] || {}), [key]: v } });
+  const sizes = () => outerSizeFields(cab, mod, env, p, { logKind: "tall.size" });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
-    section("Outer size (= box)", [
-      numField("Width (mm)", env.W, setEnv("W")),
-      numField("Depth (mm)", env.D, setEnv("D")),
-      numField("Height (mm)", env.H, setEnv("H")),
-    ]),
+    section("Outer size (= box)", sizes()),
     section("Systems", [
       numField("Top rail (mm)", p.topSystem?.frontRailHeight ?? 40, setNested("topSystem", "frontRailHeight"), { step: 5, min: 0 }),
       numField("Bottom rail (mm)", p.bottomSystem?.frontRailHeight ?? 53, setNested("bottomSystem", "frontRailHeight"), { step: 5, min: 0 }),
@@ -298,7 +294,8 @@ export function renderTall(cab, mod, result, shared) {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
-      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
+      el("div", { class: "panel-sizes" }, outerSizeFields(cab, mod, env, p, { logKind: "tall.size" })),
     ]),
     shared.board,
     frontSection(`Front view · from the room · ${zones.length} zone${zones.length === 1 ? "" : "s"} bottom → top`, [

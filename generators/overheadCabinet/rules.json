@@ -25,10 +25,11 @@
   "LED_GROOVE_WIDTH_MM": { "value": 14.5, "doc": "LED insert groove width (shared with General Tall / Kitchen / Fridge).", "label": "LED 槽宽" },
   "LED_GROOVE_DEPTH_MM": { "value": 6.5, "doc": "LED insert groove depth.", "label": "LED 槽深" },
   "LED_GROOVE_FRONT_LAND_MM": { "value": 18, "doc": "Clear strip from the T3 front edge to the near wall of the main LED channel.", "label": "LED 主槽前侧留料" },
-  "LED_GROOVE_BRANCH_END_INSET_MM": { "value": 80, "doc": "LED T-branch centres inset from each X end of T3.", "label": "LED 支槽距板端" },
+  "LED_GROOVE_BRANCH_END_INSET_MM": { "value": 30, "doc": "LED T-branch centres inset from each X end of T3.", "label": "LED 支槽距板端" },
   "RANGEHOOD_CUTOUT_WIDTH_MM": { "value": 555, "doc": "NCE rangehood: BP cutout width.", "label": "油烟机开孔宽" },
   "RANGEHOOD_CUTOUT_DEPTH_MM": { "value": 285, "doc": "NCE rangehood: BP cutout depth.", "label": "油烟机开孔深" },
   "RANGEHOOD_MIN_EDGE_MM": { "value": 40, "doc": "NCE rangehood: minimum material left around the cutout.", "label": "油烟机最小边缘留料" },
   "RANGEHOOD_DEFAULT_CLEAR_HEIGHT_MM": { "value": 75, "doc": "NCE rangehood: clear height from BP top to the insert top when the params give none.", "label": "油烟机默认净空高度" },
-  "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges.", "label": "封边厚" }
+  "EDGE_BAND_THICKNESS_MM": { "value": 1, "doc": "Edge-tape thickness written on each banded outline edge. Colour is separate: door colour on fronts, carcass colour on the visible carcass edges.", "label": "封边厚" },
+  "RUN_SHEET_MAX_MM": { "value": 2400, "doc": "An overhead longer than this cannot be cut as one board. The panel asks for a split; a shorter run may still be split.", "label": "单板最长" }
 }

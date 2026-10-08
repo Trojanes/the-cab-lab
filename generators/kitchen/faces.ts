@@ -3,7 +3,7 @@
  */
 import { dim, ref, valueOf } from "../_lib/dim.ts";
 import { setEdgeBand } from "../_lib/edgeBand.ts";
-import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, faceRef, joint, localRect, planeAxes, type AxisDir, type Board, type Joint } from "../_lib/model.ts";
+import { addFeature, annotate, boundaryEdgeFaces, edgeFaces, faceRef, joint, localRect, planeAxes, type AxisDir, type Board, type Joint, tagEdges } from "../_lib/model.ts";
 import { resolveDeclaredJoints } from "../_lib/resolveJoints.ts";
 import { relationshipDeclarationsForBoards } from "./relationshipDeclarations.ts";
 import { RULES as R } from "./rules.ts";
@@ -22,11 +22,16 @@ function frontWorldY(b: Board): number | null {
   return b.y0 + (edge.from[c] + edge.to[c]) / 2;
 }
 
-/** Style 1 B3 bottom face (−Z). Omitted `on` is the caller's decision. Returns warnings. */
+/** Style 1 B3 bottom face (−Z), including each piece of a split deck. Returns warnings. */
 export function addKitchenB3Led(boards: Board[], on: boolean): string[] {
   if (!on) return [];
-  const b3 = boards.find((b) => b.id === "B3");
-  if (!b3) return ["B3 LED groove skipped: B3 board missing."];
+  const decks = boards.filter((b) => b.boardType === "bottom_deck");
+  if (!decks.length) return ["B3 LED groove skipped: B3 board missing."];
+  return decks.flatMap((b3) => addOneB3Led(b3));
+}
+
+function addOneB3Led(b3: Board): string[] {
+  const id = b3.id;
   const width = b3.x1 - b3.x0;
   const rear = b3.y1 - b3.y0;
   const W = R.LED_GROOVE_WIDTH_MM.value;
@@ -37,7 +42,7 @@ export function addKitchenB3Led(boards: Board[], on: boolean): string[] {
     return [`B3 LED groove skipped: depth ${depth} would cut through the ${b3.materialThickness} mm board.`];
   }
   if (width <= inset * 2 + W) {
-    return [`B3 LED groove skipped: board width ${width.toFixed(1)} too narrow for 80 mm end insets.`];
+    return [`B3 LED groove skipped: board width ${width.toFixed(1)} too narrow for ${inset} mm end insets.`];
   }
   const v0 = land;
   const v1 = land + W;
@@ -47,17 +52,17 @@ export function addKitchenB3Led(boards: Board[], on: boolean): string[] {
   if (rear - v1 <= 1e-6) {
     return ["B3 LED groove T-branches skipped: no remaining depth behind the main channel."];
   }
-  const KM = "B3.feat.LED_MAIN";
+  const KM = `${id}.feat.LED_MAIN`;
   dim(`${KM}.u0`, {}, () => 0);
-  dim(`${KM}.u1`, { w: ref("B3.x1"), x0: ref("B3.x0") }, (t) => t.w - t.x0);
+  dim(`${KM}.u1`, { w: ref(`${id}.x1`), x0: ref(`${id}.x0`) }, (t) => t.w - t.x0);
   dim(`${KM}.v0`, { land: R.LED_GROOVE_FRONT_LAND_MM }, (t) => t.land);
   dim(`${KM}.v1`, { land: R.LED_GROOVE_FRONT_LAND_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.land + t.W);
   addFeature(b3, "B", {
-    id: "B3_LED_MAIN", kind: "tgroove", u0: 0, u1: width, v0, v1, depth,
+    id: `${id}_LED_MAIN`, kind: "tgroove", u0: 0, u1: width, v0, v1, depth,
     for: "led", key: KM, source: "kitchen", group: "B3.LED",
   });
   [0, 1].forEach((i) => {
-    const KB = `B3.feat.LED_BRANCH_${i + 1}`;
+    const KB = `${id}.feat.LED_BRANCH_${i + 1}`;
     const x0 = i === 0
       ? dim(`${KB}.u0`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET - t.W / 2)
       : dim(`${KB}.u0`, { w: ref(`${KM}.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET - t.W / 2);
@@ -65,9 +70,9 @@ export function addKitchenB3Led(boards: Board[], on: boolean): string[] {
       ? dim(`${KB}.u1`, { INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.INSET + t.W / 2)
       : dim(`${KB}.u1`, { w: ref(`${KM}.u1`), INSET: R.LED_GROOVE_BRANCH_END_INSET_MM, W: R.LED_GROOVE_WIDTH_MM }, (t) => t.w - t.INSET + t.W / 2);
     dim(`${KB}.v0`, { v: ref(`${KM}.v1`) }, (t) => t.v);
-    dim(`${KB}.v1`, { rear: ref("B3.y1"), y0: ref("B3.y0") }, (t) => t.rear - t.y0);
+    dim(`${KB}.v1`, { rear: ref(`${id}.y1`), y0: ref(`${id}.y0`) }, (t) => t.rear - t.y0);
     addFeature(b3, "B", {
-      id: `B3_LED_BRANCH_${i + 1}`, kind: "tgroove",
+      id: `${id}_LED_BRANCH_${i + 1}`, kind: "tgroove",
       u0: x0, u1: x1, v0: v1, v1: rear, depth,
       for: "led", key: KB, source: "kitchen", group: "B3.LED",
     });
@@ -90,7 +95,7 @@ export function buildKitchenFaces(fb: {
   const B = new Map(fb.boards.map((b) => [b.id, b]));
   for (const b of fb.boards) {
     b.role = b.category;
-    const isFront = b.category === "front_panel" || b.boardType === "front_panel" || b.id === "B1";
+    const isFront = b.category === "front_panel" || b.boardType === "front_panel" || b.boardType === "bottom_front" || b.boardType === "stove_side_panel";
     if (isFront) {
       b.stock = { kind: "door", thickness: b.materialThickness, colour: fb.doorColour };
       annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.doorColour } });
@@ -175,8 +180,9 @@ export function buildKitchenFaces(fb: {
   for (const n of fb.notches) {
     const p = B.get(n.panelId);
     if (!p || p.profilePlane !== "XY") continue;
+    // The notch is cut in the shelf outline; tag those edges (a face "notch" is not machined).
     const r = localRect(p, { x: [n.x0, n.x1], y: [n.y0, n.y1] });
-    addFeature(p, "A", { id: n.id, kind: "notch", ...r, for: "strip", source: "kitchen" });
+    tagEdges(p, "notch", r, { id: n.id, for: "strip", source: "kitchen" });
   }
 
   // Outer edges only. A V front that reaches the door face takes the door colour;
@@ -187,16 +193,45 @@ export function buildKitchenFaces(fb: {
     for (const f of boundaryEdgeFaces(b, normal)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour });
   };
   for (const b of fb.boards) {
-    if (b.boardType === "bench_top") {
+    if (b.boardType === "bench_top" || b.boardType === "bench_waterfall") {
       if (fb.benchColour) {
-        annotate(b, "A", { semantic: "top", visible: true, finish: { colour: fb.benchColour, grain: "u" } });
-        annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: carcass } });
-        band(b, "-Y", fb.benchColour);
+        if (b.profilePlane === "XZ") {
+          // Thickness runs in Y, so the show faces are the top edge and the outer edge.
+          annotate(b, "B", { semantic: "front", visible: true, finish: { colour: fb.benchColour, grain: "u" } });
+          annotate(b, "A", { semantic: "back", visible: true, finish: { colour: carcass } });
+          const show = b.boardType === "bench_waterfall"
+            ? (b.x0 < 0.01 ? "-X" : "+X")
+            : "+Z";
+          for (const f of boundaryEdgeFaces(b, show as AxisDir)) {
+            annotate(b, f.id, { semantic: show === "+Z" ? "top" : "outer", visible: true, finish: { colour: fb.benchColour, grain: show === "+Z" ? "u" : "v" } });
+          }
+          if (b.boardType === "bench_top") {
+            for (const f of boundaryEdgeFaces(b, "-Z")) annotate(b, f.id, { semantic: "bottom", visible: true, finish: { colour: carcass } });
+          }
+        } else {
+          annotate(b, "A", { semantic: "top", visible: true, finish: { colour: fb.benchColour, grain: "u" } });
+          annotate(b, "B", { semantic: "bottom", visible: true, finish: { colour: carcass } });
+          band(b, "-Y", fb.benchColour);
+        }
       }
       continue;
     }
-    if (b.boardType === "front_panel") {
+    if (b.boardType === "front_panel" || b.boardType === "stove_side_panel") {
       for (const f of edgeFaces(b)) setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: fb.doorColour });
+      continue;
+    }
+    if (b.boardType === "stove_half_divider") {
+      band(b, "-Y", fb.doorColour);
+      band(b, "+Y", carcass);
+      continue;
+    }
+    if (b.boardType === "stove_full_shelf") {
+      for (const f of boundaryEdgeFaces(b, "-Y")) {
+        const [U, V] = planeAxes(b.profilePlane);
+        const c = U === "y" ? 0 : V === "y" ? 1 : -1;
+        const y = c < 0 || !f.edge ? 0 : b.y0 + (f.edge.from[c] + f.edge.to[c]) / 2;
+        setEdgeBand(b, Number(f.id.slice(1)), { thickness: tape, colour: y < -0.5 ? fb.doorColour : carcass });
+      }
       continue;
     }
     if (b.boardType === "vertical_panel") {

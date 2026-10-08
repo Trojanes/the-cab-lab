@@ -27,8 +27,8 @@ const groups = new Map(); // wallId -> Group
 function boardGeo(wall, board) {
   const holes = (board.holes || []).map((h) => h.map((p) => (wall.axis === "x" ? { y: p.u, z: p.z } : { x: p.u, z: p.z })));
   return wall.axis === "x"
-    ? prismYZ(board.outline.map((p) => ({ y: p.u, z: p.z })), board.x0, board.x1, holes)
-    : prismXZ(board.outline.map((p) => ({ x: p.u, z: p.z })), board.y0, board.y1, holes);
+    ? prismYZ(board.outline.map((p) => ({ y: p.u, z: p.z, bulge: p.bulge })), board.x0, board.x1, holes)
+    : prismXZ(board.outline.map((p) => ({ x: p.u, z: p.z, bulge: p.bulge })), board.y0, board.y1, holes);
 }
 
 function buildGroup(wall) {
@@ -55,8 +55,8 @@ function buildGroup(wall) {
   // Sliding doors: the leaf and the pelmet are boards parallel to the wall (walls.js openingParts).
   for (const p of st.parts || []) {
     const pg = wall.axis === "x"
-      ? prismYZ(p.outline.map((q) => ({ y: q.u, z: q.z })), p.x0, p.x1)
-      : prismXZ(p.outline.map((q) => ({ x: q.u, z: q.z })), p.y0, p.y1);
+      ? prismYZ(p.outline.map((q) => ({ y: q.u, z: q.z, bulge: q.bulge })), p.x0, p.x1)
+      : prismXZ(p.outline.map((q) => ({ x: q.u, z: q.z, bulge: q.bulge })), p.y0, p.y1);
     const pm = new THREE.Mesh(pg, st.ok ? wallMat : wallMatBad);
     pm.userData = { kind: "wall", wallId: wall.id, part: p.part, opId: p.opId };
     g.add(pm);

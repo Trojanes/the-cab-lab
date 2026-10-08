@@ -188,8 +188,8 @@
             "z1": 100
           },
           "H34_bottom": {
-            "x0": 15,
-            "x1": 585,
+            "x0": 16,
+            "x1": 584,
             "y0": 553,
             "y1": 568,
             "z0": 0,
@@ -212,8 +212,8 @@
             "z1": 1099
           },
           "H34_mid": {
-            "x0": 15,
-            "x1": 585,
+            "x0": 16,
+            "x1": 584,
             "y0": 553,
             "y1": 568,
             "z0": 999,
@@ -814,62 +814,6 @@
         },
         "features": {},
         "faceFeatures": {
-          "V1.A.zi_slot_V1_boundary-zone-2": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V1.A.zi_slot_V1_boundary-zone-3": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-2": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-3": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-2": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-3": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-2": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-3": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
           "Zi_boundary-zone-3.A.zi_groove_VD_zone-3_boundary-zone-3": {
             "u0": 292,
             "u1": 308,
@@ -1120,8 +1064,8 @@
             "z1": 100
           },
           "H34_bottom": {
-            "x0": 15,
-            "x1": 649,
+            "x0": 16,
+            "x1": 648,
             "y0": 569,
             "y1": 584,
             "z0": 0,
@@ -1144,24 +1088,24 @@
             "z1": 1100
           },
           "H34_mid": {
-            "x0": 15,
-            "x1": 649,
+            "x0": 16,
+            "x1": 648,
             "y0": 569,
             "y1": 584,
             "z0": 1000,
             "z1": 1100
           },
           "H12_blank_top": {
-            "x0": 0,
-            "x1": 664,
+            "x0": 16,
+            "x1": 648,
             "y0": 0,
             "y1": 15,
             "z0": 1614,
             "z1": 1714
           },
           "H12_blank_bottom": {
-            "x0": 0,
-            "x1": 664,
+            "x0": 16,
+            "x1": 648,
             "y0": 0,
             "y1": 15,
             "z0": 1314,
@@ -1754,76 +1698,6 @@
         },
         "features": {},
         "faceFeatures": {
-          "V1.A.zi_slot_V1_boundary-drawer-a": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V1.A.zi_slot_V1_boundary-drawer-b": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
-          "V1.A.zi_slot_V1_boundary-blank": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 1298.5,
-            "v1": 1314.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-drawer-a": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-drawer-b": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 983.5,
-            "v1": 999.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-blank": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 1298.5,
-            "v1": 1314.5,
-            "depth": 50
-          },
-          "V3.A.zi_slot_V3_boundary-drawer-a": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V3.A.zi_slot_V3_boundary-blank": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 1298.5,
-            "v1": 1314.5,
-            "depth": 50
-          },
-          "V4.B.zi_slot_V4_boundary-drawer-a": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 668.5,
-            "v1": 684.5,
-            "depth": 50
-          },
-          "V4.B.zi_slot_V4_boundary-blank": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 1298.5,
-            "v1": 1314.5,
-            "depth": 50
-          },
           "FP_side-door.A.FP_side-door_hinge_1": {
             "diameter": 35,
             "depth": 12.5,
@@ -2555,48 +2429,6 @@
         },
         "features": {},
         "faceFeatures": {
-          "V1.A.zi_slot_V1_boundary-zone-2": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 242.5,
-            "v1": 258.5,
-            "depth": 50
-          },
-          "V1.A.zi_slot_V1_boundary-zone-3": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 504.5,
-            "v1": 520.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-2": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 242.5,
-            "v1": 258.5,
-            "depth": 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-3": {
-            "u0": 100,
-            "u1": 150,
-            "v0": 504.5,
-            "v1": 520.5,
-            "depth": 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-3": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 504.5,
-            "v1": 520.5,
-            "depth": 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-3": {
-            "u0": 0,
-            "u1": 50,
-            "v0": 504.5,
-            "v1": 520.5,
-            "depth": 50
-          },
           "B3.B.B3_LED_MAIN": {
             "u0": 0,
             "u1": 577,
@@ -2605,15 +2437,15 @@
             "depth": 6.5
           },
           "B3.B.B3_LED_BRANCH_1": {
-            "u0": 72.75,
-            "u1": 87.25,
+            "u0": 22.75,
+            "u1": 37.25,
             "v0": 32.5,
             "v1": 150,
             "depth": 6.5
           },
           "B3.B.B3_LED_BRANCH_2": {
-            "u0": 489.75,
-            "u1": 504.25,
+            "u0": 539.75,
+            "u1": 554.25,
             "v0": 32.5,
             "v1": 150,
             "depth": 6.5

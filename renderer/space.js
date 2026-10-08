@@ -125,6 +125,7 @@ const wallMat = new THREE.MeshStandardMaterial({
   depthWrite: false,
 });
 const obstacleMat = new THREE.MeshStandardMaterial({ color: 0x55606f, roughness: 0.9, transparent: true, opacity: 0.6 });
+const wheelArchMat = new THREE.MeshStandardMaterial({ color: 0xd94b4b, roughness: 0.55, transparent: true, opacity: 0.38, depthWrite: false });
 const roofMat = new THREE.MeshStandardMaterial({
   color: 0x46526a,
   roughness: 0.9,
@@ -236,6 +237,12 @@ export function drawSpace(resolved) {
   for (const o of obstacles || []) {
     const m = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.z1 - o.z0), obstacleMat);
     m.position.set((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, (o.z0 + o.z1) / 2);
+    room.add(m);
+  }
+  for (const o of resolved.wheelArches || []) {
+    const m = new THREE.Mesh(new THREE.BoxGeometry(o.x1 - o.x0, o.y1 - o.y0, o.z1 - o.z0), wheelArchMat);
+    m.position.set((o.x0 + o.x1) / 2, (o.y0 + o.y1) / 2, (o.z0 + o.z1) / 2);
+    m.raycast = () => {};
     room.add(m);
   }
 
@@ -366,6 +373,35 @@ function fitOrtho(radius) {
   ortho.left = -halfH * aspect;
   ortho.right = halfH * aspect;
   ortho.updateProjectionMatrix();
+}
+
+/** The orbit the window is using, so a refresh can put the camera back. */
+export function captureView() {
+  const active = document.querySelector("#viewGroup [data-view].active");
+  return {
+    view: active?.dataset.view || "3d",
+    pos: camera.position.toArray(),
+    target: controls.target.toArray(),
+  };
+}
+
+/** Put a captured orbit back. Does not reframe the space. */
+export function restoreView(saved) {
+  if (!saved || !Array.isArray(saved.pos) || saved.pos.length < 3 || !Array.isArray(saved.target) || saved.target.length < 3) return false;
+  const nums = [...saved.pos.slice(0, 3), ...saved.target.slice(0, 3)];
+  if (!nums.every((n) => Number.isFinite(n))) return false;
+  endFaceView();
+  camera.position.set(nums[0], nums[1], nums[2]);
+  controls.target.set(nums[3], nums[4], nums[5]);
+  settleControls();
+  const name = typeof saved.view === "string" ? saved.view : "3d";
+  document.querySelectorAll("#viewGroup [data-view]").forEach((b) => {
+    b.classList.toggle("active", b.dataset.view === name);
+  });
+  const btn = document.querySelector(`#viewGroup [data-view="${name}"]`);
+  const label = document.getElementById("viewLabel");
+  if (label && btn) label.textContent = btn.textContent;
+  return true;
 }
 
 export function setView(name) {

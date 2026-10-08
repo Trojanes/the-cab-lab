@@ -1,0 +1,12 @@
+---
+description: Defaults the user saves in the app must not be edited from code
+alwaysApply: true
+---
+
+# Saved defaults are the user's
+
+On the Define the space dialog, **Set current as default** writes the selected kind (Box or Vehicle) to `<userData>/settings.json`. The Cabinets block on that same dialog saves colours and stock the same way. On this machine the file is `%APPDATA%\The Cab Lab\settings.json`. It is outside the repo. **Reset to built-in** is the only control that removes a saved default.
+
+- Never open, rewrite, migrate, or "sync" that file. A code change, a refactor, a generator edit, or a request to match a number does not authorize writing it.
+- Never change `builtInBoxDefaults`, `builtInVehicleDefaults`, or any other built-in number so that it copies or overrides a default the user saved in the app.
+- When a task depends on what a new space or job starts from, read the saved values and follow them. Built-in numbers apply only when that key is absent.

@@ -4,7 +4,7 @@
 import * as job from "./job.js";
 import { getModule, fitZones, MIN_ZONE_HEIGHT } from "./modules.js";
 import { thickness } from "./materials.js";
-import { el, numField, dragField, section, kv, boardSection, grainSection, grainIssueLines, doorLine, fillDrawer, panel, wirePanelRepaint } from "./panel/widgets.js";
+import { el, numField, dragField, section, kv, boardSection, grainSection, grainIssueLines, doorLine, fillDrawer, panel, wirePanelRepaint, outerSizeFields } from "./panel/widgets.js";
 import { renderSpace, spaceFitIssues } from "./panel/space.js";
 import { renderOverhead, renderUShape } from "./panel/overhead.js";
 import { renderTall } from "./panel/tall.js";
@@ -194,11 +194,7 @@ function renderCabinet(cab) {
       el("div", { class: "panel-sub", text: `${cab.id} · ${result?.boards?.length || 0} boards` }),
     ]),
     board,
-    section("Outer size (= box)", [
-      numField("Width (mm)", env.W, setEnv("W")),
-      numField("Depth (mm)", env.D, setEnv("D")),
-      numField("Height (mm)", env.H, setEnv("H")),
-    ]),
+    section("Outer size (= box)", outerSizeFields(cab, mod, env, p, { logKind: "cabinet.size" })),
     cab.moduleId === "smallCabinet" ? section("Sides", [
       el("label", { class: "field check", title: "Door panel: colour face outward, half groove. Off: carcass side, groove through." }, [
         el("input", { type: "checkbox", checked: !!p.leftSideDoorColor, onchange: (e) => job.setParams(cab.id, { ...p, leftSideDoorColor: e.target.checked }) }),
@@ -250,8 +246,12 @@ let panelLeaving = false;
 function paintPanel() {
   const sel = job.getSelected();
   // The wide editor page only while an OHC or the Bedroom body is selected; everything else uses the narrow panel.
-  const wide = !!sel && ["ohc", "bedroom", "bedroomEast", "bedSide", "tall", "tallFridge", "kitchen", "lounge"].includes(getModule(sel.moduleId).panel);
+  const page = sel ? getModule(sel.moduleId).panel : "";
+  const wide = ["ohc", "bedroom", "bedroomEast", "bedSide", "tall", "tallFridge", "kitchen", "lounge"].includes(page);
   panel.classList.toggle("wide", wide);
+  panel.classList.toggle("kitchen", page === "kitchen");
+  panel.classList.toggle("ohc", page === "ohc");
+  panel.classList.toggle("fridge", page === "tallFridge");
   if (sel) renderCabinet(sel);
   else {
     const pl = job.getSelectedPlane();

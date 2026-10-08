@@ -3,7 +3,7 @@ import * as job from "../job.js";
 import { getSpaceKind } from "../spaces.js";
 import { openSpaceDialog } from "../spaceDialog.js";
 import { cabinetHits, overlaps, poseFits, statusOf } from "../fit.js";
-import { describeMaterials } from "../materials.js";
+import { catalogueFields } from "../catalogueMenu.js";
 import { el, grainIssueLines, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";
 // --- space ---------------------------------------------------------------------
 
@@ -47,6 +47,7 @@ export function renderSpace() {
         el("div", { class: "empty small", text: "Define the space first: a box room, or a vehicle (box rear + side-profile nose); imported floor plans later." }),
         el("button", { class: "tb primary wide-solid", text: "Define the space", onclick: () => openSpaceDialog() }),
       ]),
+      section("Cabinets", catalogueFields()),
     );
     drawerChecks.replaceChildren(el("div", { class: "empty", text: "No space defined." }));
     drawerBoards.replaceChildren(el("div", { class: "empty", text: "No space defined." }));
@@ -67,10 +68,7 @@ export function renderSpace() {
       ).map(([label, value]) => el("div", { class: "kv" }, [el("span", { text: label }), el("b", { text: value })])),
       el("button", { class: "tb wide", text: "Edit space…", onclick: () => openSpaceDialog() }),
     ]),
-    section("Cabinets", [
-      ...describeMaterials(job.getFinish(), job.getStock()).map(([label, value]) =>
-        el("div", { class: "kv" }, [el("span", { text: label }), el("b", { text: value })])),
-    ]),
+    section("Cabinets", catalogueFields()),
     issues.length
       ? el("div", { class: "panel-section" }, [
           el("div", { class: "sec-title", text: "Checks" }),

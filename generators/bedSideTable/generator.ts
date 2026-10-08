@@ -23,6 +23,8 @@
 import type { BedSideParams, BedSideResult, BedSideZone, BedSideZoneType, Board } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same, type Term } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { addFeature, annotate, attachFaces, faceRef, joint, localRect, tagEdges, type Joint } from "../_lib/model.ts";
 import { applyDoorSides } from "../_lib/finish.ts";
 import { applyMilling } from "../_lib/milling.ts";
@@ -87,7 +89,7 @@ function resolve(raw: BedSideParams) {
   };
 }
 
-export function generateBedSideTable(raw: BedSideParams): BedSideResult {
+export function generateBedSideTable(raw: BedSideParams, options: { layout?: unknown } = {}): BedSideResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const p = resolve(raw);
@@ -201,6 +203,11 @@ export function generateBedSideTable(raw: BedSideParams): BedSideResult {
     }
 
     for (const b of boards) b.source = "bedSideTable";
+    applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+      side: p.side,
+      lower: p.zones[0]?.type || "left_door",
+      upper: p.zones[1]?.type || "drawer",
+    });
     attachFaces(boards);
     for (const b of boards) {
       const doorish = b.id === "SHOW" || b.category === "front_panel";

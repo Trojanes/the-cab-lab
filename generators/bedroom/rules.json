@@ -45,7 +45,7 @@
   "LED_GROOVE_DEPTH_MM": { "value": 6.5, "doc": "LED strip channel depth (15 mm board keeps 8.5)." },
   "LED_T3_T1_GAP_MM": { "value": 0.5, "doc": "T3 top: the main LED channel's back wall stops this short of T1's front face, so the channel sits on the strip of T3 in front of T1. Style 3: T1 front 35 → channel 20 → 34.5." },
   "LED_T3_BRANCH_WIDTH_MM": { "value": 20, "doc": "T3 top: the feed branches from the main channel to the rear edge are this wide (wider than the channel: a cable slot). Style 3 measures 20." },
-  "LED_T3_BRANCH_END_INSET_MM": { "value": 80, "doc": "T3 top: one feed branch near each end of every T3, its centre this far from that end. Style 3 varies 59 – 99; the position is not critical." },
+  "LED_T3_BRANCH_END_INSET_MM": { "value": 30, "doc": "T3 top: one feed branch near each end of every T3, its centre this far from that end." },
   "LED_NOOK_SHELF_FROM_ROOM_FACE_MM": { "value": 54, "doc": "Nook shelf underside: the LED channel starts this far from the room face and runs to the shelf's rear edge, centred across the shelf. Style 3 measures 54." },
   "WARDROBE_DOOR_CLEARANCE_MM": { "value": 4, "doc": "Reveal around the wardrobe door: wall-side gap, and the vertical gap between the Style 1 fixed panel and the door. Opening side is flush with the colour panel." },
   "WARDROBE_FIXED_PANEL_TOP_DEFAULT_MM": { "value": 775, "doc": "Style 1: top of the fixed panel (the dragged split) when the params give none. Bedroom 1 measures 775; the door starts this + clearance above it." },

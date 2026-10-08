@@ -155,22 +155,27 @@ regeneration. Today only OHC `T1`–`T4`; every other board is still placed in c
 
 Decided 2026‑10‑03 (phases 2–5). Right-click a module → *Generator rules…* opens it.
 
-- **Other generators, display only** (not started; kitchen is first). The bench shows
-  the formula a face already has. Editing changes an existing parameter (a column
-  width, a row height, a cabinet depth) and the whole cabinet is generated again.
-  Nothing writes a new placement formula, and these modules do not grow a
-  `layout.json`. Three kinds on screen: a parameter the cabinet maker changes, a
-  workshop rule (`rules.json`, a reason is required), and a computed face (the
-  formula is shown, the edit lands on the parameter it uses). A face that comes
-  from the space or from another module (bedroom width, bed-box width and height)
-  is shown that way and is not edited here. Every board face must have a
-  provenance entry whose value matches the face before that module is listed.
-  Bunk and bed box already do. Bedside covers faces and outline points. East-west
-  bedroom records every face; a face that was placed as a millimetre keeps that
-  number until its own formula is named. Kitchen and ensuite are the first module
-  on the bench this way (`benchShape: "base"`): column widths, row heights, kick
-  and stock are the existing parameters; a face keeps the formula the generator
-  already has and is not given a new one. Ensuite offers no stove zone. Storage (`benchShape: "tall"`)
+- **Other generators.** The bench shows the formula a face already has. Editing a
+  cabinetmaker parameter (a column width, a row height, a cabinet depth) regenerates
+  the whole cabinet. A workshop rule (`rules.json`) needs a reason. A computed face
+  shows its formula. A face that comes from the space or from another module
+  (bedroom width, bed-box width and height) is shown and is not edited here.
+  Every board face must have a provenance entry whose value matches the face
+  before that module is listed. Bunk and bed box already do. Bedside covers faces
+  and outline points. East-west bedroom records every face; a face that was placed
+  as a millimetre keeps that number until its own formula is named. Kitchen and
+  ensuite (`benchShape: "base"`) edit column widths, row heights, kick and stock,
+  and also share `generators/kitchen/layout.json`. Every generator has a
+  `layout.json`. It stays empty until a face is edited. Default
+  mode and face mode (接触 / 延伸) write a draft for the board that was edited; the
+  generator still builds the cabinet, then moves that board's box and keeps its
+  size. The outline follows the box. Notches cut into other boards stay where the
+  code put them. An axis may carry `when` (the switches this module already has).
+  The bench draws that fork under the axis: a switch is a branch only when flipping it changes that face, and each leaf shows its own formula. The open leaf is marked 当前.
+  Saving defaults to the open situation; the other situations keep the code
+  formula. "这几档用同一条" stores one rule with no `when`. A board this situation
+  does not build is left unused; the other rules still apply. The draft is kept until 提交 writes the file. Ensuite offers no
+  stove zone. Storage (`benchShape: "tall"`)
   edits width, carcass depth, height, stock and side panels; zone heights trade
   and the stack stays put. Fridge (`benchShape: "fridge"`) edits the cut-out;
   outer width stays `cut-out + side + 3 CPT` and is not typed. Lounge
@@ -188,10 +193,13 @@ Decided 2026‑10‑03 (phases 2–5). Right-click a module → *Generator rules
   goes through `tryLayout()`: generated first, refused (with the generator's reason)
   if the generator refuses it — the last good draft stays. 撤销 / 重做 (Ctrl+Z / Y),
   放弃, 提交… (reason required; writes `layout.json`, rebuilds the bundle, logs
-  `bench.layout.commit`; scope = the generator template, the main app picks it up when
-  reopened). A face relation confirmed in the bench is only `bench.layout.edit` until
-  that commit — closing the window used to drop it with the page session. The draft
-  now stays in localStorage and the window asks before closing while it is dirty. A commit is refused (`bench.layout.conflict`) when layout.json changed
+  `bench.layout.commit`; scope = the generator template). The rebuild is sent to
+  the open Cab Lab window, which loads that bundle at once and regenerates
+  cabinets of the module. A face relation confirmed in the bench is only `bench.layout.edit` until
+  that commit. Closing Generator Rules, or closing The Cab Lab (which closes
+  this window with it), drops an uncommitted draft. The bench asks before it
+  closes while a draft is dirty. Opening it again starts from the module just
+  chosen, not the previous screen. A reload after 提交 keeps the open tab. A commit is refused (`bench.layout.conflict`) when layout.json changed
   after the draft started (another tab, a teammate, the agent): nothing is overwritten.
   The bench always generates from the file / draft, never the copy baked into its
   bundle.

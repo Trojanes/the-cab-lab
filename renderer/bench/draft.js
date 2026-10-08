@@ -36,6 +36,42 @@ export function rebase(draft) {
   return createDraft(draft.layout);
 }
 
+/** Two `when` maps name the same situation. Both empty means the rule applies in every situation. */
+export function sameWhen(a, b) {
+  const ak = Object.keys(a || {}).sort();
+  const bk = Object.keys(b || {}).sort();
+  return ak.length === bk.length && ak.every((k, i) => k === bk[i] && a[k] === b[k]);
+}
+
+function casesOf(rule) {
+  if (!rule) return [];
+  if (Array.isArray(rule.cases)) return rule.cases.map((c) => ({ ...c }));
+  const { cases, ...one } = rule;
+  return [one];
+}
+
+function packCases(cases) {
+  return cases.length === 1 ? cases[0] : { cases };
+}
+
+/** Add one axis, for one situation. Other axes, and other situations of this axis, stay untouched. */
+export function ensureAxis(layout, boardId, axis, rule, when) {
+  const stamped = { ...rule };
+  delete stamped.cases;
+  if (when && Object.keys(when).length) stamped.when = when;
+  else delete stamped.when;
+  const existing = layout.boards?.[boardId]?.axes?.[axis];
+  if (existing && casesOf(existing).some((c) => sameWhen(c.when, stamped.when))) return layout;
+  const next = clone(layout);
+  next.boards = next.boards || {};
+  const board = { ...(next.boards[boardId] || {}) };
+  const cases = casesOf(existing);
+  cases.push(stamped);
+  board.axes = { ...(board.axes || {}), [axis]: packCases(cases) };
+  next.boards[boardId] = board;
+  return next;
+}
+
 /** Give a board a placement rule if it does not have one yet. `axes` is `{ x: { from, at, size }, … }`. */
 export function ensureBoard(layout, boardId, axes) {
   const have = layout.boards?.[boardId]?.axes;
@@ -57,12 +93,22 @@ function axisOf(face) {
  * the size stays, so the opposite face moves the same distance (whole board).
  * A face relation on that axis is replaced.
  */
-export function setFace(layout, boardId, face, expr) {
+export function setFace(layout, boardId, face, expr, when, universal = false) {
   const { axis, side } = axisOf(face);
   const next = clone(layout);
   const rule = next.boards?.[boardId]?.axes?.[axis];
   if (!rule) throw new Error(`${boardId} has no ${axis} rule`);
-  next.boards[boardId].axes[axis] = { from: side, at: String(expr).trim(), size: rule.size };
+  const cases = casesOf(rule);
+  if (universal) {
+    next.boards[boardId].axes[axis] = { from: side, at: String(expr).trim(), size: cases[0].size };
+    return next;
+  }
+  const hit = cases.find((c) => sameWhen(c.when, when));
+  if (!hit) throw new Error(`${boardId} has no ${axis} rule for this situation`);
+  hit.from = side;
+  hit.at = String(expr).trim();
+  delete hit.relation;
+  next.boards[boardId].axes[axis] = packCases(cases);
   return next;
 }
 
@@ -79,14 +125,17 @@ export function relationAt(refKey, face, gap = 0, extra = 0) {
 }
 
 /** Face mode: `face` of `boardId` sits on `refKey` (`T1.y1` or a notch plane). Contact or flush, plus an optional gap. */
-export function setRelation(layout, boardId, face, refKey, kind, gap = 0, extra = 0) {
+export function setRelation(layout, boardId, face, refKey, kind, gap = 0, extra = 0, when, universal = false) {
   if (kind !== "contact" && kind !== "flush") throw new Error(`unknown relation ${kind}`);
-  const next = setFace(layout, boardId, face, relationAt(refKey, face, gap, extra));
+  const next = setFace(layout, boardId, face, relationAt(refKey, face, gap, extra), when, universal);
   const { axis } = axisOf(face);
   const relation = { kind, ref: refKey };
   if (Number(gap)) relation.offset = Number(gap);
   if (Number(extra)) relation.delta = Number(extra);
-  next.boards[boardId].axes[axis].relation = relation;
+  const cases = casesOf(next.boards[boardId].axes[axis]);
+  const hit = universal ? cases[0] : cases.find((c) => sameWhen(c.when, when));
+  if (hit) hit.relation = relation;
+  next.boards[boardId].axes[axis] = packCases(cases);
   return next;
 }
 

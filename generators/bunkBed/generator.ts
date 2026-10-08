@@ -29,6 +29,8 @@
  *    600 from the far wall     914.5 from the ladder wall
  */
 import { Outline, beginProvenance, dim, endProvenance, lit, param, ref, type Term } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { addFeature, annotate, attachFaces, boundaryEdgeFaces, faceRef, joint, tagEdges, type Board, type FaceId, type Joint } from "../_lib/model.ts";
 import { applyMilling } from "../_lib/milling.ts";
 import { applyDoorSides, doorColourBOf, doorColourOf, doorSidesOf } from "../_lib/finish.ts";
@@ -123,7 +125,7 @@ function box(y0: number, y1: number, z0: number, z1: number): Array<{ y: number;
   return [{ y: y0, z: z0 }, { y: y1, z: z0 }, { y: y1, z: z1 }, { y: y0, z: z1 }, { y: y0, z: z0 }];
 }
 
-export function generateBunkBed(raw: BunkBedParams) {
+export function generateBunkBed(raw: BunkBedParams, options: { layout?: unknown } = {}) {
   const errors: string[] = [];
   const warnings: string[] = [];
   const W = round1(num(raw.length, 0));
@@ -426,6 +428,7 @@ export function generateBunkBed(raw: BunkBedParams) {
   }
   const grain = applyGrain(boards, (b) => (b.stock?.kind === "door" ? (b.role === "end_panel" ? "side" : "front") : null), raw, { front: "horizontal", side: "vertical" });
   applyDoorSides(boards, { doorSides, carcassColorName: color });
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, { endSide });
   const provenance = endProvenance();
 
   const zone = (id: BunkZone["id"], label: string, kind: BunkZone["kind"], z0: number, z1: number, made: string[] = []): BunkZone => ({

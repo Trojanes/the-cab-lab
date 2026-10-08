@@ -159,6 +159,19 @@ interface Workpiece {
   edgeBands: [];
 }
 
+/**
+ * A mitred bench is extruded along its depth so the solid shows the 45°.
+ * The nest is the flat sheet: the show face, at the board's own thickness.
+ */
+function sheetOutline(board: Board): Pt[] | null {
+  if (board.profilePlane !== "XZ" || (board.boardType !== "bench_top" && board.boardType !== "bench_waterfall")) return null;
+  const along = board.boardType === "bench_waterfall" ? Math.abs(board.z1 - board.z0) : Math.abs(board.x1 - board.x0);
+  const across = Math.abs(board.y1 - board.y0);
+  if (!(along > 0) || !(across > 0)) return null;
+  return [[0, 0], [along, 0], [along, across], [0, across]];
+}
+
+
 function buildBoard(
   jobId: string,
   cab: CnjobCabinet,
@@ -166,7 +179,7 @@ function buildBoard(
   reasons: string[],
 ): { workpiece: Workpiece; material: Record<string, unknown> } | null {
   const where = `${cab.id}/${board.id}`;
-  const outline0 = localOutline(board) ?? rectOutline(board);
+  const outline0 = sheetOutline(board) ?? localOutline(board) ?? rectOutline(board);
   if (outline0.length < 3) {
     reasons.push(`${where}: the outline has fewer than 3 points`);
     return null;

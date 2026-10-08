@@ -1,10 +1,11 @@
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { log } from "../log.js";
-import { MIN_ZONE_WIDTH, fitZoneWidths } from "../modules.js";
+import { MIN_ZONE_WIDTH, fitZoneWidths, overheadEndPanel } from "../modules.js";
 import { sideLabel, sideOfRotZ } from "../interact.js";
 import { thickness } from "../materials.js";
-import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode } from "./widgets.js";
+import { showControlPanelForm } from "../quickCard.js";
+import { el, doorLine, numField, section, frontSection, kv, panel, repaint, gapMode, outerSizeFields, controlPanelRows } from "./widgets.js";
 // --- overhead editor ---------------------------------------------------------------
 //
 // Wide page while an OHC is selected: a zone strip (left → right, drag the
@@ -28,6 +29,69 @@ export function ohcSelect(cabId, indices) {
 function ohcTypeShort(mod, type) {
   const t = mod.zoneTypes.find((z) => z.id === type);
   return t ? t.short || t.label : type;
+}
+
+function ohcSplitTargets(zones) {
+  const out = [];
+  let x = 0;
+  for (let i = 0; i < zones.length - 1; i += 1) {
+    x += Number(zones[i].width) || 0;
+    if (zones[i].type === "rangehood_flap" && zones[i + 1].type === "rangehood_flap") continue;
+    out.push({ after: i, x });
+  }
+  return out;
+}
+
+function startSplitDrag(e, cab, _mod, total) {
+  e.preventDefault();
+  e.stopPropagation();
+  const handle = e.currentTarget;
+  const before = job.snapshot();
+  const params0 = cab.params;
+  const from = params0.splitAfter ?? null;
+  const row = handle.parentElement;
+  const rect = row.getBoundingClientRect();
+  try { handle.setPointerCapture(e.pointerId); } catch (_) { /* synthetic pointer */ }
+  handle.classList.add("active");
+  ohcDrag = { cabId: cab.id, refresh: () => {} };
+  const move = (ev) => {
+    const targets = ohcSplitTargets(params0.zones || []);
+    if (!targets.length || !rect.width) return;
+    const x = ((ev.clientX - rect.left) / rect.width) * total;
+    const hit = targets.reduce((best, t) => (Math.abs(t.x - x) < Math.abs(best.x - x) ? t : best));
+    job.setParams(cab.id, { ...params0, splitAfter: hit.after }, { history: false });
+  };
+  const end = (ev) => {
+    handle.removeEventListener("pointermove", move);
+    handle.removeEventListener("pointerup", end);
+    handle.removeEventListener("pointercancel", end);
+    try { handle.releasePointerCapture(ev.pointerId); } catch (_) { /* released */ }
+    ohcDrag = null;
+    const changed = job.commitSnapshot(before);
+    const now = job.getSelected();
+    log("ohc.split.move", {
+      id: cab.id, from, to: now ? now.params.splitAfter ?? null : null,
+      x: now ? job.resultFor(cab.id)?.debug?.split?.x ?? null : null,
+      changed, where: "zone strip",
+    });
+    repaint();
+  };
+  e.currentTarget.addEventListener("pointermove", move);
+  e.currentTarget.addEventListener("pointerup", end);
+  e.currentTarget.addEventListener("pointercancel", end);
+}
+
+/**
+ * The width a zone shows: clearance (face to face) or centre to centre, whichever the
+ * front view's dropdown reads, from the last generation. Falls back to the stored span.
+ */
+function ohcShownWidths(cab, mod) {
+  const zones = job.getSelected()?.id === cab.id ? job.getSelected().params.zones || [] : cab.params.zones || [];
+  const read = typeof mod.zoneOpenings === "function" ? mod.zoneOpenings(job.resultFor(cab.id)) : [];
+  const ok = read.length === zones.length;
+  const out = zones.map((z, i) => (ok && read[i] ? (gapMode === "center" ? read[i].center : read[i].clear) : z.width));
+  out.readout = ok; // false: the generator gave no openings (checks failing), so these are the stored spans
+  return out;
 }
 
 /** The zone strip: proportional cells with draggable boundaries; returns { strip, refresh }. */
@@ -55,15 +119,28 @@ function zoneStrip(cab, mod) {
   });
 
   const layout = (zs) => {
-    let x = 0;
+    const shown = ohcShownWidths(cab, mod);
+    const r1 = (v) => String(Math.round(v * 10) / 10);
     zs.forEach((z, i) => {
       cells[i].style.flexBasis = `${(z.width / total) * 100}%`;
-      cells[i].querySelector(".zs-w").textContent = String(Math.round(z.width));
-      x += z.width;
+      cells[i].querySelector(".zs-w").textContent = r1(shown[i] ?? z.width);
     });
-    widthRow.replaceChildren(...zs.map((z) => el("span", { style: `flex-basis:${(z.width / total) * 100}%`, text: String(Math.round(z.width)) })));
+    widthRow.replaceChildren(...zs.map((z, i) => el("span", { style: `flex-basis:${(z.width / total) * 100}%`, text: r1(shown[i] ?? z.width), title: !shown.readout ? "Stored width (boundary to boundary)" : gapMode === "center" ? "Centre to centre" : "Clearance" })));
     let acc = 0;
-    cumRow.replaceChildren(...zs.slice(0, -1).map((z) => { acc += z.width; return el("span", { style: `left:${(acc / total) * 100}%`, text: String(Math.round(acc)) }); }));
+    const marks = [];
+    zs.slice(0, -1).forEach((z, i) => {
+      acc += z.width;
+      const on = job.getSelected()?.params?.splitAfter === i;
+      const mark = el("span", {
+        class: on ? "zs-split" : "",
+        style: `left:${(acc / total) * 100}%`,
+        text: on ? "↔" : String(Math.round(acc)),
+        title: on ? "Drag the split onto a line between zones" : "",
+      });
+      if (on) mark.addEventListener("pointerdown", (e) => startSplitDrag(e, cab, mod, total));
+      marks.push(mark);
+    });
+    cumRow.replaceChildren(...marks);
   };
 
   // Boundaries: a grip between neighbouring cells; drag moves the boundary (10 mm steps, Shift = 1 mm).
@@ -119,16 +196,6 @@ export function renderUShape(cab, mod, result, shared) {
     job.setParams(cab.id, { ...p, ...patch });
     log("uohc.set", { id: cab.id, key, from, to });
   };
-  const setHeightDown = (v) => {
-    const H = Math.max(mod.minSize.H, v);
-    const before = job.snapshot();
-    job.updateCabinet(cab.id, (c) => {
-      c.params = mod.setEnvelope(c.params, { H });
-      c.pose = { ...c.pose, z: c.pose.z + (env.H - H) };
-    });
-    job.commitSnapshot(before);
-    log("uohc.set", { id: cab.id, key: "cabinetHeight", from: env.H, to: H });
-  };
   const runCard = (run, label) => {
     const types = run === "BACK" ? mod.zoneTypes : mod.sideZoneTypes;
     const zones = (p.zones && p.zones[run]) || [{ id: `${run}-1`, type: "up_flap", width: 1 }];
@@ -163,15 +230,19 @@ export function renderUShape(cab, mod, result, shared) {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "U overhead" }),
-      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} mm · back on the wall` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · back on the wall` }),
+      el("div", { class: "panel-sizes" }, outerSizeFields(cab, mod, env, p, {
+        logKind: "uohc.size",
+        heightFrom: "top",
+        show: { D: false },
+        labels: { W: "Width along the wall (mm)" },
+      })),
     ]),
     shared.board,
     section("Runs", [
-      numField("Width along the wall (mm)", p.totalWidth, (v) => set({ totalWidth: Math.max(mod.minSize.W, v) }, "totalWidth", p.totalWidth, v)),
       numField("Left arm (mm)", p.leftArmLength, (v) => set({ leftArmLength: Math.max(0, v) }, "leftArmLength", p.leftArmLength, v), { step: 10, min: 0 }),
       numField("Right arm (mm)", p.rightArmLength, (v) => set({ rightArmLength: Math.max(0, v) }, "rightArmLength", p.rightArmLength, v), { step: 10, min: 0 }),
       numField("Run depth (mm)", p.cabinetDepth, (v) => set({ cabinetDepth: Math.max(150, v) }, "cabinetDepth", p.cabinetDepth, v), { step: 10, min: 150 }),
-      numField("Height (mm)", env.H, setHeightDown),
       el("div", { class: "empty small", text: "The back run owns both corners. Each arm is only the part past that corner. Drawing the box sets both arms to the box depth; change an arm here afterwards." }),
     ]),
     runCard("LEFT", "Left arm"),
@@ -201,28 +272,89 @@ export function renderOverhead(cab, mod, result, shared) {
   if (ohcDrag && ohcDrag.cabId === cab.id && panel.querySelector(".zs-strip")) {
     ohcDrag.refresh();
     const view = panel.querySelector(".ohc-front");
-    if (view) view.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1, gaps: gapMode }) || "";
+    if (view) view.innerHTML = mod.frontView(job.resultFor(cab.id), { selectedZoneIndex: selected[0] ?? -1, gaps: gapMode }) || "";
     return;
   }
 
   const { strip, widthRow, cumRow } = zoneStrip(cab, mod);
 
-  const addZone = el("button", { class: "tb", text: "+ Add zone", onclick: () => {
-    // The new zone takes up to 300 mm from the widest one (or everything is re-fitted).
+  // Add / delete follow the selected zone, as in the kitchen: only that zone gives or takes width,
+  // zones further right keep theirs. After a delete the split stays when the two zones across it survive.
+  const r1 = (v) => Math.round(v * 10) / 10;
+  const keepSplit = (patch, next) => {
+    if (!Number.isInteger(p.splitAfter)) return patch;
+    const leftId = zones[p.splitAfter]?.id;
+    const rightId = zones[p.splitAfter + 1]?.id;
+    const at = next.findIndex((z, k) => z.id === leftId && next[k + 1]?.id === rightId);
+    if (at >= 0) patch.splitAfter = at;
+    else delete patch.splitAfter;
+    return patch;
+  };
+  const one = selected.length === 1 ? selected[0] : -1;
+  // The add is planned when the page is drawn, so a refused add shows as a greyed button with the reason.
+  const addPlan = (() => {
+    if (one < 0) return { reason: "Select one zone first. The new zone goes to its right." };
+    if (zones[one]?.type === "rangehood_flap" && zones[one + 1]?.type === "rangehood_flap") {
+      return { reason: "A zone cannot go inside a range hood group." };
+    }
     const next = zones.map((z) => ({ ...z }));
-    const widest = next.reduce((a, b) => (b.width > a.width ? b : a), next[0]);
-    const take = Math.min(300, widest.width - MIN_ZONE_WIDTH);
-    const zone = { id: `zone-${Date.now().toString(36)}`, type: "up_flap", width: Math.max(MIN_ZONE_WIDTH, take) };
-    if (take >= MIN_ZONE_WIDTH) { widest.width = Math.round((widest.width - take) * 10) / 10; next.push(zone); setZones(next, "add"); }
-    else if ((next.length + 1) * MIN_ZONE_WIDTH <= total) { next.push(zone); setZones(fitZoneWidths(next, total), "add"); }
-    else log("ohc.zone.blocked", { id: cab.id, reason: `no room for another ${MIN_ZONE_WIDTH} mm zone`, total });
-    ohcSelect(cab.id, [next.length - 1]);
-  } });
-  const delZone = el("button", { class: "tb", text: "Delete", disabled: !selected.length || zones.length - selected.length < 1, onclick: () => {
-    const next = zones.filter((_, i) => !selected.includes(i)).map((z) => ({ ...z }));
-    setZones(fitZoneWidths(next, total), "remove", { removed: selected });
-    ohcSelect(cab.id, []);
-  } });
+    const host = next[one];
+    const take = Math.min(400, r1(host.width / 2));
+    if (take < MIN_ZONE_WIDTH || host.width - take < MIN_ZONE_WIDTH) {
+      return { reason: `Zone ${one + 1} is ${Math.round(host.width)} wide: it cannot give ${MIN_ZONE_WIDTH} mm and keep ${MIN_ZONE_WIDTH}.` };
+    }
+    host.width = r1(host.width - take);
+    const zone = { id: `zone-${Date.now().toString(36)}`, type: "up_flap", width: take };
+    next.splice(one + 1, 0, zone);
+    const patch = { ...p, zones: next };
+    // The new zone fills up to the old line, so a split on or right of that line moves one index along.
+    if (Number.isInteger(p.splitAfter) && p.splitAfter >= one) patch.splitAfter = p.splitAfter + 1;
+    // Refuse an add the generator would reject (e.g. a range hood group left narrower than its insert needs).
+    const known = new Set(result?.validation?.errors || []);
+    let fresh = [];
+    try { fresh = (mod.generate(patch)?.validation?.errors || []).filter((m) => !known.has(m)); } catch (_) { fresh = []; }
+    if (fresh.length) return { reason: `Not here: ${fresh[0]}` };
+    return { patch, next };
+  })();
+  const addZone = el("button", {
+    class: "tb",
+    text: "+ Add zone",
+    disabled: !!addPlan.reason,
+    title: addPlan.reason || "Insert a zone to the right of the selected one. Only that zone gives up width; zones further right keep theirs.",
+    onclick: () => {
+      if (addPlan.reason) { log("ohc.zone.blocked", { id: cab.id, zone: one, reason: addPlan.reason }); return; }
+      const { patch, next } = addPlan;
+      // Select first: setParams repaints the panel, and the buttons must see the new selection.
+      ohcSelect(cab.id, [one + 1]);
+      job.setParams(cab.id, patch);
+      log("ohc.zone.add", { id: cab.id, at: one + 1, from: one, widths: next.map((z) => z.width), types: next.map((z) => z.type), splitAfter: patch.splitAfter ?? null });
+    },
+  });
+  const delZone = el("button", {
+    class: "tb",
+    text: "Delete",
+    disabled: !selected.length || zones.length - selected.length < 1,
+    title: "Each deleted zone's width goes to the zone on its left (the first zone's to its right). Other zones keep theirs.",
+    onclick: () => {
+      const next = zones.map((z) => ({ ...z }));
+      const gone = new Set(selected.map((i) => next[i].id));
+      // Right to left, so a run of deleted zones all pours into the survivor on its left.
+      for (let i = next.length - 1; i >= 0; i -= 1) {
+        if (!gone.has(next[i].id)) continue;
+        let heir = -1;
+        for (let k = i - 1; k >= 0; k -= 1) if (!gone.has(next[k].id)) { heir = k; break; }
+        if (heir < 0) for (let k = i + 1; k < next.length; k += 1) if (!gone.has(next[k].id)) { heir = k; break; }
+        if (heir < 0) return;
+        next[heir].width = r1(next[heir].width + next[i].width);
+        next[i].width = 0;
+      }
+      const kept = next.filter((z) => !gone.has(z.id));
+      const patch = keepSplit({ ...p, zones: kept }, kept);
+      ohcSelect(cab.id, []);
+      job.setParams(cab.id, patch);
+      log("ohc.zone.remove", { id: cab.id, widths: kept.map((z) => z.width), types: kept.map((z) => z.type), removed: selected, splitAfter: patch.splitAfter ?? null });
+    },
+  });
   const avgZone = el("button", { class: "tb", text: "Average selected", disabled: selected.length < 2, title: "Give the selected zones equal widths (their total stays)", onclick: () => {
     const next = zones.map((z) => ({ ...z }));
     const sum = selected.reduce((s, i) => s + next[i].width, 0);
@@ -231,9 +363,84 @@ export function renderOverhead(cab, mod, result, shared) {
     setZones(next, "average", { zones: selected });
   } });
 
-  const front = el("div", { class: "ohc-front" });
+  const front = el("div", { class: "bedroom-front ohc-front" });
   front.innerHTML = mod.frontView(result, { selectedZoneIndex: selected[0] ?? -1, gaps: gapMode }) || "";
   if (!front.firstChild) front.append(el("div", { class: "empty small", text: "No front view — fix the checks first." }));
+  const openings = typeof mod.zoneOpenings === "function" ? mod.zoneOpenings(result) : [];
+
+  // Shown width (clearance or centre to centre) → stored width: the same delta. The neighbour on the right
+  // (on the left for the last zone) takes the difference, so the cabinet keeps its width.
+  // `clamp` (the zone card, like the kitchen card): an out-of-range number is cut back to the limit.
+  // Without it (the number under the front view, like the kitchen) it is refused.
+  const setShownWidth = (i, typed, shown, where, { clamp = false } = {}) => {
+    const neighbour = i < zones.length - 1 ? i + 1 : i - 1;
+    if (neighbour < 0 || !Number.isFinite(typed) || Math.abs(typed - shown) < 0.05) return;
+    const next = zones.map((zz) => ({ ...zz }));
+    let delta = r1(typed - shown);
+    if (clamp) {
+      const lo = MIN_ZONE_WIDTH - next[i].width;
+      const hi = next[neighbour].width - MIN_ZONE_WIDTH;
+      delta = r1(Math.max(lo, Math.min(hi, delta)));
+    }
+    const width = r1(next[i].width + delta);
+    const other = r1(next[neighbour].width - delta);
+    if (width < MIN_ZONE_WIDTH || other < MIN_ZONE_WIDTH || Math.abs(delta) < 0.05) {
+      log("ohc.zone.blocked", { id: cab.id, zone: i, reason: `a zone stays at least ${MIN_ZONE_WIDTH} mm`, typed, mode: gapMode, where });
+      repaint(); // the field goes back to the value the cabinet still has
+      return;
+    }
+    next[i].width = width;
+    next[neighbour].width = other;
+    setZones(next, "width", { zone: i, width, mode: gapMode, shown: typed, where });
+  };
+
+  const editZoneOpening = (dim) => {
+    if (front.querySelector(".col-dim-input")) return;
+    const i = Number(dim.getAttribute("data-col"));
+    const shown = Number(gapMode === "center" ? dim.dataset.center : dim.dataset.clear);
+    if (!Number.isInteger(i) || !Number.isFinite(shown)) return;
+    const box = dim.getBoundingClientRect();
+    const host = front.getBoundingClientRect();
+    const input = document.createElement("input");
+    input.type = "number";
+    input.className = "col-dim-input";
+    input.step = "1";
+    input.value = String(shown);
+    input.style.left = `${box.left - host.left + box.width / 2}px`;
+    input.style.top = `${box.top - host.top}px`;
+    front.append(input);
+    input.focus();
+    input.select();
+    let done = false;
+    const finish = (apply) => {
+      if (done) return;
+      done = true;
+      const typed = Number(input.value);
+      input.remove();
+      if (apply) setShownWidth(i, typed, shown, "front view");
+    };
+    input.addEventListener("keydown", (ev) => {
+      if (ev.key === "Enter") { ev.preventDefault(); finish(true); }
+      else if (ev.key === "Escape") { ev.preventDefault(); finish(false); }
+    });
+    input.addEventListener("blur", () => finish(true));
+  };
+
+  front.addEventListener("click", (e) => {
+    const dim = e.target.closest?.(".col-dim.editable");
+    if (dim) {
+      e.stopPropagation();
+      editZoneOpening(dim);
+      return;
+    }
+    const region = e.target.closest?.("[data-zone-index]");
+    if (!region) return;
+    const i = Number(region.getAttribute("data-zone-index"));
+    const cur = ohcSelected(cab.id);
+    if (e.ctrlKey || e.metaKey) ohcSelect(cab.id, cur.includes(i) ? cur.filter((k) => k !== i) : [...cur, i]);
+    else ohcSelect(cab.id, cur.length === 1 && cur[0] === i ? [] : [i]);
+    repaint();
+  });
 
   // Selected zone card.
   let zoneCard = null;
@@ -255,20 +462,15 @@ export function renderOverhead(cab, mod, result, shared) {
       job.setParams(cab.id, patch);
       log("ohc.zone.type", { id: cab.id, widths: next.map((zz) => zz.width), types: next.map((zz) => zz.type), zone: i, type: e.target.value });
     } }, mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
-    const neighbour = i < zones.length - 1 ? i + 1 : i - 1;
-    const maxW = neighbour >= 0 ? z.width + zones[neighbour].width - MIN_ZONE_WIDTH : total;
+    const read = openings.length === zones.length ? openings[i] : null;
+    const widthShown = read ? (gapMode === "center" ? read.center : read.clear) : z.width;
+    const widthLabel = !read ? "Width (mm)" : gapMode === "center" ? "Centre width (mm)" : "Clear width (mm)";
     zoneCard = section(`Zone ${i + 1} of ${zones.length}`, [
       el("label", { class: "field" }, [el("span", { text: "Type" }), type]),
-      numField("Width (mm)", z.width, (v) => {
+      numField(widthLabel, widthShown, (v) => {
         // The neighbour to the right (or left for the last zone) absorbs the difference.
-        const w = Math.max(MIN_ZONE_WIDTH, Math.min(maxW, Math.round(v)));
-        if (neighbour < 0) return;
-        const next = zones.map((zz) => ({ ...zz }));
-        const delta = w - next[i].width;
-        next[i].width = w;
-        next[neighbour].width = Math.round((next[neighbour].width - delta) * 10) / 10;
-        setZones(next, "width", { zone: i, width: w });
-      }, { step: 10, min: MIN_ZONE_WIDTH }),
+        setShownWidth(i, Number(v), widthShown, "zone card", { clamp: true });
+      }, { step: 1, min: 0, readOnly: zones.length <= 1 ? "The only zone fills the cabinet" : null }),
       el("div", { class: "kv" }, [el("span", { text: "From left" }), el("b", { text: `${Math.round(zones.slice(0, i).reduce((s, zz) => s + zz.width, 0))} – ${Math.round(zones.slice(0, i + 1).reduce((s, zz) => s + zz.width, 0))} mm` })]),
     ]);
   } else if (selected.length > 1) {
@@ -306,21 +508,22 @@ export function renderOverhead(cab, mod, result, shared) {
     el("div", { class: "empty small", text: "A top, a front and a back in carcass stock. The top tongues into the dividers on each side of the group, and any divider inside the group stands on that top. Clear height is the gap from the bottom panel's top face up to the insert. The carcass needs 365 mm of depth, and 635 mm clear between those outer dividers. Hood zones that touch are one insert; a flap or a fixed panel between two hoods is refused." }),
   ]) : null;
 
+  // A converted partition: the door-stock end panel and the control panels cut through that end.
+  const endPanel = overheadEndPanel(p);
+  const endCard = endPanel || (p.controlPanels || []).length ? section("End panel", [
+    endPanel
+      ? kv("End panel", `${endPanel} · door stock ${fpt} mm · door underside to the top, flush with the door face`)
+      : kv("End panel", "none"),
+    endPanel ? el("div", { class: "empty small", text: "Right-click the cabinet: Change to partition puts a fitted partition back on this outer face when a kitchen waterfall lines up with it." }) : null,
+    ...controlPanelRows(cab.id, p.controlPanels || [], { host: "endPanel", canAdd: !!endPanel }),
+  ].filter(Boolean)) : null;
+
   // Cabinet-level fields, folded.
-  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
-  const setHeightDown = (v) => {
-    // The top stays on the ceiling: a taller box moves its bottom down.
-    const H = Math.max(mod.minSize.H, v);
-    const before = job.snapshot();
-    job.updateCabinet(cab.id, (c) => { c.params = mod.setEnvelope(c.params, { H }); c.pose = { ...c.pose, z: c.pose.z + (env.H - H) }; });
-    job.commitSnapshot(before);
-  };
+  const sizes = () => outerSizeFields(cab, mod, env, p, { logKind: "ohc.size", heightFrom: "top", depthPad: fpt });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D + fpt)} × ${Math.round(env.H)} · ${result?.boards?.length || 0} boards` }),
     section("Outer size (= box, doors included)", [
-      numField("Width (mm)", env.W, setEnv("W")),
-      numField("Depth (mm)", env.D + fpt, (v) => setEnv("D")(v - fpt)),
-      numField("Height (mm)", env.H, setHeightDown),
+      ...sizes(),
       el("div", { class: "kv" }, [el("span", { text: "Bottom above floor" }), el("b", { text: `${Math.round(cab.pose.z)} mm` })]),
     ]),
     section("Material (job stock)", [
@@ -376,14 +579,42 @@ export function renderOverhead(cab, mod, result, shared) {
     ]),
   ]);
 
+  const splitTargets = ohcSplitTargets(zones);
+  const splitOn = Number.isInteger(p.splitAfter) && splitTargets.some((t) => t.after === p.splitAfter);
+  const splitBtn = el("button", {
+    class: `tb${splitOn ? " active" : ""}`,
+    text: splitOn ? "Remove split" : "Split",
+    disabled: !splitOn && splitTargets.length === 0,
+    title: splitTargets.length === 0
+      ? "Needs two zones, and the line cannot run through a rangehood."
+      : "Two carcasses butted on a zone line. Flaps there each keep half the clearance.",
+    onclick: () => {
+      if (splitOn) {
+        const next = { ...p };
+        delete next.splitAfter;
+        job.setParams(cab.id, next);
+        log("ohc.split", { id: cab.id, on: false, from: p.splitAfter });
+        return;
+      }
+      const mid = total / 2;
+      const hit = splitTargets.reduce((best, t) => (Math.abs(t.x - mid) < Math.abs(best.x - mid) ? t : best));
+      job.setParams(cab.id, { ...p, splitAfter: hit.after });
+      log("ohc.split", { id: cab.id, on: true, after: hit.after, x: hit.x });
+    },
+  });
+  const sheetWarn = (result?.validation?.warnings || []).find((w) => /cannot be cut/.test(w));
+  const sheetHint = sheetWarn ? el("div", { class: "zs-hint warn", text: sheetWarn }) : null;
+
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: `${mod.label} cabinet` }),
-      el("div", { class: "panel-sub", text: `${cab.id} · doors ${sideLabel(sideOfRotZ(cab.pose.rotZ))} · ${Math.round(env.W)} × ${Math.round(env.D + fpt)} × ${Math.round(env.H)} mm · top on the ceiling` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · doors ${sideLabel(sideOfRotZ(cab.pose.rotZ))} · top on the ceiling` }),
+      el("div", { class: "panel-sizes" }, outerSizeFields(cab, mod, env, p, { logKind: "ohc.size", heightFrom: "top", depthPad: fpt })),
     ]),
     shared.board,
     section(`Zones · left → right · ${zones.length} · ${Math.round(total)} mm`, [
-      el("div", { class: "zs-tools" }, [addZone, delZone, avgZone, el("span", { class: "zs-hint", text: "Drag a boundary · click a zone · Ctrl+click adds to the selection" })]),
+      el("div", { class: "zs-tools" }, [addZone, delZone, avgZone, splitBtn, el("span", { class: "zs-hint", text: splitOn ? "Drag the blue ↔ onto a line between zones. Flaps there each keep half the clearance." : "Drag a boundary · click a zone (strip or front view) · Ctrl+click adds to the selection · + Add zone goes right of the selected one" })]),
+      sheetHint,
       strip,
       widthRow,
       cumRow,
@@ -391,9 +622,12 @@ export function renderOverhead(cab, mod, result, shared) {
     zoneCard,
     hoodCard,
     frontSection("Front view", [front]),
+    endCard,
     fold,
     shared.grain,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),
   ].filter(Boolean));
 }
+
+// controlPanelRows — shared with the wall editor; lives in panel/widgets.js.

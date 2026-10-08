@@ -14,7 +14,7 @@
 import * as THREE from "three";
 import { canvas, rayFromClient, planePointAt, closestTOnLine } from "../space.js";
 import * as job from "../job.js";
-import { getModule, isBaseCabinet, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL } from "../modules.js";
+import { getModule, isBaseCabinet, BEDROOM_LAYOUT_LABEL as LAYOUT_LABEL, getKitchenWidthColumn, setKitchenWidthColumn } from "../modules.js";
 import {
   pickables, groupFor, setHandleHover, setEnvelopeDrag,
   showSnapMarker, hideSnapMarker, showInference, hideInference, showAlignLines, hideAlignLines,
@@ -28,7 +28,7 @@ import {
 import { showTip, hideTip } from "../hud.js";
 import { wallPickables } from "../walls3d.js";
 import { wallBoards } from "../walls.js";
-import { poseFits, overlaps, FRONT_THICKNESS_DEFAULT } from "../fit.js";
+import { poseFits, overlaps, envelopeFootprint, sideBlocked, FRONT_THICKNESS_DEFAULT } from "../fit.js";
 import { clearHeightAt } from "../spaces.js";
 import { log } from "../log.js";
 
@@ -306,11 +306,15 @@ export function setTyped(k, v) {
 
 /** Commit the field on Tab / Enter: expressions and comma lists. Returns the dim after the last filled one. */
 export function commitDim(k) {
+  const d = dimOwner();
   const parts = dimInputs[k].value.split(",");
   let kk = k;
   for (let i = 0; i < parts.length; i += 1) {
-    const v = evalDim(parts[i], currentDim(kk), maxDim(kk));
-    if (v != null) { setTyped(kk, v); dimInputs[kk].value = Math.round(v); }
+    if (parts[i].trim() === "" && d && d.clearsEmpty && d.clearsEmpty()) setTyped(kk, null);
+    else {
+      const v = evalDim(parts[i], currentDim(kk), maxDim(kk));
+      if (v != null) { setTyped(kk, v); dimInputs[kk].value = Math.round(v); }
+    }
     if (i < parts.length - 1) kk = nextDim(kk);
   }
   return nextDim(kk);
@@ -322,13 +326,18 @@ for (const k of DIM_ORDER) {
     // Plain numbers apply live; expressions wait for Tab / Enter.
     const s = input.value.trim();
     if (/^\d+(?:\.\d+)?$/.test(s)) setTyped(k, Number(s));
-    else if (s === "") setTyped(k, null);
+    else if (s === "") {
+      const d = dimOwner();
+      if (!d || !d.liveClearsEmpty || d.liveClearsEmpty()) setTyped(k, null);
+    }
   });
   input.addEventListener("keydown", (e) => {
     if (e.key === "Tab") {
       e.preventDefault();
       const next = commitDim(k);
       focusDim(e.shiftKey ? nextDim(k, true) : next);
+      const d = dimOwner();
+      if (d && d.refresh) d.refresh();
     } else if (e.key === "Enter") {
       e.preventDefault();
       commitDim(k);
@@ -446,8 +455,68 @@ export function endWallSplit(e) {
 
 // --- envelope handle drag ---------------------------------------------------------
 
+/** Kitchen left / right end, in the cabinet frame, flush against a wall or another solid. */
+export function kitchenEndBlocked(cab, end) {
+  if (!cab) return false;
+  const fp = envelopeFootprint(cab, cab.pose || {});
+  const b = {
+    x0: fp.minX, y0: fp.minY, z0: fp.z0,
+    W: Math.max(fp.maxX - fp.minX, 0.1), D: Math.max(fp.maxY - fp.minY, 0.1), H: Math.max(fp.z1 - fp.z0, 0.1),
+  };
+  const turns = (((cab.pose?.rotZ || 0) % 360) + 360) % 360;
+  const localDir = end === "right" ? 1 : -1;
+  const side = turns === 90 ? { axis: "y", dir: localDir }
+    : turns === 180 ? { axis: "x", dir: -localDir }
+    : turns === 270 ? { axis: "y", dir: -localDir }
+    : { axis: "x", dir: localDir };
+  return sideBlocked(b, side, cab.id);
+}
+
+/** Which column a kitchen width change uses. Asks once, then remembers it. */
+export function askKitchenColumn(client, columns, onPick) {
+  document.querySelectorAll(".column-ask").forEach((n) => n.remove());
+  const pop = document.createElement("div");
+  pop.className = "size-pop column-ask";
+  pop.style.position = "fixed";
+  pop.style.left = `${Math.min(client.x + 12, window.innerWidth - 280)}px`;
+  pop.style.top = `${Math.min(client.y + 12, window.innerHeight - 80)}px`;
+  pop.style.zIndex = "30";
+  const label = document.createElement("span");
+  label.textContent = "Which column changes?";
+  pop.append(label);
+  columns.forEach((col, i) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "tb";
+    button.textContent = `Column ${i + 1}`;
+    button.title = `${Math.round(col.width)} mm. Drag the width after this.`;
+    button.addEventListener("pointerdown", (ev) => ev.stopPropagation());
+    button.addEventListener("click", (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+      pop.remove();
+      onPick(i);
+    });
+    pop.append(button);
+  });
+  document.body.append(pop);
+}
+
+export function kitchenWidthIndex(cab, faceDir) {
+  const cols = cab.params?.columns || [];
+  if (cols.length < 2) return 0;
+  const remembered = getKitchenWidthColumn(cab.id);
+  if (remembered != null && remembered >= 0 && remembered < cols.length) return remembered;
+  return faceDir < 0 ? 0 : cols.length - 1;
+}
+
 export function beginHandleDrag(e, hit, cab) {
   const { handle, cabId } = hit.object.userData;
+  const cols = cab.params?.columns || [];
+  if (handle.type === "W" && isBaseCabinet(cab.moduleId) && cols.length > 1 && getKitchenWidthColumn(cab.id) == null) {
+    askKitchenColumn(e, cols, (index) => setKitchenWidthColumn(cab.id, index));
+    return;
+  }
   const group = groupFor(cabId);
   const axis = handle.type === "W" ? "x" : handle.type === "D" ? "y" : handle.type === "divider" ? (handle.axis || "z") : "z";
   const dir = localAxisWorld(group, axis);
@@ -460,6 +529,7 @@ export function beginHandleDrag(e, hit, cab) {
     pose0: { ...cab.pose },
     result0: job.resultFor(cabId),
     grain0: (job.resultFor(cabId)?.grain?.issues || []).length,
+    column: handle.type === "W" && isBaseCabinet(cab.moduleId) ? kitchenWidthIndex(cab, 1) : null,
   };
   // OrbitControls ignores the left button, so the middle button still orbits mid-drag.
   canvas.setPointerCapture(e.pointerId);
@@ -503,7 +573,9 @@ export function handleDragMove(e) {
 
   if (h.type === "W") {
     const W = Math.max(mod.minSize.W, job.snap(env0.W + delta));
-    applyIfFits(mod.setEnvelope(drag.params0, { W }), cab.pose);
+    const sized = mod.setEnvelope(drag.params0, { W }, { column: drag.column });
+    if (!sized) { stopped = true; stoppedBy = "a column at its minimum"; }
+    else applyIfFits(sized, cab.pose);
   } else if (h.type === "D") {
     // Front face is pulled; keep the back (local y = D) where it is.
     const D = Math.max(mod.minSize.D, job.snap(env0.D - delta));
@@ -517,10 +589,12 @@ export function handleDragMove(e) {
     if (mod.growsDown) {
       // Top glued to the ceiling: the bottom is pulled; a lower bottom = a taller box.
       const H = Math.max(mod.minSize.H, job.snap(env0.H - delta));
-      applyIfFits(mod.setEnvelope(drag.params0, { H }), { ...drag.pose0, z: drag.pose0.z + (env0.H - H) });
+      const sized = mod.setEnvelope(drag.params0, { H });
+      if (sized) applyIfFits(sized, { ...drag.pose0, z: drag.pose0.z + (env0.H - H) });
     } else {
       const H = Math.max(mod.minSize.H, job.snap(env0.H + delta));
-      applyIfFits(mod.setEnvelope(drag.params0, { H }), cab.pose);
+      const sized = mod.setEnvelope(drag.params0, { H });
+      if (sized) applyIfFits(sized, cab.pose);
     }
   } else if (h.type === "divider") {
     const prev = { params: cab.params, pose: { ...cab.pose } };

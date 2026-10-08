@@ -17,7 +17,7 @@
  * Display only: nothing here decides geometry.
  */
 import type { KitchenResult, KitchenZoneType } from "./types.ts";
-import { PV, boardGaps, dimText, fitCanvas, fmt, frontRect, gapMarks, grip, label, px, selectRect, spacedLabels, svgRoot, zoneColor } from "../_lib/preview.ts";
+import { PV, boardGaps, columnOpenings, dimText, fitCanvas, fmt, frontRect, gapMarks, grip, label, px, selectRect, spacedLabels, svgRoot, zoneColor, type DimSpec, type PxBox } from "../_lib/preview.ts";
 
 export interface KitchenSvgPreviewOptions {
   width?: number;
@@ -36,6 +36,26 @@ interface PreviewColumn {
   x0: number;
   x1: number;
   zones: { id: string; zoneType: KitchenZoneType; z0: number; z1: number }[];
+}
+
+/** Bottom corner of the inner-top notch, on the edge that faces the opening. */
+function notchFloorCorner(panel: { x0: number; x1: number; profilePlane?: string; profileVector?: Array<Record<string, number>> }): { x: number; z: number } | null {
+  const pv = panel.profileVector ?? [];
+  if (panel.profilePlane !== "XZ") return null;
+  const pts = pv
+    .map((p) => ({ x: Number(p.x), z: Number(p.z) }))
+    .filter((p) => Number.isFinite(p.x) && Number.isFinite(p.z));
+  if (pts.length < 4) return null;
+  const zTop = Math.max(...pts.map((p) => p.z));
+  const zBot = Math.min(...pts.map((p) => p.z));
+  const floor = pts.filter((p) => p.z > zBot + 0.4 && p.z < zTop - 0.4);
+  if (!floor.length) return null;
+  const z = Math.min(...floor.map((p) => p.z));
+  const at = floor.filter((p) => Math.abs(p.z - z) < 0.4);
+  const xMin = Math.min(...pts.map((p) => p.x));
+  const xMax = Math.max(...pts.map((p) => p.x));
+  const onEdge = at.find((p) => Math.abs(p.x - xMin) < 0.4 || Math.abs(p.x - xMax) < 0.4);
+  return { x: onEdge ? onEdge.x : at[0].x, z };
 }
 
 export const KITCHEN_ZONE_LABELS: Record<string, string> = {
@@ -59,27 +79,55 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
   if (!(W > 0) || !(H > 0)) return null;
   const columns = (result.debug?.columns ?? []) as PreviewColumn[];
   if (!columns.length) return null;
+  const bench = result.boards.find((b) => b.id === "BENCH");
+  const fall = result.boards.find((b) => b.id === "WATERFALL");
+  const bodyX0 = columns[0].x0;
+  const bodyX1 = columns[columns.length - 1].x1;
+  const xHi = Math.max(bodyX1, bench?.x1 ?? 0, fall?.x1 ?? 0);
+  const xLo = Math.min(bodyX0, bench?.x0 ?? 0, fall?.x0 ?? 0);
   const avoidances = (result.debug?.avoidances ?? []) as { id: string; x0: number; x1: number; height: number; depth: number }[];
+  const split = result.debug?.split as { after?: number; x?: number } | null;
+  const splitX = split && Number.isFinite(split.x) ? Number(split.x) : null;
 
   const width = options.width ?? 520;
   const showDimensions = options.showDimensions ?? true;
   const selZone = options.selectedZoneId ?? null;
   const selCol = options.selectedCol ?? -1;
   // data-h stays the carcass height: zone drags read it. The bench sits above that, in extra top padding.
-  const bench = result.boards.find((b) => b.id === "BENCH");
   const rise = bench ? Math.max(0, bench.z1 - H) : 0;
-  const fitted = fitCanvas(W, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: 14, b: showDimensions ? 40 : 14 });
+  const span = Math.max(xHi - xLo, 1);
+  const fitted = fitCanvas(span, H, width, options.maxHeight ?? 520, { l: 44, r: 16, t: splitX != null ? 36 : 14, b: showDimensions ? 40 : 14 });
   const extra = rise > 0 ? Math.ceil(rise * fitted.scale) + 6 : 0;
   const scale = fitted.scale;
   const ox = fitted.ox;
   const oy = fitted.oy + extra;
   const height = fitted.height + extra;
-  const toX = (x: number) => ox + x * scale;
+  const toX = (x: number) => ox + (x - xLo) * scale;
   const toY = (z: number) => oy + (H - z) * scale;
   const rect = (x0: number, x1: number, z0: number, z1: number) =>
     `x="${px(toX(x0))}" y="${px(toY(z1))}" width="${px(Math.max((x1 - x0) * scale, 0.8))}" height="${px(Math.max((z1 - z0) * scale, 0.8))}"`;
   const isSel = (ci: number, id: string) => id === selZone && (selCol < 0 || selCol === ci);
   const parts: string[] = [];
+  const stoveDims: DimSpec[] = [];
+  const avoidText: PxBox[] = [];
+  const reserve = (x: number, y: number, text: string, size: number) => {
+    const w = text.length * size * 0.62 + 4;
+    const h = size + 6;
+    avoidText.push({ x0: x - w / 2, y0: y - h / 2, x1: x + w / 2, y1: y + h / 2 });
+  };
+  const stripPoints = (b: { profilePlane?: string; profileVector?: Array<Record<string, number>> }) => {
+    const pv = b.profileVector ?? [];
+    if (b.profilePlane !== "XZ" || pv.length < 4) return "";
+    return pv
+      .filter((p) => Number.isFinite(Number(p.x)) && Number.isFinite(Number(p.z)))
+      .map((p) => `${px(toX(Number(p.x)))},${px(toY(Number(p.z)))}`)
+      .join(" ");
+  };
+  const stripPoly = (b: { id: string; profilePlane?: string; profileVector?: Array<Record<string, number>> }, emphasize: boolean) => {
+    const points = stripPoints(b);
+    if (!points) return "";
+    return `<polygon data-board="${b.id}" pointer-events="none" points="${points}" fill="${PV.front}" fill-opacity="${emphasize ? 0.95 : 0.55}" stroke="${emphasize ? "#f4fbff" : PV.frontLine}" stroke-width="${emphasize ? 1.75 : 0.75}" />`;
+  };
 
   // Cells: the pick areas under the boards; the kick a faint band.
   parts.push(`<rect ${rect(0, W, 0, BCH)} fill="rgba(255,255,255,0.025)" stroke="none" pointer-events="none" />`);
@@ -94,6 +142,18 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
   for (const b of boards) {
     const r = frontRect(b);
     if (!r || r.x1 - r.x0 < 0.1 || r.z1 - r.z0 < 0.1) continue;
+    if (b.boardType === "bench_top" || b.boardType === "bench_waterfall") {
+      if (b.profilePlane === "XZ") {
+        const poly = stripPoly(b, b.boardType === "bench_waterfall");
+        if (poly) parts.push(poly);
+        continue;
+      }
+    }
+    if (b.boardType === "stove_side_panel") {
+      const poly = stripPoly(b, false);
+      if (poly) parts.push(poly);
+      continue;
+    }
     const door = b.stock?.kind === "door";
     const isFront = b.y0 < -0.01;
     parts.push(
@@ -109,50 +169,85 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     if ((av.x1 - av.x0) * scale > 34) parts.push(label(toX((av.x0 + av.x1) / 2), toY(av.height) + 9, `wheel ${fmt(av.height)}`, { size: 9, fill: "#f08a8d" }));
   }
 
-  // Type colour over the boards. Clicks still hit the region underneath.
+  // Type colour over the boards, light enough that the boards still read. Clicks hit the region underneath.
   columns.forEach((col) => {
     for (const z of col.zones) {
-      parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" fill-opacity="0.9" stroke="none" />`);
+      parts.push(`<rect pointer-events="none" ${rect(col.x0, col.x1, z.z0, z.z1)} fill="${zoneColor(z.zoneType)}" fill-opacity="0.28" stroke="none" />`);
     }
   });
-
-  // Hinge cups and lock mortises (absolute cabinet x / z).
-  for (const h of result.hinges) {
-    parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max((h.diameter / 2) * scale, 1.5))}" fill="none" stroke="${PV.hinge}" stroke-width="1" pointer-events="none" />`);
-  }
-  for (const l of result.locks) {
-    const w = Math.max(l.width * scale, 4);
-    const h = Math.max(l.height * scale, 2.5);
-    parts.push(`<rect x="${px(toX(l.centerX) - w / 2)}" y="${px(toY(l.centerZ) - h / 2)}" width="${px(w)}" height="${px(h)}" rx="${px(h / 2)}" fill="${PV.lock}" fill-opacity="0.55" stroke="none" pointer-events="none" />`);
-  }
 
   columns.forEach((col, ci) => {
     const z = col.zones.find((zz) => isSel(ci, zz.id));
     if (z) parts.push(selectRect(rect(col.x0, col.x1, z.z0, z.z1)));
   });
 
-  // Cell names (type + height), haloed.
+  // Hinge cups and locks sit above the zone colour, so a moved cup stays visible.
+  for (const h of result.hinges) {
+    parts.push(`<circle cx="${px(toX(h.centerX))}" cy="${px(toY(h.centerZ))}" r="${px(Math.max((h.diameter / 2) * scale, 2.5))}" fill="none" stroke="#f4fbff" stroke-width="1.5" pointer-events="none" />`);
+  }
+  for (const l of result.locks) {
+    const w = Math.max(l.width * scale, 4);
+    const h = Math.max(l.height * scale, 2.5);
+    parts.push(`<rect x="${px(toX(l.centerX) - w / 2)}" y="${px(toY(l.centerZ) - h / 2)}" width="${px(w)}" height="${px(h)}" rx="${px(h / 2)}" fill="${PV.lock}" fill-opacity="0.85" stroke="none" pointer-events="none" />`);
+  }
+
+  // Stove side strips, notch included, in front of the zone colour and the selection wash.
+  for (const b of result.boards) {
+    if (b.boardType !== "stove_side_panel") continue;
+    const poly = stripPoly(b, true);
+    if (poly) parts.push(poly);
+  }
+
+  // Zone name. Width and height are the clearance / centre bars, drawn with the other openings.
   for (const col of columns) {
     const w = (col.x1 - col.x0) * scale;
     for (const z of col.zones) {
       const h = (z.z1 - z.z0) * scale;
       if (h < 14 || w < 36) continue;
-      const cx = toX((col.x0 + col.x1) / 2);
-      const cy = toY((z.z0 + z.z1) / 2);
       const name = KITCHEN_ZONE_LABELS[z.zoneType] ?? z.zoneType;
       const short = w < 90 ? name.replace("Door · hinge ", "Door ").replace("Double door", "Double") : name;
-      if (h >= 32) {
-        parts.push(label(cx, cy - 6, short, { size: 11, fill: z.zoneType === "unassigned" ? "#f08a8d" : PV.text }));
-        parts.push(label(cx, cy + 8, fmt(z.z1 - z.z0), { size: 10, fill: PV.text2 }));
-      } else {
-        parts.push(label(cx, cy, `${short} · ${fmt(z.z1 - z.z0)}`, { size: 10 }));
+      if (h >= 36) {
+        const nameX = toX((col.x0 + col.x1) / 2);
+        const nameY = toY(z.z1) + 12;
+        parts.push(label(nameX, nameY, short, { size: 11, fill: z.zoneType === "unassigned" ? "#f08a8d" : PV.text }));
+        reserve(nameX, nameY, short, 11);
+      }
+      if (z.zoneType !== "stove") continue;
+      const strips = result.boards
+        .filter((b) => b.boardType === "stove_side_panel" && b.id.includes(`-${z.id}-`))
+        .slice()
+        .sort((a, b) => a.x0 - b.x0);
+      if (strips.length < 2) continue;
+      const left = strips[0];
+      const right = strips[strips.length - 1];
+      const gap = right.x0 - left.x1;
+      stoveDims.push({
+        axis: "x", from: left.x1, to: right.x0,
+        edgeLo: Math.min(left.z0, right.z0), edgeHi: Math.max(left.z1, right.z1),
+        text: fmt(gap), color: "#d8dde4", priority: 0,
+      });
+      const shelf = result.boards.find((b) => b.boardType === "stove_full_shelf" && b.id.includes(`-${z.id}-`));
+      const corner = notchFloorCorner(left);
+      if (shelf && corner && corner.z > shelf.z1 + 0.5) {
+        stoveDims.push({
+          axis: "z", from: shelf.z1, to: corner.z,
+          edgeLo: corner.x, edgeHi: right.x0,
+          text: fmt(corner.z - shelf.z1), color: "#d8dde4", priority: 0,
+        });
       }
     }
   }
-  if ((BCH * scale) >= 11) parts.push(label(toX(0) + 6, toY(BCH / 2), `kick ${fmt(BCH)}`, { size: 9, fill: PV.text2, anchor: "start" }));
+  if ((BCH * scale) >= 11) {
+    const kick = `kick ${fmt(BCH)}`;
+    const kx = toX(0) + 6;
+    const ky = toY(BCH / 2);
+    parts.push(label(kx, ky, kick, { size: 9, fill: PV.text2, anchor: "start" }));
+    const kw = kick.length * 9 * 0.62;
+    avoidText.push({ x0: kx, y0: ky - 8, x1: kx + kw, y1: ky + 8 });
+  }
 
-  // Outer envelope.
-  parts.push(`<rect ${rect(0, W, 0, H)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
+  // Outer envelope of the carcass. A waterfall sits outside this, drawn from its own outline.
+  parts.push(`<rect ${rect(bodyX0, bodyX1, 0, H)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
 
   // Draggable boundaries: between columns (over the zone area), and between zones inside a column.
   for (let i = 0; i < columns.length - 1; i += 1) {
@@ -166,24 +261,64 @@ export function generateKitchenSvgPreview(result: KitchenResult, options: Kitche
     }
   });
 
+  // Split Kitchen: a double arrow above the run. It only sits on a column line.
+  if (splitX != null) {
+    const x = toX(splitX);
+    const y = toY(H) - 16;
+    const arm = 18;
+    const head = 6;
+    parts.push(
+      `<line x1="${px(x)}" y1="${px(toY(H))}" x2="${px(x)}" y2="${px(toY(BCH))}" stroke="#7eb6ff" stroke-width="1.25" stroke-dasharray="3 3" pointer-events="none" />`,
+    );
+    parts.push(
+      `<g class="boundary split-arrow" data-boundary="split" data-axis="x">` +
+      `<title>Split — drag onto a line between columns</title>` +
+      `<line x1="${px(x - arm)}" y1="${px(y)}" x2="${px(x + arm)}" y2="${px(y)}" stroke="#7eb6ff" stroke-width="2" />` +
+      `<polygon points="${px(x - arm)},${px(y)} ${px(x - arm + head)},${px(y - head)} ${px(x - arm + head)},${px(y + head)}" fill="#7eb6ff" />` +
+      `<polygon points="${px(x + arm)},${px(y)} ${px(x + arm - head)},${px(y - head)} ${px(x + arm - head)},${px(y + head)}" fill="#7eb6ff" />` +
+      `<line class="hit" x1="${px(x - arm)}" y1="${px(y)}" x2="${px(x + arm)}" y2="${px(y)}" stroke="transparent" stroke-width="14" pointer-events="stroke" />` +
+      `</g>`,
+    );
+  }
+
   if (showDimensions) {
     parts.push(spacedLabels([
       { y: toY(0), text: "0", fill: PV.text3 },
       { y: toY(BCH), text: fmt(BCH), fill: PV.text3 },
       { y: toY(H), text: fmt(H), fill: PV.text3 },
     ], ox - 6, "end"));
-    // Column widths along the bottom (draggable when there is more than one).
+    // Column openings along the bottom. Clearance or centre to centre, same choice as the gaps in the elevation.
+    const openings = columnOpenings(columns, result.boards);
+    const centerRead = (options.gaps ?? "clear") === "center";
     const yb = toY(0) + 12;
-    columns.forEach((col) => {
+    columns.forEach((col, ci) => {
       const x0 = toX(col.x0);
       const x1 = toX(col.x1);
+      const reading = openings[ci];
+      const shown = centerRead ? reading.center : reading.clear;
       parts.push(`<line x1="${px(x0)}" y1="${px(yb - 4)}" x2="${px(x0)}" y2="${px(yb + 4)}" stroke="${PV.text3}" pointer-events="none" />`);
       parts.push(`<line x1="${px(x1)}" y1="${px(yb - 4)}" x2="${px(x1)}" y2="${px(yb + 4)}" stroke="${PV.text3}" pointer-events="none" />`);
-      if (x1 - x0 >= 24) parts.push(dimText((x0 + x1) / 2, yb, fmt(col.x1 - col.x0), "middle", columns.length > 1 ? PV.boundary : PV.text2));
+      if (x1 - x0 >= 24) {
+        const text = fmt(shown);
+        const hit = Math.max(36, text.length * 8);
+        const mid = (x0 + x1) / 2;
+        const editable = columns.length > 1;
+        parts.push(
+          `<g class="col-dim${editable ? " editable" : ""}" data-col="${ci}" data-width="${reading.width}" data-clear="${reading.clear}" data-center="${reading.center}">` +
+          `<title>${centerRead ? "Centre to centre" : "Clearance"} · click to type</title>` +
+          (editable ? `<rect x="${px(mid - hit / 2)}" y="${px(yb - 9)}" width="${hit}" height="18" fill="transparent" />` : "") +
+          `<text x="${px(mid)}" y="${px(yb)}" text-anchor="middle" dominant-baseline="middle" font-size="10" fill="${editable ? PV.boundary : PV.text2}" pointer-events="none">${text}</text>` +
+          `</g>`,
+        );
+        reserve(mid, yb, text, 10);
+      }
     });
-    parts.push(dimText(toX(W / 2), yb + 15, `W ${fmt(W)} · H ${fmt(H)} · ${columns.length} column${columns.length === 1 ? "" : "s"}`, "middle", PV.text3));
+    const summary = `W ${fmt(xHi - xLo)} · H ${fmt(H)} · ${columns.length} column${columns.length === 1 ? "" : "s"}`;
+    const sy = yb + 22;
+    parts.push(dimText(toX((xLo + xHi) / 2), sy, summary, "middle", PV.text3));
+    reserve(toX((xLo + xHi) / 2), sy, summary, 10);
   }
-  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
+  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear", { extra: stoveDims, avoid: avoidText }));
 
   return svgRoot(width, height, { scale, ox, oy, w: W, h: H }, "Kitchen base front elevation", parts.join(""));
 }

@@ -4,7 +4,7 @@ import { openFloorPlan } from "../floorplan.js";
 import { DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SHEET_LONG_MM, SHEET_SHORT_MM, SLIDING_FLOOR_GAP, SLIDING_GAP, cabinetBlocksOpening, pelmetCover, wallBoards, wallLength, wallOrientation } from "../walls.js";
 import { envelopeFootprint, overlaps, statusOf } from "../fit.js";
 import { partitionClearance, thickness } from "../materials.js";
-import { el, numField, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";
+import { el, numField, section, kv, panel, drawerChecks, drawerBoards, controlPanelRows } from "./widgets.js";
 function doorBlockers(w, s) {
   const out = [];
   for (const o of s.openings) {
@@ -55,9 +55,10 @@ export function renderWall(w) {
       s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Neck" }), el("b", { text: `${Math.round(s.fitSteps.neckDepth)} mm deep` })]) : null,
       s.fitSteps ? el("div", { class: "kv" }, [el("span", { text: "Base depth" }), el("b", { text: `${Math.round(s.fitSteps.kitchenDepth)} mm · top ${Math.round(s.fitSteps.kitchenTop)}` })]) : null,
       numField("Corner radius", w.fit.radius ?? 50, (v) => job.setWallFit(w.id, { overheadId: w.fit.overheadId, kitchenId: w.fit.kitchenId, radius: Math.max(0, v) }, "radius"), { step: 1, min: 0 }),
-      el("div", { class: "empty small", text: "Upper depth is the overhead plus 20, and its lower edge is 20 above the overhead bottom. The gap between them is 100 deep. The base step is 50 above the base and 30 deeper than its total depth. The four step corners use this radius: two outer, two inner." }),
+      el("div", { class: "empty small", text: "Upper depth is the overhead plus 20. Its lower edge is 15 mm below the door, and the door hangs 30 mm below the carcass. The gap between the steps is 100 deep. The base step is 50 above the base and 30 deeper than its total depth. The four step corners are real arcs of this radius." }),
       el("button", { class: "tb", text: "Clear cabinet fit", onclick: () => job.setWallFit(w.id, null, "clear") }),
     ].filter(Boolean)) : null,
+    section(`Control panels (${(w.controlPanels || []).length})`, controlPanelRows(w.id, w.controlPanels || [], { host: "wall", canAdd: true })),
     section("Stock (from the job catalogue)", [
       el("div", { class: "kv" }, [el("span", { text: "Thickness" }), el("b", { text: `${s.thickness} mm · Partition` })]),
       el("div", { class: "kv" }, [el("span", { text: "Bottom" }), el("b", { text: `${cl.floor} mm above the floor` })]),

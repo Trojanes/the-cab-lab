@@ -7,6 +7,11 @@ import { swatchChipStyle } from "../doorSwatches.js";
 import { thickness } from "../materials.js";
 import { armedHandleFor, armHandle } from "../cabinets3d.js";
 import { removeGroove, startGroove } from "../grooveTool.js";
+import { setKitchenWidthColumn } from "../modules.js";
+import { showControlPanelForm } from "../quickCard.js";
+import { keepCorner, localAxes } from "../pose.js";
+import { cabinetHits } from "../fit.js";
+import { noteGrowth } from "../yield.js";
 
 /** The right panel element every editor repaints into. */
 export const panel = document.getElementById("rightpanel");
@@ -139,6 +144,107 @@ export function dragField(label, value, onCommit, cabId, type, title) {
   return field;
 }
 
+/** Local box the pose is measured from. Modules with their own box use that; the rest are x 0..W, y −door..D, z 0..H. */
+export function cabinetBox(mod, params) {
+  if (typeof mod.localBox === "function") return mod.localBox(params);
+  const e = mod.envelope(params);
+  const fpt = params.frontPanelThickness ?? params.frontThickness ?? 16;
+  return { x0: 0, x1: e.W, y0: -fpt, y1: e.D, z0: 0, z1: e.H };
+}
+
+/**
+ * Typed outer size. Width asks which face moves. Depth keeps the back.
+ * Height keeps the bottom, unless `heightFrom` is "top" (a ceiling-hung cabinet).
+ * `depthPad` is added to the stored depth for the field (overhead: the door).
+ */
+export function outerSizeFields(cab, mod, env, params, opts = {}) {
+  const heightFrom = opts.heightFrom === "top" ? "top" : "bottom";
+  const depthPad = opts.depthPad || 0;
+  const show = { W: true, D: true, H: true, ...(opts.show || {}) };
+  const readOnly = opts.readOnly || {};
+  const logKind = opts.logKind || "cabinet.size";
+  const shownOf = (key) => (key === "D" ? env.D + depthPad : env[key]);
+  const commit = (key, value, face, column) => {
+    const min = (mod.minSize?.[key] || 0) + (key === "D" ? depthPad : 0);
+    const sized = Math.max(min, value);
+    const from = shownOf(key);
+    if (!(Math.abs(sized - from) > 1e-6)) return;
+    const before = job.snapshot();
+    const hits = opts.grow ? cabinetHits(cab) : null;
+    const patch = key === "D" ? { D: sized - depthPad } : { [key]: sized };
+    let next = mod.setEnvelope(params, patch, key === "W" && column != null ? { column } : undefined);
+    if (!next) return;
+    if (key === "W" && column != null) setKitchenWidthColumn(cab.id, column);
+    if (opts.finish) next = opts.finish(next);
+    const corner = key === "W"
+      ? { x: face === "left" ? 1 : -1, y: -1, z: -1 }
+      : key === "D"
+        ? { x: -1, y: 1, z: -1 }
+        : { x: -1, y: -1, z: heightFrom === "top" ? 1 : -1 };
+    const pose = keepCorner(cab.pose, cabinetBox(mod, params), cabinetBox(mod, next), corner);
+    job.updateCabinet(cab.id, (c) => { c.params = next; c.pose = pose; });
+    const changed = job.commitSnapshot(before);
+    const now = job.getJob().cabinets.find((c) => c.id === cab.id);
+    if (hits && now && sized > from + 1e-6 && key !== "D") {
+      const axes = localAxes(now.pose);
+      const dir = key === "H" ? axes[heightFrom === "top" ? 5 : 4] : axes[face === "left" ? 1 : 0];
+      noteGrowth(now, hits, dir.map((v) => Math.round(v)), "size");
+    }
+      log(logKind, {
+      id: cab.id, key, from, to: sized,
+      face: key === "W" ? face : key === "D" ? "back" : heightFrom,
+      column: key === "W" && column != null ? column : undefined,
+      changed,
+    });
+  };
+  const askColumn = (v, face, field) => {
+    const cols = opts.columns || [];
+    if (cols.length < 2) { commit("W", v, face, 0); return; }
+    field.parentElement?.querySelectorAll(".size-pop").forEach((n) => n.remove());
+    const pop = el("div", { class: "size-pop" }, [
+      el("span", { text: "Which column?" }),
+      ...cols.map((col, i) => el("button", {
+        type: "button", class: "tb", text: `Column ${i + 1}`,
+        title: `${Math.round(col.width)} mm now. This column takes the whole change.`,
+        onclick: () => { pop.remove(); commit("W", v, face, i); },
+      })),
+    ]);
+    field.after(pop);
+  };
+  const askWidth = (v, field) => {
+    field.parentElement?.querySelectorAll(".size-pop").forEach((n) => n.remove());
+    const pop = el("div", { class: "size-pop" }, [
+      el("span", { text: "Which face moves?" }),
+      el("button", { type: "button", class: "tb", text: "Left", title: "The left face moves. The right face stays.", onclick: () => { pop.remove(); askColumn(v, "left", field); } }),
+      el("button", { type: "button", class: "tb", text: "Right", title: "The right face moves. The left face stays.", onclick: () => { pop.remove(); askColumn(v, "right", field); } }),
+    ]);
+    field.after(pop);
+  };
+  const field = (key, label, title, onCommit) => {
+    if (readOnly[key]) return numField(label, shownOf(key), () => {}, { readOnly: readOnly[key] });
+    const shown = Math.round(shownOf(key) * 10) / 10;
+    const input = el("input", { type: "number", value: shown, step: 10, min: 0, title });
+    const row = el("label", { class: "field", title }, [el("span", { text: label }), input]);
+    const go = () => {
+      const v = Number(input.value);
+      if (!Number.isFinite(v) || v === shown) { input.value = shown; return; }
+      onCommit(v, row);
+    };
+    input.addEventListener("change", go);
+    input.addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); input.blur(); } });
+    return row;
+  };
+  const labels = { W: "Width (mm)", D: "Depth (mm)", H: "Height (mm)", ...(opts.labels || {}) };
+  const heightTitle = heightFrom === "top"
+    ? "The top stays on the ceiling. The bottom moves."
+    : "From the bottom upward. The bottom stays.";
+  return [
+    show.W ? field("W", labels.W, "Type a width, then choose whether the left face or the right face moves.", (v, row) => askWidth(v, row)) : null,
+    show.D ? field("D", labels.D, "From the back. The back stays and the front moves.", (v) => commit("D", v)) : null,
+    show.H ? field("H", labels.H, heightTitle, (v) => commit("H", v)) : null,
+  ].filter(Boolean);
+}
+
 export function section(title, children) {
   return el("div", { class: "panel-section" }, [el("div", { class: "sec-title", text: title }), ...children]);
 }
@@ -162,6 +268,46 @@ export function frontSection(title, children) {
   ]);
 }
 export const kv = (label, value) => el("div", { class: "kv" }, [el("span", { text: label }), el("b", { text: value })]);
+
+/**
+ * Control panels on a partition (`host: "wall"`) or an overhead end panel: one
+ * row each with its numbers, × to remove, and an Add button. A row the overhead
+ * only derives from a partition (`host: "wall"` on the overhead) is read-only.
+ */
+export function controlPanelRows(targetId, list, { host, canAdd }) {
+  const rows = list.map((cp) => {
+    const derived = host === "endPanel" && cp.host === "wall";
+    const set = (patch) => job.setControlPanel(targetId, cp.id, patch);
+    return el("div", { class: "opening" }, [
+      el("div", { class: "opening-head" }, [
+        el("b", { text: cp.id }),
+        el("span", { text: derived ? `through ${cp.wall} · ${cp.side} end` : `${Math.round(cp.width)} × ${Math.round(cp.height)} · ${Math.round(cp.depth)} deep` }),
+        derived ? null : el("button", { class: "icon", text: "×", title: "Remove this control panel", onclick: () => job.removeControlPanel(targetId, cp.id) }),
+      ]),
+      ...(derived
+        ? [el("div", { class: "kv" }, [el("span", { text: "Centre" }), el("b", { text: `${Math.round(cp.fromCeiling)} under the top · ${Math.round(cp.fromBack)} from the back` })])]
+        : [
+            numField("Centre from ceiling", cp.fromCeiling, (v) => set({ fromCeiling: Math.max(0, v) }), { step: 5, min: 0 }),
+            numField("Centre from back wall", cp.fromBack, (v) => set({ fromBack: Math.max(0, v) }), { step: 5, min: 0 }),
+            numField("Opening width", cp.width, (v) => set({ width: Math.max(1, v) }), { step: 5, min: 1 }),
+            numField("Opening height", cp.height, (v) => set({ height: Math.max(1, v) }), { step: 5, min: 1 }),
+            numField("Depth", cp.depth, (v) => set({ depth: Math.max(1, v) }), { step: 1, min: 1 }),
+          ]),
+    ].filter(Boolean));
+  });
+  const add = canAdd ? el("button", {
+    class: "tb wide", text: "Add Control Panel…",
+    onclick: async (e) => {
+      const r = e.currentTarget.getBoundingClientRect();
+      const rec = await showControlPanelForm(r.left, r.bottom + 4, { title: `Control panel · ${targetId}` });
+      if (rec) job.addControlPanel(targetId, rec, { how: "panel" });
+    },
+  }) : null;
+  const hint = el("div", { class: "empty small", text: host === "wall"
+    ? "The opening is cut through this partition; the overhead standing against this end cuts its end divider and adds backing boards until the depth is reached — the last one takes a 10 mm half slot that runs on to the wall for the wiring."
+    : "The opening is cut through the end panel and the end divider; backing dividers are added until the depth is reached — the last one takes a 10 mm half slot that runs to the back for the wiring. Beside a range hood the backing divider is the short one on RGHD_TOP." });
+  return [...rows, add, hint];
+}
 
 /**
  * Read-out for the board / face selected inside the cabinet (tree or a second click in 3D).
@@ -250,7 +396,10 @@ export function fillDrawer(result, errors, warnings) {
             const d = boardDims(b);
             const feats = (b.faces || []).reduce((n, f) => n + f.features.length, 0);
             // Same selection as the tree and the 3D view: one click = this board.
-            return el("tr", { class: sub && sub.boardId === b.id ? "sel" : "", onclick: () => job.select(cabId, { boardId: b.id }) }, [
+            return el("tr", { class: sub && sub.boardId === b.id ? "sel" : "", onclick: (e) => {
+              if (e.ctrlKey || e.metaKey) job.select(cabId, null, { extend: true });
+              else job.select(cabId, { boardId: b.id });
+            } }, [
               el("td", { text: b.id }), el("td", { text: b.name }), el("td", { text: b.boardType }),
               el("td", { text: d.L.toFixed(1) }), el("td", { text: d.W.toFixed(1) }), el("td", { text: String(d.T) }),
               el("td", { text: b.faces ? `${b.faces.length}${feats ? ` · ${feats} feat.` : ""}` : "—" }),

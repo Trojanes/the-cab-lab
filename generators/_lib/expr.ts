@@ -1,8 +1,8 @@
 /**
  * Arithmetic expressions for rule data (layout.json): numbers, names,
  * + - * / % ^, parentheses, unary minus and min max abs floor ceil round sqrt.
- * A name is a param / rule (`Cw`, `T4_HEIGHT_MM`) or another board's face
- * (`T1.y1`). No eval: the renderer CSP has no 'unsafe-eval'.
+ * A name is a param / rule (`Cw`, `T4_HEIGHT_MM`), another board's face
+ * (`T1.y1`), or an outline point (`V2.pv[0].y`). No eval: the renderer CSP has no 'unsafe-eval'.
  *
  * `compile()` parses once; the result is cached by source text, so a run that
  * evaluates the same rule for many cabinets parses it a single time.
@@ -41,7 +41,7 @@ function tokenize(src: string): Tok[] {
       continue;
     }
     if (/[A-Za-z_]/.test(c)) {
-      const m = /^[A-Za-z_][\w-]*(?:\.[A-Za-z_][\w-]*)*/.exec(src.slice(i))!;
+      const m = /^[A-Za-z_][\w-]*(?:\[\d+\])?(?:\.[A-Za-z_][\w-]*(?:\[\d+\])?)*/.exec(src.slice(i))!;
       out.push({ t: "id", v: m[0] });
       i += m[0].length;
       continue;

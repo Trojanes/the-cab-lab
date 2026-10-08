@@ -146,8 +146,7 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   assert.equal(loungeFromPolyline([{ x: 0, y: 600 }, { x: 2000, y: 600 }]).params.style, "I_SHAPE");
   assert.equal(loungeFromPolyline([{ x: 0, y: 600 }, { x: 2000, y: 600 }, { x: 2000, y: 800 }]).params.style, "L_SHAPE");
   assert.equal(loungeFromPolyline([{ x: 0, y: 800 }, { x: 1500, y: 800 }, { x: 4000, y: 800 }]).params.style, "PARALLEL");
-  assert.equal(loungeFromPolyline([{ x: 0, y: 0 }, { x: 0, y: 1600 }, { x: 2000, y: 1600 }, { x: 2000, y: 0 }]).params.style, "U_SHAPE");
-  explode("lounge-U", generateLounge({ style: "U_SHAPE", height: 420, mainWidth: 2000, mainDepth: 1600, lDepth: 600, topLidEnabled: false }));
+  assert.throws(() => loungeFromPolyline([{ x: 0, y: 0 }, { x: 0, y: 1600 }, { x: 2000, y: 1600 }, { x: 2000, y: 0 }]), /U lounge was retired/);
   explode("lounge-Parallel", generateLounge({ style: "PARALLEL", height: 420, totalWidth: 4000, singleLoungeWidth: 1500, depth: 800, topLidEnabled: true }));
   explode("tall-style2", generateGeneralTall({
     cabinetHeight: 2000, cabinetWidth: 600, cabinetDepth: 584,

@@ -154,7 +154,21 @@ const PHASES = [
   ["move", `(async () => { const e = window.__e2e;
     e.key("m"); await e.settle();
     e.ok("move mode entered", String(e.mode()).startsWith("move"), e.mode());
-    const triad = e.scan((h) => h.object.userData && h.object.userData.kind === "moveAxis" && h.object.userData.op === "translate" && h.object.userData.axis !== "z", 10);
+    let triad = e.scan((h) => h.object.userData && h.object.userData.kind === "moveAxis" && h.object.userData.op === "translate" && h.object.userData.axis !== "z", 10);
+    // The arrows are only a few px wide on screen; a coarse grid can sit between
+    // them. Fall back to a fine sweep around the triad's projected position.
+    if (!triad) {
+      const root = e.S.scene.getObjectByName("move-triad");
+      if (root && root.visible) {
+        const c0 = e.toClient(root.position.x, root.position.y, root.position.z);
+        for (let dy = -80; dy <= 80 && !triad; dy += 3)
+          for (let dx = -80; dx <= 80 && !triad; dx += 3) {
+            const h = e.SH.pick(Math.round(c0.x + dx), Math.round(c0.y + dy));
+            const u = h && h.object.userData;
+            if (u && u.kind === "moveAxis" && u.op === "translate" && u.axis !== "z") triad = { x: Math.round(c0.x + dx), y: Math.round(c0.y + dy) };
+          }
+      }
+    }
     let moved = false, dbg = "";
     if (triad) {
       const h2 = e.SH.pick(triad.x, triad.y);
@@ -193,6 +207,32 @@ const PHASES = [
         + " downBy=" + claims.down.join(",") + " hoverBy=" + claims.hover.join(",")
         + " mid1=" + (mid1 === p0 ? "same" : "DIFF") + " mid2=" + (mid2 === mid1 ? "same" : "DIFF") + tInfo;
       if (e.errs.length > errN) dbg += " " + e.errs.slice(errN).join("|").slice(0, 150);
+    }
+    if (!triad) {
+      const root = e.S.scene.getObjectByName("move-triad");
+      const MV = await import("./interact/move.js");
+      const st = MV.moveState && MV.moveState();
+      const cab0 = e.cabs()[0];
+      let pt = null;
+      try { pt = root ? root.position.toArray().map((v) => Math.round(v)) : null; } catch (_) {}
+      dbg = "no triad root=" + (root ? (root.visible ? "vis" : "HIDDEN") + "@ " + JSON.stringify(pt) : "MISSING")
+        + " move=" + JSON.stringify(st && { id: st.id, target: st.target, kind: st.kind })
+        + " sel=" + e.J.getSelectedId() + " sub=" + JSON.stringify(e.J.getSubSelection())
+        + " cabPose=" + (cab0 ? JSON.stringify(cab0.pose) : "none")
+        + " errs=" + e.errs.length;
+      if (root && root.visible) {
+        const C3 = await import("./cabinets3d.js");
+        const pk = C3.pickables().filter((m) => m.userData.kind === "moveAxis");
+        const scr = pk.map((m) => {
+          const b = new e.S.camera.position.constructor();
+          m.getWorldPosition(b); const c = e.toClient(b.x, b.y, b.z);
+          return m.userData.axis + m.userData.op[0] + "@" + Math.round(c.x) + "," + Math.round(c.y);
+        });
+        const pC = e.toClient(root.position.x, root.position.y, root.position.z);
+        const direct = e.SH.pick(Math.round(pC.x), Math.round(pC.y));
+        dbg += " pickables=" + pk.length + " " + scr.join(" ") + " rootScr=" + Math.round(pC.x) + "," + Math.round(pC.y)
+          + " direct=" + (direct ? direct.object.userData.kind + "/" + (direct.object.userData.axis || "-") : "none");
+      }
     }
     e.ok("axis drag moves cabinet", moved, dbg || "no triad");
     e.key("Enter"); await e.settle();

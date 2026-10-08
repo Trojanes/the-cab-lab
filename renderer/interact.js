@@ -30,10 +30,10 @@ import {
   pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, drawableOn, extrudeRoom, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX,
 } from "./snap.js";
-import { envelopeBox, rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, poseRotatedTo } from "./fit.js";
+import { envelopeBox, rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, poseRotatedTo, overlaps } from "./fit.js";
 
 // Re-exported for floorplan.js / panel.js (moved to fit.js — pure math).
-export { rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide };
+export { rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, overlaps };
 import { log } from "./log.js";
 import {
   initBoardSketch, boardActive, boardMode, startBoard, cancelBoard, boardPointerDown, boardPointerMove, boardPointerUp, boardKeydown,
@@ -209,16 +209,20 @@ canvas.addEventListener("pointerdown", (e) => {
   if (placeMode.down(e)) return;
 
   const hit = pick(e.clientX, e.clientY);
+  const extend = e.ctrlKey || e.metaKey;
   if (!hit) {
-    job.select(null);
+    if (!extend) job.select(null);
     return;
   }
   const { kind, cabId, handle, planeId, wallId } = hit.object.userData;
   if (kind === "handle" && handle && handle.type === "wallSplit") { beginWallSplit(e, hit); return; }
-  if (kind === "cplane") { job.select(planeId); return; }
-  if (kind === "wall") { job.select(wallId); return; }
+  if (kind === "cplane") { if (!extend) job.select(planeId); return; }
+  if (kind === "wall") { if (!extend) job.select(wallId); return; }
   const cab = job.getJob().cabinets.find((c) => c.id === cabId);
   if (!cab) return;
+
+  // Ctrl+click toggles this cabinet in the set. It does not drill into a board and does not drag a handle.
+  if (extend) { job.select(cabId, null, { extend: true }); return; }
 
   if (kind === "handle") {
     beginHandleDrag(e, hit, cab);
@@ -227,8 +231,9 @@ canvas.addEventListener("pointerdown", (e) => {
 
   // Drill down module → board → face: the first click takes the cabinet, a click on a board of
   // the selected cabinet takes that board, a click on the selected board takes the face under
-  // the cursor. Esc (or the cabinet row in the tree) climbs back up.
-  if (cabId === job.getSelectedId() && hit.object.userData.boardId) {
+  // the cursor. Esc (or the cabinet row in the tree) climbs back up. A set of several cabinets
+  // stays at cabinet level: a plain click keeps only the one under the cursor.
+  if (job.getSelectedIds().length === 1 && cabId === job.getSelectedId() && hit.object.userData.boardId) {
     const sub = job.getSubSelection();
     const under = faceUnderHit(hit);
     if (!sub || sub.boardId !== under.boardId) job.select(cabId, { boardId: under.boardId });
@@ -236,7 +241,7 @@ canvas.addEventListener("pointerdown", (e) => {
     return;
   }
   // A volume-only module laid out in regions (bedroom body): the second click takes the region.
-  if (cabId === job.getSelectedId() && hit.object.userData.regionId) {
+  if (job.getSelectedIds().length === 1 && cabId === job.getSelectedId() && hit.object.userData.regionId) {
     job.select(cabId, { regionId: hit.object.userData.regionId });
     return;
   }
@@ -386,6 +391,7 @@ window.addEventListener("keydown", (e) => {
   }
 
   const sel = job.getSelected();
+  const selectedIds = job.getSelectedIds();
   if (e.key === "f" || e.key === "F") {
     if (sel) {
       const env = envelopeBox(sel, job.resultFor(sel.id));
@@ -408,8 +414,13 @@ window.addEventListener("keydown", (e) => {
   if (e.key === "m" || e.key === "M") {
     startMove(sel.id);
   } else if (e.key === "Delete" || e.key === "Backspace") {
-    log("key.delete", { id: sel.id });
-    job.removeCabinet(sel.id);
+    if (selectedIds.length > 1) {
+      log("key.delete", { id: sel.id, ids: selectedIds });
+      job.removeCabinets(selectedIds);
+    } else {
+      log("key.delete", { id: sel.id });
+      job.removeCabinet(sel.id);
+    }
   } else if (e.key === "r" || e.key === "R") {
     if (getModule(sel.moduleId).noOrient) {
       const why = getModule(sel.moduleId).noOrient;

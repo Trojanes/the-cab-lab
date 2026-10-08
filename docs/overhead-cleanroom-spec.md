@@ -73,7 +73,7 @@
 | LED_GROOVE_WIDTH_MM | 14.5 | LED 插槽宽 |
 | LED_GROOVE_DEPTH_MM | 6.5 | LED 插槽深 |
 | LED_GROOVE_FRONT_LAND_MM | 18 | T3 前沿到主槽近壁净条 |
-| LED_GROOVE_BRANCH_END_INSET_MM | 80 | T 型支路中心距两端缩进 |
+| LED_GROOVE_BRANCH_END_INSET_MM | 30 | T 型支路中心距两端缩进 |
 | RANGEHOOD_CUTOUT_WIDTH_MM | 555 | 油烟机 BP 开孔宽 |
 | RANGEHOOD_CUTOUT_DEPTH_MM | 285 | 油烟机 BP 开孔深 |
 | RANGEHOOD_MIN_EDGE_MM | 40 | 开孔四周最小留料 |
@@ -108,7 +108,7 @@
 | T4 后缺口 | D<i>.E* | notch 标签 | 高 20 |
 | 油烟机侧槽 | D<i>.A / .B | groove | 油烟机配置时 |
 | 螺丝导孔 T2SH/T3SH/T4SH_D<i> | T2.A / T3.A / T4.A | hole（through） | ⌀3 深 15；T4 孔上移 10、离缺口 8 |
-| LED T 型槽 | T3.A | tgroove ×3 | 宽 14.5 深 6.5；主槽前留 18；支路距两端 80 |
+| LED T 型槽 | T3.A | tgroove ×3 | 宽 14.5 深 6.5；主槽前留 18；支路距两端 30 |
 | 铰链杯 | FP<i>.A（背面 +Y） | hole | ⌀35 深 12；距上 22.5 距侧 100 |
 | 内分隔件槽 | RGHD_TOP.A | groove | 油烟机配置时 |
 

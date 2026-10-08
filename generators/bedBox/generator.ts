@@ -25,6 +25,8 @@
 import type { BedBoxParams, BedBoxResult, Board } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same, type Term } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import { annotate, attachFaces, boundaryEdgeFaces, faceRef, joint, tagEdges, type FaceId, type Joint } from "../_lib/model.ts";
 import { applyMilling } from "../_lib/milling.ts";
 
@@ -54,7 +56,7 @@ export function minHeight(): number {
   return round1(2 * R.RAIL_HEIGHT_MM.value + 2 * R.DIVIDER_NOTCH_UNDERCUT_MM.value);
 }
 
-export function generateBedBox(raw: BedBoxParams): BedBoxResult {
+export function generateBedBox(raw: BedBoxParams, options: { layout?: unknown } = {}): BedBoxResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const W = round1(asNum(raw.width, 0));
@@ -205,6 +207,7 @@ export function generateBedBox(raw: BedBoxParams): BedBoxResult {
     const RAIL_R_HIGH = longRail("RAIL_R_HIGH", "Long rail · right · high", false, true);
 
     boards.push(SIDE_L, SIDE_R, END, DIVIDER, RAIL_L_LOW, RAIL_L_HIGH, RAIL_R_LOW, RAIL_R_HIGH, RAIL_END_LOW, RAIL_END_HIGH, RAIL_BODY_LOW, RAIL_BODY_HIGH);
+    applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings);
 
     // --- faces ------------------------------------------------------------------------------
     attachFaces(boards);

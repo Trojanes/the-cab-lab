@@ -27,6 +27,7 @@ const ENTRIES = [
   // Shared helpers the bench needs in the browser (pins are read/written there).
   { name: "pins", entry: path.join(MODULES_DIR, "_lib", "pins.ts") },
   { name: "cnjob", entry: path.join(MODULES_DIR, "_lib", "cnjob.ts") },
+  { name: "step", entry: path.join(MODULES_DIR, "_lib", "step.ts") },
   { name: "userGrooves", entry: path.join(MODULES_DIR, "_lib", "userGrooves.ts") },
 ];
 

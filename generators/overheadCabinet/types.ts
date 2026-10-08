@@ -45,6 +45,19 @@ export interface OverheadCabinetParams {
   routerDiameter?: number;
   featureWidth?: number;
   internalDividerCenterlines?: number[];
+  /**
+   * Split the run on the zone boundary after this zone (0 = between the first
+   * and second). Two dividers butt there; fronts each keep half the clearance.
+   * Not a line inside a rangehood group, and never an outer end.
+   */
+  splitAfter?: number;
+  /** Door-stock end panel outside the end divider (a partition changed to a waterfall). */
+  endPanel?: "left" | "right" | null;
+  /**
+   * Control-panel recesses at an end (controlPanel.ts). `host: "wall"` entries are written
+   * by the job from a partition in front of that end; the others are cut from the end panel.
+   */
+  controlPanels?: Array<Record<string, unknown>>;
   zones?: Array<{
     id?: string;
     type: "up_flap" | "rangehood_flap" | "fixed_panel" | "open" | string;

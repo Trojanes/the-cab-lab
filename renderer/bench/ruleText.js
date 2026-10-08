@@ -32,9 +32,14 @@ export function toDisplay(expr) {
     .trim();
 }
 
+/** A generator formula may be written `= V0.x1`. The layout expression has no equals sign. */
+export function stripLeadEquals(text) {
+  return String(text).replace(/^(?:=\s*)+/, "").trim();
+}
+
 /** Display text (or a plain expression) → stored expression. */
 export function fromDisplay(text, names = {}) {
-  let s = String(text).replace(/−/g, "-").replace(/×/g, "*").replace(/÷/g, "/").replace(/（/g, "(").replace(/）/g, ")");
+  let s = stripLeadEquals(String(text).replace(/−/g, "-").replace(/×/g, "*").replace(/÷/g, "/").replace(/（/g, "(").replace(/）/g, ")"));
   const faceBack = Object.fromEntries([...Object.entries(FACE_NAMES), ...Object.entries(SIZE_NAMES)].map(([k, v]) => [v, k]));
   s = s.replace(/([A-Za-z][\w-]*)\.(左边|右边|前表面|后表面|下边|上边|长|深|高)/g, (_, id, n) => `${id}.${faceBack[n]}`);
   const pairs = Object.entries(names).filter(([, label]) => label).sort((a, b) => b[1].length - a[1].length);
@@ -42,13 +47,16 @@ export function fromDisplay(text, names = {}) {
   return s.replace(/\s+/g, " ").trim();
 }
 
-const ATOM = /[A-Za-z_][\w]*|\d+(?:\.\d+)?|[+\-*/(),]|\S/g;
+const ATOM = /[A-Za-z_][\w-]*(?:\[\d+\])?(?:\.[A-Za-z_][\w-]*(?:\[\d+\])?)*|\d+(?:\.\d+)?|[+\-*/(),]|−|×|÷|\S/g;
 
 function lexFormula(expr) {
   return [...String(expr).matchAll(ATOM)].map((m) => {
     const v = m[0];
     if (/^[A-Za-z_]/.test(v)) return { t: "id", v };
     if (/^\d/.test(v)) return { t: "num", v };
+    if (v === "−") return { t: "op", v: "-" };
+    if (v === "×") return { t: "op", v: "*" };
+    if (v === "÷") return { t: "op", v: "/" };
     if ("+-*/".includes(v)) return { t: "op", v };
     return { t: "mark", v };
   });
@@ -109,17 +117,19 @@ export function removeParam(expr, sym) {
   return text || "0";
 }
 
-/** Split a display formula so each primary parameter is its own chip. */
-export function formulaPieces(expr, primary = []) {
-  const set = new Set(primary);
+const NAME = /[A-Za-z_][\w-]*(?:\[\d+\])?(?:\.[A-Za-z_][\w-]*(?:\[\d+\])?)*/g;
+
+/** Split a display formula into chips and the operators between them. Every name is one chip (`T1.y1`, `toeY`); a function name (`min(`) stays text. */
+export function formulaPieces(expr) {
   const src = String(expr);
-  const re = /[A-Za-z_][\w]*/g;
+  const re = new RegExp(NAME.source, "g");
   const out = [];
   let last = 0;
   let m = re.exec(src);
   while (m) {
     if (m.index > last) out.push({ kind: "text", text: src.slice(last, m.index) });
-    out.push(set.has(m[0]) ? { kind: "param", sym: m[0] } : { kind: "text", text: m[0] });
+    const call = src[m.index + m[0].length] === "(";
+    out.push(call ? { kind: "text", text: m[0] } : { kind: "param", sym: m[0] });
     last = m.index + m[0].length;
     m = re.exec(src);
   }

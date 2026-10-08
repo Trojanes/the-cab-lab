@@ -2,7 +2,7 @@
 import * as job from "../job.js";
 import { log } from "../log.js";
 import { MIN_ZONE_HEIGHT } from "../modules.js";
-import { el, numField, section, frontSection, panel, repaint } from "./widgets.js";
+import { el, numField, section, frontSection, panel, repaint, outerSizeFields } from "./widgets.js";
 // --- cabinet ---------------------------------------------------------------------
 
 const smallSel = { cabId: null, zoneId: null };
@@ -139,7 +139,8 @@ export function renderSmall(cab, mod, result, shared) {
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Small cabinet" }),
-      el("div", { class: "panel-sub", text: `${cab.id} · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} rows` }),
+      el("div", { class: "panel-sub", text: `${cab.id} · ${zones.length} rows` }),
+      el("div", { class: "panel-sizes" }, outerSizeFields(cab, mod, env, p, { logKind: "small.size" })),
     ]),
     shared.board,
     el("div", { class: "panel-section" }, [addRow, removeRow]),
@@ -155,11 +156,7 @@ export function renderSmall(cab, mod, result, shared) {
         el("span", { text: "Right side is a door panel" }),
       ]),
     ]),
-    section("Outer size (= box)", [
-      numField("Width (mm)", env.W, (v) => job.setParams(cab.id, mod.setEnvelope(p, { W: Math.max(mod.minSize.W, v) }))),
-      numField("Depth (mm)", env.D, (v) => job.setParams(cab.id, mod.setEnvelope(p, { D: Math.max(mod.minSize.D, v) }))),
-      numField("Height (mm)", env.H, (v) => job.setParams(cab.id, mod.setEnvelope(p, { H: Math.max(mod.minSize.H, v) }))),
-    ]),
+    section("Outer size (= box)", outerSizeFields(cab, mod, env, p, { logKind: "small.size" })),
     shared.grain,
     shared.checks,
     el("div", { class: "panel-foot" }, [shared.remove]),

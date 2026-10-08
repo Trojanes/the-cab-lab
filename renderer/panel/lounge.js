@@ -2,7 +2,7 @@
 import * as job from "../job.js";
 import { log } from "../log.js";
 import { thickness } from "../materials.js";
-import { el, numField, section, kv, panel, repaint } from "./widgets.js";
+import { el, numField, section, kv, panel, repaint, outerSizeFields } from "./widgets.js";
 // --- lounge editor ---------------------------------------------------------------------
 //
 // Wide page while a lounge group is selected: a top-down plan view (the
@@ -21,15 +21,15 @@ function loungeSelected(cabId) {
 }
 
 const LOUNGE_RUN_LABEL = { i: "Run", main: "Main run", l: "L wing", left: "Left leg", right: "Right leg" };
-const LOUNGE_STYLE_LABEL = { I_SHAPE: "I · straight", L_SHAPE: "L · corner", U_SHAPE: "U · three sides", PARALLEL: "Parallel · face to face" };
+const LOUNGE_STYLE_LABEL = { I_SHAPE: "I · straight", L_SHAPE: "L · corner", PARALLEL: "Parallel · face to face" };
 
 export function renderLounge(cab, mod, result, shared) {
   const p = cab.params;
   const env = mod.envelope(p);
   const style = p.style || "L_SHAPE";
-  const frameL = style === "L_SHAPE" && p.construction !== "classic";
-  const frame = frameL || (style === "I_SHAPE" && p.construction !== "classic");
-  const frameP = style === "PARALLEL" && p.construction !== "classic";
+  // Every lounge is the frame build now (the classic top panel and the U were retired).
+  const frameL = style === "L_SHAPE";
+  const frameP = style === "PARALLEL";
   // The middle cabinet as the generator built it (its width may come from the gap).
   const mc = result?.params?.middleCabinet ?? null;
   const mcField = (label, key, min) => numField(label, mc[key], (v) => {
@@ -137,9 +137,6 @@ export function renderLounge(cab, mod, result, shared) {
     } else if (style === "L_SHAPE") {
       if (selectedRun === "main") f.push(num("Overall width (mm)", "mainWidth", mod.minSize.W, "Main run + wing, along the wall"), num("Seat depth (mm)", "mainDepth", 300));
       if (selectedRun === "l") f.push(num("Wing length (mm)", "lWidth", 400, "Wall to the room end of the wing — the overall depth"), num("Wing seat depth (mm)", "lDepth", 200));
-    } else if (style === "U_SHAPE") {
-      if (selectedRun === "main") f.push(num("Overall width (mm)", "mainWidth", mod.minSize.W), num("Overall depth (mm)", "mainDepth", 600));
-      else f.push(num("Leg seat depth (mm)", "lDepth", 200, "Both legs and the back run share it"), num("Overall depth (mm)", "mainDepth", 600));
     } else if (style === "PARALLEL") {
       f.push(num("Run width (mm)", "singleLoungeWidth", 400, "Both runs share it"), num("Run length (mm)", "depth", 400), num("Total width (mm)", "totalWidth", 1600, "Outer face to outer face"));
     }
@@ -169,8 +166,19 @@ export function renderLounge(cab, mod, result, shared) {
         [["NONE", "Seat front"], ["DRAWER", "Drawer"]].map(([v, text]) => el("option", { value: v, text, selected: v === (p.lFrontAccess === "DRAWER" ? "DRAWER" : "NONE") }))),
     ]) : null,
     numField("Seat height (mm)", p.height ?? env.H, (v) => setP("height", Math.max(mod.minSize.H, Math.round(v)), "size"), { step: 10, min: mod.minSize.H }),
-    // A frame lounge's whole top is the lid; only the frame parallel has the wheel-arch cover yet.
-    frame || frameP ? null : check("Top lids", p.topLidEnabled !== false, (on) => setP("topLidEnabled", on, "lid"), "Storage under the seat: an opening in each top with a lift-out lid"),
+    // The whole top of each run is the lid; only the parallel lounge has the wheel-arch cover yet.
+    frameL ? check("Back panel", p.backPanel === true, (on) => setP("backPanel", on, "back"), "A tall panel on the wing's outer side. The wing moves into the main by one panel thickness; the outer width stays.") : null,
+    frameP ? check("Left back panel", p.leftBackPanel === true, (on) => setP("leftBackPanel", on, "back"), "On the left run's outer end. That run moves toward the gap by one panel thickness.") : null,
+    frameP ? check("Right back panel", p.rightBackPanel === true, (on) => setP("rightBackPanel", on, "back"), "On the right run's outer end. That run moves toward the gap by one panel thickness.") : null,
+    (frameL && p.backPanel === true) || (frameP && (p.leftBackPanel === true || p.rightBackPanel === true)) ? (() => {
+      const past = numField("Past the front (mm)", p.backPanelOverhang ?? 50, (v) => setP("backPanelOverhang", Math.max(0, Math.round(v)), "back"), { step: 5, min: 0 });
+      past.title = "How far the panel sticks past the room face. The seat stays where it is.";
+      const high = Math.round(result?.params?.backPanelHeight ?? (p.height ?? 420) + 530);
+      return el("div", {}, [
+        past,
+        el("div", { class: "empty small", text: `Panel ${high} mm high — 530 above the seat. The top corner toward the room is rounded, radius 50.` }),
+      ]);
+    })() : null,
     frameP ? el("label", { class: "field wide-value", title: "Both runs' aisle ends: a plain end panel, or a drawer front with a fixed strip over it (no drawer box)" }, [
       el("span", { text: "Aisle ends" }),
       el("select", { onchange: (e) => { e.target.blur(); setP("aisleAccess", e.target.value, "access"); } },
@@ -182,7 +190,7 @@ export function renderLounge(cab, mod, result, shared) {
       mcField("Cabinet depth (mm)", "depth", 100),
       mcField("Cabinet height (mm)", "height", 100),
     ] : []),
-    style !== "U_SHAPE" && !frame ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
+    style === "PARALLEL" ? check("Wheel-arch cut-out", p.wheelAvoidanceEnabled === true, (on) => setP("wheelAvoidanceEnabled", on, "wheel")) : null,
     ...(style === "PARALLEL" && p.wheelAvoidanceEnabled === true ? [
       numField("Wheel arch depth (mm)", p.avoidanceDepth ?? 300, (v) => setP("avoidanceDepth", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
       numField("Wheel arch height (mm)", p.avoidanceHeight ?? 250, (v) => setP("avoidanceHeight", Math.max(0, Math.round(v)), "wheel"), { step: 10, min: 0 }),
@@ -190,15 +198,10 @@ export function renderLounge(cab, mod, result, shared) {
   ].filter(Boolean));
 
   // Cabinet-level fields, folded.
-  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
   const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Lounge · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${result?.boards?.length || 0} boards` }),
-    section("Outer size (= box)", [
-      numField("Width (mm)", env.W, setEnv("W")),
-      numField("Depth (mm)", env.D, setEnv("D")),
-      numField("Height (mm)", env.H, setEnv("H")),
-    ]),
+    section("Outer size (= box)", outerSizeFields(cab, mod, env, p, { logKind: "lounge.size" })),
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
       numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),

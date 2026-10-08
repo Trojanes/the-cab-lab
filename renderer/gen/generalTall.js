@@ -99,30 +99,470 @@ function defineRules(module, raw) {
   return out;
 }
 
+// generators/_lib/expr.ts
+var FUNCS = {
+  min: Math.min,
+  max: Math.max,
+  abs: Math.abs,
+  floor: Math.floor,
+  ceil: Math.ceil,
+  round: Math.round,
+  sqrt: Math.sqrt
+};
+function tokenize(src) {
+  const out = [];
+  let i = 0;
+  while (i < src.length) {
+    const c = src[i];
+    if (/\s/.test(c)) {
+      i += 1;
+      continue;
+    }
+    if (/[0-9.]/.test(c)) {
+      const m = /^[0-9]*\.?[0-9]+(?:e[+-]?[0-9]+)?/i.exec(src.slice(i));
+      if (!m) throw new Error(`bad number at ${i} in "${src}"`);
+      out.push({ t: "num", v: Number(m[0]) });
+      i += m[0].length;
+      continue;
+    }
+    if (/[A-Za-z_]/.test(c)) {
+      const m = /^[A-Za-z_][\w-]*(?:\[\d+\])?(?:\.[A-Za-z_][\w-]*(?:\[\d+\])?)*/.exec(src.slice(i));
+      out.push({ t: "id", v: m[0] });
+      i += m[0].length;
+      continue;
+    }
+    if ("+-*/%^(),".includes(c)) {
+      out.push({ t: c });
+      i += 1;
+      continue;
+    }
+    throw new Error(`unexpected "${c}" in "${src}"`);
+  }
+  return out;
+}
+function parse(src) {
+  const toks = tokenize(src);
+  let p = 0;
+  const peek = () => toks[p];
+  const take = (t) => {
+    const k = toks[p];
+    if (!k || t && k.t !== t) throw new Error(`expected ${t || "a value"} in "${src}"`);
+    p += 1;
+    return k;
+  };
+  const primary = () => {
+    const k = peek();
+    if (!k) throw new Error(`unexpected end of "${src}"`);
+    if (k.t === "num") {
+      p += 1;
+      return { k: "num", v: k.v };
+    }
+    if (k.t === "(") {
+      p += 1;
+      const v = sum();
+      take(")");
+      return v;
+    }
+    if (k.t === "-") {
+      p += 1;
+      return { k: "neg", a: primary() };
+    }
+    if (k.t === "+") {
+      p += 1;
+      return primary();
+    }
+    if (k.t === "id") {
+      p += 1;
+      const name = k.v;
+      if (peek()?.t === "(") {
+        p += 1;
+        if (!(name in FUNCS)) throw new Error(`unknown function ${name} in "${src}"`);
+        const args = [];
+        if (peek()?.t !== ")") {
+          args.push(sum());
+          while (peek()?.t === ",") {
+            p += 1;
+            args.push(sum());
+          }
+        }
+        take(")");
+        return { k: "call", f: name, args };
+      }
+      return { k: "id", v: name };
+    }
+    throw new Error(`unexpected ${k.t} in "${src}"`);
+  };
+  const power = () => {
+    let a = primary();
+    while (peek()?.t === "^") {
+      p += 1;
+      a = { k: "bin", op: "^", a, b: primary() };
+    }
+    return a;
+  };
+  const product = () => {
+    let a = power();
+    while (peek() && ["*", "/", "%"].includes(peek().t)) {
+      const op = take().t;
+      a = { k: "bin", op, a, b: power() };
+    }
+    return a;
+  };
+  const sum = () => {
+    let a = product();
+    while (peek() && ["+", "-"].includes(peek().t)) {
+      const op = take().t;
+      a = { k: "bin", op, a, b: product() };
+    }
+    return a;
+  };
+  if (!toks.length) throw new Error("empty expression");
+  const node = sum();
+  if (p !== toks.length) throw new Error(`trailing input in "${src}"`);
+  return node;
+}
+function namesOf(n, out) {
+  if (n.k === "id") out.add(n.v);
+  else if (n.k === "neg") namesOf(n.a, out);
+  else if (n.k === "bin") {
+    namesOf(n.a, out);
+    namesOf(n.b, out);
+  } else if (n.k === "call") for (const a of n.args) namesOf(a, out);
+}
+function run(n, lookup) {
+  switch (n.k) {
+    case "num":
+      return n.v;
+    case "id":
+      return lookup(n.v);
+    case "neg":
+      return -run(n.a, lookup);
+    case "call":
+      return FUNCS[n.f](...n.args.map((a) => run(a, lookup)));
+    case "bin": {
+      const a = run(n.a, lookup);
+      const b = run(n.b, lookup);
+      switch (n.op) {
+        case "+":
+          return a + b;
+        case "-":
+          return a - b;
+        case "*":
+          return a * b;
+        case "/":
+          return a / b;
+        case "%":
+          return a % b;
+        default:
+          return a ** b;
+      }
+    }
+  }
+}
+var cache = /* @__PURE__ */ new Map();
+function compile(src) {
+  const key = String(src).trim();
+  const hit = cache.get(key);
+  if (hit) return hit;
+  const node = parse(key);
+  const names = /* @__PURE__ */ new Set();
+  namesOf(node, names);
+  const compiled = { src: key, names: [...names], run: (lookup) => run(node, lookup) };
+  cache.set(key, compiled);
+  return compiled;
+}
+
+// generators/_lib/layout.ts
+var AXES = ["x", "y", "z"];
+function selectAxisRule(rule, situation = {}) {
+  const list = rule.cases?.length ? rule.cases : [rule];
+  const hit = list.filter((c) => !c.when || Object.entries(c.when).every(([k, v]) => situation[k] === v));
+  hit.sort((a, b) => Object.keys(b.when || {}).length - Object.keys(a.when || {}).length);
+  return hit[0] || null;
+}
+var CORNERS = ["FL", "FR", "RR", "RL"];
+var LayoutError = class extends Error {
+};
+var FACE_REF = /^([A-Za-z][\w-]*)\.([xyz])([01])$/;
+function planeOf(ref2) {
+  const face = FACE_REF.exec(ref2);
+  if (face) return { board: face[1], axis: face[2] };
+  const m = /^([A-Za-z][\w-]*)\.(.+)$/.exec(ref2);
+  if (!m) return null;
+  const ax = /([xyz])\d*$/i.exec(m[2]);
+  if (!ax) return null;
+  return { board: m[1], axis: ax[1].toLowerCase() };
+}
+function atHonours(at, ref2, from, offset = 0, extra = 0) {
+  const shift = (from === "lo" ? 1 : -1) * (Number(offset) || 0) + (Number(extra) || 0);
+  let expected = ref2;
+  if (shift) {
+    const mag = Math.round(Math.abs(shift) * 1e3) / 1e3;
+    expected = `${ref2} ${shift > 0 ? "+" : "-"} ${mag}`;
+  }
+  return at.trim() === expected;
+}
+function validateAxisRule(id, axis, r) {
+  if (!r || r.from !== "lo" && r.from !== "hi") throw new LayoutError(`layout: ${id}.${axis} from must be lo or hi`);
+  for (const k of ["at", "size"]) {
+    if (typeof r[k] !== "string" || !r[k].trim()) throw new LayoutError(`layout: ${id}.${axis} ${k} missing`);
+    try {
+      compile(r[k]);
+    } catch (err) {
+      throw new LayoutError(`layout: ${id}.${axis} ${k}: ${err.message}`);
+    }
+  }
+  if (r.when != null) {
+    if (typeof r.when !== "object" || Array.isArray(r.when)) throw new LayoutError(`layout: ${id}.${axis} when must be a map of switches`);
+    for (const [key, value] of Object.entries(r.when)) {
+      if (typeof value !== "string" || !value) throw new LayoutError(`layout: ${id}.${axis} when.${key} must be a value`);
+    }
+  }
+  if (r.relation != null) {
+    const rel = r.relation;
+    if (rel.kind !== "contact" && rel.kind !== "flush") throw new LayoutError(`layout: ${id}.${axis} relation must be contact or flush`);
+    const plane = planeOf(String(rel.ref));
+    if (!plane) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} is not a board face`);
+    if (plane.axis !== axis) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} is on another axis`);
+    if (plane.board === id) throw new LayoutError(`layout: ${id}.${axis} relation refers to its own face`);
+    if (!atHonours(r.at, String(rel.ref), r.from, rel.offset || 0, rel.delta || 0)) throw new LayoutError(`layout: ${id}.${axis} relation ref ${rel.ref} differs from at (${r.at})`);
+  }
+}
+function validateLayout(raw) {
+  const f = raw;
+  if (!f || typeof f !== "object") throw new LayoutError("layout: not an object");
+  if (typeof f.module !== "string") throw new LayoutError("layout: module missing");
+  if (!Number.isFinite(f.version)) throw new LayoutError("layout: version missing");
+  if (!f.boards || typeof f.boards !== "object") throw new LayoutError("layout: boards missing");
+  for (const [id, b] of Object.entries(f.boards)) {
+    if (!b || typeof b.axes !== "object") throw new LayoutError(`layout: ${id} has no axes`);
+    for (const [axis, r] of Object.entries(b.axes)) {
+      if (!AXES.includes(axis)) throw new LayoutError(`layout: ${id} has an unknown axis ${axis}`);
+      const list = r?.cases?.length ? r.cases : [r];
+      for (const one of list) validateAxisRule(id, axis, one);
+    }
+    const check = (what, src) => {
+      if (typeof src !== "string" || !src.trim()) throw new LayoutError(`layout: ${id} ${what} missing`);
+      try {
+        compile(src);
+      } catch (err) {
+        throw new LayoutError(`layout: ${id} ${what}: ${err.message}`);
+      }
+    };
+    if (b.outline != null) {
+      for (const c of CORNERS) {
+        const p = b.outline.corners?.[c];
+        if (!p) throw new LayoutError(`layout: ${id} outline has no corner ${c}`);
+        check(`corner ${c} u`, p.u);
+        check(`corner ${c} v`, p.v);
+      }
+    }
+    for (const [fid, feat] of Object.entries(b.features ?? {})) check(`feature ${fid} depth`, feat?.depth);
+  }
+  return f;
+}
+function placeBoards(file, ids, scope, warnings = [], situation = {}) {
+  const placing = new Set(ids);
+  for (const id of ids) {
+    const rule = file.boards[id];
+    if (!rule?.axes || !AXES.some((axis) => rule.axes[axis])) throw new LayoutError(`layout: ${id} has no axes`);
+  }
+  const done = /* @__PURE__ */ new Map();
+  const visiting = [];
+  const termOf = (name, from) => {
+    if (name in scope) return scope[name];
+    const m = FACE_REF.exec(name);
+    if (m && placing.has(m[1])) {
+      placeAxis(m[1], m[2]);
+      return ref(name);
+    }
+    if (Number.isFinite(valueOf(name))) return ref(name);
+    if (m) throw new LayoutError(`layout: ${from} uses ${name}: ${m[1]} is placed in code after these boards, so its faces cannot be referenced yet`);
+    throw new LayoutError(`layout: ${from} uses ${name}, which is not an input, a rule or a placed face`);
+  };
+  const record = (key, c, from) => {
+    const terms = {};
+    for (const n of c.names) terms[n] = termOf(n, from);
+    return dim(key, terms, (t) => c.run((n) => t[n]), { formula: c.src });
+  };
+  function placeAxis(id, axis) {
+    const key = `${id}.${axis}`;
+    const hit = done.get(key);
+    if (hit) return hit;
+    const raw = file.boards[id].axes[axis];
+    const r = raw ? selectAxisRule(raw, situation) : null;
+    if (!r) return null;
+    if (visiting.includes(key)) {
+      throw new LayoutError(`layout: ${[...visiting.slice(visiting.indexOf(key)), key].join(" \u2192 ")} goes round in a circle`);
+    }
+    visiting.push(key);
+    const lo = `${id}.${axis}0`;
+    const hi = `${id}.${axis}1`;
+    const sizeKey = `${id}.${axis}Size`;
+    const drive = r.from === "lo" ? lo : hi;
+    const other = r.from === "lo" ? hi : lo;
+    record(drive, compile(r.at), `${id} ${axis} position`);
+    const size = record(sizeKey, compile(r.size), `${id} ${axis} size`);
+    if (!(size > 0)) throw new LayoutError(`layout: ${id} ${axis} size is ${size}, it must be above 0`);
+    if (r.from === "lo") dim(other, { [drive]: ref(drive), [sizeKey]: ref(sizeKey) }, (t) => t[drive] + t[sizeKey], { formula: `${drive} + ${sizeKey}` });
+    else dim(other, { [drive]: ref(drive), [sizeKey]: ref(sizeKey) }, (t) => t[drive] - t[sizeKey], { formula: `${drive} - ${sizeKey}` });
+    visiting.pop();
+    const pair = [valueOf(lo), valueOf(hi)];
+    done.set(key, pair);
+    return pair;
+  }
+  const out = {};
+  for (const id of ids) {
+    const box = {};
+    for (const axis of AXES) {
+      if (!file.boards[id].axes[axis]) continue;
+      const pair = placeAxis(id, axis);
+      if (!pair) continue;
+      const [a0, a1] = pair;
+      box[`${axis}0`] = a0;
+      box[`${axis}1`] = a1;
+    }
+    out[id] = box;
+  }
+  for (const id of ids) {
+    for (const axis of AXES) {
+      const raw = file.boards[id].axes[axis];
+      if (!raw) continue;
+      const rel = selectAxisRule(raw, situation)?.relation;
+      if (rel?.kind !== "contact" || rel.offset) continue;
+      const otherId = planeOf(rel.ref)?.board;
+      if (!otherId || !out[otherId]) continue;
+      const other = otherId;
+      const ok = AXES.filter((k) => k !== axis).every((k) => {
+        const a0 = out[id][`${k}0`] ?? valueOf(`${id}.${k}0`);
+        const a1 = out[id][`${k}1`] ?? valueOf(`${id}.${k}1`);
+        const b0 = valueOf(`${other}.${k}0`);
+        const b1 = valueOf(`${other}.${k}1`);
+        return Number.isFinite(b0) && Number.isFinite(b1) && Math.min(a1, b1) - Math.max(a0, b0) > 0.01;
+      });
+      if (!ok) warnings.push(`${id}: its ${axis} contact with ${rel.ref} no longer touches (the two faces do not overlap).`);
+    }
+  }
+  return out;
+}
+var round2 = (n) => Math.round(n * 1e3) / 1e3;
+function followOutline(board, before) {
+  if (board.profilePlane !== "YZ" || !board.profileVector) return;
+  const dy = board.y0 - before.y0;
+  const dz = board.z0 - before.z0;
+  if (Math.abs(dy) < 1e-9 && Math.abs(dz) < 1e-9) return;
+  board.profileVector = board.profileVector.map((p) => {
+    const q = { ...p };
+    if (typeof q.y === "number") q.y = round2(q.y + dy);
+    if (typeof q.z === "number") q.z = round2(q.z + dz);
+    return q;
+  });
+}
+function applyLayoutDraft(boards, layout, scope, errors, warnings, situation = {}, skip = () => false) {
+  if (layout == null) return;
+  try {
+    const file = validateLayout(layout);
+    const known = new Set(boards.map((b) => b.id));
+    const ids = Object.keys(file.boards).filter((id) => known.has(id) && !skip(id));
+    for (const id of Object.keys(file.boards)) {
+      if (skip(id)) continue;
+      if (!known.has(id)) warnings.push(`layout: ${id} is not a board of this cabinet, so that rule was left unused`);
+    }
+    if (!ids.length) return;
+    const placed = placeBoards(file, ids, scope, warnings, situation);
+    for (const b of boards) {
+      const box = placed[b.id];
+      if (!box) continue;
+      const before = { y0: b.y0, z0: b.z0 };
+      for (const face of ["x0", "x1", "y0", "y1", "z0", "z1"]) {
+        const v = box[face];
+        if (typeof v === "number") b[face] = v;
+      }
+      followOutline(b, before);
+    }
+  } catch (err) {
+    if (err instanceof LayoutError) errors.push(err.message);
+    else throw err;
+  }
+}
+
+// generators/generalTall/layout.json
+var layout_default = {
+  module: "generalTall",
+  version: 1,
+  boards: {}
+};
+
+// generators/generalTall/layout.ts
+var LAYOUT = validateLayout(layout_default);
+
 // generators/_lib/model.ts
 function planeAxes(plane) {
   if (plane === "YZ") return ["y", "z", "x"];
   if (plane === "XZ") return ["x", "z", "y"];
   return ["x", "y", "z"];
 }
+var ARC_CHORD_MM = 0.05;
+var ARC_STEP_MAX = 5 * Math.PI / 180;
+function bulgeOf(p) {
+  const b = Number(p.bulge);
+  return Number.isFinite(b) ? b : 0;
+}
+function expandBulgeRing(pts) {
+  if (!pts.some((p) => p.b && Math.abs(p.b) > 1e-9)) return pts.map((p) => ({ u: p.u, v: p.v }));
+  const n = pts.length;
+  const out = [];
+  for (let i = 0; i < n; i += 1) {
+    const a = pts[i];
+    const c = pts[(i + 1) % n];
+    out.push({ u: a.u, v: a.v });
+    const bulge = a.b ?? 0;
+    const chord = Math.hypot(c.u - a.u, c.v - a.v);
+    if (!bulge || chord < 1e-9) continue;
+    const sweep = 4 * Math.atan(bulge);
+    const du = (c.u - a.u) / chord;
+    const dv = (c.v - a.v) / chord;
+    const h = chord / 2 / Math.tan(sweep / 2);
+    const cu = (a.u + c.u) / 2 - dv * h;
+    const cv = (a.v + c.v) / 2 + du * h;
+    const r = Math.hypot(a.u - cu, a.v - cv);
+    if (!(r > 1e-6)) continue;
+    const a0 = Math.atan2(a.v - cv, a.u - cu);
+    const step = Math.min(ARC_STEP_MAX, 2 * Math.acos(Math.max(-1, 1 - ARC_CHORD_MM / r)));
+    const k = Math.max(2, Math.ceil(Math.abs(sweep) / step));
+    for (let j = 1; j < k; j += 1) {
+      const t = a0 + sweep * j / k;
+      out.push({ u: cu + r * Math.cos(t), v: cv + r * Math.sin(t) });
+    }
+  }
+  return out;
+}
 function localOutline(b) {
   const [U, V] = planeAxes(b.profilePlane);
-  let pts = null;
+  let raw = null;
+  let local = false;
   const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
   if (b.profilePlane === "YZ") {
-    if (pv) pts = pv.map((p) => [Number(p.y) - b.y0, Number(p.z) - b.z0]);
-    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) pts = b.cutProfileVector.map((p) => [p.y, p.z]);
+    if (pv) raw = pv.map((p) => ({ u: Number(p.y), v: Number(p.z), b: bulgeOf(p) }));
+    else if (b.cutProfileVector && b.cutProfileVector.length >= 4) {
+      raw = b.cutProfileVector.map((p) => ({ u: p.y, v: p.z }));
+      local = true;
+    }
   } else if (pv) {
-    const mu = Math.min(...pv.map((p) => Number(p[U])));
-    const mv = Math.min(...pv.map((p) => Number(p[V])));
-    pts = pv.map((p) => [Number(p[U]) - mu, Number(p[V]) - mv]);
+    raw = pv.map((p) => ({ u: Number(p[U]), v: Number(p[V]), b: bulgeOf(p) }));
   }
-  if (!pts) return null;
-  const out = pts.slice();
-  const first = out[0];
-  const last = out[out.length - 1];
-  if (out.length > 2 && Math.abs(first[0] - last[0]) < 1e-9 && Math.abs(first[1] - last[1]) < 1e-9) out.pop();
-  return out.length >= 3 ? out : null;
+  if (!raw) return null;
+  if (raw.length > 2) {
+    const a = raw[0];
+    const c = raw[raw.length - 1];
+    if (Math.abs(a.u - c.u) < 1e-9 && Math.abs(a.v - c.v) < 1e-9) raw.pop();
+  }
+  const expanded = expandBulgeRing(raw);
+  if (expanded.length < 3) return null;
+  if (local) return expanded.map((p) => [p.u, p.v]);
+  const ou = b.profilePlane === "YZ" ? b.y0 : Math.min(...expanded.map((p) => p.u));
+  const ov = b.profilePlane === "YZ" ? b.z0 : Math.min(...expanded.map((p) => p.v));
+  return expanded.map((p) => [p.u - ou, p.v - ov]);
 }
 function rectOutline(b) {
   const [U, V] = planeAxes(b.profilePlane);
@@ -197,6 +637,13 @@ function addFeature(b, faceId, feature) {
 function edgeFaces(b) {
   return (b.faces ?? (b.faces = facesOf(b))).filter((f) => f.id.startsWith("E"));
 }
+function edgeFacesIn(b, box) {
+  return edgeFaces(b).filter((f) => {
+    const mu = (f.edge.from[0] + f.edge.to[0]) / 2;
+    const mv = (f.edge.from[1] + f.edge.to[1]) / 2;
+    return mu >= box.u0 && mu <= box.u1 && mv >= box.v0 && mv <= box.v1;
+  });
+}
 function boundaryEdgeFaces(b, normal, tol = 0.01) {
   const [U, V] = planeAxes(b.profilePlane);
   const axis = normal[1].toLowerCase();
@@ -206,6 +653,11 @@ function boundaryEdgeFaces(b, normal, tol = 0.01) {
   const coords = all.flatMap((f) => [f.edge.from[c], f.edge.to[c]]);
   const extreme = normal[0] === "+" ? Math.max(...coords) : Math.min(...coords);
   return all.filter((f) => f.normal === normal && Math.abs(f.edge.from[c] - extreme) <= tol && Math.abs(f.edge.to[c] - extreme) <= tol);
+}
+function tagEdges(b, kind, box, meta) {
+  const hit = edgeFacesIn(b, box);
+  for (const f of hit) f.features.push({ kind, ...meta });
+  return hit.map((f) => f.id);
 }
 function annotate(b, faceId, a) {
   Object.assign(faceOf(b, faceId), a);
@@ -354,7 +806,8 @@ function slabRebateFace(b) {
   return null;
 }
 function colourFaceOf(b, A, B) {
-  if (b.stock?.kind !== "door" || b.stock.sides === 2) return null;
+  const coloured = b.stock?.kind === "door" || b.stock?.kind === "bench";
+  if (!coloured || b.stock?.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
 function reportFace(A, B, colour) {
@@ -653,7 +1106,7 @@ var rules_default = {
   LED_GROOVE_WIDTH_MM: { value: 14.5, doc: "LED \u69FD\u5BBD\uFF08ledGroove\uFF1AT3 \u9876\u9762\u3001B3 \u5E95\u9762\u7684 T \u5F62\u69FD\uFF1B\u4E0E\u540A\u67DC\u76F8\u540C\uFF09\u3002" },
   LED_GROOVE_DEPTH_MM: { value: 6.5, doc: "LED \u69FD\u6DF1\u3002" },
   LED_GROOVE_FRONT_LAND_MM: { value: 18, doc: "T3 / B3 \u524D\u7F18\u5230 LED \u4E3B\u69FD\u8FD1\u8FB9\u7684\u7559\u8FB9\u3002" },
-  LED_GROOVE_BRANCH_END_INSET_MM: { value: 80, doc: "\u4E24\u6761 LED \u652F\u69FD\u4E2D\u5FC3\u8DDD\u677F\u4E24\u7AEF\uFF1B\u652F\u69FD\u4ECE\u4E3B\u69FD\u901A\u5230\u677F\u540E\u7F18\uFF0C\u5BBD\u540C\u69FD\u5BBD\u3002" },
+  LED_GROOVE_BRANCH_END_INSET_MM: { value: 30, doc: "\u4E24\u6761 LED \u652F\u69FD\u4E2D\u5FC3\u8DDD\u677F\u4E24\u7AEF\uFF1B\u652F\u69FD\u4ECE\u4E3B\u69FD\u901A\u5230\u677F\u540E\u7F18\uFF0C\u5BBD\u540C\u69FD\u5BBD\u3002" },
   EDGE_BAND_THICKNESS_MM: { value: 1, doc: "\u5C01\u8FB9\u5E26\u539A\u5EA6\u3002\u989C\u8272\u53E6\u5B9A\uFF1A\u95E8\u677F\u6599\u7684\u8FB9\u3001\u4EE5\u53CA\u548C\u95E8\u9762\u9F50\u5E73\u9732\u5728\u524D\u9762\u7684\u67DC\u4F53\u8FB9\uFF08V1/V2/V5 \u524D\u8FB9\u3001\u51B0\u7BB1\u5D4C\u677F\u9876\u4E0A\u7684 TH1 \u524D\u8FB9\u3001\u62BD\u5C49\u4E0A\u65B9\u9732\u51FA\u7684\u51B0\u7BB1\u5E95\u677F\u548C\u524D\u6491\u6761\u524D\u8FB9\uFF09\u7528\u95E8\u677F\u989C\u8272\uFF0C\u5176\u4F59\u770B\u5F97\u89C1\u7684\u67DC\u4F53\u8FB9\u7528\u67DC\u4F53\u989C\u8272\uFF08\u542B H \u6A2A\u6865\u671D\u7A7A\u683C\u5B50\u7684\u90A3\u6761\u957F\u8FB9\uFF1B\u671D\u51B0\u7BB1\u8154\u3001\u8D34\u5730\u8D34\u9876\u8D34\u677F\u7684\u4E0D\u5C01\uFF09\u3002" },
   HINGE_CUP_DIAMETER: { value: 35, doc: "\u94F0\u94FE\u676F\u76F4\u5F84\u3002" },
   HINGE_CUP_DEPTH: { value: 12.5, doc: "\u94F0\u94FE\u676F\u6DF1\u3002" },
@@ -745,15 +1198,7 @@ function buildTallFaces(fb) {
     const v = B.get(s.vPanelId);
     if (!v) continue;
     const r = localRect(v, { y: [s.y0, s.y1], z: [s.z0, s.z1] });
-    const left = s.vPanelId === "V1" || s.vPanelId === "V3";
-    addFeature(v, left ? "A" : "B", {
-      id: s.id,
-      kind: "groove",
-      ...r,
-      depth: s.depth,
-      for: `Zi_${s.boundaryId}`,
-      source: "generalTall"
-    });
+    tagEdges(v, "notch", r, { id: s.id, for: `Zi_${s.boundaryId}`, source: "generalTall" });
   }
   for (const g of fb.ziGrooves) {
     const board = B.get(g.boardId);
@@ -962,54 +1407,72 @@ function fitCanvas(W, H, width, maxHeight, pad) {
   const height = Math.round(H * scale + pad.t + pad.b);
   return { scale, ox, oy, height };
 }
-function boardGaps(boards) {
-  const out = [];
-  const structural = boards.filter((b) => b.category !== "front_panel" && b.stock?.kind !== "door");
-  for (const axis of ["x", "z"]) {
-    const thick = axis === "x" ? "X" : "Z";
-    const list = structural.filter((b) => b.thicknessAxis === thick);
-    const lo = (b) => axis === "x" ? b.x0 : b.z0;
-    const hi = (b) => axis === "x" ? b.x1 : b.z1;
-    const c0 = (b) => axis === "x" ? b.z0 : b.x0;
-    const c1 = (b) => axis === "x" ? b.z1 : b.x1;
-    const mid = (b) => (lo(b) + hi(b)) / 2;
-    const sorted = [...list].sort((a, b) => mid(a) - mid(b));
-    for (let i = 0; i < sorted.length; i += 1) {
-      for (let j = i + 1; j < sorted.length; j += 1) {
-        const a = sorted[i];
-        const b = sorted[j];
-        const crossLo = Math.max(c0(a), c0(b));
-        const crossHi = Math.min(c1(a), c1(b));
-        if (crossHi - crossLo < 30) continue;
-        const clear = lo(b) - hi(a);
-        if (clear < 8) continue;
-        const blocked = sorted.some((m, k) => {
-          if (k === i || k === j) return false;
-          if (mid(m) <= mid(a) || mid(m) >= mid(b)) return false;
-          const share = Math.min(c1(m), crossHi) - Math.max(c0(m), crossLo);
-          return share > 20 && lo(m) >= hi(a) - 1 && hi(m) <= lo(b) + 1;
-        });
-        if (blocked) continue;
-        out.push({
-          axis,
-          clear: Math.round(clear * 10) / 10,
-          center: Math.round((mid(b) - mid(a)) * 10) / 10,
-          at: (hi(a) + lo(b)) / 2,
-          cross: (crossLo + crossHi) / 2
-        });
-      }
-    }
-  }
-  return out;
+function textWidth(text, size = 9) {
+  return text.length * size * 0.62 + 4;
 }
-function gapMarks(gaps, toX, toY, scale, mode = "clear") {
-  const center = mode === "center";
-  return gaps.map((g) => {
-    if (g.clear * scale < 16) return "";
-    const x = g.axis === "x" ? toX(g.at) : toX(g.cross);
-    const y = g.axis === "z" ? toY(g.at) : toY(g.cross);
-    return label(x, y, fmt(center ? g.center : g.clear), { size: 9, fill: center ? "#e0a34f" : "#8ec5ef" });
-  }).join("");
+function hits(a, b, pad = 3) {
+  return a.x0 - pad < b.x1 && a.x1 + pad > b.x0 && a.y0 - pad < b.y1 && a.y1 + pad > b.y0;
+}
+function paintDim(toX, toY, spec, edge, side, offsetPx, along) {
+  if (!(Math.abs(spec.to - spec.from) > 0.4)) return null;
+  const tick = 3.5;
+  const color = spec.color;
+  const halo = `fill="${color}" stroke="${PV.bg}" stroke-width="2.5" paint-order="stroke" stroke-linejoin="round"`;
+  const w = textWidth(spec.text);
+  const h = 12;
+  if (spec.axis === "x") {
+    const x0 = toX(Math.min(spec.from, spec.to));
+    const x1 = toX(Math.max(spec.from, spec.to));
+    if (x1 - x0 < 18) return null;
+    const yEdge = toY(edge);
+    const y = yEdge + side * offsetPx;
+    const textY = y + side * 8;
+    const mid2 = (x0 + x1) / 2 + along;
+    if (mid2 < x0 || mid2 > x1) return null;
+    const svg2 = `<g pointer-events="none" stroke="${color}"><line x1="${px(x0)}" y1="${px(yEdge)}" x2="${px(x0)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x1)}" y1="${px(yEdge)}" x2="${px(x1)}" y2="${px(y + side * tick)}" stroke-width="0.6" /><line x1="${px(x0)}" y1="${px(y)}" x2="${px(x1)}" y2="${px(y)}" stroke-width="0.8" /><line x1="${px(x0)}" y1="${px(y - tick)}" x2="${px(x0)}" y2="${px(y + tick)}" stroke-width="0.8" /><line x1="${px(x1)}" y1="${px(y - tick)}" x2="${px(x1)}" y2="${px(y + tick)}" stroke-width="0.8" /><text x="${px(mid2)}" y="${px(textY)}" text-anchor="middle" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+    return { svg: svg2, box: { x0: mid2 - w / 2, y0: textY - h / 2, x1: mid2 + w / 2, y1: textY + h / 2 } };
+  }
+  const y0 = toY(Math.max(spec.from, spec.to));
+  const y1 = toY(Math.min(spec.from, spec.to));
+  if (y1 - y0 < 18) return null;
+  const xEdge = toX(edge);
+  const x = xEdge + side * offsetPx;
+  const textX = x + side * 5;
+  const mid = (y0 + y1) / 2 + along;
+  if (mid < y0 || mid > y1) return null;
+  const anchor = side > 0 ? "start" : "end";
+  const svg = `<g pointer-events="none" stroke="${color}"><line x1="${px(xEdge)}" y1="${px(y0)}" x2="${px(x + side * tick)}" y2="${px(y0)}" stroke-width="0.6" /><line x1="${px(xEdge)}" y1="${px(y1)}" x2="${px(x + side * tick)}" y2="${px(y1)}" stroke-width="0.6" /><line x1="${px(x)}" y1="${px(y0)}" x2="${px(x)}" y2="${px(y1)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y0)}" x2="${px(x + tick)}" y2="${px(y0)}" stroke-width="0.8" /><line x1="${px(x - tick)}" y1="${px(y1)}" x2="${px(x + tick)}" y2="${px(y1)}" stroke-width="0.8" /><text x="${px(textX)}" y="${px(mid)}" text-anchor="${anchor}" dominant-baseline="middle" font-size="9" ${halo} pointer-events="none">${esc(spec.text)}</text></g>`;
+  const box = side > 0 ? { x0: textX, y0: mid - h / 2, x1: textX + w, y1: mid + h / 2 } : { x0: textX - w, y0: mid - h / 2, x1: textX, y1: mid + h / 2 };
+  return { svg, box };
+}
+function layoutDimensions(specs, toX, toY, avoid = []) {
+  const occupied = avoid.map((b) => ({ ...b }));
+  const order = specs.map((spec, i) => ({ spec, i })).sort((a, b) => (a.spec.priority ?? 1) - (b.spec.priority ?? 1) || Math.abs(a.spec.to - a.spec.from) - Math.abs(b.spec.to - b.spec.from));
+  const out = [];
+  for (const { spec } of order) {
+    const preferred = spec.axis === "x" ? -1 : 1;
+    const alongs = [0, -28, 28, -56, 56, -84, 84, -112, 112, -140, 140];
+    let placed = null;
+    for (const offset of [16, 58]) {
+      for (const side of [preferred, -preferred]) {
+        const edge = side === preferred ? spec.edgeLo : spec.edgeHi;
+        for (const along of alongs) {
+          const attempt = paintDim(toX, toY, spec, edge, side, offset, along);
+          if (!attempt) continue;
+          if (occupied.some((box) => hits(attempt.box, box))) continue;
+          placed = attempt;
+          break;
+        }
+        if (placed) break;
+      }
+      if (placed) break;
+    }
+    if (!placed) placed = paintDim(toX, toY, spec, spec.edgeLo, preferred, 16, 0);
+    if (!placed) continue;
+    occupied.push(placed.box);
+    out.push(placed.svg);
+  }
+  return out.join("");
 }
 function svgRoot(width, height, data, aria, body) {
   const d = Object.entries(data).map(([k, v]) => `data-${k}="${v}"`).join(" ");
@@ -1032,6 +1495,70 @@ var GT_ZONE_LABELS = {
   fixed_panel: "Fixed panel"
 };
 var OWNED_HEIGHT = /* @__PURE__ */ new Set(["fridge"]);
+var r1 = (v) => Math.round(v * 10) / 10;
+function gtZoneOpenings(result) {
+  if (!result || result.validation?.errors?.length || !result.boards?.length || !result.stack?.length) return [];
+  const CW = result.params.cabinetWidth;
+  const rows = result.stack;
+  const zones = rows.filter((it) => it.kind === "functional_zone");
+  const zid = (it) => it.zoneId ?? it.zone?.id ?? it.id;
+  const carcass = result.boards.filter((b) => b.category !== "front_panel" && b.stock?.kind !== "door");
+  const yFront = Math.min(...carcass.map((b) => b.y0));
+  const front = carcass.filter((b) => b.y0 <= yFront + 20);
+  const flats = front.filter((b) => b.thicknessAxis === "Z" && Math.min(b.x1, CW * 0.7) - Math.max(b.x0, CW * 0.3) > 1);
+  const uprights = front.filter((b) => b.thicknessAxis === "X");
+  return zones.map((it, index) => {
+    const z0 = it.z0;
+    const z1 = it.z1;
+    const owned = OWNED_HEIGHT.has(it.zoneType);
+    const below = flats.filter((b) => b.z1 <= z0 + 0.8 || b.z0 - 0.2 <= z0 && z0 <= b.z1 + 0.2).sort((a, b) => b.z0 + b.z1 - (a.z0 + a.z1))[0];
+    const above = flats.filter((b) => b.z0 >= z1 - 0.8 || b.z0 - 0.2 <= z1 && z1 <= b.z1 + 0.2).sort((a, b) => a.z0 + a.z1 - (b.z0 + b.z1))[0];
+    const k = rows.indexOf(it);
+    const prev = rows[k - 1];
+    const next = rows[k + 1];
+    const floorAt = prev && prev.kind === "bottom_system" ? prev.z1 : null;
+    const ceilAt = next && next.kind === "top_system" ? next.z0 : null;
+    let lo = owned || !below ? z0 : below.z1;
+    let hi = owned || !above ? z1 : above.z0;
+    let loMid = owned || !below ? z0 : (below.z0 + below.z1) / 2;
+    let hiMid = owned || !above ? z1 : (above.z0 + above.z1) / 2;
+    if (!owned && floorAt != null && floorAt > lo) {
+      lo = floorAt;
+      loMid = floorAt;
+    }
+    if (!owned && ceilAt != null && ceilAt < hi) {
+      hi = ceilAt;
+      hiMid = ceilAt;
+    }
+    const need = Math.min(50, (z1 - z0) * 0.3);
+    const across = uprights.filter((b) => Math.min(b.z1, z1) - Math.max(b.z0, z0) > need).sort((a, b) => a.x0 - b.x0 || a.x1 - b.x1);
+    const widths = [];
+    for (let i = 0; i < across.length - 1; i += 1) {
+      const a = across[i];
+      const b = across[i + 1];
+      if (b.x0 - a.x1 < 8) continue;
+      widths.push({ aHi: a.x1, bLo: b.x0, aMid: (a.x0 + a.x1) / 2, bMid: (b.x0 + b.x1) / 2, clear: r1(b.x0 - a.x1), center: r1((b.x0 + b.x1) / 2 - (a.x0 + a.x1) / 2) });
+    }
+    return {
+      id: String(zid(it)),
+      index,
+      zoneType: String(it.zoneType ?? ""),
+      z0,
+      z1,
+      height: Number(it.height ?? r1(z1 - z0)),
+      clear: r1(hi - lo),
+      center: r1(hiMid - loMid),
+      owned,
+      lo,
+      hi,
+      loMid,
+      hiMid,
+      xLo: widths.length ? widths[0].aHi : 0,
+      xHi: widths.length ? widths[widths.length - 1].bLo : CW,
+      widths
+    };
+  });
+}
 function generateGTSvgPreview(result, options = {}) {
   if (!result || result.validation.errors.length || !result.boards.length || !result.stack?.length) return null;
   const CW = result.params.cabinetWidth;
@@ -1048,6 +1575,15 @@ function generateGTSvgPreview(result, options = {}) {
   const zones = rows.filter((it) => it.kind === "functional_zone");
   const zid = (it) => it.zoneId ?? it.zone?.id ?? it.id;
   const parts = [];
+  const avoid = [];
+  const reserve = (x, y, text, size, anchor = "middle") => {
+    const w = text.length * size * 0.62 + 4;
+    const h = size + 6;
+    const x0 = anchor === "start" ? x : x - w / 2;
+    avoid.push({ x0, y0: y - h / 2, x1: x0 + w, y1: y + h / 2 });
+  };
+  const mode = options.gaps === "center" ? "center" : "clear";
+  const openings = gtZoneOpenings(result);
   for (const it of rows) {
     if (it.kind === "functional_zone") {
       parts.push(`<rect class="region" data-zone="${zid(it)}" ${rect(0, CW, it.z0, it.z1)} fill="${zoneColor(it.zoneType)}" stroke="none" />`);
@@ -1085,11 +1621,19 @@ function generateGTSvgPreview(result, options = {}) {
     const cx = toX(it.zone?.verticalDivider === true ? CW / 4 : CW / 2);
     const cy = toY((it.z0 + it.z1) / 2);
     const name = GT_ZONE_LABELS[it.zoneType ?? ""] ?? it.zoneType ?? it.id;
+    if (options.readout) {
+      parts.push(label(cx, cy, name, { size: 11 }));
+      reserve(cx, cy, name, 11);
+      continue;
+    }
     if (h >= 32) {
       parts.push(label(cx, cy - 6, name, { size: 11 }));
       parts.push(label(cx, cy + 8, fmt(it.height), { size: 10, fill: PV.text2 }));
+      reserve(cx, cy - 6, name, 11);
+      reserve(cx, cy + 8, fmt(it.height), 10);
     } else {
       parts.push(label(cx, cy, `${name} \xB7 ${fmt(it.height)}`, { size: 10 }));
+      reserve(cx, cy, `${name} \xB7 ${fmt(it.height)}`, 10);
     }
   }
   parts.push(`<rect ${rect(0, CW, 0, CH)} fill="none" stroke="${PV.envelope}" stroke-width="1.25" pointer-events="none" />`);
@@ -1120,14 +1664,54 @@ function generateGTSvgPreview(result, options = {}) {
     });
     parts.push(spacedLabels(items, ox - 6, "end"));
     const right = toX(CW);
-    for (const it of zones) {
+    zones.forEach((it, i) => {
       parts.push(`<line x1="${px(right + 3)}" y1="${px(toY(it.z1))}" x2="${px(right + 8)}" y2="${px(toY(it.z1))}" stroke="${PV.text3}" pointer-events="none" />`);
       parts.push(`<line x1="${px(right + 3)}" y1="${px(toY(it.z0))}" x2="${px(right + 8)}" y2="${px(toY(it.z0))}" stroke="${PV.text3}" pointer-events="none" />`);
-      if ((it.z1 - it.z0) * scale >= 12) parts.push(dimText(right + 11, toY((it.z0 + it.z1) / 2), fmt(it.height), "start"));
-    }
+      if ((it.z1 - it.z0) * scale < 12) return;
+      const y = toY((it.z0 + it.z1) / 2);
+      const o = openings[i];
+      if (!options.readout || !o) {
+        parts.push(dimText(right + 11, y, fmt(it.height), "start"));
+        reserve(right + 11, y, fmt(it.height), 10, "start");
+        return;
+      }
+      const text = fmt(mode === "center" ? o.center : o.clear);
+      const editable = options.editable === true && !o.owned && zones.length > 1;
+      const hit = Math.max(36, text.length * 8);
+      parts.push(
+        `<g class="zone-dim${editable ? " editable" : ""}" data-zone="${zid(it)}" data-height="${o.height}" data-clear="${o.clear}" data-center="${o.center}"><title>${o.owned ? "The fridge cut-out" : `${mode === "center" ? "Centre to centre" : "Clearance"}${editable ? " \xB7 click to type" : ""}`}</title>` + (editable ? `<rect x="${px(right + 9)}" y="${px(y - 9)}" width="${hit}" height="18" fill="transparent" />` : "") + `<text x="${px(right + 11)}" y="${px(y)}" text-anchor="start" dominant-baseline="middle" font-size="10" fill="${editable ? PV.boundary : PV.text2}" pointer-events="none">${text}</text></g>`
+      );
+      reserve(right + 11, y, text, 10, "start");
+    });
     parts.push(dimText(toX(CW / 2), toY(0) + 15, `W ${fmt(CW)} \xB7 H ${fmt(CH)}`, "middle", PV.text3));
+    reserve(toX(CW / 2), toY(0) + 15, `W ${fmt(CW)} \xB7 H ${fmt(CH)}`, 10);
   }
-  parts.push(gapMarks(boardGaps(result.boards), toX, toY, scale, options.gaps ?? "clear"));
+  const color = mode === "center" ? "#e0a34f" : "#8ec5ef";
+  const specs = [];
+  for (const o of openings) {
+    for (const w of o.widths) {
+      specs.push({
+        axis: "x",
+        from: mode === "center" ? w.aMid : w.aHi,
+        to: mode === "center" ? w.bMid : w.bLo,
+        edgeLo: o.lo,
+        edgeHi: o.hi,
+        text: fmt(mode === "center" ? w.center : w.clear),
+        color
+      });
+    }
+    specs.push({
+      axis: "z",
+      from: mode === "center" ? o.loMid : o.lo,
+      to: mode === "center" ? o.hiMid : o.hi,
+      edgeLo: o.xLo,
+      edgeHi: o.xHi,
+      text: fmt(mode === "center" ? o.center : o.clear),
+      color: o.owned ? PV.text : color,
+      priority: o.owned ? 0 : 1
+    });
+  }
+  parts.push(layoutDimensions(specs.filter((sp) => Math.abs(sp.to - sp.from) * scale >= 18), toX, toY, avoid));
   return svgRoot(width, height, { scale, ox, oy, w: CW, h: CH }, "Tall cabinet front elevation", parts.join(""));
 }
 
@@ -1322,8 +1906,8 @@ var presets_default = {
             z1: 100
           },
           H34_bottom: {
-            x0: 15,
-            x1: 585,
+            x0: 16,
+            x1: 584,
             y0: 553,
             y1: 568,
             z0: 0,
@@ -1346,8 +1930,8 @@ var presets_default = {
             z1: 1099
           },
           H34_mid: {
-            x0: 15,
-            x1: 585,
+            x0: 16,
+            x1: 584,
             y0: 553,
             y1: 568,
             z0: 999,
@@ -1948,62 +2532,6 @@ var presets_default = {
         },
         features: {},
         faceFeatures: {
-          "V1.A.zi_slot_V1_boundary-zone-2": {
-            u0: 100,
-            u1: 150,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V1.A.zi_slot_V1_boundary-zone-3": {
-            u0: 100,
-            u1: 150,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-2": {
-            u0: 100,
-            u1: 150,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-3": {
-            u0: 100,
-            u1: 150,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-2": {
-            u0: 0,
-            u1: 50,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-3": {
-            u0: 0,
-            u1: 50,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-2": {
-            u0: 0,
-            u1: 50,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-3": {
-            u0: 0,
-            u1: 50,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
           "Zi_boundary-zone-3.A.zi_groove_VD_zone-3_boundary-zone-3": {
             u0: 292,
             u1: 308,
@@ -2254,8 +2782,8 @@ var presets_default = {
             z1: 100
           },
           H34_bottom: {
-            x0: 15,
-            x1: 649,
+            x0: 16,
+            x1: 648,
             y0: 569,
             y1: 584,
             z0: 0,
@@ -2278,24 +2806,24 @@ var presets_default = {
             z1: 1100
           },
           H34_mid: {
-            x0: 15,
-            x1: 649,
+            x0: 16,
+            x1: 648,
             y0: 569,
             y1: 584,
             z0: 1e3,
             z1: 1100
           },
           H12_blank_top: {
-            x0: 0,
-            x1: 664,
+            x0: 16,
+            x1: 648,
             y0: 0,
             y1: 15,
             z0: 1614,
             z1: 1714
           },
           H12_blank_bottom: {
-            x0: 0,
-            x1: 664,
+            x0: 16,
+            x1: 648,
             y0: 0,
             y1: 15,
             z0: 1314,
@@ -2888,76 +3416,6 @@ var presets_default = {
         },
         features: {},
         faceFeatures: {
-          "V1.A.zi_slot_V1_boundary-drawer-a": {
-            u0: 100,
-            u1: 150,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V1.A.zi_slot_V1_boundary-drawer-b": {
-            u0: 100,
-            u1: 150,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
-          "V1.A.zi_slot_V1_boundary-blank": {
-            u0: 100,
-            u1: 150,
-            v0: 1298.5,
-            v1: 1314.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-drawer-a": {
-            u0: 100,
-            u1: 150,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-drawer-b": {
-            u0: 100,
-            u1: 150,
-            v0: 983.5,
-            v1: 999.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-blank": {
-            u0: 100,
-            u1: 150,
-            v0: 1298.5,
-            v1: 1314.5,
-            depth: 50
-          },
-          "V3.A.zi_slot_V3_boundary-drawer-a": {
-            u0: 0,
-            u1: 50,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V3.A.zi_slot_V3_boundary-blank": {
-            u0: 0,
-            u1: 50,
-            v0: 1298.5,
-            v1: 1314.5,
-            depth: 50
-          },
-          "V4.B.zi_slot_V4_boundary-drawer-a": {
-            u0: 0,
-            u1: 50,
-            v0: 668.5,
-            v1: 684.5,
-            depth: 50
-          },
-          "V4.B.zi_slot_V4_boundary-blank": {
-            u0: 0,
-            u1: 50,
-            v0: 1298.5,
-            v1: 1314.5,
-            depth: 50
-          },
           "FP_side-door.A.FP_side-door_hinge_1": {
             diameter: 35,
             depth: 12.5,
@@ -3689,48 +4147,6 @@ var presets_default = {
         },
         features: {},
         faceFeatures: {
-          "V1.A.zi_slot_V1_boundary-zone-2": {
-            u0: 100,
-            u1: 150,
-            v0: 242.5,
-            v1: 258.5,
-            depth: 50
-          },
-          "V1.A.zi_slot_V1_boundary-zone-3": {
-            u0: 100,
-            u1: 150,
-            v0: 504.5,
-            v1: 520.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-2": {
-            u0: 100,
-            u1: 150,
-            v0: 242.5,
-            v1: 258.5,
-            depth: 50
-          },
-          "V2.B.zi_slot_V2_boundary-zone-3": {
-            u0: 100,
-            u1: 150,
-            v0: 504.5,
-            v1: 520.5,
-            depth: 50
-          },
-          "V3.A.zi_slot_V3_boundary-zone-3": {
-            u0: 0,
-            u1: 50,
-            v0: 504.5,
-            v1: 520.5,
-            depth: 50
-          },
-          "V4.B.zi_slot_V4_boundary-zone-3": {
-            u0: 0,
-            u1: 50,
-            v0: 504.5,
-            v1: 520.5,
-            depth: 50
-          },
           "B3.B.B3_LED_MAIN": {
             u0: 0,
             u1: 577,
@@ -3739,15 +4155,15 @@ var presets_default = {
             depth: 6.5
           },
           "B3.B.B3_LED_BRANCH_1": {
-            u0: 72.75,
-            u1: 87.25,
+            u0: 22.75,
+            u1: 37.25,
             v0: 32.5,
             v1: 150,
             depth: 6.5
           },
           "B3.B.B3_LED_BRANCH_2": {
-            u0: 489.75,
-            u1: 504.25,
+            u0: 539.75,
+            u1: 554.25,
             v0: 32.5,
             v1: 150,
             depth: 6.5
@@ -4348,10 +4764,18 @@ function stampTallBoards(s, boards) {
     if (id.startsWith("H34")) {
       put("x0", hX1);
       put("x1", hX0);
+      put("x0", xL1);
+      put("x1", xR0);
       if (Number.isFinite(valueOf("V5.x1"))) put("x0", link("V5.x1"));
       if (Number.isFinite(valueOf("V5.x0"))) put("x1", link("V5.x0"));
       put("y0", h34y0);
       put("y1", md);
+    }
+    if (id.startsWith("H12")) {
+      put("x0", xL1);
+      put("x1", xR0);
+      put("y0", zero);
+      put("y1", ex({ d: RULES.H12_DEPTH }, (t) => t.d, "H12_DEPTH"));
     }
     if (/_mid$/.test(id) && id.startsWith("H")) {
       if (Number.isFinite(valueOf("tall.hMid.z0"))) {
@@ -4453,7 +4877,7 @@ function stampTallBoards(s, boards) {
     }
   }
 }
-function generateGeneralTall(input) {
+function generateGeneralTall(input, options = {}) {
   beginProvenance();
   const errors = [];
   const warnings = [];
@@ -5127,8 +5551,8 @@ function generateGeneralTall(input) {
       same(`${h.name}.y0`, "tall.hY0");
       same(`${h.name}.y1`, "tall.hY1");
     } else {
-      let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
-      let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
+      let x0 = Math.max(r2(dx + RULES.H_SUPPORT_THICKNESS.value), vLeftX1);
+      let x1 = Math.min(r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value), vRightX0);
       const v5 = boards.find((board) => board.id === "V5");
       if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - RULES.H34_DEPTH.value) {
         if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
@@ -5210,8 +5634,8 @@ function generateGeneralTall(input) {
         same(`${h.name}.y0`, "tall.hY0");
         same(`${h.name}.y1`, "tall.hY1");
       } else {
-        let x0 = r2(dx + RULES.H_SUPPORT_THICKNESS.value);
-        let x1 = r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value);
+        let x0 = Math.max(r2(dx + RULES.H_SUPPORT_THICKNESS.value), vLeftX1);
+        let x1 = Math.min(r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value), vRightX0);
         const v5 = boards.find((board) => board.id === "V5");
         if (v5 && h.z0 < v5.z1 && h.z1 > v5.z0 && v5.y1 > md - RULES.H34_DEPTH.value) {
           if (v5.x0 < dx + mw / 2) x0 = r2(Math.max(x0, v5.x1));
@@ -5287,8 +5711,8 @@ function generateGeneralTall(input) {
       "carcass",
       "XZ",
       "Y",
-      r2(dx + RULES.H_SUPPORT_THICKNESS.value),
-      r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value),
+      Math.max(r2(dx + RULES.H_SUPPORT_THICKNESS.value), vLeftX1),
+      Math.min(r2(dx + mw - RULES.H_SUPPORT_THICKNESS.value), vRightX0),
       r2(md - RULES.H34_DEPTH.value),
       md,
       h34z0,
@@ -5335,10 +5759,10 @@ function generateGeneralTall(input) {
         "H12",
         s.hT,
         "carcass",
-        "XY",
-        "Z",
-        dx,
-        r2(dx + mw),
+        "XZ",
+        "Y",
+        vLeftX1,
+        vRightX0,
         0,
         RULES.H12_DEPTH.value,
         r2(zi.z1 - H),
@@ -5352,10 +5776,10 @@ function generateGeneralTall(input) {
         "H12",
         s.hT,
         "carcass",
-        "XY",
-        "Z",
-        dx,
-        r2(dx + mw),
+        "XZ",
+        "Y",
+        vLeftX1,
+        vRightX0,
         0,
         RULES.H12_DEPTH.value,
         zi.z0,
@@ -5370,10 +5794,10 @@ function generateGeneralTall(input) {
         "H12",
         s.hT,
         "carcass",
-        "XY",
-        "Z",
-        dx,
-        r2(dx + mw),
+        "XZ",
+        "Y",
+        vLeftX1,
+        vRightX0,
         0,
         RULES.H12_DEPTH.value,
         zi.z0,
@@ -5750,6 +6174,10 @@ function generateGeneralTall(input) {
     ));
   }
   stampTallBoards(s, boards);
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+    leftSide: s.leftT > 0 ? s.leftFinish : "none",
+    rightSide: s.rightT > 0 ? s.rightFinish : "none"
+  });
   attachFaces(boards);
   const joints = buildTallFaces({
     boards,
@@ -5821,5 +6249,6 @@ export {
   fitTallCabinetHeight,
   fridgeCabinetWidth,
   generateGTSvgPreview,
-  generateGeneralTall
+  generateGeneralTall,
+  gtZoneOpenings
 };

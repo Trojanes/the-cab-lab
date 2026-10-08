@@ -4,7 +4,10 @@
  * Boards are returned in one cabinet frame: y = 0 at the open tips, +y toward the back wall.
  */
 import { generateOverheadCabinet } from "../overheadCabinet/generator.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT } from "./layout.ts";
 import type { Board } from "../overheadCabinet/types.ts";
+import { facesOf, localOutline, planeAxes, rectOutline, type FaceFeature, type FaceId } from "../_lib/model.ts";
 import { RULES as R } from "./rules.ts";
 
 export interface UZone {
@@ -106,25 +109,129 @@ function axisOf(axis: Board["thicknessAxis"], deg: number): Board["thicknessAxis
   return axis === "X" ? "Y" : "X";
 }
 
+type V3 = { x: number; y: number; z: number };
+type AxisL = "x" | "y" | "z";
+
+/** A point of a run's own frame in the U frame: rotate, translate, then y measured from the tips. */
+function mapPoint(p: V3, t: Xform, spanY: number): V3 {
+  const [x, y] = transformXY(p.x, p.y, t);
+  return { x, y: spanY - y, z: p.z };
+}
+
+/**
+ * Move one board of a straight run into the U. The outline, the cut-outs and every face
+ * feature go with it: the run is rotated and mirrored, so the outline is carried point by
+ * point into the new plane, A / B swap when the thickness direction flips, and each feature
+ * is re-measured from the new box. (Dropping the outline left plain boxes with grooves,
+ * hinge cups and edge bands in the old run's coordinates.)
+ */
 function placeBoard(run: RunId, board: Board, t: Xform, spanY: number): Board {
-  const pts = [
-    [board.x0, board.y0], [board.x0, board.y1], [board.x1, board.y0], [board.x1, board.y1],
-  ].map(([x, y]) => transformXY(x, y, t));
-  const xs = pts.map(([x]) => x);
-  const ys = pts.map(([, y]) => spanY - y);
-  return {
+  const [U, V, T] = planeAxes(board.profilePlane) as [AxisL, AxisL, AxisL];
+  const plane = planeOf(board.profilePlane, t.rotationDeg);
+  const [U2, V2, T2] = planeAxes(plane) as [AxisL, AxisL, AxisL];
+  const at = (u: number, v: number, w: number): V3 => {
+    const p = { x: 0, y: 0, z: 0 };
+    p[U] = u; p[V] = v; p[T] = w;
+    return mapPoint(p, t, spanY);
+  };
+  const U0 = board[`${U}0`];
+  const V0 = board[`${V}0`];
+  const t0 = board[`${T}0`];
+  const t1 = board[`${T}1`];
+
+  // Outline in the run's absolute (u, v), then in the U frame.
+  const local = localOutline(board) ?? rectOutline(board);
+  const outline = local.map(([u, v]) => at(U0 + u, V0 + v, t0));
+  const holes = (board.profileHoles ?? []).map((h) => (h as Array<Record<string, number>>).map((q) => {
+    const mu = board.profileVector ? Math.min(...(board.profileVector as Array<Record<string, number>>).map((r) => Number(r[U]))) : U0;
+    const mv = board.profileVector ? Math.min(...(board.profileVector as Array<Record<string, number>>).map((r) => Number(r[V]))) : V0;
+    return at(Number(q[U]) - mu + U0, Number(q[V]) - mv + V0, t0);
+  }));
+
+  // New box: the mapped corners, widened in-plane to the outline (a divider's tongue leaves the box).
+  const corners = [board.x0, board.x1].flatMap((x) => [board.y0, board.y1].flatMap((y) => [board.z0, board.z1].map((z) => mapPoint({ x, y, z }, t, spanY))));
+  const box: Record<string, number> = {};
+  for (const a of ["x", "y", "z"] as AxisL[]) {
+    box[`${a}0`] = Math.min(...corners.map((c) => c[a]));
+    box[`${a}1`] = Math.max(...corners.map((c) => c[a]));
+  }
+  for (const a of [U2, V2]) {
+    box[`${a}0`] = Math.min(box[`${a}0`]!, ...outline.map((c) => c[a]));
+    box[`${a}1`] = Math.max(box[`${a}1`]!, ...outline.map((c) => c[a]));
+  }
+  const nU0 = box[`${U2}0`]!;
+  const nV0 = box[`${V2}0`]!;
+  const flip = at(U0, V0, t1)[T2] < at(U0, V0, t0)[T2];
+  const big = (id: FaceId): FaceId => (id === "A" ? (flip ? "B" : "A") : id === "B" ? (flip ? "A" : "B") : id);
+  const toLocal = (u: number, v: number): [number, number] => {
+    const q = at(U0 + u, V0 + v, t0);
+    return [q[U2] - nU0, q[V2] - nV0];
+  };
+  const pt = (q: V3) => ({ [U2]: q[U2], [V2]: q[V2] }) as Record<string, number>;
+
+  const placed: Board = {
     ...board,
     id: `${run}.${board.id}`,
     name: `${run} ${board.name}`,
-    profilePlane: planeOf(board.profilePlane, t.rotationDeg),
+    profilePlane: plane,
     thicknessAxis: axisOf(board.thicknessAxis, t.rotationDeg),
-    x0: Math.min(...xs),
-    x1: Math.max(...xs),
-    y0: Math.min(...ys),
-    y1: Math.max(...ys),
-    profileVector: undefined,
+    x0: box.x0!, x1: box.x1!, y0: box.y0!, y1: box.y1!, z0: box.z0!, z1: box.z1!,
+    profileVector: [...outline, outline[0]!].map(pt) as Board["profileVector"],
+    profileHoles: holes.length ? holes.map((h) => h.map(pt)) as Board["profileHoles"] : undefined,
     cutProfileVector: undefined,
+    profileFeatures: undefined,
+    faces: undefined,
   };
+  const faces = facesOf(placed);
+  for (const f of board.faces ?? []) {
+    const to = faces.find((g) => g.id === big(f.id));
+    if (!to) continue;
+    if (f.semantic !== undefined) to.semantic = f.semantic;
+    if (f.visible !== undefined) to.visible = f.visible;
+    if (f.finish !== undefined) to.finish = f.finish;
+    to.features = (f.features ?? []).map((ft): FaceFeature => {
+      const out: FaceFeature = { ...ft };
+      if ([ft.u0, ft.u1, ft.v0, ft.v1].every((n) => Number.isFinite(n))) {
+        const a = toLocal(ft.u0!, ft.v0!);
+        const b = toLocal(ft.u1!, ft.v1!);
+        out.u0 = Math.min(a[0], b[0]); out.u1 = Math.max(a[0], b[0]);
+        out.v0 = Math.min(a[1], b[1]); out.v1 = Math.max(a[1], b[1]);
+      }
+      if (Array.isArray(ft.center)) out.center = toLocal(ft.center[0], ft.center[1]);
+      if (Array.isArray(ft.loop)) out.loop = ft.loop.map(([u, v]) => toLocal(u, v));
+      return out;
+    });
+  }
+  placed.faces = faces;
+  if (placed.milling === "A" || placed.milling === "B") placed.milling = big(placed.milling) as "A" | "B";
+  return placed;
+}
+
+/** A front cut back to the usable span: its A / B features keep their place on the cabinet. */
+function clipFront(b: Board, x0: number, x1: number): Board {
+  const shift = x0 - b.x0;
+  const width = x1 - x0;
+  const out: Board = { ...b, x0, x1, profileVector: undefined, faces: undefined };
+  const faces = facesOf(out);
+  for (const f of b.faces ?? []) {
+    const to = faces.find((g) => g.id === f.id);
+    if (!to) continue;
+    if (f.semantic !== undefined) to.semantic = f.semantic;
+    if (f.visible !== undefined) to.visible = f.visible;
+    if (f.finish !== undefined) to.finish = f.finish;
+    if (f.id !== "A" && f.id !== "B") { to.features = f.features; continue; }
+    to.features = (f.features ?? []).flatMap((ft) => {
+      const moved: FaceFeature = { ...ft };
+      if (Number.isFinite(ft.u0) && Number.isFinite(ft.u1)) { moved.u0 = ft.u0! - shift; moved.u1 = ft.u1! - shift; }
+      if (Array.isArray(ft.center)) moved.center = [ft.center[0] - shift, ft.center[1]];
+      if (Array.isArray(ft.loop)) moved.loop = ft.loop.map(([u, v]) => [u - shift, v] as [number, number]);
+      const lo = Array.isArray(moved.center) ? moved.center[0] - (moved.diameter ?? 0) / 2 : Math.min(moved.u0 ?? 0, moved.u1 ?? 0);
+      const hi = Array.isArray(moved.center) ? moved.center[0] + (moved.diameter ?? 0) / 2 : Math.max(moved.u0 ?? 0, moved.u1 ?? 0);
+      return lo >= 0 && hi <= width ? [moved] : [];
+    });
+  }
+  out.faces = faces;
+  return out;
 }
 
 function overlap(a: Board, b: Board): number {
@@ -134,7 +241,7 @@ function overlap(a: Board, b: Board): number {
   return dx * dy * dz;
 }
 
-export function generateUShapeOverhead(raw: UShapeParams) {
+export function generateUShapeOverhead(raw: UShapeParams, options: { layout?: unknown } = {}) {
   const errors: string[] = [];
   const warnings: string[] = [];
   const totalWidth = n(raw.totalWidth, 2400);
@@ -235,7 +342,7 @@ export function generateUShapeOverhead(raw: UShapeParams) {
       const x0 = Math.max(b.x0, usable0);
       const x1 = Math.min(b.x1, usable1);
       if (x1 - x0 < 1) return [];
-      return [{ ...b, x0, x1 }];
+      return [x0 === b.x0 && x1 === b.x1 ? b : clipFront(b, x0, x1)];
     });
     return clipped.map((b) => placeBoard(run.id, b, run.transform, spanY));
   });
@@ -247,6 +354,11 @@ export function generateUShapeOverhead(raw: UShapeParams) {
       if (overlap(a, b) > 1) errors.push(`${a.id} overlaps ${b.id}.`);
     }
   }
+
+  applyLayoutDraft(boards, options.layout != null ? options.layout : LAYOUT, {}, errors, warnings, {
+    ledGroove: raw.ledGroove === true ? "on" : "off",
+    rangehoodAlignment: raw.rangehoodAlignment === "right" ? "right" : "left",
+  });
 
   return {
     boards: errors.some((e) => e.startsWith("totalWidth") || e.includes("needs")) && !runs.length ? [] : boards,

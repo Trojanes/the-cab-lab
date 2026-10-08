@@ -1,5 +1,10 @@
 # 休闲柜组（Lounge，I/L/U/Parallel）逻辑规格 — cleanroom 重实现提取
 
+> **2026-10-08 起：旧结构（construction = "classic"：顶板开口 + 带台阶的盖板）和 U 形沙发已经去掉。**
+> I、L、平行沙发一律是框架式（§10）：外板满高，盖子直接平放在外板之间，不再挖槽。
+> 存档里的 `construction: "classic"` 打开时按框架式生成（并给一条警告）；U 形存档会报错，需要重画成 L 或 I。
+> 下面写到 classic / U 的章节（§3–§5、§8 黄金 golden-*）只作历史记录，生成器已经不走这些路径。
+
 > 目的：从既有实现提取**行为与逻辑规格**（不含实现代码），供不照搬代码的重新实现使用。
 > 验收方式：数值对拍（golden preset + pins，0.01 mm）。
 > 事实来源：参数/常量/接缝声明（数据）、测试断言数值（验收基准）。
@@ -15,7 +20,7 @@
 
 | 参数 | 默认 | 说明 |
 |---|---|---|
-| style | L_SHAPE | L_SHAPE / I_SHAPE / PARALLEL / U_SHAPE |
+| style | L_SHAPE | L_SHAPE / I_SHAPE / PARALLEL（U_SHAPE 已去掉） |
 | height | 420 | 总高 |
 | partitionPanelThickness (PPT) | 18 | 全部板厚（柜组单一厚度体系） |
 | wheelAvoidanceEnabled | false | 轮拱避让开关 |
@@ -216,6 +221,10 @@ U 形是包围盒内三条 I 形段，开口朝局部 Y=0。
 中柜（框架平行沙发）：只定宽、深、高——开轮拱时站在避让盖板上表面（z = AH），没开时站在地上（z = 0），middleCabinet.startHeight 不用（上面以后另放 bench top）。hasMiddleCabinet 没设时，两段之间 ≥ MIDDLE_CABINET_MIN_WIDTH 300 就自动放；middleCabinet.width 没设时取 MIDDLE_CABINET_WIDTH 600 和中间空隙里小的那个；比空隙宽是 error（会站进座位里）。实际尺寸在 `result.params.middleCabinet`（null = 没有）。
 
 黄金 `rear-door-parallel`（1880 × 900 × 420，SW 560，AD 380 / AH 270，中柜 502 × 270 × 457 站在避让盖板上 z 270 → 727）：21 块板，盖子 538 × 859。
+
+### 10.4 背板（默认关）
+
+L 的翼端外侧面，或平行沙发左、右外端，可以各加一块隔断厚的背板（`backPanel` / `leftBackPanel` / `rightBackPanel`）。外轮廓沿墙的总长不动：板占外侧那一个板厚，座体朝里面让出同样的厚度（L 挤占主段，平行挤占中间空隙）。板从地到座高 + BACK_PANEL_ABOVE_SEAT 530（座高 420 时 950），沿这一截的侧面从墙盖到房间面，再往房间伸出 BACK_PANEL_OVERHANG 50（`backPanelOverhang` 可改）。靠房间的上角倒圆，半径 BACK_PANEL_CORNER_RADIUS 50，是一条真圆弧（轮廓上的 bulge）；靠墙的上角是直角。I 形没有。
 
 ### 10.1 L 端抽屉（lFrontAccess = "DRAWER"，只在框架式 L）
 

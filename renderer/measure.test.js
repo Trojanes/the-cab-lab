@@ -1,7 +1,7 @@
 // Measure: distances, angles, and the click chain. No scene, no job.
 import {
   MEASURE_LIMIT, boardSize, boardSummary, emptyMeasure, measureBetween, measureClick, measureEnds,
-  measureLogPick, measureLogResult, measureMark, measurePreview, measureSummary, planeAngle,
+  measureLogPick, measureLogResult, measureMark, measurePreview, measureSummary, planeAngle, segmentLength,
 } from "./measure.js";
 
 function assert(cond, msg) {
@@ -156,6 +156,39 @@ const face = (z, normal, at, label) => ({
     face(0, [1, 0, 0], { x: 0, y: 0, z: 0 }, "C"),
   ));
   assert(ang.pair === "angle" && ang.distance == null && ang.angle === 90, JSON.stringify(ang));
+}
+
+// An edge: straight length, fillet arc length, parallel gap, square angle.
+{
+  near(segmentLength(0, 0, 200, 0, 0), 200);
+  near(segmentLength(0, 0, 200, 0, 1), 100 * Math.PI, 1e-6, "semicircle");
+  const edge = (x0, y0, x1, y1) => ({
+    kind: "edge",
+    a: { x: x0, y: y0, z: 0 },
+    b: { x: x1, y: y1, z: 0 },
+    at: { x: (x0 + x1) / 2, y: (y0 + y1) / 2, z: 0 },
+    samples: [{ x: x0, y: y0, z: 0 }, { x: x1, y: y1, z: 0 }],
+    length: Math.hypot(x1 - x0, y1 - y0),
+    label: "edge",
+  });
+  const along = edge(0, 0, 100, 0);
+  const parallel = edge(0, 40, 100, 40);
+  const up = { ...edge(0, 0, 0, 0), b: { x: 0, y: 0, z: 100 }, at: { x: 0, y: 0, z: 50 }, samples: [{ x: 0, y: 0, z: 0 }, { x: 0, y: 0, z: 100 }] };
+  const gap = measureBetween(along, parallel);
+  assert(gap.kind === "edge-edge", gap.kind);
+  near(gap.distance, 40);
+  const square = measureBetween(along, up);
+  assert(square.kind === "angle" && square.between === "edges", JSON.stringify(square));
+  near(square.angle, 90);
+  const toPoint = measureBetween(along, { kind: "point", x: 50, y: 30, z: 0, label: "p" });
+  near(toPoint.distance, 30);
+  const floor = face(0, [0, 0, 1], { x: 0, y: 0, z: 0 }, "Floor");
+  const raised = { ...along, a: { x: 0, y: 0, z: 18 }, b: { x: 100, y: 0, z: 18 }, at: { x: 50, y: 0, z: 18 }, samples: [{ x: 0, y: 0, z: 18 }, { x: 100, y: 0, z: 18 }] };
+  const off = measureBetween(raised, floor);
+  assert(off.kind === "edge-face", off.kind);
+  near(off.distance, 18);
+  const logged = measureLogPick(along);
+  assert(logged.kind === "edge" && logged.length === 100 && logged.normal == null, JSON.stringify(logged));
 }
 
 console.log("measure.test.js ok");

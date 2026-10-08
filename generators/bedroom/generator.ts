@@ -54,6 +54,8 @@ import type {
 } from "./types.ts";
 import { RULES as R } from "./rules.ts";
 import { Outline, beginProvenance, dim, endProvenance, ex, lit, param, ref, same } from "../_lib/dim.ts";
+import { applyLayoutDraft } from "../_lib/layout.ts";
+import { LAYOUT as PLACEMENT } from "./layout.ts";
 import { addFeature, annotate, attachFaces, boundaryEdgeFaces, edgeFacesIn, faceRef, joint, localRect, type Joint } from "../_lib/model.ts";
 import { buildBedroomOhc, equalOhcZones, normalizeOhcZones, setOhcBoundary, yWhereRoofMeets } from "./ohc.ts";
 import { addNookShelfLed, addT3LedChannels } from "./led.ts";
@@ -344,7 +346,7 @@ const ZONE_LABEL: Record<BedroomZoneId, string> = {
   ohc: "Overhead",
 };
 
-export function generateBedroom(raw: BedroomParams): BedroomResult {
+export function generateBedroom(raw: BedroomParams, options: { layout?: unknown } = {}): BedroomResult {
   const errors: string[] = [];
   const warnings: string[] = [];
   const p = resolve(raw);
@@ -994,6 +996,10 @@ export function generateBedroom(raw: BedroomParams): BedroomResult {
     if (ohcZone) ohcZone.boards = ohc.boards.map((b) => b.id);
   }
 
+  applyLayoutDraft(boards, options.layout != null ? options.layout : PLACEMENT, {}, errors, warnings, {
+    style: p.style === "nook" ? "nook" : "style1",
+    ledGroove: p.ledGroove ? "on" : "off",
+  });
   const provenance = endProvenance();
   const layout: BedroomLayoutInfo = {
     openingWidth: round1(openingW),

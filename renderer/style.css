@@ -20,6 +20,8 @@
   --left-w: 148px;
   --right-w: 280px;
   --right-w-wide: 540px;
+  /* Kitchen and overhead editors: two steps of +15% on the 540 px wide page, so the front view stays readable. */
+  --right-w-kitchen: 714px;
   --drawer-h: 220px;
   --drawer-tabs-h: 30px;
 }
@@ -395,6 +397,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .snap-list-row:hover { background: var(--bg-hover); }
 .snap-list-row input { margin: 0; accent-color: var(--accent); }
 #app:has(#rightpanel.wide) .sketch-bar { right: calc(var(--right-w-wide) + 12px); }
+#app:has(#rightpanel.wide.kitchen) .sketch-bar,
+#app:has(#rightpanel.wide.ohc) .sketch-bar { right: calc(var(--right-w-kitchen) + 12px); }
 .sketch-title { font-weight: 600; color: var(--text); white-space: nowrap; }
 .sketch-group { display: flex; align-items: center; gap: 2px; padding-left: 10px; border-left: 1px solid var(--line); }
 .sketch-group-label { color: var(--text-3); text-transform: uppercase; letter-spacing: 0.06em; font-size: 10px; margin-right: 4px; }
@@ -485,6 +489,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .fp-btn:hover:not(:disabled) { color: var(--text); border-color: var(--accent); }
 .fp-btn.active { background: var(--accent-soft); color: var(--text); border-color: var(--accent); }
 #app:has(#rightpanel.wide) .fp-btn { right: calc(var(--right-w-wide) + 12px); }
+#app:has(#rightpanel.wide.kitchen) .fp-btn,
+#app:has(#rightpanel.wide.ohc) .fp-btn { right: calc(var(--right-w-kitchen) + 12px); }
 #floorplan {
   position: absolute;
   inset: 0;
@@ -505,6 +511,8 @@ button:disabled { cursor: default; opacity: 0.45; }
   border-bottom: 1px solid var(--line);
 }
 #app:has(#rightpanel.wide) .fp-tools { padding-right: calc(var(--right-w-wide) + 10px); }
+#app:has(#rightpanel.wide.kitchen) .fp-tools,
+#app:has(#rightpanel.wide.ohc) .fp-tools { padding-right: calc(var(--right-w-kitchen) + 10px); }
 .fp-title { font-weight: 600; letter-spacing: 0.02em; margin-right: 4px; }
 .fp-sep { width: 1px; height: 18px; background: var(--line-strong); margin: 0 6px; }
 .fp-tools .tb.seg { border: 1px solid transparent; }
@@ -566,6 +574,8 @@ button:disabled { cursor: default; opacity: 0.45; }
 .fp-dim input:focus { outline: none; border-color: var(--accent); }
 /* door card (shower door clearance / sliding door top + leaf); the fields switch with the tool */
 .fp-card.sliding [data-for="shower"], .fp-card:not(.sliding) [data-for="sliding"] { display: none; }
+.fp-card.arch label:not([data-for="arch"]) { display: none; }
+.fp-card:not(.arch) [data-for="arch"] { display: none; }
 .fp-card {
   position: absolute;
   z-index: 4;
@@ -661,6 +671,8 @@ button:disabled { cursor: default; opacity: 0.45; }
   overflow-y: auto;
 }
 #rightpanel.wide { width: var(--right-w-wide); }
+#rightpanel.wide.kitchen,
+#rightpanel.wide.ohc { width: var(--right-w-kitchen); }
 #rightpanel.panel-out {
   animation: panel-out 0.32s ease-in forwards;
   pointer-events: none;
@@ -685,6 +697,20 @@ button:disabled { cursor: default; opacity: 0.45; }
 }
 .panel-title { font-size: 14px; font-weight: 600; }
 .panel-sub { color: var(--text-3); font-size: 11px; margin-top: 2px; }
+.panel-sizes { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.panel-sizes .field { margin: 0; }
+.size-pop {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: -2px 0 2px;
+  padding: 6px 8px;
+  background: var(--bg-panel-2);
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius);
+  font-size: 11px;
+}
+.size-pop .tb { height: 22px; padding: 0 8px; border: 1px solid var(--line-strong); }
 .panel-section {
   padding: 10px 14px 12px;
   border-bottom: 1px solid var(--line);
@@ -887,6 +913,16 @@ button:disabled { cursor: default; opacity: 0.45; }
   padding: 18px 20px;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
 }
+#spaceDialog .modal-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+#spaceDialog .modal-scroll {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1 1 auto;
+}
 .modal-title { font-size: 16px; font-weight: 600; }
 .modal-sub { color: var(--text-3); font-size: 11px; margin: 2px 0 14px; }
 .kind-list { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; margin-bottom: 14px; }
@@ -1007,6 +1043,15 @@ button:disabled { cursor: default; opacity: 0.45; }
 .nose-note.ok { color: var(--ok); }
 .nose-note.err { color: #f0a0a0; }
 .modal-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+#spaceDialog .modal-actions { align-items: center; flex: none; margin-top: 8px; }
+#spaceDialog .modal-actions .spacer { flex: 1; }
+#spaceDialog [data-set-default],
+#spaceDialog [data-reset-default] { border: 1px solid var(--line-strong); flex: none; }
+#spaceDialog [data-default-note] { margin-top: 10px; flex: none; overflow-wrap: anywhere; }
+.modal-card.export-card { width: 420px; }
+.export-list { display: flex; flex-direction: column; gap: 2px; max-height: 320px; overflow: auto; margin-top: 4px; }
+.export-list label { display: flex; gap: 8px; align-items: center; padding: 4px 2px; cursor: pointer; }
+.export-list label:hover { background: var(--bg-hover); }
 
 .empty { color: var(--text-3); }
 .empty.small { font-size: 11px; }
@@ -1021,7 +1066,18 @@ button:disabled { cursor: default; opacity: 0.45; }
 .ctx.hidden { display: none; }
 .ctx button { display: block; width: 100%; text-align: left; padding: 5px 10px; border-radius: 3px; }
 .ctx button:hover:not(:disabled) { background: var(--bg-hover); }
+.ctx button.danger { color: var(--err); }
+.ctx button.danger:hover:not(:disabled) { background: rgba(217, 75, 75, 0.15); }
 .ctx .ctx-title { padding: 4px 10px 2px; color: var(--text-3); font-size: 10px; text-transform: uppercase; letter-spacing: 0.06em; }
+/* Quick cards (quickCard.js): a one-question choice, or the control panel form. */
+.quick-card.form { min-width: 280px; padding: 6px 10px 8px; font-size: 12px; }
+.quick-card.form .field { grid-template-columns: 1fr 72px; margin: 4px 0; }
+.quick-card.form .empty.small { color: var(--text-3); font-size: 11px; margin: 4px 0 6px; }
+.quick-card .quick-actions { display: flex; justify-content: flex-end; gap: 6px; }
+.quick-card .quick-actions button { display: inline-block; width: auto; height: 24px; padding: 0 10px; border: 1px solid var(--line-strong); }
+
+.catalogue-note:empty { display: none; }
+.catalogue-note { color: var(--err); font-size: 11px; margin-top: 4px; }
 
 #topbar .hint { color: var(--accent); font-size: 11px; }
 
@@ -1088,9 +1144,11 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .zs-tools { display: flex; align-items: center; gap: 4px; margin-bottom: 8px; flex-wrap: wrap; }
 .zs-tools .tb { height: 24px; padding: 0 8px; border: 1px solid var(--line-strong); }
 .zs-tools .tb:disabled { opacity: 0.45; cursor: default; }
+.zs-tools .tb.active { border-color: #7eb6ff; color: #d6e9ff; }
 .zs-tools + .bedroom-front { margin-top: 2px; }
 .bedroom-front + .zs-hint { margin-top: 6px; }
 .zs-hint { flex-basis: 100%; font-size: 11px; color: var(--text-3); }
+.zs-hint.warn { color: #e0a34f; }
 .zs-strip {
   display: flex;
   align-items: stretch;
@@ -1136,14 +1194,52 @@ button.icon:hover:not(:disabled) { background: var(--bg-hover); color: var(--err
 .zs-row > span { flex: 0 0 auto; text-align: center; overflow: hidden; white-space: nowrap; }
 .zs-row.cum { height: 14px; margin-top: 0; }
 .zs-row.cum > span { position: absolute; transform: translateX(-50%); color: var(--warn); }
+.zs-row.cum > span.zs-split { color: #7eb6ff; font-weight: 700; cursor: ew-resize; z-index: 2; }
 
-.ohc-front { border-radius: var(--radius); overflow: hidden; background: #f8fbff; }
+/* Overhead front view: same dark elevation as the kitchen (it also carries .bedroom-front). The bench window uses .ohc-front alone. */
+.ohc-front { border-radius: var(--radius); overflow: hidden; }
 .ohc-front svg { display: block; width: 100%; height: auto; }
 
 /* Bedroom body front view: the boards in the 3D colours on the panel's dark ground; regions underneath are clickable, orange boundaries draggable. */
 .bedroom-front { border-radius: var(--radius); overflow: hidden; background: #1d2025; border: 1px solid var(--line); touch-action: none; }
+/* Kitchen: no card around the elevation, and it uses the section's side padding so the drawing is larger. */
+#rightpanel.kitchen .bedroom-front,
+#rightpanel.ohc .bedroom-front,
+#rightpanel.fridge .bedroom-front {
+  border: none;
+  border-radius: 0;
+  background: transparent;
+  margin-left: -14px;
+  margin-right: -14px;
+  width: calc(100% + 28px);
+}
+#rightpanel.kitchen .bedroom-front svg > rect:first-of-type,
+#rightpanel.ohc .bedroom-front svg > rect:first-of-type,
+#rightpanel.fridge .bedroom-front svg > rect:first-of-type { fill: var(--bg-panel); }
 .bedroom-front svg { display: block; width: 100%; height: auto; }
 .bedroom-front .region { cursor: pointer; }
+.bedroom-front .col-dim.editable { cursor: text; }
+.bedroom-front .col-dim.editable:hover text { fill: #fff; }
+.col-dim-input {
+  position: absolute;
+  z-index: 3;
+  width: 64px;
+  height: 20px;
+  margin-left: -32px;
+  padding: 0 4px;
+  background: var(--bg);
+  color: var(--text);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius);
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+}
+#rightpanel.kitchen .bedroom-front,
+#rightpanel.ohc .bedroom-front,
+#rightpanel.fridge .bedroom-front { position: relative; }
+.bedroom-front .zone-dim.editable { cursor: text; }
+.bedroom-front .zone-dim.editable:hover text { fill: #fff; }
 .bedroom-front .region:hover { fill: rgba(79, 134, 224, 0.16); }
 .bedroom-front .boundary[data-axis="x"] { cursor: ew-resize; }
 .bedroom-front .boundary[data-axis="z"] { cursor: ns-resize; }
