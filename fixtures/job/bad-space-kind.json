@@ -1,0 +1,11 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "space": {
+    "kind": "castle",
+    "params": {}
+  },
+  "cabinets": [],
+  "planes": [],
+  "walls": []
+}

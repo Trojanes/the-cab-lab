@@ -1,0 +1,13 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "space": null,
+  "cabinets": [
+    {
+      "id": "c1",
+      "params": {}
+    }
+  ],
+  "planes": [],
+  "walls": []
+}

@@ -1,0 +1,19 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "space": null,
+  "cabinets": [
+    {
+      "id": "c1",
+      "moduleId": "smallCabinet",
+      "params": {},
+      "pose": {
+        "x": 0,
+        "y": "up",
+        "z": 0
+      }
+    }
+  ],
+  "planes": [],
+  "walls": []
+}

@@ -1,0 +1,9 @@
+{
+  "version": "job.v1",
+  "space": {
+    "width": 3000,
+    "depth": 2400,
+    "height": 2600
+  },
+  "cabinets": []
+}

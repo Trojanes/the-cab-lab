@@ -1,8 +1,9 @@
 // job.json in memory. Everything visible traces back to this object.
 // Undo/redo = whole-job snapshots. Generation results are cached per cabinet
 // and rebuilt whenever params change.
-import { getModule } from "./modules.js";
-import { resolveSpace } from "./spaces.js";
+import { getModule, MODULES } from "./modules.js";
+import { resolveSpace, SPACE_KINDS } from "./spaces.js";
+import { validateJobInput, validateJobV2 } from "./jobContract.js";
 import { log } from "./log.js";
 import { colorSlotOf, defaultMaterials, doorColors, normalizeFinish, normalizeStock, withColorSlot } from "./materials.js";
 import { normalizeWall, normalizeOpening, wallSolid, placeSplit, bindCabinets } from "./walls.js";
@@ -41,6 +42,7 @@ function migrate(obj) {
       planes: Array.isArray(obj.planes) ? obj.planes : [],
     };
   }
+  if (!obj.units) obj.units = "mm";
   if (!Array.isArray(obj.planes)) obj.planes = [];
   obj.walls = (Array.isArray(obj.walls) ? obj.walls : []).map(normalizeWall).filter(Boolean);
   obj.finish = normalizeFinish(obj.finish);
@@ -744,7 +746,18 @@ export function loadJob(obj, path) {
   if (!obj || !/^job\.v[12]$/.test(obj.version || "") || !Array.isArray(obj.cabinets)) {
     throw new Error("Not a Cab Lab job file");
   }
-  job = migrate(obj);
+  const preIssues = validateJobInput(obj, { moduleIds: Object.keys(MODULES) });
+  if (preIssues.length) {
+    log("file.open.rejected", { path, issues: preIssues });
+    throw new Error(`Invalid job file: ${preIssues.join("; ")}`);
+  }
+  const migrated = migrate(obj);
+  const contractIssues = validateJobV2(migrated, { spaceKinds: Object.keys(SPACE_KINDS) });
+  if (contractIssues.length) {
+    log("file.open.rejected", { path, issues: contractIssues });
+    throw new Error(`Invalid job file: ${contractIssues.join("; ")}`);
+  }
+  job = migrated;
   conflict = null;
   log("file.open", { path, version: obj.version, cabinets: job.cabinets.length, space: job.space, finish: job.finish, stock: job.stock });
   selectedId = null;

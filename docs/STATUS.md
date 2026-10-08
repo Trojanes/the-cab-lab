@@ -34,7 +34,7 @@ devops 4efe6229
 ## 当前工作
 
 - 工程文档整理
-- 核心接口固化
+- 核心接口固化（T01：job/Board/cnjob 三层运行时校验 + 契约文档 `docs/job.schema.json` + 正负向 fixture 回放，分支 `feature/t01-data-contract`）
 - 测试体系整理
 - Cab Lab / OmniCam 集成规范
 

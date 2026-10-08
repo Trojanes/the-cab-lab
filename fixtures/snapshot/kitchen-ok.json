@@ -1,0 +1,2637 @@
+{
+  "schema": "cabinetnc.manufacturing-snapshot",
+  "schemaVersion": "1.1.0",
+  "jobId": "kitchen-fixture",
+  "units": "mm",
+  "exportedAt": "2026-10-08T00:00:00.000Z",
+  "source": {
+    "producer": "the-cab-lab",
+    "producerVersion": "0.2.0"
+  },
+  "materials": [
+    {
+      "materialId": "pvc-white-stipple-2s-15",
+      "thicknessMm": 15,
+      "colorName": "White Stipple",
+      "surfaceMode": "DOUBLE_SIDED",
+      "series": "pvc",
+      "grained": false,
+      "decorId": "white-stipple",
+      "displayName": "White Stipple · double-sided · 15 mm"
+    },
+    {
+      "materialId": "hpl-gloss-white-1s-16",
+      "thicknessMm": 16,
+      "colorName": "Gloss White",
+      "surfaceMode": "SINGLE_SIDED",
+      "series": "hpl",
+      "grained": true,
+      "decorId": "gloss-white",
+      "displayName": "Gloss White · single-sided · 16 mm"
+    }
+  ],
+  "workpieces": [
+    {
+      "workpieceId": "k1/V0",
+      "panelId": "k1/V0",
+      "name": "Left End Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "V0"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              238,
+              0
+            ],
+            [
+              238,
+              85
+            ],
+            [
+              254,
+              85
+            ],
+            [
+              254,
+              795
+            ],
+            [
+              238,
+              795
+            ],
+            [
+              238,
+              864
+            ],
+            [
+              153,
+              864
+            ],
+            [
+              153,
+              880
+            ],
+            [
+              85,
+              880
+            ],
+            [
+              85,
+              864
+            ],
+            [
+              0,
+              864
+            ],
+            [
+              0,
+              71
+            ],
+            [
+              80,
+              71
+            ],
+            [
+              80,
+              55
+            ],
+            [
+              70,
+              55
+            ],
+            [
+              70,
+              0
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            238,
+            0
+          ],
+          [
+            238,
+            85
+          ],
+          [
+            254,
+            85
+          ],
+          [
+            254,
+            795
+          ],
+          [
+            238,
+            795
+          ],
+          [
+            238,
+            864
+          ],
+          [
+            153,
+            864
+          ],
+          [
+            153,
+            880
+          ],
+          [
+            85,
+            880
+          ],
+          [
+            85,
+            864
+          ],
+          [
+            0,
+            864
+          ],
+          [
+            0,
+            71
+          ],
+          [
+            80,
+            71
+          ],
+          [
+            80,
+            55
+          ],
+          [
+            70,
+            55
+          ],
+          [
+            70,
+            0
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "c1-door-shelf-V0-right",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "centerline": [
+              [
+                78.667,
+                447.5
+              ],
+              [
+                175.333,
+                447.5
+              ]
+            ],
+            "widthMm": 16
+          },
+          "intent": {
+            "purpose": "c1-door-shelf"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/V1",
+      "panelId": "k1/V1",
+      "name": "Vertical Panel 1",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "V1"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              70,
+              880
+            ],
+            [
+              70,
+              825
+            ],
+            [
+              80,
+              825
+            ],
+            [
+              80,
+              809
+            ],
+            [
+              0,
+              809
+            ],
+            [
+              0,
+              16
+            ],
+            [
+              85,
+              16
+            ],
+            [
+              85,
+              0
+            ],
+            [
+              153,
+              0
+            ],
+            [
+              153,
+              16
+            ],
+            [
+              238,
+              16
+            ],
+            [
+              238,
+              85
+            ],
+            [
+              254,
+              85
+            ],
+            [
+              254,
+              795
+            ],
+            [
+              238,
+              795
+            ],
+            [
+              238,
+              880
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            70,
+            880
+          ],
+          [
+            70,
+            825
+          ],
+          [
+            80,
+            825
+          ],
+          [
+            80,
+            809
+          ],
+          [
+            0,
+            809
+          ],
+          [
+            0,
+            16
+          ],
+          [
+            85,
+            16
+          ],
+          [
+            85,
+            0
+          ],
+          [
+            153,
+            0
+          ],
+          [
+            153,
+            16
+          ],
+          [
+            238,
+            16
+          ],
+          [
+            238,
+            85
+          ],
+          [
+            254,
+            85
+          ],
+          [
+            254,
+            795
+          ],
+          [
+            238,
+            795
+          ],
+          [
+            238,
+            880
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "c1-door-shelf-V1-left",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "centerline": [
+              [
+                78.667,
+                432.5
+              ],
+              [
+                175.333,
+                432.5
+              ]
+            ],
+            "widthMm": 16
+          },
+          "depthMm": 7.5,
+          "intent": {
+            "purpose": "c1-door-shelf"
+          }
+        },
+        {
+          "featureId": "k-col-2-c2d-bottom-V1-screw-1",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "center": [
+              75,
+              300
+            ],
+            "diameterMm": 3
+          },
+          "intent": {
+            "purpose": "k-col-2-c2d-bottom"
+          }
+        },
+        {
+          "featureId": "c2r-door-shelf-V1-screw-1",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "center": [
+              100,
+              569.5
+            ],
+            "diameterMm": 3
+          },
+          "intent": {
+            "purpose": "c2r-door-shelf"
+          }
+        },
+        {
+          "featureId": "c2r-door-shelf-V1-screw-2",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "center": [
+              154,
+              569.5
+            ],
+            "diameterMm": 3
+          },
+          "intent": {
+            "purpose": "c2r-door-shelf"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/V2",
+      "panelId": "k1/V2",
+      "name": "Right End Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "V2"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              238,
+              0
+            ],
+            [
+              238,
+              85
+            ],
+            [
+              254,
+              85
+            ],
+            [
+              254,
+              795
+            ],
+            [
+              238,
+              795
+            ],
+            [
+              238,
+              864
+            ],
+            [
+              153,
+              864
+            ],
+            [
+              153,
+              880
+            ],
+            [
+              85,
+              880
+            ],
+            [
+              85,
+              864
+            ],
+            [
+              0,
+              864
+            ],
+            [
+              0,
+              71
+            ],
+            [
+              80,
+              71
+            ],
+            [
+              80,
+              55
+            ],
+            [
+              70,
+              55
+            ],
+            [
+              70,
+              0
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            238,
+            0
+          ],
+          [
+            238,
+            85
+          ],
+          [
+            254,
+            85
+          ],
+          [
+            254,
+            795
+          ],
+          [
+            238,
+            795
+          ],
+          [
+            238,
+            864
+          ],
+          [
+            153,
+            864
+          ],
+          [
+            153,
+            880
+          ],
+          [
+            85,
+            880
+          ],
+          [
+            85,
+            864
+          ],
+          [
+            0,
+            864
+          ],
+          [
+            0,
+            71
+          ],
+          [
+            80,
+            71
+          ],
+          [
+            80,
+            55
+          ],
+          [
+            70,
+            55
+          ],
+          [
+            70,
+            0
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "k-col-2-c2d-bottom-V2-left",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "centerline": [
+              [
+                45,
+                580
+              ],
+              [
+                155,
+                580
+              ]
+            ],
+            "widthMm": 16
+          },
+          "intent": {
+            "purpose": "k-col-2-c2d-bottom"
+          }
+        },
+        {
+          "featureId": "c2r-door-shelf-V2-left",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": true,
+          "geometry": {
+            "centerline": [
+              [
+                78.667,
+                310.5
+              ],
+              [
+                175.333,
+                310.5
+              ]
+            ],
+            "widthMm": 16
+          },
+          "intent": {
+            "purpose": "c2r-door-shelf"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/B1",
+      "panelId": "k1/B1",
+      "name": "Bottom Front Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "B1"
+      },
+      "material": {
+        "materialId": "hpl-gloss-white-1s-16",
+        "thicknessMm": 16,
+        "colorName": "Gloss White",
+        "surfaceMode": "SINGLE_SIDED",
+        "series": "hpl",
+        "grained": true,
+        "decorId": "gloss-white"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              887,
+              0
+            ],
+            [
+              887,
+              55
+            ],
+            [
+              0,
+              55
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            887,
+            0
+          ],
+          [
+            887,
+            55
+          ],
+          [
+            0,
+            55
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          }
+        },
+        {
+          "faceId": "B",
+          "role": "colour",
+          "machiningPermission": "NOT_ALLOWED",
+          "finish": {
+            "finishId": "gloss-white",
+            "finishName": "Gloss White"
+          }
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": [],
+      "grainDirection": "X"
+    },
+    {
+      "workpieceId": "k1/B2",
+      "panelId": "k1/B2",
+      "name": "Bottom Carcass Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "B2"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              887,
+              0
+            ],
+            [
+              887,
+              55
+            ],
+            [
+              0,
+              55
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            887,
+            0
+          ],
+          [
+            887,
+            55
+          ],
+          [
+            0,
+            55
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/B3",
+      "panelId": "k1/B3",
+      "name": "Bottom Deck",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "B3"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              20
+            ],
+            [
+              15.5,
+              20
+            ],
+            [
+              15.5,
+              0
+            ],
+            [
+              436,
+              0
+            ],
+            [
+              436,
+              20
+            ],
+            [
+              452,
+              20
+            ],
+            [
+              452,
+              0
+            ],
+            [
+              871.5,
+              0
+            ],
+            [
+              871.5,
+              20
+            ],
+            [
+              887,
+              20
+            ],
+            [
+              887,
+              100
+            ],
+            [
+              0,
+              100
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            20
+          ],
+          [
+            15.5,
+            20
+          ],
+          [
+            15.5,
+            0
+          ],
+          [
+            436,
+            0
+          ],
+          [
+            436,
+            20
+          ],
+          [
+            452,
+            20
+          ],
+          [
+            452,
+            0
+          ],
+          [
+            871.5,
+            0
+          ],
+          [
+            871.5,
+            20
+          ],
+          [
+            887,
+            20
+          ],
+          [
+            887,
+            100
+          ],
+          [
+            0,
+            100
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "B3_LED_MAIN",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "centerline": [
+              [
+                0,
+                74.75
+              ],
+              [
+                887,
+                74.75
+              ]
+            ],
+            "widthMm": 14.5
+          },
+          "depthMm": 6.5,
+          "intent": {
+            "purpose": "led"
+          }
+        },
+        {
+          "featureId": "B3_LED_BRANCH_1",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "centerline": [
+              [
+                80,
+                67.5
+              ],
+              [
+                80,
+                0
+              ]
+            ],
+            "widthMm": 14.5
+          },
+          "depthMm": 6.5,
+          "intent": {
+            "purpose": "led"
+          }
+        },
+        {
+          "featureId": "B3_LED_BRANCH_2",
+          "kind": "groove",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "centerline": [
+              [
+                807,
+                67.5
+              ],
+              [
+                807,
+                0
+              ]
+            ],
+            "widthMm": 14.5
+          },
+          "depthMm": 6.5,
+          "intent": {
+            "purpose": "led"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/k-col-2-c2d-bottom",
+      "panelId": "k1/k-col-2-c2d-bottom",
+      "name": "Drawer Divider",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "k-col-2-c2d-bottom"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              420.5,
+              0
+            ],
+            [
+              420.5,
+              50
+            ],
+            [
+              435.5,
+              50
+            ],
+            [
+              435.5,
+              150
+            ],
+            [
+              0,
+              150
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            420.5,
+            0
+          ],
+          [
+            420.5,
+            50
+          ],
+          [
+            435.5,
+            50
+          ],
+          [
+            435.5,
+            150
+          ],
+          [
+            0,
+            150
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/c1-door-shelf",
+      "panelId": "k1/c1-door-shelf",
+      "name": "Door Shelf",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "c1-door-shelf"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              15,
+              0
+            ],
+            [
+              436.5,
+              0
+            ],
+            [
+              436.5,
+              84.667
+            ],
+            [
+              444,
+              84.667
+            ],
+            [
+              444,
+              169.333
+            ],
+            [
+              436.5,
+              169.333
+            ],
+            [
+              436.5,
+              254
+            ],
+            [
+              15,
+              254
+            ],
+            [
+              15,
+              169.333
+            ],
+            [
+              0,
+              169.333
+            ],
+            [
+              0,
+              84.667
+            ],
+            [
+              15,
+              84.667
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            15,
+            0
+          ],
+          [
+            436.5,
+            0
+          ],
+          [
+            436.5,
+            84.667
+          ],
+          [
+            444,
+            84.667
+          ],
+          [
+            444,
+            169.333
+          ],
+          [
+            436.5,
+            169.333
+          ],
+          [
+            436.5,
+            254
+          ],
+          [
+            15,
+            254
+          ],
+          [
+            15,
+            169.333
+          ],
+          [
+            0,
+            169.333
+          ],
+          [
+            0,
+            84.667
+          ],
+          [
+            15,
+            84.667
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/c2r-door-shelf",
+      "panelId": "k1/c2r-door-shelf",
+      "name": "Door Shelf",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "c2r-door-shelf"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              420.5,
+              0
+            ],
+            [
+              420.5,
+              84.667
+            ],
+            [
+              435.5,
+              84.667
+            ],
+            [
+              435.5,
+              169.333
+            ],
+            [
+              420.5,
+              169.333
+            ],
+            [
+              420.5,
+              254
+            ],
+            [
+              0,
+              254
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            420.5,
+            0
+          ],
+          [
+            420.5,
+            84.667
+          ],
+          [
+            435.5,
+            84.667
+          ],
+          [
+            435.5,
+            169.333
+          ],
+          [
+            420.5,
+            169.333
+          ],
+          [
+            420.5,
+            254
+          ],
+          [
+            0,
+            254
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/T1-1",
+      "panelId": "k1/T1-1",
+      "name": "Top Front Rail",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "T1-1"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              887,
+              0
+            ],
+            [
+              887,
+              80
+            ],
+            [
+              871.5,
+              80
+            ],
+            [
+              871.5,
+              100
+            ],
+            [
+              452,
+              100
+            ],
+            [
+              452,
+              80
+            ],
+            [
+              436,
+              80
+            ],
+            [
+              436,
+              100
+            ],
+            [
+              15.5,
+              100
+            ],
+            [
+              15.5,
+              80
+            ],
+            [
+              0,
+              80
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            887,
+            0
+          ],
+          [
+            887,
+            80
+          ],
+          [
+            871.5,
+            80
+          ],
+          [
+            871.5,
+            100
+          ],
+          [
+            452,
+            100
+          ],
+          [
+            452,
+            80
+          ],
+          [
+            436,
+            80
+          ],
+          [
+            436,
+            100
+          ],
+          [
+            15.5,
+            100
+          ],
+          [
+            15.5,
+            80
+          ],
+          [
+            0,
+            80
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/T2-1",
+      "panelId": "k1/T2-1",
+      "name": "Top Rear Rail",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "T2-1"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              20
+            ],
+            [
+              15.5,
+              20
+            ],
+            [
+              15.5,
+              0
+            ],
+            [
+              436,
+              0
+            ],
+            [
+              436,
+              20
+            ],
+            [
+              452,
+              20
+            ],
+            [
+              452,
+              0
+            ],
+            [
+              871.5,
+              0
+            ],
+            [
+              871.5,
+              20
+            ],
+            [
+              887,
+              20
+            ],
+            [
+              887,
+              100
+            ],
+            [
+              0,
+              100
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            20
+          ],
+          [
+            15.5,
+            20
+          ],
+          [
+            15.5,
+            0
+          ],
+          [
+            436,
+            0
+          ],
+          [
+            436,
+            20
+          ],
+          [
+            452,
+            20
+          ],
+          [
+            452,
+            0
+          ],
+          [
+            871.5,
+            0
+          ],
+          [
+            871.5,
+            20
+          ],
+          [
+            887,
+            20
+          ],
+          [
+            887,
+            100
+          ],
+          [
+            0,
+            100
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/T3-1",
+      "panelId": "k1/T3-1",
+      "name": "Top Rear Vertical",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "T3-1"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              20
+            ],
+            [
+              15.5,
+              20
+            ],
+            [
+              15.5,
+              0
+            ],
+            [
+              436,
+              0
+            ],
+            [
+              436,
+              20
+            ],
+            [
+              452,
+              20
+            ],
+            [
+              452,
+              0
+            ],
+            [
+              871.5,
+              0
+            ],
+            [
+              871.5,
+              20
+            ],
+            [
+              887,
+              20
+            ],
+            [
+              887,
+              100
+            ],
+            [
+              0,
+              100
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            20
+          ],
+          [
+            15.5,
+            20
+          ],
+          [
+            15.5,
+            0
+          ],
+          [
+            436,
+            0
+          ],
+          [
+            436,
+            20
+          ],
+          [
+            452,
+            20
+          ],
+          [
+            452,
+            0
+          ],
+          [
+            871.5,
+            0
+          ],
+          [
+            871.5,
+            20
+          ],
+          [
+            887,
+            20
+          ],
+          [
+            887,
+            100
+          ],
+          [
+            0,
+            100
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/B4-1",
+      "panelId": "k1/B4-1",
+      "name": "Bottom Rear Vertical",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "B4-1"
+      },
+      "material": {
+        "materialId": "pvc-white-stipple-2s-15",
+        "thicknessMm": 15,
+        "colorName": "White Stipple",
+        "surfaceMode": "DOUBLE_SIDED",
+        "series": "pvc",
+        "grained": false,
+        "decorId": "white-stipple"
+      },
+      "geometry": {
+        "quality": "exact",
+        "toleranceMm": 0.01,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              887,
+              0
+            ],
+            [
+              887,
+              80
+            ],
+            [
+              871.5,
+              80
+            ],
+            [
+              871.5,
+              100
+            ],
+            [
+              452,
+              100
+            ],
+            [
+              452,
+              80
+            ],
+            [
+              436,
+              80
+            ],
+            [
+              436,
+              100
+            ],
+            [
+              15.5,
+              100
+            ],
+            [
+              15.5,
+              80
+            ],
+            [
+              0,
+              80
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            887,
+            0
+          ],
+          [
+            887,
+            80
+          ],
+          [
+            871.5,
+            80
+          ],
+          [
+            871.5,
+            100
+          ],
+          [
+            452,
+            100
+          ],
+          [
+            452,
+            80
+          ],
+          [
+            436,
+            80
+          ],
+          [
+            436,
+            100
+          ],
+          [
+            15.5,
+            100
+          ],
+          [
+            15.5,
+            80
+          ],
+          [
+            0,
+            80
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "ALLOWED"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "EITHER"
+      },
+      "edgeBands": []
+    },
+    {
+      "workpieceId": "k1/c1-front-panel",
+      "panelId": "k1/c1-front-panel",
+      "name": "Front Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "c1-front-panel"
+      },
+      "material": {
+        "materialId": "hpl-gloss-white-1s-16",
+        "thicknessMm": 16,
+        "colorName": "Gloss White",
+        "surfaceMode": "SINGLE_SIDED",
+        "series": "hpl",
+        "grained": true,
+        "decorId": "gloss-white"
+      },
+      "geometry": {
+        "quality": "tessellated",
+        "toleranceMm": 0.3,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              440.25,
+              0
+            ],
+            [
+              440.25,
+              822.5
+            ],
+            [
+              0,
+              822.5
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            440.25,
+            0
+          ],
+          [
+            440.25,
+            822.5
+          ],
+          [
+            0,
+            822.5
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          }
+        },
+        {
+          "faceId": "B",
+          "role": "colour",
+          "machiningPermission": "NOT_ALLOWED",
+          "finish": {
+            "finishId": "gloss-white",
+            "finishName": "Gloss White"
+          }
+        }
+      ],
+      "features": [
+        {
+          "featureId": "c1-front-panel-hinge-1",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "center": [
+              22.5,
+              722.5
+            ],
+            "diameterMm": 35
+          },
+          "depthMm": 12.5,
+          "intent": {
+            "purpose": "hinge"
+          }
+        },
+        {
+          "featureId": "c1-front-panel-hinge-2",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "center": [
+              22.5,
+              100
+            ],
+            "diameterMm": 35
+          },
+          "depthMm": 12.5,
+          "intent": {
+            "purpose": "hinge"
+          }
+        },
+        {
+          "featureId": "c1-front-panel-lock",
+          "kind": "throughProfile",
+          "sourceFace": "THROUGH",
+          "through": true,
+          "geometry": {
+            "profile": {
+              "closed": true,
+              "points": [
+                [
+                  340.5,
+                  771.75
+                ],
+                [
+                  337.534,
+                  772.34
+                ],
+                [
+                  335.02,
+                  774.02
+                ],
+                [
+                  333.34,
+                  776.534
+                ],
+                [
+                  332.75,
+                  779.5
+                ],
+                [
+                  333.34,
+                  782.466
+                ],
+                [
+                  335.02,
+                  784.98
+                ],
+                [
+                  337.534,
+                  786.66
+                ],
+                [
+                  340.5,
+                  787.25
+                ],
+                [
+                  380,
+                  787.25
+                ],
+                [
+                  382.966,
+                  786.66
+                ],
+                [
+                  385.48,
+                  784.98
+                ],
+                [
+                  387.16,
+                  782.466
+                ],
+                [
+                  387.75,
+                  779.5
+                ],
+                [
+                  387.16,
+                  776.534
+                ],
+                [
+                  385.48,
+                  774.02
+                ],
+                [
+                  382.966,
+                  772.34
+                ],
+                [
+                  380,
+                  771.75
+                ]
+              ]
+            }
+          },
+          "hasArc": true,
+          "intent": {
+            "purpose": "lock"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": [],
+      "grainDirection": "X"
+    },
+    {
+      "workpieceId": "k1/c2d-front-panel",
+      "panelId": "k1/c2d-front-panel",
+      "name": "Front Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "c2d-front-panel"
+      },
+      "material": {
+        "materialId": "hpl-gloss-white-1s-16",
+        "thicknessMm": 16,
+        "colorName": "Gloss White",
+        "surfaceMode": "SINGLE_SIDED",
+        "series": "hpl",
+        "grained": true,
+        "decorId": "gloss-white"
+      },
+      "geometry": {
+        "quality": "tessellated",
+        "toleranceMm": 0.3,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              439.25,
+              0
+            ],
+            [
+              439.25,
+              296.25
+            ],
+            [
+              0,
+              296.25
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            439.25,
+            0
+          ],
+          [
+            439.25,
+            296.25
+          ],
+          [
+            0,
+            296.25
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          }
+        },
+        {
+          "faceId": "B",
+          "role": "colour",
+          "machiningPermission": "NOT_ALLOWED",
+          "finish": {
+            "finishId": "gloss-white",
+            "finishName": "Gloss White"
+          }
+        }
+      ],
+      "features": [
+        {
+          "featureId": "c2d-front-panel-lock",
+          "kind": "throughProfile",
+          "sourceFace": "THROUGH",
+          "through": true,
+          "geometry": {
+            "profile": {
+              "closed": true,
+              "points": [
+                [
+                  199.875,
+                  245.5
+                ],
+                [
+                  196.909,
+                  246.09
+                ],
+                [
+                  194.395,
+                  247.77
+                ],
+                [
+                  192.715,
+                  250.284
+                ],
+                [
+                  192.125,
+                  253.25
+                ],
+                [
+                  192.715,
+                  256.216
+                ],
+                [
+                  194.395,
+                  258.73
+                ],
+                [
+                  196.909,
+                  260.41
+                ],
+                [
+                  199.875,
+                  261
+                ],
+                [
+                  239.375,
+                  261
+                ],
+                [
+                  242.341,
+                  260.41
+                ],
+                [
+                  244.855,
+                  258.73
+                ],
+                [
+                  246.535,
+                  256.216
+                ],
+                [
+                  247.125,
+                  253.25
+                ],
+                [
+                  246.535,
+                  250.284
+                ],
+                [
+                  244.855,
+                  247.77
+                ],
+                [
+                  242.341,
+                  246.09
+                ],
+                [
+                  239.375,
+                  245.5
+                ]
+              ]
+            }
+          },
+          "hasArc": true,
+          "intent": {
+            "purpose": "lock"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": [],
+      "grainDirection": "X"
+    },
+    {
+      "workpieceId": "k1/c2r-front-panel",
+      "panelId": "k1/c2r-front-panel",
+      "name": "Front Panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "kitchen-fixture",
+        "moduleId": "kitchen",
+        "role": "c2r-front-panel"
+      },
+      "material": {
+        "materialId": "hpl-gloss-white-1s-16",
+        "thicknessMm": 16,
+        "colorName": "Gloss White",
+        "surfaceMode": "SINGLE_SIDED",
+        "series": "hpl",
+        "grained": true,
+        "decorId": "gloss-white"
+      },
+      "geometry": {
+        "quality": "tessellated",
+        "toleranceMm": 0.3,
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              439.25,
+              0
+            ],
+            [
+              439.25,
+              523.75
+            ],
+            [
+              0,
+              523.75
+            ]
+          ]
+        },
+        "nestingPolygon": [
+          [
+            0,
+            0
+          ],
+          [
+            439.25,
+            0
+          ],
+          [
+            439.25,
+            523.75
+          ],
+          [
+            0,
+            523.75
+          ]
+        ]
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY",
+          "finish": {
+            "finishId": "white-stipple",
+            "finishName": "White Stipple"
+          }
+        },
+        {
+          "faceId": "B",
+          "role": "colour",
+          "machiningPermission": "NOT_ALLOWED",
+          "finish": {
+            "finishId": "gloss-white",
+            "finishName": "Gloss White"
+          }
+        }
+      ],
+      "features": [
+        {
+          "featureId": "c2r-front-panel-hinge-1",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "center": [
+              416.75,
+              430.104
+            ],
+            "diameterMm": 35
+          },
+          "depthMm": 12.5,
+          "intent": {
+            "purpose": "hinge"
+          }
+        },
+        {
+          "featureId": "c2r-front-panel-hinge-2",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": false,
+          "geometry": {
+            "center": [
+              416.75,
+              93.646
+            ],
+            "diameterMm": 35
+          },
+          "depthMm": 12.5,
+          "intent": {
+            "purpose": "hinge"
+          }
+        },
+        {
+          "featureId": "c2r-front-panel-lock",
+          "kind": "throughProfile",
+          "sourceFace": "THROUGH",
+          "through": true,
+          "geometry": {
+            "profile": {
+              "closed": true,
+              "points": [
+                [
+                  60.25,
+                  479.25
+                ],
+                [
+                  57.284,
+                  479.84
+                ],
+                [
+                  54.77,
+                  481.52
+                ],
+                [
+                  53.09,
+                  484.034
+                ],
+                [
+                  52.5,
+                  487
+                ],
+                [
+                  53.09,
+                  489.966
+                ],
+                [
+                  54.77,
+                  492.48
+                ],
+                [
+                  57.284,
+                  494.16
+                ],
+                [
+                  60.25,
+                  494.75
+                ],
+                [
+                  99.75,
+                  494.75
+                ],
+                [
+                  102.716,
+                  494.16
+                ],
+                [
+                  105.23,
+                  492.48
+                ],
+                [
+                  106.91,
+                  489.966
+                ],
+                [
+                  107.5,
+                  487
+                ],
+                [
+                  106.91,
+                  484.034
+                ],
+                [
+                  105.23,
+                  481.52
+                ],
+                [
+                  102.716,
+                  479.84
+                ],
+                [
+                  99.75,
+                  479.25
+                ]
+              ]
+            }
+          },
+          "hasArc": true,
+          "intent": {
+            "purpose": "lock"
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": [],
+      "grainDirection": "X"
+    }
+  ],
+  "relationships": [],
+  "diagnostics": []
+}
