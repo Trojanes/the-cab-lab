@@ -251,7 +251,8 @@ function explode(name: string, result: { boards: Array<{ id: string; category?: 
   const modulesSrc = readFileSync(join(root, "renderer", "modules.js"), "utf8");
   assert.ok(modulesSrc.includes('lounge: "I"') && modulesSrc.includes('lounge: "L"') && !modulesSrc.includes('lounge: "U"'), "Lounge rail is I and L");
   const interact = readFileSync(join(root, "renderer", "interact.js"), "utf8");
-  assert.ok(interact.includes("startLounge") && interact.includes("loungeFromDrawnRun"), "lounge draws in the 3D view");
+  const loungeMode = readFileSync(join(root, "renderer", "interact", "lounge.js"), "utf8");
+  assert.ok(interact.includes("startLounge") && loungeMode.includes("loungeFromDrawnRun"), "lounge draws in the 3D view");
   assert.ok(fp.includes('e.key === "g"'), "floorplan G shortcut");
   const fit = readFileSync(join(root, "renderer", "fit.js"), "utf8");
   assert.ok(fit.includes("export function cabinetFootprints"), "cabinetFootprints");
