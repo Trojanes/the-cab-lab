@@ -1,3 +1,4 @@
+// @module bench @owns toolbar, context menus, dialogs
 // --- context menu ---------------------------------------------------------------------------------
 import { draftStep, pickModule } from "./bench.js";
 import { $, $$, bench, cur, h, saveState, state, tab } from "./core.js";

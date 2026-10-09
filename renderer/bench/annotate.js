@@ -1,3 +1,4 @@
+// @module bench @owns default-mode annotations — face labels + dim lines
 // Default-mode annotations in the bench's 3D view: a label just outside each
 // of the six box faces (position formulas, blue) and a dimension line along
 // each axis (size formulas, orange). The dimension lines are 3D; the labels

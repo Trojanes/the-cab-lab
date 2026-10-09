@@ -68,7 +68,8 @@ const out = app.exportCnjob();         // { ok: true, snapshot } → hand to Omn
 appApi.js  — stable verbs, structured results (THIS file is the agent contract)
   ├─ job.js       — job.json store, commands, history, migrate+contract on load
   ├─ fit.js       — space-fit legality (envelope/footprints/overlaps/statusOf)
-  ├─ modules.js   — module catalogue → generators (renderer/gen bundles)
+  ├─ modules.js   — module catalogue → generators (renderer/gen bundles;
+  │                 pure helpers re-exported from modules/stackFit.js, modules/fridge.js)
   └─ gen/cnjob.js — boards → manufacturing snapshot
 ```
 

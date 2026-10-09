@@ -1,3 +1,4 @@
+// @module bench @owns L3 board flatten — profile-plane SVG, pickable vertices
 // L3: one board flattened in its profile plane, as SVG. Every outline vertex,
 // bounding-box corner and hinge hole is a pickable point that knows the
 // provenance keys of its two coordinates. Display only.

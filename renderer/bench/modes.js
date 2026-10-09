@@ -1,3 +1,4 @@
+// @module bench @owns board parameter modes + face pick
 // --- board parameter modes: default (position formulas) / face (contact, flush) -------------------
 // Right-click any board → 参数调试. A board in layout.json edits its placement rule. A board
 // still placed in code shows the formulas it already has; confirming a new box rule is refused

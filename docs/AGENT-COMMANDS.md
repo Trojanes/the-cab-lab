@@ -329,7 +329,7 @@ small zone type：`left_door` `right_door` `drawer`
 | `bench.report.write` | 写报告 | `moduleId`,`markdown` |
 
 Electron 宿主附加（raycast 需要）：`bench.screen-of` `bench.pick-face`
-`bench.select` `bench.set-kind` … 详见 `window.__bench`（bench.js:3606）。
+`bench.select` `bench.set-kind` … 详见 `window.__bench`（bench/bench.js 壳尾部）。
 
 ## 6. meta.*（协议自描述）
 

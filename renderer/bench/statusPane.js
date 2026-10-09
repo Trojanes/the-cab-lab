@@ -1,3 +1,4 @@
+// @module bench @owns status footer — errors/warnings/pins
 // --- status counts (errors, warnings, pins) — the footer, not a drawer -------------------
 import { refresh } from "./bench.js";
 import { $, bench, cur, h, tab, writePresets } from "./core.js";

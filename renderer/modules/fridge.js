@@ -1,5 +1,5 @@
-// @module modules/fridge @owns fridge-cabinet zone rules (below/above types,
-// slack zone, rule issues, width anchor)
+// @module modules @owns fridge-cabinet zone rules — below/above types, slack
+// zone, rule issues, width anchor
 // The fridge's cut-out is fixed; everything else follows it. Bottom → top:
 // drawers / down flaps, the fridge (one), then nothing, an up flap or a fixed
 // panel. Width = cut-out + side panel + V1 / V2 / V5 (fridgeCabinetWidth), so

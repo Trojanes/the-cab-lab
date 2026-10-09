@@ -1,4 +1,4 @@
-// @module interact/place-ceiling @owns ceiling-hung (Overhead) anchor + back-wall rules
+// @module interact @owns place.ceiling — ceiling-hung (Overhead) anchor + back-wall rules
 // The anchor is a feature point where the flat ceiling meets a solid: a space
 // wall, a cabinet's outer box, or a partition (extended up to the roof). That
 // face is the cabinet's back, W runs along it, the doors face the room and the

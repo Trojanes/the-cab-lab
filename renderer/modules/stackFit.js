@@ -1,4 +1,4 @@
-// @module modules/stackFit @owns zone/stack resize + fit math
+// @module modules @owns zone/stack resize + fit math
 // Pure zone-stack helpers shared by every module descriptor's resize handles:
 // shrink/merge rules, proportional fitting, id minting. No DOM, no generator
 // imports — the same math a headless test runs.

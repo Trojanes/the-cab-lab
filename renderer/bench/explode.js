@@ -1,3 +1,4 @@
+// @module bench @owns explode planning math — assembly order + pull directions
 // Exploded / assembly view of one generator result (docs/bench-spec.md, "Explode").
 // Pure data, no Three.js: reads boards, joints and face features, decides an
 // assembly order and the direction each board is pulled out along. It never

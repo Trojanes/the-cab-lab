@@ -1,4 +1,4 @@
-// @module bench/core @owns bench state (tabs/cache), data loading, generate, shared DOM helpers
+// @module bench @owns bench state (tabs/cache), data loading, generate, shared DOM helpers
 // Shared bench machinery — every bench/* file builds on this. Holds the tab
 // state and cache, preset/rules/layout loading, the generator call, the DOM
 // builders h()/section(), and the cross-file hook table (`core.refresh` etc.)

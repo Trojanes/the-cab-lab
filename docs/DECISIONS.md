@@ -8,6 +8,29 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-10 · bench/modules dirs join the layered contract
+
+- **What**: `bench.js` (3841) split into `bench/` — shell + `core`
+  `paramsForm` `modes` `view3d` `selection` `statusPane` `l3` `chrome`;
+  pure helpers moved out of `modules.js` into `modules/stackFit.js` +
+  `modules/fridge.js` (registry re-exports them); `interact/place.js`
+  gave its ceiling-hung block to `place-ceiling.js`. `check-deps`
+  extended: bench/* is closed (own window, no outside importers),
+  modules/* is owned by the registry, `@module` coverage + size budgets
+  apply to all four dirs.
+- **Why**: bench is the surface the Generator Agent edits through — a
+  3800-line file made every agent task a full-file scope audit, and the
+  split had zero index coverage (no headers, no rules).
+- **Rejected**: extracting the shared door-side placement helpers
+  (`inwardSide`/`partitionFlush`/`placeSide`) — ground cabinets share
+  them, so ownership would be false. Also rejected: a separate facade
+  file for `modules/*` — the registry itself is the facade.
+- **Notes**: bench/* allows sibling circular imports through
+  `export function` only (see `bench/AGENTS.md`); `modules/*` helpers
+  must import live `let generateX` bindings from `../modules.js`, never
+  `gen/*` — `applyBundle` hot-replaces them and a static capture goes
+  stale.
+
 ## 2026-10-09 · Upstream 27ed7e2 merged into the layered structure
 
 - **What**: 43 shell hunks routed into modules — lounge-fit walls pick

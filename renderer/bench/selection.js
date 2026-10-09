@@ -1,3 +1,4 @@
+// @module bench @owns selection panel
 // --- selection panel ---------------------------------------------------------------------
 import { tryLayout } from "./bench.js";
 import { $, $$, cur, generate, h, names, section, tab } from "./core.js";

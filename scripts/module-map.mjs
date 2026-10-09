@@ -17,9 +17,11 @@ const root = join(dirname(fileURLToPath(import.meta.url)), "..");
 const check = process.argv.includes("--check");
 
 const DIRS = [
-  { dir: "renderer", title: "renderer core (state, geometry, 3D)", excludeDirs: ["gen", "interact", "panel"] },
+  { dir: "renderer", title: "renderer core (state, geometry, 3D)", excludeDirs: ["gen", "interact", "panel", "bench", "modules"] },
   { dir: "renderer/interact", title: "interact/* — pointer/key modes behind the interact.js shell" },
   { dir: "renderer/panel", title: "panel/* — right-panel editors behind the panel.js shell" },
+  { dir: "renderer/bench", title: "bench/* — generator bench window behind the bench/bench.js shell" },
+  { dir: "renderer/modules", title: "modules/* — pure helper domains behind the modules.js registry" },
   { dir: "generators", title: "generators/<module> — parametric sources (TS)", only: /generator\.ts$/ },
   { dir: "generators/_lib", title: "generators/_lib — shared generator library", only: /\.ts$/, skip: /\.test\.ts$/ },
 ];

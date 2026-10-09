@@ -18,7 +18,7 @@
 | 改动面 | 命令 | 耗时 | 覆盖 |
 |---|---|---|---|
 | 文档 / 规则 / 测试本身 | `npm run verify:quick` | ~3s | 分层 + 地图时效 + job/app 契约 |
-| `renderer/panel/*`、`interact/*`、渲染核心 | `npm run verify` | ~15s | 全 16 个 renderer 套件 + audit |
+| `renderer/panel/*`、`interact/*`、`bench/*`、`modules/*`、渲染核心 | `npm run verify` | ~15s | 全 16 个 renderer 套件 + audit |
 | `generators/*`、`cnjob`、`job` 契约、依赖 | `npm run verify:full` | ~4min | 上项 + golden 套件 + 跨仓回放 + 真机 E2E |
 | 合并 / upstream 移植 / 多模块重构 | `npm run verify:full` | ~4min | 同上 |
 
@@ -28,8 +28,10 @@
 
 分层结构（壳 → 注册模式/编辑器 → 模块目录 → 中立层 → `gen/*`）是**固定契约，不是建议**。新模块、新功能往里填：
 
-- 新交互模式 → `renderer/interact/` 新文件 + `S` 槽 + 壳里 MODE 注册。**不**给它新目录、新调度层、不改壳的写法。
+- 新交互模式 → `renderer/interact/` 新文件 + `S` 槽 + 壳里 MODE 注册。**不**给它新目录、新调度层、不改壳的写法。模式内自包含的领域块可抽成兄弟文件（`place-ceiling.js` 模式：单向 import，不给壳注册）。
 - 新编辑器 → `renderer/panel/` 新文件 + `@tags` 头 + 壳里注册。同上。
+- bench 新功能区 → `renderer/bench/` 新文件 + `@module bench` 头；共享状态/ DOM helper 进 `core.js`，壳保持派发。兄弟循环 import 只走 `export function`，可变状态经属主函数改。
+- 注册表纯 helper 域 → `renderer/modules/` 新文件 + 壳 `modules.js` re-export；helper 需要生成器时从 `../modules.js` 导活绑定，**不**碰 `gen/*`。
 - 新助手 → 按分层进 `fit.js` / `boardSketch.js` / `widgets.js` / `shared.js`。绝不在旁边再开一个 utils，绝不引壳。
 - 新生成器 → `generators/<module>/` 照现有模块的文件布局；`build:generators` 打进 `renderer/gen/`。
 
@@ -51,7 +53,7 @@
 
 `verify` 全绿意味着：
 
-- `check:deps` —— 分层没破（panel ⟂ interact，模块目录归壳私有）
+- `check:deps` —— 分层没破（panel ⟂ interact；模块目录归壳私有；bench/* 自闭合）+ `@module` 头全覆盖 + 体积预算
 - `check:map` —— `MODULE-MAP.md` 与代码同新鲜度
 - `test:job` / `test:app` —— 数据契约 + 无头全流程
 - 16 个 renderer 套件 —— 各交互/面板机制 pin 住

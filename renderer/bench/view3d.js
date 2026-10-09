@@ -1,3 +1,4 @@
+// @module bench @owns 3D scene — camera, explode view, tooltips, cut/opacity
 // --- 3D --------------------------------------------------------------------------------
 import { $, $$, cur, saveState, tab } from "./core.js";
 import { MODE_GHOST, buildModeOverlay, faceHit, facePick } from "./modes.js";

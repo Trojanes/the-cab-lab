@@ -18,7 +18,9 @@ developers and agents follow. Quick form:
 ## Invariants
 
 - Z up, mm, front-left floor origin. Never edit `renderer/gen/*` (built).
-- `panel/*` ⟂ `interact/*` no cross-imports (`npm run check:deps` enforces).
+- `panel/*` ⟂ `interact/*` no cross-imports; `modules/*` is owned by the
+  `modules.js` registry; `bench/*` is a closed window — nothing outside
+  `bench/` imports it (`npm run check:deps` enforces all of it).
 - Editing = change `job.json`/params then regenerate; undo = snapshots.
 - **The layered architecture is frozen**: new features slot into the
   existing layers; reorganising/splitting/renaming only happens on an
@@ -30,7 +32,7 @@ A change is unfinished until its tier is green
 (full spec: **`docs/DEV-LOOP.md`**):
 
 - `npm run verify:quick` — docs/rules/tests only (~3 s)
-- `npm run verify` — renderer/panel/interact changes (~15 s)
+- `npm run verify` — renderer/panel/interact/bench/modules changes (~15 s)
 - `npm run verify:full` — generators, cnjob, job contract, merges (~4 min)
 
 Report which tier you ran and its result. Never regenerate golden

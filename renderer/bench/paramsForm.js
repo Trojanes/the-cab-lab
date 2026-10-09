@@ -1,4 +1,4 @@
-// @module bench/paramsForm @owns the right-side parameter forms (per-module input renderers)
+// @module bench @owns the right-side parameter forms (per-module input renderers)
 // Parameter forms: renders the generator's inputs for the active tab and
 // commits edits through setParam/setParams → core.refresh. Pure UI — writes
 // only t.params, never rules.json/layout.json.

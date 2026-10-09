@@ -1,3 +1,4 @@
+// @module bench @owns formula bar — chip editor
 // A face formula as an editable bar. Parameter names are atomic chips
 // (backspace deletes the whole chip; the letters inside cannot be changed).
 // Operators and numbers are ordinary text. Click the bar to edit; Enter commits.

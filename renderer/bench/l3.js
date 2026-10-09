@@ -1,3 +1,4 @@
+// @module bench @owns L3 board editor UI
 // --- L3: board editor ----------------------------------------------------------------------------
 import { $, $$, cur, h, saveState, tab } from "./core.js";
 import { boardEditable, cornerOf, dragPoint, exitMode, placementRule } from "./modes.js";

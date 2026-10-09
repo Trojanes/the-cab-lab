@@ -1,3 +1,4 @@
+// @module bench @owns bench shell — tabs, rules list, draft commit, presets, __bench api, boot
 // Generator bench (docs/bench-spec.md). One tab per generator + preset; the
 // 3D view, the board list and the selection panel all read one generator
 // result and its `debug.provenance`. The bench writes rules.json, pins in
