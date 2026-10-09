@@ -128,3 +128,29 @@ node scripts/agent-run.mjs finish <runDir>                    # 跑 accept，exi
 任务单示例见 `agent/tasks/fix-overlap.task.json`。规则：修 job 的任务
 不给 `bench.*`；改生成器数据的任务才有 `bench.rules.set` 等。审计文件
 是 REGRESSION-LOG 生态的一部分——agent 修好的场景顺手 `--pin` 成 fixture。
+
+### 6.1 Generator 任务（改 rules/layout，不动 generator.ts）
+
+任务单加 `"generator": "<moduleId>"`：start 时把该模块全部 preset 的
+pin 面抓进 `run.json` 旁的 `baseline.json`，运行中 `bench.diff` 自动
+以它为基准（`CABLAB_RUN_DIR` 注入，agent 无法伪造基准）。
+
+标准循环（pilot: `agent/tasks/kitchen-strip-width.task.json`）：
+
+```
+bench.rules.read <mod>                      # 读规则+doc
+bench.rules.set  <mod> --name X --value V   # 改常量
+bench.pins     <mod>                        # 红了——pin 面差异=预期漂移
+bench.diff     <mod>                        # 字段级 diff，逐条 {path,from,to}
+bench.presets.repin <mod> --allow <regex>   # 只重写范围内的 pin；
+                                            # 范围外漂移 → scope_denied 不落盘
+bench.pins     <mod>                        # 转绿
+finish                                      # accept 判定
+```
+
+accept 除 `expect:"ok"` / 字段路径外支持 `expect:"diff.scope"`：
+diff 的每条 `path` 必须匹配 `scope` 正则之一，`mustChange` 拒绝空 diff。
+
+边界：`presets.write`（全文件覆写）默认不给——pin 是期望值，改了等于
+自己改考卷；重钉只能走 `presets.repin`（只允许声明过的路径动）。
+`layout.write` 是全文件级，T2 任务先打 diff 再人工审。

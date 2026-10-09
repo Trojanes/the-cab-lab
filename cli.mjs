@@ -67,8 +67,9 @@ function bindPositional(verb, { args, pos }) {
 /* ---------- host verbs (fs / subprocess) ---------- */
 
 const GENERATORS = resolve(ROOT, "generators");
-const genFile = (moduleId, name) => {
-  // generators/<dir>/<name>.json — dir names differ from module ids
+
+const genDirOf = (moduleId) => {
+  // generators/<dir> — dir names differ from module ids
   const dirs = {
     overheadCabinet: "overheadCabinet", uShapeOverheadCabinet: "uShapeOverhead",
     kitchenCabinet: "kitchen", ensuiteCabinet: "kitchen",
@@ -77,9 +78,73 @@ const genFile = (moduleId, name) => {
     bedroom: "bedroom", bedroomEast: "bedroomEast", bedBox: "bedBox",
     bunkBed: "bunkBed", bedSideTable: "bedSideTable", sketchBoard: "sketchBoard",
   };
-  const dir = dirs[moduleId];
-  return dir ? resolve(GENERATORS, dir, `${name}.json`) : null;
+  return dirs[moduleId] || moduleId;
 };
+const genFile = (moduleId, name) => resolve(GENERATORS, genDirOf(moduleId), `${name}.json`);
+
+/* --- bench generator verbs: presets/pins regen + scoped diff + rebuild --- */
+
+// generate entry per generator folder — explicit table on purpose: a loose
+// /^generate[A-Z]/ scan once picked generateOHCFrontView and crashed (DECISIONS).
+const GEN_ENTRY = {
+  overheadCabinet: "generateOverheadCabinet", uShapeOverhead: "generateUShapeOverhead",
+  kitchen: "generateKitchenCabinet", generalTall: "generateGeneralTall",
+  smallCabinet: "generateSmallCabinet", lounge: "generateLounge",
+  bedroom: "generateBedroom", bedroomEast: "generateBedroomEast",
+  bedBox: "generateBedBox", bedSideTable: "generateBedSideTable",
+  bunkBed: "generateBunkBed", sketchBoard: "generateSketchBoard",
+  ensuiteDrawing: "generateEnsuiteDrawing",
+};
+
+async function genResult(moduleId, params) {
+  const dir = genDirOf(moduleId);
+  const fn = GEN_ENTRY[dir];
+  if (!fn) throw new Error(`no generator entry for '${moduleId}'`);
+  const mod = await import(`./generators/${dir}/generator.ts`);
+  return mod[fn](params);
+}
+
+async function presetsOf(moduleId) {
+  const p = resolve(GENERATORS, genDirOf(moduleId), "presets.json");
+  return existsSync(p) ? JSON.parse(readFileSync(p, "utf8")) : null;
+}
+
+/** Pins → flat map path→number: `B3.y1`, `T3.cut[0][1]`, `BP.A.BG.u0`. */
+function flattenPins(pins) {
+  const out = {};
+  for (const [sec, rec] of Object.entries(pins ?? {})) {
+    for (const [k, v] of Object.entries(rec ?? {})) {
+      if (sec === "points") v.forEach((pt, i) => pt.forEach((n, j) => { out[`${k}[${i}][${j}]`] = n; }));
+      else for (const [f, n] of Object.entries(v)) out[`${k}.${f}`] = n;
+    }
+  }
+  return out;
+}
+
+const PIN_TOL = 0.01;
+const near = (a, b) => a != null && b != null && Number.isFinite(a) && Number.isFinite(b) && Math.abs(a - b) <= PIN_TOL;
+
+/** {path, from, to} for every flat pin that differs (from:null = new pin). */
+function diffPinMaps(baseFlat, liveFlat, prefix = "") {
+  const out = [];
+  for (const k of new Set([...Object.keys(baseFlat), ...Object.keys(liveFlat)])) {
+    const a = baseFlat[k] ?? null, b = liveFlat[k] ?? null;
+    if (!near(a, b)) out.push({ path: prefix + k, from: a, to: b });
+  }
+  return out;
+}
+
+/** Write a flat pin value back into the nested Pins structure (existing pins only). */
+function setFlatPin(pins, key, val) {
+  const m = key.match(/^(.*)\[(\d+)\]\[(\d+)\]$/);
+  if (m && pins.points?.[m[1]]) { pins.points[m[1]][+m[2]][+m[3]] = val; return true; }
+  const dot = key.lastIndexOf(".");
+  const id = key.slice(0, dot), field = key.slice(dot + 1);
+  for (const sec of ["boards", "zones", "features", "faceFeatures"]) {
+    if (pins[sec]?.[id] && field in pins[sec][id]) { pins[sec][id][field] = val; return true; }
+  }
+  return false;
+}
 
 const HOST = {
   "file.open": (a) => {
@@ -116,7 +181,70 @@ const HOST = {
   },
   "bench.layout.read": (a) => readGenJson(a, "layout"),
   "bench.layout.write": (a) => writeGenJson(a, "layout"),
-  "bench.diff": () => ({ ok: false, error: "use scripts/diff-snapshots.mjs for the semantic diff", code: "bad_args" }),
+  // -- generator-agent surface: regen pins, scoped diff, rebuild, scoped repin --
+  "bench.pins": async (a) => {
+    const pres = await presetsOf(a.moduleId);
+    if (!pres) return { ok: false, error: `no presets.json for module '${a.moduleId}'`, code: "unknown_id" };
+    const { checkPins } = await import("./generators/_lib/pins.ts");
+    const failures = [];
+    for (const p of pres.presets) {
+      let r;
+      try { r = await genResult(a.moduleId, p.params); }
+      catch (e) { return { ok: false, verb: "bench.pins", error: `${p.id}: ${e.message}`, code: "internal" }; }
+      for (const m of checkPins(r, p.pins)) failures.push({ preset: p.id, ...m });
+    }
+    return { ok: !failures.length, verb: "bench.pins", effect: { moduleId: a.moduleId, failures }, error: failures.length ? `${failures.length} pin mismatches` : undefined, code: failures.length ? "pins" : undefined };
+  },
+  "bench.baseline": async (a) => {
+    const pres = await presetsOf(a.moduleId);
+    if (!pres) return { ok: false, error: `no presets.json for module '${a.moduleId}'`, code: "unknown_id" };
+    if (!a.path) return { ok: false, error: "bench.baseline needs --path", code: "bad_args" };
+    const { collectPins } = await import("./generators/_lib/pins.ts");
+    const out = {};
+    for (const p of pres.presets) out[p.id] = flattenPins(collectPins(await genResult(a.moduleId, p.params)));
+    writeFileSync(resolve(a.path), JSON.stringify(out, null, 2));
+    return { ok: true, verb: "bench.baseline", effect: { path: a.path, presets: Object.keys(out) } };
+  },
+  "bench.diff": async (a) => {
+    const pres = await presetsOf(a.moduleId);
+    if (!pres) return { ok: false, error: `no presets.json for module '${a.moduleId}'`, code: "unknown_id" };
+    const { collectPins } = await import("./generators/_lib/pins.ts");
+    // baseline: --path, else the run-dir baseline, else the pinned expectations
+    const bp = a.baseline || a.path || (process.env.CABLAB_RUN_DIR ? resolve(process.env.CABLAB_RUN_DIR, "baseline.json") : null);
+    const base = bp && existsSync(bp) ? JSON.parse(readFileSync(bp, "utf8")) : null;
+    const changes = [];
+    for (const p of pres.presets) {
+      const live = flattenPins(collectPins(await genResult(a.moduleId, p.params)));
+      const baseFlat = base?.[p.id] ?? flattenPins(p.pins);
+      for (const d of diffPinMaps(baseFlat, live, `${p.id}.`)) changes.push(d);
+    }
+    return { ok: true, verb: "bench.diff", effect: { moduleId: a.moduleId, baseline: base ? bp : "presets", changes } };
+  },
+  "bench.presets.repin": async (a) => {
+    const pres = await presetsOf(a.moduleId);
+    if (!pres) return { ok: false, error: `no presets.json for module '${a.moduleId}'`, code: "unknown_id" };
+    const allow = String(a.allow ?? "").split(",").filter(Boolean).map((s) => new RegExp(s));
+    if (!allow.length) return { ok: false, error: "bench.presets.repin needs --allow <path-regexp,...> — blanket repin refused", code: "bad_args" };
+    const { collectPins } = await import("./generators/_lib/pins.ts");
+    const repinned = [], violations = [];
+    for (const p of pres.presets) {
+      const live = flattenPins(collectPins(await genResult(a.moduleId, p.params)));
+      const cur = flattenPins(p.pins);
+      for (const d of diffPinMaps(cur, live, `${p.id}.`)) {
+        const inner = d.path.slice(p.id.length + 1);
+        if (!allow.some((re) => re.test(d.path))) { violations.push(d); continue; }
+        if (setFlatPin(p.pins, inner, d.to)) repinned.push(d.path);
+        else violations.push({ ...d, path: `${d.path} (new pin)` });
+      }
+    }
+    if (violations.length) return { ok: false, verb: "bench.presets.repin", effect: { repinned, violations }, error: `${violations.length} out-of-scope pin drifts — not written`, code: "scope_denied" };
+    writeFileSync(genFile(a.moduleId, "presets"), JSON.stringify(pres, null, 2));
+    return { ok: true, verb: "bench.presets.repin", effect: { repinned } };
+  },
+  "bench.rebuild": () => {
+    const r = spawnSync("npm", ["run", "build:generators", "--silent"], { cwd: ROOT, encoding: "utf8", shell: true, timeout: 120000 });
+    return { ok: r.status === 0, verb: "bench.rebuild", error: r.status ? String(r.stderr || r.stdout || "build failed").slice(-400) : undefined, code: r.status ? "internal" : undefined };
+  },
   "omnicam.run": (a) => {
     const target = a.file || a._pos?.[0];
     if (!target) return { ok: false, error: "omnicam.run needs a .cnjob path or --demo", code: "bad_args" };
@@ -138,7 +266,7 @@ function readGenJson(a, name) {
 }
 function writeGenJson(a, name) {
   const p = genFile(needS(a, "moduleId"), name);
-  if (!p) return { ok: false, error: `no ${name}.json target for module '${a.moduleId}'`, code: "unknown_id" };
+  if (!existsSync(dirname(p))) return { ok: false, error: `no ${name}.json target for module '${a.moduleId}'`, code: "unknown_id" };
   const data = a.data ?? a.json ?? (a.path ? JSON.parse(readFileSync(resolve(a.path), "utf8")) : null);
   if (data == null) return { ok: false, error: `bench.${name}.write needs --data/--json/--path`, code: "bad_args" };
   writeFileSync(p, typeof data === "string" ? data : JSON.stringify(data, null, 2));

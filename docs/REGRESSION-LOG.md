@@ -52,6 +52,12 @@ path; the rendering path they actually crashed in is covered by e2e.
 | `doorBlockers is not defined` when the space editor rendered with a partition present | e2e `functional` phase, first CI run (windows-latest) — local run missed it because nothing deselected while a wall existed | Extraction miss: `doorBlockers` stayed a private helper in `panel/wall.js` but `panel/space.js` calls it without importing | Moved to shared layer `panel/widgets.js` (siblings never import each other), imported by both editors. e2e now deselects with a partition present and asserts the space editor renders with zero page errors |
 | E2E phases `functional`/`functional-drag` timed out on CI | First E2E CI run | `Runtime.evaluate` capped each phase at 25 s; 16 select→settle→edit cycles do not fit on a software-rendered runner | Phase timeout 150 s; job timeout 12 min |
 
+## Known coverage gaps (not bugs — instrument limits)
+
+| Gap | Found | Note |
+|---|---|---|
+| Pins do not see `centerline` geometry features | Generator-agent pilot (DRAWER_SLOT_Y0 45→40 produced a zero `bench.diff`) | `pins.ts` `FACE_FEATURE_FIELDS` covers u/v boxes, diameter, depth, radius, cx/cy — a groove stored as `centerline` points is invisible to `bench.pins`/`bench.diff`. The cnjob golden (kitchen-ok.json) is the only gate that sees those. A generator task whose diff lands only in unpinned geometry must additionally re-emit the golden — or extend pins to cover centerline paths. |
+
 ## Workflow
 
 - New crash dump arrives → `node scripts/replay-log.mjs --pin <file> <short-name>`

@@ -321,8 +321,11 @@ small zone type：`left_door` `right_door` `drawer`
 | `bench.presets.read` / `bench.presets.write` | presets.json 读/写（pins） | `moduleId`, `--json` |
 | `bench.rules.read` / `bench.rules.set` | rules.json 读 / 单条写（`{doc}` 必填） | `moduleId`,`name`,`value` |
 | `bench.layout.read` / `bench.layout.write` | layout.json 读/写（placement/relation/corners/features） | `moduleId`,`--json` |
-| `bench.rebuild` | 重生成 + 跑 pins | `moduleId` |
-| `bench.diff` | 语义 diff（T04） | `--moduleId`,`--regen`,`--path` |
+| `bench.pins` | 对 presets.json 逐 preset 断言 pins（结构化 failures） | `moduleId` |
+| `bench.baseline` | 抓当前 pin 面快照到文件（agent-run 在任务开始时自动做） | `moduleId`,`--path` |
+| `bench.diff` | 当前输出 vs baseline（或 pins）的字段级差异，`effect.changes[].path` | `moduleId`,`--baseline` |
+| `bench.presets.repin` | 只重写 `--allow` 正则覆盖的 pin；范围外漂移 → `scope_denied` 不落盘 | `moduleId`,`--allow` |
+| `bench.rebuild` | `npm run build:generators`（job 级动词吃 renderer/gen bundle，改完 json 必须跑） | — |
 | `bench.report.write` | 写报告 | `moduleId`,`markdown` |
 
 Electron 宿主附加（raycast 需要）：`bench.screen-of` `bench.pick-face`

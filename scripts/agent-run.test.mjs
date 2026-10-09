@@ -59,5 +59,27 @@ go(["exec", dirC, "describe"]);
 r = go(["exec", dirC, "describe"]);
 ok(r.status === 1 && JSON.parse(r.stdout).code === "budget", "maxOps enforced");
 
+// --- task D: generator task — baseline at start + diff.scope accept ---------
+const taskD = join(t, "d.task.json");
+writeFileSync(taskD, JSON.stringify({
+  id: "t-gen", goal: "gen", generator: "kitchenCabinet",
+  allow: ["bench.diff"],
+  accept: [{ verb: "bench.diff", args: ["--moduleId", "kitchenCabinet"], expect: "diff.scope", scope: ["^kitchen-base\\."] }],
+}));
+const dirD = runDirOf(go(["start", taskD]).stdout);
+ok(existsSync(join(dirD, "baseline.json")), "generator task captures pin baseline at start");
+r = go(["finish", dirD]);
+ok(r.status === 0 && JSON.parse(r.stdout).pass === true, "diff.scope passes on an untouched generator");
+
+// --- task E: diff.scope + mustChange fails on a no-op -----------------------
+const taskE = join(t, "e.task.json");
+writeFileSync(taskE, JSON.stringify({
+  id: "t-noop", goal: "noop", generator: "kitchenCabinet", allow: ["bench.diff"],
+  accept: [{ verb: "bench.diff", args: ["--moduleId", "kitchenCabinet"], expect: "diff.scope", mustChange: true, scope: ["^kitchen-base\\."] }],
+}));
+const dirE = runDirOf(go(["start", taskE]).stdout);
+r = go(["finish", dirE]);
+ok(r.status === 1 && JSON.parse(r.stdout).pass === false, "mustChange rejects an empty diff");
+
 console.log(bad ? `${bad} FAILED` : "all ok");
 process.exit(bad ? 1 : 0);

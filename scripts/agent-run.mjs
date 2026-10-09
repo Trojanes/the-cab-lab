@@ -14,9 +14,12 @@
 //   "goal": "human-readable objective",
 //   "input": "fixtures/job/x.json",          // opened as the session job at start (optional)
 //   "allow": ["describe","validate","cabinet.*","history.*"],  // verb prefixes; unlisted verbs are denied
+//   "generator": "kitchenCabinet",       // generator task → preset baseline captured at start
 //   "accept": [ {"verb":"validate","expect":"effect.ok"}, {"verb":"file.export-cnjob"} ],
 //   "budget": { "maxOps": 30 }
 // }
+// accept kinds: "ok" (default, truthy dig) · "diff.scope" (bench.diff changes ⊆ scope
+// regexes, +mustChange) — the "only touched declared surfaces" gate.
 //
 // Run dir: logs/agent/<id>-<ts>/ holds session/ (cwd → own .cablab-session.json),
 // transcript.jsonl (one line per op incl. denied), run.json (task + verdict).
@@ -48,7 +51,7 @@ function cli(runDir, verb, args, dryRun) {
   mkdirSync(sessionDir, { recursive: true });
   const argv = [CLI, verb, ...args, "--json"];
   if (dryRun) argv.push("--dry-run");
-  const r = spawnSync("node", argv, { cwd: sessionDir, encoding: "utf8" });
+  const r = spawnSync("node", argv, { cwd: sessionDir, encoding: "utf8", env: { ...process.env, CABLAB_RUN_DIR: resolve(runDir) } });
   try { return JSON.parse(r.stdout.trim().split("\n").pop()); }
   catch { return { ok: false, verb, error: `cli exit ${r.status}: ${(r.stderr || r.stdout || "").slice(-300)}`, code: "internal" }; }
 }
@@ -72,6 +75,12 @@ if (cmd === "start") {
     const r = cli(dir, "file.open", ["--path", resolve(ROOT, "..", task.input)]);
     logOp(dir, { i: 1, role: "setup", verb: "file.open", args: { path: task.input }, ok: r.ok });
     run.ops = 1;
+    if (!r.ok) { console.log(JSON.stringify(r)); saveRun({ run, file: resolve(dir, "run.json") }); process.exit(1); }
+  }
+  if (task.generator) {
+    // capture the pre-change pin surface; exec's bench.diff resolves it via CABLAB_RUN_DIR
+    const r = cli(dir, "bench.baseline", ["--moduleId", task.generator, "--path", resolve(dir, "baseline.json")]);
+    logOp(dir, { i: ++run.ops, role: "setup", verb: "bench.baseline", args: { moduleId: task.generator }, ok: r.ok });
     if (!r.ok) { console.log(JSON.stringify(r)); saveRun({ run, file: resolve(dir, "run.json") }); process.exit(1); }
   }
   saveRun({ run, file: resolve(dir, "run.json") });
@@ -116,8 +125,18 @@ else if (cmd === "finish") {
   for (const c of run.task.accept) {
     const { verb, args = [], expect = "ok" } = typeof c === "string" ? { verb: c } : c;
     const r = cli(a1, verb, args);
-    const got = dig(r, expect);
-    const ok = !!got;
+    let got, ok;
+    if (expect === "diff.scope") {
+      // every change path must match a scope regex; mustChange forbids a no-op pass
+      const scope = (c.scope ?? []).map((s) => new RegExp(s));
+      const changes = r.effect?.changes ?? [];
+      const outside = changes.filter((ch) => !scope.some((re) => re.test(ch.path)));
+      ok = r.ok && scope.length > 0 && outside.length === 0 && (!c.mustChange || changes.length > 0);
+      got = { changes: changes.length, outside: outside.map((d) => d.path).slice(0, 10) };
+    } else {
+      got = dig(r, expect);
+      ok = !!got;
+    }
     results.push({ verb, expect, ok, value: got });
     logOp(a1, { i: ++run.ops, role: "accept", verb, args, ok, expect, value: got });
     if (!ok) pass = false;
