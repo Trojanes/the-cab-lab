@@ -42,6 +42,7 @@ const STEPS = [
     ["test:sketch", "board sketch geometry"],
     ["test:commands", "command registry"],
     ["test:crash", "pinned crash dumps replay"],
+    ["test:cases", "accumulated project cases replay"],
     ["audit", "geometry audit (known-bad allowed)"],
   ]),
   ...(full || ci ? [

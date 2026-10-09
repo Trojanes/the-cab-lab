@@ -76,6 +76,10 @@ node scripts/diff-snapshots.mjs a.json b.json  # 任意两份快照（exit 1 = �
 - `scripts/emit-replay-cnjob.mjs` — 发射 `fixtures/replay/kitchen.cnjob`
   （真实 zip，manifest + snapshot）。契约变更时先 `--check` 确认漂移，
   再重新发射并同步到 `cabinetnc-cut/dotnet/tests/testdata/regression/packages/`。
+- `fixtures/projects/<name>/` — **真实项目案例库**（docs/CASES.md）：
+  每个案例 = job.json + 确定性 package.cnjob + CASE.md。
+  `npm run test:cases` 每次 verify 回放全部案例（加载→校验→再导出→
+  与包内快照逐字节比）。真实项目入库：`node scripts/add-case.mjs <file> <name>`。
 
 ### OmniCam（`cabinetnc-cut`）
 

@@ -78,3 +78,15 @@ this". Order: newest on top.
 - **Rejected**: median-of-per-runs (uShape's *minimum* is already 4.15 ms —
   real cost, not GC tail) and a fixed higher budget (weakens the quiet-CI
   contract; the median factor keeps it strict there).
+
+## 2026-10-09 · real projects accumulate as replayable cases
+
+- **What**: `fixtures/projects/<name>/` = job.json + deterministic
+  package.cnjob + CASE.md, ingested by `scripts/add-case.mjs` and replayed by
+  `npm run test:cases` on every verify.
+- **Why**: a synthetic fixture pins a contract; Troy's real test projects pin
+  whole workflows. Keeping the source job next to the package makes every
+  case re-emittable, so generator drift against real jobs is caught and
+  diffs are reviewable.
+- **Rejected**: collecting bare .cnjob exports only — output-only artifacts
+  can't be regenerated or diagnosed when the format moves.

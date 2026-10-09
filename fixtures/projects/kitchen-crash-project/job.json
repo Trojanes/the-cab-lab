@@ -1,0 +1,142 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "origin": "front-left floor corner; X right, Y back, Z up",
+  "space": {
+    "kind": "box",
+    "params": {
+      "width": 4000,
+      "depth": 3000,
+      "height": 2400,
+      "walls": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "finish": {
+    "carcass": {
+      "name": "White Stipple"
+    },
+    "door": {
+      "series": "acrylic",
+      "mode": "one",
+      "sides": "single",
+      "colors": [
+        {
+          "id": "A",
+          "series": "acrylic",
+          "name": "Gloss White"
+        }
+      ]
+    },
+    "benchTop": {
+      "name": "Pale Driftwood"
+    }
+  },
+  "stock": {
+    "carcass": {
+      "thickness": 15
+    },
+    "partition": {
+      "thickness": 18,
+      "floorClearance": 2,
+      "ceilingClearance": 2
+    },
+    "door": {
+      "thickness": 16
+    }
+  },
+  "cabinets": [
+    {
+      "id": "cab-1",
+      "moduleId": "generalTallCabinet",
+      "pose": {
+        "x": 1774,
+        "y": 420,
+        "z": 0,
+        "rotZ": 90
+      },
+      "params": {
+        "cabinetWidth": 660,
+        "cabinetDepth": 534,
+        "cabinetHeight": 1160,
+        "panelThickness": 15,
+        "frontPanelThickness": 16,
+        "topSystem": {
+          "style": "style_1",
+          "frontRailHeight": 40
+        },
+        "bottomSystem": {
+          "style": "style_1",
+          "frontRailHeight": 53
+        },
+        "zones": [
+          {
+            "id": "zone-1",
+            "type": "side_door",
+            "height": 348
+          },
+          {
+            "id": "zone-2",
+            "type": "drawer",
+            "height": 300
+          },
+          {
+            "id": "zone-3",
+            "type": "double_door",
+            "height": 357,
+            "verticalDivider": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "cab-2",
+      "moduleId": "generalTallCabinet",
+      "pose": {
+        "x": 1240,
+        "y": 70,
+        "z": 0,
+        "rotZ": 0
+      },
+      "params": {
+        "cabinetWidth": 1060,
+        "cabinetDepth": 350,
+        "cabinetHeight": 1110,
+        "panelThickness": 15,
+        "frontPanelThickness": 16,
+        "topSystem": {
+          "style": "style_1",
+          "frontRailHeight": 40
+        },
+        "bottomSystem": {
+          "style": "style_1",
+          "frontRailHeight": 53
+        },
+        "zones": [
+          {
+            "id": "zone-1",
+            "type": "side_door",
+            "height": 333
+          },
+          {
+            "id": "zone-2",
+            "type": "drawer",
+            "height": 300
+          },
+          {
+            "id": "zone-3",
+            "type": "double_door",
+            "height": 322,
+            "verticalDivider": true
+          }
+        ]
+      }
+    }
+  ],
+  "planes": [],
+  "walls": []
+}
