@@ -66,3 +66,15 @@ this". Order: newest on top.
 - **Why**: upstream's loose `/^generate[A-Z]/` matched
   `generateOHCFrontView` (alphabetically first re-export) and crashed.
 - **Rejected**: renaming the helper — the audit script is the defect.
+
+## 2026-10-09 · generator budget is median-normalised to the machine
+
+- **What**: `smoke.test.ts` collects every module's mean generate time, then
+  asserts each is under `GENERATE_BUDGET_MS × clamp(median/0.5, 1, 4)`.
+- **Why**: a quiet machine runs the suite median ≈0.5 ms; ambient load lifts
+  all modules together and pushes the biggest generator (uShape, ~5.5 ms on a
+  loaded box) over the fixed 5 ms line — three consecutive false reds locally
+  while CI stayed green.
+- **Rejected**: median-of-per-runs (uShape's *minimum* is already 4.15 ms —
+  real cost, not GC tail) and a fixed higher budget (weakens the quiet-CI
+  contract; the median factor keeps it strict there).

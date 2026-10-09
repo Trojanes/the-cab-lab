@@ -21,3 +21,16 @@ jobs:
       # job/app contracts, all renderer suites, audit, generator suite.
       # E2E (real Electron) and cross-repo replay stay local/verify:full.
       - run: npm run verify:ci
+
+  e2e:
+    runs-on: windows-latest
+    timeout-minutes: 8
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      # Needs the real electron binary this time — the driver spawns it.
+      - run: npm ci
+      - run: node scripts/e2e-drive.mjs

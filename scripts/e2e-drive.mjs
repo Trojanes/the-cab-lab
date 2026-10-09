@@ -484,6 +484,92 @@ const PHASES = [
     await e.settle(150);
     return e.mode(); })()`],
 
+  ["functional-drag", `(async () => { const e = window.__e2e;
+    // Gesture pass: SVG boundary grips get real pointerdown/move/up drags and the
+    // stored params must move. The panels keep their own mm<->px mapping on the
+    // svg element (data-scale/ox/oy/h) — we invert it back to client coords.
+    const panel = document.getElementById("rightpanel") || document.body;
+    const cab = (id) => e.cabs().find((c) => c.moduleId === id);
+    const jCab = (id) => e.J.getJob().cabinets.find((x) => x.id === id);
+    const sel = async (id) => { const c = cab(id); if (c) { e.J.select(c.id); await e.settle(450); } return c; };
+    const svgDrag = async (gripSel, dxMm, dyMm) => {
+      const front = panel.querySelector(".bedroom-front");
+      const g = front && front.querySelector(gripSel);
+      const svg = front && front.querySelector("svg");
+      if (!g || !svg) return "no grip";
+      const rect = svg.getBoundingClientRect();
+      const k = Number(svg.getAttribute("width")) / rect.width;
+      const scale = Number(svg.dataset.scale);
+      const gr = g.getBoundingClientRect();
+      const p0 = { x: gr.left + gr.width / 2, y: gr.top + gr.height / 2 };
+      const to = { x: p0.x + (dxMm * scale) / k, y: p0.y - (dyMm * scale) / k };
+      const opts = { bubbles: true, button: 0, buttons: 1, pointerId: 1, pointerType: "mouse", isPrimary: true };
+      g.dispatchEvent(new PointerEvent("pointerdown", { ...opts, clientX: p0.x, clientY: p0.y }));
+      front.dispatchEvent(new PointerEvent("pointermove", { ...opts, clientX: to.x, clientY: to.y }));
+      front.dispatchEvent(new PointerEvent("pointerup", { ...opts, clientX: to.x, clientY: to.y, buttons: 0 }));
+      await e.settle(120);
+      return "dragged";
+    };
+
+    // --- kitchen: column boundary drag keeps the run's total; split toggles + drags ---
+    let c = await sel("kitchenCabinet");
+    if (c) {
+      const cell = panel.querySelector("[data-zone]");
+      if (cell) { cell.dispatchEvent(new MouseEvent("click", { bubbles: true })); await e.settle(80); }
+      const addBtn = [...panel.querySelectorAll("button.tb")].find((b) => b.textContent.includes("+ Column"));
+      while ((jCab(c.id).params.columns || []).length < 3 && addBtn && !addBtn.disabled) { addBtn.click(); await e.settle(120); }
+      const ws0 = (jCab(c.id).params.columns || []).map((x) => x.width);
+      const r = await svgDrag("[data-boundary='column']", 60, 0);
+      const ws1 = (jCab(c.id).params.columns || []).map((x) => x.width);
+      const sum = (a) => a.reduce((x, y) => x + y, 0);
+      e.ok("kitchen column boundary drag", r === "dragged" && ws1.join() !== ws0.join() && Math.abs(sum(ws1) - sum(ws0)) < 1,
+        r + " " + ws0.join() + " -> " + ws1.join());
+      const splitBtn = [...panel.querySelectorAll("button.tb")].find((b) => /Split Kitchen/.test(b.textContent));
+      if (splitBtn && !splitBtn.disabled) { splitBtn.click(); await e.settle(120); }
+      const s0 = jCab(c.id).params.splitAfter;
+      const lines = (e.J.resultFor(c.id)?.debug?.columns || []).slice(0, -1).map((col) => col.x1);
+      // Drag toward a different boundary: the marker sits on lines[s0].
+      const target = s0 > 0 ? s0 - 1 : s0 + 1;
+      const dxMm = s0 != null && lines[target] != null ? lines[target] - lines[s0] : -400;
+      const r2 = await svgDrag("[data-boundary='split']", dxMm, 0);
+      const s1 = jCab(c.id).params.splitAfter;
+      e.ok("kitchen split marker drag", r2 === "dragged" && s0 != null && s1 !== s0, s0 + " -> " + s1 + " (" + r2 + ")");
+      const rm = [...panel.querySelectorAll("button.tb")].find((b) => /Remove split/.test(b.textContent));
+      if (rm && !rm.disabled) { rm.click(); await e.settle(100); }
+      e.ok("kitchen split removed", jCab(c.id).params.splitAfter == null, "after=" + jCab(c.id).params.splitAfter);
+      // Wheel arch avoidance checkbox → wheelAvoidances[0] created.
+      const cb = [...panel.querySelectorAll("label.field.check input[type=checkbox]")].find((i) => /wheel arch/i.test(i.closest("label").textContent || ""));
+      if (cb && !cb.checked) { cb.click(); await e.settle(120); }
+      const wa = jCab(c.id).params;
+      e.ok("kitchen wheel arch toggles on", wa.wheelArchAvoidance === true && (wa.wheelAvoidances || []).length >= 1,
+        "on=" + wa.wheelArchAvoidance + " arches=" + JSON.stringify(wa.wheelAvoidances || []).slice(0, 100));
+    } else e.ok("kitchen drag suite", false, "no cabinet");
+
+    // --- lounge: plan edge grip drag edits the stored size ---
+    c = await sel("loungeGenerator");
+    if (c) {
+      const g = panel.querySelector("[data-boundary]");
+      const edge = g && g.getAttribute("data-param");
+      const axis = g && g.getAttribute("data-axis");
+      // the panel maps screen-side edge names onto stored params
+      const param = { mainWidthLo: "mainWidth", totalWidthLo: "totalWidth", mainDepthFront: "mainDepth", lWidthFront: "lWidth", depthFront: "depth" }[edge] || edge;
+      const read = () => (param && param.startsWith("middleCabinet.") ? (jCab(c.id).params.middleCabinet || {})[param.slice(14)] : param ? jCab(c.id).params[param] : undefined);
+      const v0 = read();
+      const r = await svgDrag("[data-boundary]", axis === "y" ? 0 : 50, axis === "y" ? 50 : 0);
+      const v1 = read();
+      e.ok("lounge plan edge drag applies", r === "dragged" && param && v1 !== v0, edge + "→" + param + " " + v0 + " -> " + v1 + " (" + r + ")");
+    } else e.ok("lounge drag", false, "no cabinet");
+
+    // --- tall: zone boundary drag adjusts zone heights ---
+    c = await sel("generalTallCabinet");
+    if (c) {
+      const h0 = JSON.stringify((jCab(c.id).params.zones || []).map((z) => z.height));
+      const r = await svgDrag("[data-boundary]", 0, -60);
+      const h1 = JSON.stringify((jCab(c.id).params.zones || []).map((z) => z.height));
+      e.ok("tall zone boundary drag applies", r === "dragged" && h1 !== h0, r + " " + h0 + " -> " + h1);
+    } else e.ok("tall drag", false, "no cabinet");
+    return e.mode(); })()`],
+
   ["final", `(async () => { const e = window.__e2e;
     e.ok("ends in a rest mode", ["idle", "selected"].includes(String(e.mode())), e.mode());
     e.ok("no page errors", e.errs.length === 0, e.errs.slice(0, 4).join(" | "));
