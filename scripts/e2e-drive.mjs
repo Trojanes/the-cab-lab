@@ -617,7 +617,9 @@ try {
   let fail = 0;
   for (const [name, expr] of PHASES) {
     try {
-      const r = await evaluate(expr, 25000);
+      // 150 s: the functional phases serialize many select→settle→edit steps and
+      // software-rendered CI runners are several times slower than a dev box.
+      const r = await evaluate(expr, 150000);
       if (process.env.E2E_TRACE) console.error(`[phase ${name}]`, JSON.stringify(r).slice(0, 160));
     } catch (err) {
       console.log(`FAIL  phase "${name}" threw — ${err.message.slice(0, 300)}`);
