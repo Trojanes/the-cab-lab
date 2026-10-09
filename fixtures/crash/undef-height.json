@@ -1,0 +1,133 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "origin": "front-left floor corner; X right, Y back, Z up",
+  "space": {
+    "kind": "box",
+    "params": {
+      "width": 4000,
+      "depth": 3000,
+      "height": 2400,
+      "walls": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "finish": {
+    "carcass": {
+      "name": "White Stipple"
+    },
+    "door": {
+      "series": "acrylic",
+      "mode": "one",
+      "colors": [
+        {
+          "id": "A",
+          "series": "acrylic",
+          "name": "Gloss White"
+        }
+      ]
+    }
+  },
+  "stock": {
+    "carcass": {
+      "thickness": 15
+    },
+    "partition": {
+      "thickness": 18,
+      "floorClearance": 2,
+      "ceilingClearance": 2
+    },
+    "door": {
+      "thickness": 16
+    }
+  },
+  "cabinets": [
+    {
+      "id": "cab-1",
+      "moduleId": "generalTallCabinet",
+      "pose": {
+        "x": 1430,
+        "y": 984,
+        "z": 0,
+        "rotZ": 180
+      },
+      "params": {
+        "cabinetWidth": 1260,
+        "cabinetDepth": 764,
+        "cabinetHeight": 1170,
+        "panelThickness": 15,
+        "frontPanelThickness": 16,
+        "topSystem": {
+          "style": "style_1",
+          "frontRailHeight": 40
+        },
+        "bottomSystem": {
+          "style": "style_1",
+          "frontRailHeight": 53
+        },
+        "zones": [
+          {
+            "id": "zone-1",
+            "type": "side_door",
+            "height": 351
+          },
+          {
+            "id": "zone-2",
+            "type": "drawer",
+            "height": 300
+          },
+          {
+            "id": "zone-3",
+            "type": "double_door",
+            "height": 550,
+            "verticalDivider": true
+          }
+        ]
+      }
+    },
+    {
+      "id": "cab-2",
+      "moduleId": "kitchenCabinet",
+      "pose": {
+        "x": 4000,
+        "y": 984.0000000000001,
+        "z": 0,
+        "rotZ": 180
+      },
+      "params": {
+        "globalSettings": {
+          "length": 1000,
+          "depth": 984,
+          "height": 1290
+        },
+        "materialThickness": 15,
+        "frontThickness": 16,
+        "bottomClearanceHeight": 70,
+        "bottomClearanceStyle": "style_1",
+        "frontClearance": 2.5,
+        "lockEnabled": true,
+        "columns": [
+          {
+            "id": "c1",
+            "width": 1000,
+            "zones": [
+              {
+                "id": "z1",
+                "height": 1220,
+                "zoneType": "left_door"
+              }
+            ]
+          }
+        ],
+        "wheelAvoidances": [],
+        "vPanelMachiningPreferences": []
+      }
+    }
+  ],
+  "planes": [],
+  "walls": []
+}

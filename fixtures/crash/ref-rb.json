@@ -1,0 +1,55 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "origin": "front-left floor corner; X right, Y back, Z up",
+  "space": {
+    "kind": "box",
+    "params": {
+      "width": 4000,
+      "depth": 3000,
+      "height": 2400,
+      "walls": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "finish": {
+    "carcass": {
+      "name": "White Stipple"
+    },
+    "door": {
+      "series": "acrylic",
+      "mode": "one",
+      "sides": "single",
+      "colors": [
+        {
+          "id": "A",
+          "series": "acrylic",
+          "name": "Gloss White"
+        }
+      ]
+    },
+    "benchTop": {
+      "name": "Pale Driftwood"
+    }
+  },
+  "stock": {
+    "carcass": {
+      "thickness": 15
+    },
+    "partition": {
+      "thickness": 18,
+      "floorClearance": 2,
+      "ceilingClearance": 2
+    },
+    "door": {
+      "thickness": 16
+    }
+  },
+  "cabinets": [],
+  "planes": [],
+  "walls": []
+}

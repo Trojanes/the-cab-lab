@@ -354,6 +354,136 @@ const PHASES = [
     e.ok("space editor renders on deselect", spaceLen > 300 && e.errs.length === err0, "chars=" + spaceLen);
     return { wallLen, spaceLen, errs: e.errs.length - err0 }; })()`],
 
+  ["functional", `(async () => { const e = window.__e2e;
+    // Functional pass: not just "the editor renders" — every editor must accept a
+    // real edit that lands in job params. Uses the cabinets "all-panels" placed.
+    const panel = document.getElementById("rightpanel") || document.body;
+    const cab = (id) => e.cabs().find((c) => c.moduleId === id);
+    const jCab = (id) => e.J.getJob().cabinets.find((x) => x.id === id);
+    const sel = async (id) => { const c = cab(id); if (c) { e.J.select(c.id); await e.settle(450); } return c; };
+    const ev = (t, o = {}) => new (t === "click" ? MouseEvent : Event)(t, { bubbles: true, ...o });
+    // Try editable label.field number inputs until one mutates the job.
+    const fieldCommit = async (id) => {
+      const c = await sel(id); if (!c) return "no cabinet";
+      const inputs = [...panel.querySelectorAll("label.field input[type=number]")].filter((i) => !i.readOnly && !i.disabled);
+      if (!inputs.length) return "no editable field";
+      for (const inp of inputs) {
+        const before = JSON.stringify(jCab(c.id));
+        inp.value = String((Number(inp.value) || 0) + 10);
+        inp.dispatchEvent(new Event("change", { bubbles: true }));
+        await e.settle(80);
+        if (JSON.stringify(jCab(c.id)) !== before) return "changed";
+      }
+      return "no change on " + inputs.length + " fields";
+    };
+    // Click .col-dim.editable → type +delta into .col-dim-input → Enter.
+    const dimEdit = async (delta = 20) => {
+      const dim = panel.querySelector(".col-dim.editable");
+      if (!dim) return { res: "no editable dim" };
+      const param = dim.getAttribute("data-param");
+      dim.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+      await e.settle(40);
+      const inp = panel.querySelector(".col-dim-input");
+      if (!inp) return { res: "input did not open", param };
+      inp.value = String((Number(inp.value) || 0) + delta);
+      inp.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+      await e.settle(100);
+      return { res: "ok", param };
+    };
+
+    // --- kitchen: + Column on the selected column, typed column dim ---
+    let c = await sel("kitchenCabinet");
+    if (c) {
+      const cell = panel.querySelector("[data-zone]");
+      if (cell) { cell.dispatchEvent(new MouseEvent("click", { bubbles: true })); await e.settle(60); }
+      const n0 = (jCab(c.id).params.columns || []).length;
+      const addBtn = [...panel.querySelectorAll("button.tb")].find((b) => b.textContent.includes("+ Column"));
+      if (addBtn && !addBtn.disabled) { addBtn.click(); await e.settle(100); }
+      const n1 = (jCab(c.id).params.columns || []).length;
+      e.ok("kitchen + Column adds a column", n1 === n0 + 1, n0 + " -> " + n1 + (addBtn ? (addBtn.disabled ? " (disabled)" : "") : " (no btn)"));
+      const w0 = (jCab(c.id).params.columns || []).map((x) => x.width).join();
+      const d = await dimEdit(20);
+      const w1 = (jCab(c.id).params.columns || []).map((x) => x.width).join();
+      e.ok("kitchen typed column dim applies", d.res === "ok" && w1 !== w0, d.res + " " + w0 + " -> " + w1);
+    } else e.ok("kitchen functional", false, "no cabinet");
+
+    // --- lounge: plan-view typed dim edits the stored param ---
+    c = await sel("loungeGenerator");
+    if (c) {
+      const dim = panel.querySelector(".col-dim.editable");
+      const param = dim && dim.getAttribute("data-param");
+      const v0 = param ? jCab(c.id).params[param] : undefined;
+      const d = await dimEdit(40);
+      const v1 = (d.param || param) ? jCab(c.id).params[d.param || param] : undefined;
+      e.ok("lounge plan typed dim applies", d.res === "ok" && v1 !== v0, (d.param || param) + " " + v0 + " -> " + v1 + " (" + d.res + ")");
+      e.ok("lounge wheel-arch controls present", /wheel/i.test(panel.innerHTML), "");
+    } else e.ok("lounge functional", false, "no cabinet");
+
+    // --- tall: ctrl-multiselect two zones, Average selected height applies ---
+    c = await sel("generalTallCabinet");
+    if (c) {
+      const regions = [...panel.querySelectorAll("[data-zone]")];
+      if (regions.length >= 2) {
+        regions[0].dispatchEvent(new MouseEvent("click", { bubbles: true })); await e.settle(50);
+        regions[1].dispatchEvent(new MouseEvent("click", { bubbles: true, ctrlKey: true })); await e.settle(50);
+        const avg = [...panel.querySelectorAll("button.tb")].find((b) => /average selected/i.test(b.textContent));
+        const h0 = JSON.stringify((jCab(c.id).params.zones || []).map((z) => z.height));
+        if (avg && !avg.disabled) { avg.click(); await e.settle(100); }
+        const h1 = JSON.stringify((jCab(c.id).params.zones || []).map((z) => z.height));
+        e.ok("tall ctrl+click multiselect + average", !!avg && !avg.disabled && h1 !== h0, "btn=" + !!avg + (avg ? (avg.disabled ? " disabled" : "") : "") + " " + h0 + " -> " + h1);
+      } else e.ok("tall multiselect", false, "zone regions=" + regions.length);
+    } else e.ok("tall functional", false, "no cabinet");
+
+    // --- every other editor: a field edit must land in params ---
+    const generic = ["ensuiteCabinet", "tallFridgeCabinet", "overheadCabinet", "uShapeOverheadCabinet", "smallCabinet", "bedroom", "bedroomEast", "bedside", "bunkBed", "bedBox"];
+    const fails = [];
+    for (const id of generic) {
+      if (!cab(id)) continue;                       // module not in this build
+      const r = await fieldCommit(id);
+      if (r !== "changed") fails.push(id + ":" + r);
+    }
+    e.ok("every editor accepts a param edit", fails.length === 0, fails.slice(0, 5).join(" | ") || "checked " + generic.length);
+
+    // --- drawing modules render real content ---
+    for (const id of ["ensuiteDrawingLower", "ensuiteDrawingTall"]) {
+      c = await sel(id);
+      if (!c) continue;
+      const len = panel.innerHTML.length;
+      e.ok(id + " drawing panel has content", len > 200, "chars=" + len);
+    }
+
+    // --- partition fit to a lounge run: store + render the upstream contract ---
+    const ohc = cab("overheadCabinet"), lg = cab("loungeGenerator");
+    if (ohc && lg && e.J.addWall) {
+      const w = e.J.addWall({ axis: "x", at: e.sp.depth - 400, u0: 200, u1: 1800, side: 1 });
+      e.J.setWallFit(w.id, { overheadId: ohc.id, loungeId: lg.id, radius: 50 });
+      await e.settle(80);
+      const stored = e.J.getWall(w.id) || {};
+      e.J.select(w.id); await e.settle(450);
+      e.ok("wall fit to lounge stored + rendered", stored.fit && stored.fit.loungeId === lg.id && !stored.fit.kitchenId && /Lounge/.test(panel.innerHTML),
+        "fit=" + JSON.stringify(stored.fit || null) + " panel=" + (/Lounge/.test(panel.innerHTML) ? "Lounge" : "?"));
+    } else e.ok("wall fit to lounge", false, "missing overhead/lounge/addWall");
+
+    // --- ensuite sample: refused in a wrong space; in the matching space the
+    // existing drawing cabs make it refuse "already in job"; cleared, it places.
+    const n0 = e.cabs().length;
+    const bad = e.I.placeEnsuiteSample();
+    e.ok("ensuite sample refuses wrong space", bad === false && e.cabs().length === n0, "ret=" + bad);
+    e.J.defineSpace("box", { width: 2275, depth: 3000, height: 1965 });
+    await e.settle(150);
+    const dup = e.I.placeEnsuiteSample();
+    e.ok("ensuite sample refuses when parts exist", dup === false && e.cabs().length === n0, "ret=" + dup);
+    for (const x of e.cabs().filter((x) => String(x.moduleId).startsWith("ensuiteDrawing"))) e.J.removeCabinet(x.id);
+    await e.settle(60);
+    const before = e.cabs().length;
+    const good = e.I.placeEnsuiteSample();
+    await e.settle(150);
+    const newIds = e.cabs().slice(-2).map((x) => x.moduleId);
+    e.ok("ensuite sample places both parts", good === true && e.cabs().length === before + 2, "ret=" + good + " new=" + newIds.join(","));
+    e.J.defineSpace("box", { width: e.sp.width, depth: e.sp.depth, height: e.sp.height });
+    await e.settle(150);
+    return e.mode(); })()`],
+
   ["final", `(async () => { const e = window.__e2e;
     e.ok("ends in a rest mode", ["idle", "selected"].includes(String(e.mode())), e.mode());
     e.ok("no page errors", e.errs.length === 0, e.errs.slice(0, 4).join(" | "));

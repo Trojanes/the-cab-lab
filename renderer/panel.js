@@ -39,56 +39,6 @@ function renderCabinet(cab) {
   const setParam = (k, min = 0) => (v) => job.setParams(cab.id, { ...p, [k]: Math.max(min, v) });
   const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
 
-  const zones = p.zones || [];
-  const zoneRows = zones.map((z, i) => {
-    const type = el("select", {
-      onchange: (e) => {
-        const next = zones.map((zz) => ({ ...zz }));
-        next[i].type = e.target.value;
-        e.target.blur();
-        job.setParams(cab.id, { ...p, zones: next });
-      },
-    }, mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
-    const height = el("input", { type: "number", value: z.height, step: 1, min: 0 });
-    height.addEventListener("change", () => {
-      const v = Number(height.value);
-      if (!Number.isFinite(v) || v <= 0) { height.value = z.height; return; }
-      // Changing one zone: the neighbour below (or above for the last) absorbs the difference.
-      const next = zones.map((zz) => ({ ...zz }));
-      const j = i < next.length - 1 ? i + 1 : i - 1;
-      const delta = v - next[i].height;
-      if (j >= 0 && next[j].height - delta >= 60) {
-        next[i].height = v;
-        next[j].height = Math.round((next[j].height - delta) * 10) / 10;
-        job.setParams(cab.id, { ...p, zones: next });
-      } else {
-        height.value = z.height;
-      }
-    });
-    const remove = el("button", { class: "icon", title: "Remove zone", text: "×", disabled: zones.length <= 1,
-      onclick: () => {
-        const next = zones.filter((_, k) => k !== i);
-        job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
-      } });
-    return el("div", { class: "zone-row" }, [el("span", { class: "zone-idx", text: String(i + 1) }), type, height, remove]);
-  });
-
-  const addZone = el("button", { class: "tb wide", text: "+ Add zone", onclick: () => {
-    // New zone takes up to 150 mm from the tallest existing zone.
-    const next = zones.map((zz) => ({ ...zz }));
-    const tallest = next.reduce((a, b) => (b.height > a.height ? b : a), next[0]);
-    const take = Math.min(150, tallest.height - MIN_ZONE_HEIGHT);
-    const zone = { id: `zone-${Date.now().toString(36)}`, type: "drawer", height: take };
-    if (take >= MIN_ZONE_HEIGHT) {
-      tallest.height = Math.round((tallest.height - take) * 10) / 10;
-      next.push(zone);
-      job.setParams(cab.id, { ...p, zones: next });
-    } else {
-      next.push({ ...zone, height: MIN_ZONE_HEIGHT });
-      job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
-    }
-  } });
-
   const errors = [...(result?.validation?.errors || []), ...grainIssueLines(result)];
   const warnings = result?.validation?.warnings || [];
   const grain = grainSection(cab, mod, result);
@@ -194,6 +144,59 @@ function renderCabinet(cab) {
   }
   if (mod.panel === "bedroomEast") { renderBedroomEast(cab, mod, result, { checks, remove, p, env, board }); fillDrawer(result, errors, warnings); return; }
   if (mod.panel === "bunk") { renderBunk(cab, mod, result, { checks, remove, p, env, board }); fillDrawer(result, errors, warnings); return; }
+
+  // Generic fallback page: the only consumer of the zone editor. Built here, not
+  // up top — a module may store `params.zones` as a non-array (uShape keeps it
+  // per-run: {LEFT, BACK, RIGHT}) and zones.map there crashed every selection.
+  const zones = Array.isArray(p.zones) ? p.zones : [];
+  const zoneRows = zones.map((z, i) => {
+    const type = el("select", {
+      onchange: (e) => {
+        const next = zones.map((zz) => ({ ...zz }));
+        next[i].type = e.target.value;
+        e.target.blur();
+        job.setParams(cab.id, { ...p, zones: next });
+      },
+    }, (mod.zoneTypes || []).map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
+    const height = el("input", { type: "number", value: z.height, step: 1, min: 0 });
+    height.addEventListener("change", () => {
+      const v = Number(height.value);
+      if (!Number.isFinite(v) || v <= 0) { height.value = z.height; return; }
+      // Changing one zone: the neighbour below (or above for the last) absorbs the difference.
+      const next = zones.map((zz) => ({ ...zz }));
+      const j = i < next.length - 1 ? i + 1 : i - 1;
+      const delta = v - next[i].height;
+      if (j >= 0 && next[j].height - delta >= 60) {
+        next[i].height = v;
+        next[j].height = Math.round((next[j].height - delta) * 10) / 10;
+        job.setParams(cab.id, { ...p, zones: next });
+      } else {
+        height.value = z.height;
+      }
+    });
+    const remove = el("button", { class: "icon", title: "Remove zone", text: "×", disabled: zones.length <= 1,
+      onclick: () => {
+        const next = zones.filter((_, k) => k !== i);
+        job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
+      } });
+    return el("div", { class: "zone-row" }, [el("span", { class: "zone-idx", text: String(i + 1) }), type, height, remove]);
+  });
+
+  const addZone = el("button", { class: "tb wide", text: "+ Add zone", onclick: () => {
+    // New zone takes up to 150 mm from the tallest existing zone.
+    const next = zones.map((zz) => ({ ...zz }));
+    const tallest = next.reduce((a, b) => (b.height > a.height ? b : a), next[0]);
+    const take = Math.min(150, tallest.height - MIN_ZONE_HEIGHT);
+    const zone = { id: `zone-${Date.now().toString(36)}`, type: "drawer", height: take };
+    if (take >= MIN_ZONE_HEIGHT) {
+      tallest.height = Math.round((tallest.height - take) * 10) / 10;
+      next.push(zone);
+      job.setParams(cab.id, { ...p, zones: next });
+    } else {
+      next.push({ ...zone, height: MIN_ZONE_HEIGHT });
+      job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
+    }
+  } });
 
   const boxChildren = [
     el("div", { class: "panel-head" }, [
