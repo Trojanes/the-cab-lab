@@ -2,21 +2,10 @@
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
 import { openFloorPlan } from "../floorplan.js";
-import { DOOR_CLEAR_DEPTH, OPENING_MIN_WIDTH, OPENING_TYPES, SHEET_LONG_MM, SHEET_SHORT_MM, SLIDING_FLOOR_GAP, SLIDING_GAP, cabinetBlocksOpening, pelmetCover, wallBoards, wallLength, wallOrientation } from "../walls.js";
-import { envelopeFootprint, overlaps, statusOf } from "../fit.js";
+import { OPENING_MIN_WIDTH, OPENING_TYPES, SHEET_LONG_MM, SHEET_SHORT_MM, SLIDING_FLOOR_GAP, SLIDING_GAP, pelmetCover, wallBoards, wallLength, wallOrientation } from "../walls.js";
+import { statusOf } from "../fit.js";
 import { partitionClearance, thickness } from "../materials.js";
-import { el, numField, section, kv, panel, drawerChecks, drawerBoards, controlPanelRows } from "./widgets.js";
-function doorBlockers(w, s) {
-  const out = [];
-  for (const o of s.openings) {
-    for (const cab of job.getJob().cabinets) {
-      const fp = envelopeFootprint(cab, cab.pose);
-      const box = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
-      if (cabinetBlocksOpening(box, s, o)) out.push(`${cab.id} blocks the ${(OPENING_TYPES[o.type] || "door").toLowerCase()} ${o.id} in ${w.id} (within ${DOOR_CLEAR_DEPTH} mm).`);
-    }
-  }
-  return out;
-}
+import { el, numField, section, kv, panel, drawerChecks, drawerBoards, controlPanelRows, doorBlockers } from "./widgets.js";
 
 export function renderWall(w) {
   const st = statusOf(w);

@@ -11,7 +11,8 @@ import { removeGroove, startGroove } from "../grooveTool.js";
 import { setKitchenWidthColumn } from "../modules.js";
 import { showControlPanelForm } from "../quickCard.js";
 import { keepCorner, localAxes } from "../pose.js";
-import { cabinetHits } from "../fit.js";
+import { cabinetHits, envelopeFootprint } from "../fit.js";
+import { DOOR_CLEAR_DEPTH, OPENING_TYPES, cabinetBlocksOpening } from "../walls.js";
 import { noteGrowth } from "../yield.js";
 
 /** The right panel element every editor repaints into. */
@@ -146,6 +147,19 @@ export function dragField(label, value, onCommit, cabId, type, title) {
 }
 
 /** Local box the pose is measured from. Modules with their own box use that; the rest are x 0..W, y −door..D, z 0..H. */
+/** Cabinets standing close enough to block a wall opening (door swing / slide). */
+export function doorBlockers(w, s) {
+  const out = [];
+  for (const o of s.openings) {
+    for (const cab of job.getJob().cabinets) {
+      const fp = envelopeFootprint(cab, cab.pose);
+      const box = { x: [fp.minX, fp.maxX], y: [fp.minY, fp.maxY], z: [fp.z0, fp.z1] };
+      if (cabinetBlocksOpening(box, s, o)) out.push(`${cab.id} blocks the ${(OPENING_TYPES[o.type] || "door").toLowerCase()} ${o.id} in ${w.id} (within ${DOOR_CLEAR_DEPTH} mm).`);
+    }
+  }
+  return out;
+}
+
 export function cabinetBox(mod, params) {
   if (typeof mod.localBox === "function") return mod.localBox(params);
   const e = mod.envelope(params);

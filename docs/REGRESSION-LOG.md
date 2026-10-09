@@ -49,6 +49,8 @@ path; the rendering path they actually crashed in is covered by e2e.
 | Bug | Found | Root cause | Fix + coverage |
 |---|---|---|---|
 | Selecting a U-shape overhead crashed the panel (`zones.map is not a function`) | e2e `functional` phase, first run | `renderCabinet` built the generic zone editor unconditionally at the top; `uShapeOverheadCabinet.params.zones` is per-run `{LEFT, BACK, RIGHT}` object, not an array. The crash also left the panel showing the previous editor, cascading into broken subsequent interactions | Zone editor construction moved to the generic fallback path only (`renderer/panel.js`), `Array.isArray` guard + `mod.zoneTypes || []`. e2e `functional` selects uShape and asserts its editor accepts a field edit |
+| `doorBlockers is not defined` when the space editor rendered with a partition present | e2e `functional` phase, first CI run (windows-latest) — local run missed it because nothing deselected while a wall existed | Extraction miss: `doorBlockers` stayed a private helper in `panel/wall.js` but `panel/space.js` calls it without importing | Moved to shared layer `panel/widgets.js` (siblings never import each other), imported by both editors. e2e now deselects with a partition present and asserts the space editor renders with zero page errors |
+| E2E phases `functional`/`functional-drag` timed out on CI | First E2E CI run | `Runtime.evaluate` capped each phase at 25 s; 16 select→settle→edit cycles do not fit on a software-rendered runner | Phase timeout 150 s; job timeout 12 min |
 
 ## Workflow
 

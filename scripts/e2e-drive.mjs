@@ -464,6 +464,15 @@ const PHASES = [
         "fit=" + JSON.stringify(stored.fit || null) + " panel=" + (/Lounge/.test(panel.innerHTML) ? "Lounge" : "?"));
     } else e.ok("wall fit to lounge", false, "missing overhead/lounge/addWall");
 
+    // Deselect while a partition exists — renderSpace runs spaceFitIssues over the
+    // wall, which calls doorBlockers (it crashed on CI before it moved to widgets).
+    {
+      const err0 = e.errs.length;
+      e.J.select(null); await e.settle(450);
+      e.ok("space editor renders with a partition", panel.innerHTML.length > 300 && e.errs.length === err0,
+        "chars=" + panel.innerHTML.length + " errs=" + (e.errs.length - err0));
+    }
+
     // --- ensuite sample: refused in a wrong space; in the matching space the
     // existing drawing cabs make it refuse "already in job"; cleared, it places.
     const n0 = e.cabs().length;

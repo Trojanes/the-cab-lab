@@ -5,7 +5,7 @@ import { getSpaceKind } from "../spaces.js";
 import { openSpaceDialog } from "../spaceDialog.js";
 import { cabinetHits, overlaps, poseFits, statusOf } from "../fit.js";
 import { catalogueFields } from "../catalogueMenu.js";
-import { el, grainIssueLines, section, kv, panel, drawerChecks, drawerBoards } from "./widgets.js";
+import { el, grainIssueLines, section, kv, panel, drawerChecks, drawerBoards, doorBlockers } from "./widgets.js";
 // --- space ---------------------------------------------------------------------
 
 /** Cabinets that no longer fit the space (after a space edit, for instance). */
