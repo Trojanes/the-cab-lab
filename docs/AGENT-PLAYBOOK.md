@@ -112,3 +112,19 @@ history.end                               # 整组成为一步 undo
 - Electron 内嵌 `window.__app.invoke` —— 契约已定待接线，MCP/CLI 已可用
 - omnicam 分步动词（preflight/nest/repair）—— `omnicam.run` 整管线可用，分步待接
 - `bench.screen-of` / `bench.pick-face` —— 需要活 app 的 raycast，仅 Electron 宿主
+
+## 6. 任务运行（agent-run）——受控执行 + 审计
+
+`scripts/agent-run.mjs` 是任务的执行壳：任务单限定动词面（`allow` 前缀，
+越界即 `scope_denied`）、操作预算（`maxOps`）、验收断言（`accept`），
+全程写 `logs/agent/<id>-<ts>/transcript.jsonl` + `run.json` + `report.md`。
+
+```bash
+node scripts/agent-run.mjs start  agent/tasks/<x>.task.json   # 建运行目录 + 打开 input
+node scripts/agent-run.mjs exec   <runDir> <verb> [args…]     # 逐动词执行（回执同 CLI）
+node scripts/agent-run.mjs finish <runDir>                    # 跑 accept，exit 0/1
+```
+
+任务单示例见 `agent/tasks/fix-overlap.task.json`。规则：修 job 的任务
+不给 `bench.*`；改生成器数据的任务才有 `bench.rules.set` 等。审计文件
+是 REGRESSION-LOG 生态的一部分——agent 修好的场景顺手 `--pin` 成 fixture。

@@ -90,3 +90,17 @@ this". Order: newest on top.
   diffs are reviewable.
 - **Rejected**: collecting bare .cnjob exports only — output-only artifacts
   can't be regenerated or diagnosed when the format moves.
+
+## 2026-10-09 · agent runs go through a scoped harness, not raw CLI
+
+- **What**: `scripts/agent-run.mjs` (start/exec/finish) reads a task file
+  declaring the allowed verb prefixes, op budget and accept checks; every op
+  is logged to `logs/agent/<id>/transcript.jsonl` and the verdict is computed
+  by the harness, not the agent. Self-test: `test:agent`.
+- **Why**: the 92-verb surface is the tool whitelist, but nothing enforced
+  *per-task* scope — a "fix this job" agent could have called bench.rules.set
+  and silently rewritten generator data. Scope is now code-enforced, and
+  "done" is a script assertion, not the agent saying so.
+- **Rejected**: prompt-level rules only ("please don't touch generators") —
+  unenforceable; and a daemon/LLM-in-the-loop runner — the harness is
+  driver-agnostic, any model can drive it through exec calls.
