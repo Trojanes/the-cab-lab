@@ -42,7 +42,7 @@ Command Registry 成功通常返回：
 - `dryRun` 对注册表的 `mutates` 动词保存/恢复 Job 快照；CLI 的部分宿主命令（例如 `bench.rules.set`、`bench.layout.write`）直接写文件，**不能假定都支持同等回滚**。
 - `invoke()` 普通执行异常时未统一 `restoreAll`；`cablab_batch` 顺序调用且非原子批处理。
 - `scripts/agent-run.mjs` 的 allow-list / 预算 / transcript 只约束**经该 Runner 执行的动词**，不是对拥有 Shell/仓库写权限的编程 Agent 的操作系统隔离。
-- **导出文件陷阱**：`createApp().exportCnjob()` 返回 `snapshot` 对象；当前 `cli.mjs file.export-cnjob --path ...` 写入的是 Snapshot JSON，而不是含 `manifest.json`、`snapshot.json` 的 ZIP。不要把扩展名为 `.cnjob` 的该输出直接当成可导入 ZIP。真正 ZIP 的生成/重放入口参见 `scripts/emit-replay-cnjob.mjs`、`generators/_lib/cnjobZip.ts`（如位置调整，以仓库实码为准）。
+- **导出文件陷阱**：`createApp().exportCnjob()` 返回 `snapshot` 对象；当前 `cli.mjs file.export-cnjob --path ...` 写入的是 Snapshot JSON，而不是含 `manifest.json`、`snapshot.json` 的 ZIP。不要把扩展名为 `.cnjob` 的该输出直接当成可导入 ZIP。真正 ZIP 的生成/重放入口参见 `scripts/emit-replay-cnjob.mjs`、`cnjobZip.js`（如位置调整，以仓库实码为准）。
 - `bench.pins` / `bench.diff` 对部分 `centerline` 槽特征存在覆盖盲区；制造语义仍要由 Snapshot Golden / 跨仓回放兜底。
 - Golden / CI 全绿只代表未出现未豁免回归；`generators/_lib/audit.known.json` 中已登记的几何问题仍需单独裁决。
 
