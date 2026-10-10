@@ -115,9 +115,23 @@ history.end                               # 整组成为一步 undo
 
 ## 6. 任务运行（agent-run）——受控执行 + 审计
 
-`scripts/agent-run.mjs` 是任务的执行壳：任务单限定动词面（`allow` 前缀，
-越界即 `scope_denied`）、操作预算（`maxOps`）、验收断言（`accept`），
-全程写 `logs/agent/<id>-<ts>/transcript.jsonl` + `run.json` + `report.md`。
+**日常使用走 `npm run agent`（scripts/agent.mjs），不用记路径：**
+
+```bash
+npm run agent                          # 任务列表
+npm run agent -- fix-overlap --demo    # 一键演示：红 → 内置修复 → 绿 → 复核
+npm run agent -- fix-overlap           # 交互模式：进了会话直接敲动词
+npm run agent -- ls                    # 历史 run
+npm run agent -- review [runDir]       # 复核最近/指定 run
+```
+
+交互模式里只有四个特殊词：`fix`（跑该任务的内置修复）、`finish`
+（验收+复核一把出）、`status`、`quit`——其余输入原样当动词执行。
+
+底下仍是同一套执行壳 `scripts/agent-run.mjs`：任务单限定动词面
+（`allow` 前缀，越界即 `scope_denied`）、操作预算（`maxOps`）、验收断言
+（`accept`），全程写 `logs/agent/<id>-<ts>/transcript.jsonl` + `run.json`
++ `report.md`。要脚本化驱动（接 LLM）时用它的子命令：
 
 ```bash
 node scripts/agent-run.mjs start  agent/tasks/<x>.task.json   # 建运行目录 + 打开 input

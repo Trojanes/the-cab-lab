@@ -41,7 +41,8 @@
     "bench": "node ensure-electron.js && node build-generators.js && node scripts/run-bench.js",
     "shortcut": "powershell -NoProfile -ExecutionPolicy Bypass -File create-desktop-shortcut.ps1",
     "test:commands": "node renderer/commands.test.js",
-    "cli": "node cli.mjs"
+    "cli": "node cli.mjs",
+    "agent": "node scripts/agent.mjs"
   },
   "dependencies": {
     "polygon-clipping": "^0.15.7",
