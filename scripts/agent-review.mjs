@@ -18,6 +18,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
 import { resolve, dirname, relative } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { verifyProposal } from "./agent-proposal.mjs";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CLI = resolve(ROOT, "cli.mjs");
@@ -103,9 +104,11 @@ if (task.generator) {
   const scopeRes = (task.accept ?? [])
     .filter((c) => typeof c === "object" && c.expect === "diff.scope")
     .flatMap((c) => c.scope ?? []);
-  if (!scopeRes.length) {
+  // A proposal task declares its drift surface in proposal.scope — the
+  // proposal.scoped gate is the equivalent check; no double-warn.
+  if (!scopeRes.length && !task.proposal) {
     add("diff.scope", "warn", false, { why: "generator task has no declared diff.scope — drift unbounded" });
-  } else {
+  } else if (!scopeRes.length) { /* proposal.scoped covers it */ } else {
     const scope = scopeRes.map((s) => new RegExp(s));
     const r = cli("bench.diff", ["--moduleId", task.generator]);
     const changes = r.effect?.changes ?? [];
@@ -114,6 +117,23 @@ if (task.generator) {
       changes: changes.length, outside: outside.map((d) => d.path).slice(0, 10),
     });
   }
+}
+
+/* ---- block: declared generator intent held -------------------------- */
+// A proposal task must end where it said it would: declared rules landed,
+// no stale mental model, drift stayed inside scope and budget — re-verified
+// live, not from run.json's cached proposal results.
+if (task.proposal) {
+  const readRules = (moduleId) => {
+    const r = cli("bench.rules.read", ["--moduleId", moduleId]);
+    return r.ok ? r.effect.data : null;
+  };
+  const runDiff = () => {
+    const r = cli("bench.diff", ["--moduleId", task.generator]);
+    return r.effect ?? { changes: [] };
+  };
+  for (const c of verifyProposal({ task, proposalBase: run.proposalBase ?? {}, readRules, runDiff }))
+    checks.push(c);
 }
 
 /* ---- block: declared write surface ⊆ repo dirty set (optional) ------ */

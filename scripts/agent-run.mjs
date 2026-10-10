@@ -31,6 +31,7 @@ import { readFileSync, writeFileSync, mkdirSync, appendFileSync, existsSync } fr
 import { resolve, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { spawnSync } from "node:child_process";
+import { checkProposalShape, declaredRuleNames, verifyProposal } from "./agent-proposal.mjs";
 
 const ROOT = dirname(fileURLToPath(import.meta.url));
 const CLI = resolve(ROOT, "..", "cli.mjs");
@@ -69,6 +70,11 @@ function logOp(runDir, entry) {
 if (cmd === "start") {
   const task = JSON.parse(readFileSync(resolve(a1), "utf8"));
   for (const k of ["id", "goal", "allow", "accept"]) if (!task[k]) { console.error(`task needs ${k}`); process.exit(2); }
+  if (task.proposal) {
+    const bad = checkProposalShape(task.proposal);
+    if (bad) { console.error(`proposal invalid: ${bad}`); process.exit(2); }
+    if (!task.generator) { console.error("proposal tasks need a generator"); process.exit(2); }
+  }
   const id = `${task.id}-${new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)}`;
   const dir = resolve(AGENT_DIR, id);
   mkdirSync(dir, { recursive: true });
@@ -86,6 +92,16 @@ if (cmd === "start") {
     const r = cli(dir, "bench.baseline", ["--moduleId", task.generator, "--path", resolve(dir, "baseline.json")]);
     logOp(dir, { i: ++run.ops, role: "setup", verb: "bench.baseline", args: { moduleId: task.generator }, ok: r.ok });
     if (!r.ok) { console.log(JSON.stringify(r)); saveRun({ run, file: resolve(dir, "run.json") }); process.exit(1); }
+  }
+  if (task.proposal) {
+    // capture the rules values the proposal claims it starts from — the
+    // `stale` gate compares declared `from` against THIS snapshot later.
+    const r = cli(dir, "bench.rules.read", ["--moduleId", task.generator]);
+    logOp(dir, { i: ++run.ops, role: "setup", verb: "bench.rules.read", args: { moduleId: task.generator }, ok: r.ok });
+    if (!r.ok) { console.log(JSON.stringify(r)); saveRun({ run, file: resolve(dir, "run.json") }); process.exit(1); }
+    run.proposalBase = {};
+    for (const c of task.proposal.changes.filter((c) => c.surface === "rules"))
+      run.proposalBase[c.name] = r.effect?.data?.[c.name]?.value ?? null;
   }
   saveRun({ run, file: resolve(dir, "run.json") });
   console.log(`run dir: ${dir}`);
@@ -105,6 +121,29 @@ else if (cmd === "exec") {
     const r = { ok: false, verb, error: `verb not in task allow list`, code: "scope_denied" };
     logOp(a1, { i, role: "agent", verb, args, denied: true });
     saveRun(ctx); console.log(JSON.stringify(r)); process.exit(1);
+  }
+  // proposal tasks: writes restricted to the declared change surface —
+  // bench.rules.set only touches declared names, bench.layout.write only
+  // when a layout change was declared. Repin stays guarded by its own
+  // scoped-drift refusal + the diff gates.
+  if (run.task.proposal) {
+    const prop = run.task.proposal;
+    const argOf = (k) => {
+      const i = args.indexOf(`--${k}`);
+      if (i >= 0) return args[i + 1];
+      const eq = args.find((a) => a.startsWith(`--${k}=`));
+      return eq ? eq.slice(k.length + 3) : undefined;
+    };
+    let deniedWhy = null;
+    if (verb === "bench.rules.set" && !declaredRuleNames(prop).has(argOf("name")))
+      deniedWhy = `rule '${argOf("name")}' is not in proposal.changes`;
+    if (verb === "bench.layout.write" && !prop.changes.some((c) => c.surface === "layout"))
+      deniedWhy = "proposal declares no layout change";
+    if (deniedWhy) {
+      const r = { ok: false, verb, error: deniedWhy, code: "scope_denied" };
+      logOp(a1, { i, role: "agent", verb, args, denied: true, why: "proposal" });
+      saveRun(ctx); console.log(JSON.stringify(r)); process.exit(1);
+    }
   }
   if (run.task.budget?.maxOps && i > run.task.budget.maxOps) {
     const r = { ok: false, verb, error: `budget exceeded (maxOps ${run.task.budget.maxOps})`, code: "budget" };
@@ -144,6 +183,22 @@ else if (cmd === "finish") {
     results.push({ verb, expect, ok, value: got });
     logOp(a1, { i: ++run.ops, role: "accept", verb, args, ok, expect, value: got });
     if (!ok) pass = false;
+  }
+  // proposal gates — a declared intent must hold, always, on top of accept.
+  if (run.task.proposal) {
+    const readRules = (moduleId) => {
+      const r = cli(a1, "bench.rules.read", ["--moduleId", moduleId]);
+      return r.ok ? r.effect.data : null;
+    };
+    const runDiff = () => {
+      const r = cli(a1, "bench.diff", ["--moduleId", run.task.generator]);
+      return r.effect ?? { changes: [] };
+    };
+    for (const c of verifyProposal({ task: run.task, proposalBase: run.proposalBase ?? {}, readRules, runDiff })) {
+      results.push({ verb: c.id, expect: "proposal", ok: c.ok, value: c.detail });
+      logOp(a1, { i: ++run.ops, role: "accept", verb: c.id, ok: c.ok, expect: "proposal", value: c.detail });
+      if (!c.ok) pass = false;
+    }
   }
   run.state = pass ? "passed" : "failed";
   run.finishedAt = new Date().toISOString();

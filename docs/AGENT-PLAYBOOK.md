@@ -182,3 +182,38 @@ node scripts/agent-run.mjs  review <runDir>    # 或 scripts/agent-review.mjs <r
 `approved` 可发布 · `needs_human` 机械全绿但有值得看的痕迹 ·
 `validation_blocked` 有硬违规。LLM 语义层经 `--judge` 挂点接入，
 永远只能把好结果拉下来，不能把烂的顶上去。
+
+### 6.3 Generator 任务加 `proposal` —— 先声明意图，再动手
+
+Generator Agent 的完整回路由**提案文件**驱动：任务单里的 `proposal`
+块是 Agent 在动手前写下的"我要改什么"，之后每一道门都拿运行实况
+对照这份声明——而不是事后看 diff 猜意图。
+
+```json
+"proposal": {
+  "changes": [
+    { "surface": "rules", "name": "SUPPORT_STRIP_WIDTH",
+      "from": 100, "to": 95, "reason": "收窄支撑条 5mm" },
+    { "surface": "layout", "reason": "…" }
+  ],
+  "scope": ["^kitchen-base\\.(B3|T1-1)\\."],
+  "maxChanges": 60
+}
+```
+
+- **start**：快照每个声明规则的现值进 `run.proposalBase`
+- **exec**：`bench.rules.set` 只许碰声明过的 name，未声明 → `scope_denied`；
+  `bench.layout.write` 需要声明过 layout 变更才放行
+- **finish/review**：四道闸门自动跑——
+  `stale`（声明 `from` ≠ 快照值 → 心智模型错了，拒）·
+  `applied`（声明 `to` 未落地）· `scoped`（漂移路径 ⊆ scope）·
+  `bounded`（漂移条数 ≤ maxChanges）
+
+范式任务单：`agent/tasks/kitchen-strip-width.task.json`。标准循环：
+`rules.set` → `pins`（红=预期漂移）→ `diff` → `presets.repin --allow <scope>`
+→ `pins`（绿）→ `finish` → `review`。实测：60 处漂移全落 scope，
+finish 6 项全过，review approved。
+
+`writes`（可选）：任务单声明允许改动的仓库路径正则数组，review 时
+`git status` 脏文件必须 ⊆ 白名单（logs/、.cablab-session 豁免）——
+抓绕过动词面直接写文件的行为。

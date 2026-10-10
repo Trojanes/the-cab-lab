@@ -81,5 +81,70 @@ const dirE = runDirOf(go(["start", taskE]).stdout);
 r = go(["finish", dirE]);
 ok(r.status === 1 && JSON.parse(r.stdout).pass === false, "mustChange rejects an empty diff");
 
+// --- task F: proposal gate — undeclared rule denied at exec ---------------
+const taskF = join(t, "f.task.json");
+writeFileSync(taskF, JSON.stringify({
+  id: "t-prop-gate", goal: "gen", generator: "kitchenCabinet",
+  allow: ["bench.rules.set", "bench.diff"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 100, to: 95, reason: "test" }],
+    scope: ["^kitchen-base\\."],
+  },
+  accept: [{ verb: "bench.diff", args: ["--moduleId", "kitchenCabinet"] }],
+}));
+const dirF = runDirOf(go(["start", taskF]).stdout);
+ok(existsSync(join(dirF, "run.json")) && JSON.parse(readFileSync(join(dirF, "run.json"), "utf8")).proposalBase?.SUPPORT_STRIP_WIDTH === 100,
+  "proposal task captures rule base values at start");
+r = go(["exec", dirF, "bench.rules.set", "--moduleId", "kitchenCabinet", "--name", "OTHER_RULE", "--value", "1"]);
+ok(r.status === 1 && JSON.parse(r.stdout).code === "scope_denied", "undeclared rule denied at exec");
+r = go(["finish", dirF]);
+ok(r.status === 1 && r.stdout.includes("proposal.applied"), "unapplied declared change fails finish");
+
+// --- task G: stale `from` → proposal.stale blocks ---------------------------
+const taskG = join(t, "g.task.json");
+writeFileSync(taskG, JSON.stringify({
+  id: "t-prop-stale", goal: "gen", generator: "kitchenCabinet",
+  allow: ["bench.diff"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 999, to: 100, reason: "test" }],
+    scope: ["^kitchen-base\\."],
+  },
+  accept: [],
+}));
+const dirG = runDirOf(go(["start", taskG]).stdout);
+r = go(["finish", dirG]);
+ok(r.status === 1 && r.stdout.includes("proposal.stale"), "stale from blocks the run");
+
+// --- task H: satisfied proposal (identity change) → PASS -------------------
+const taskH = join(t, "h.task.json");
+writeFileSync(taskH, JSON.stringify({
+  id: "t-prop-pass", goal: "gen", generator: "kitchenCabinet",
+  allow: ["bench.diff"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 100, to: 100, reason: "test" }],
+    scope: ["^kitchen-base\\."], maxChanges: 5,
+  },
+  accept: [],
+}));
+const dirH = runDirOf(go(["start", taskH]).stdout);
+go(["exec", dirH, "bench.diff", "--moduleId", "kitchenCabinet"]);
+r = go(["finish", dirH]);
+ok(r.status === 0 && JSON.parse(r.stdout).pass === true, "satisfied proposal passes finish");
+
+// --- task I: layout.write gated when no layout change declared -------------
+const taskI = join(t, "i.task.json");
+writeFileSync(taskI, JSON.stringify({
+  id: "t-prop-layout", goal: "gen", generator: "kitchenCabinet",
+  allow: ["bench.layout.write"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 100, to: 95, reason: "test" }],
+    scope: ["^kitchen-base\\."],
+  },
+  accept: [],
+}));
+const dirI = runDirOf(go(["start", taskI]).stdout);
+r = go(["exec", dirI, "bench.layout.write", "--moduleId", "kitchenCabinet", "--data", "{}"]);
+ok(r.status === 1 && JSON.parse(r.stdout).code === "scope_denied", "layout.write denied without declared layout change");
+
 console.log(bad ? `${bad} FAILED` : "all ok");
 process.exit(bad ? 1 : 0);

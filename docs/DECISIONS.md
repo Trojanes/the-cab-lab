@@ -8,6 +8,31 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-11 · Generator tasks declare intent as a proposal, not after the fact
+
+- **What**: `task.proposal` turns a generator task into a stated plan —
+  `changes` (rule names with `from`/`to`, layout flag), `scope` (allowed
+  pin-drift paths), `maxChanges`. The harness gates `bench.rules.set` /
+  `bench.layout.write` to the declared surface at exec time; `finish`
+  and `agent-review` run four gates: `stale` (declared `from` must match
+  the start-time snapshot), `applied` (declared `to` must have landed),
+  `scoped` (live drift ⊆ scope), `bounded` (drift count ≤ maxChanges).
+  Shared verifier: `scripts/agent-proposal.mjs`.
+- **Why**: the Generator Agent loop's core hazard is silent unrelated
+  drift — a rule change that quietly moves pins the task never meant to
+  touch. Declaring intent first makes "what the agent meant to do"
+  checkable data instead of post-hoc guesswork; a stale `from` proves
+  the agent's model of the generator was wrong before it wrote a byte.
+- **Rejected**: repin-allow regexes gated at exec — `bench.presets.repin`
+  already refuses out-of-scope drift against live state, and the diff
+  gates catch the rest; exec-time regex containment is not mechanically
+  decidable.
+- **Rejected**: letting `diff.scope` warn fire on proposal tasks without
+  an accept-level scope — `proposal.scoped` is the same gate; double-
+  warning would flag every well-formed proposal run.
+
+---
+
 ## 2026-10-11 · Review is an independent re-verification, not a trusted read
 
 - **What**: `scripts/agent-review.mjs` audits a finished run dir —

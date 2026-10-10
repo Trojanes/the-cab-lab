@@ -106,5 +106,36 @@ ok(r.status === 1 && verdictOf(r.stdout) === "validation_blocked", "judge cannot
 r = go(RUN, ["review", dirF]);
 ok(r.status === 0, "agent-run review passthrough works");
 
+/* --- J: proposal unapplied (declared to≠live) → blocked ------------------ */
+const mkRun = (name, task, extra = {}) => {
+  const d = join(t, name);
+  spawnSync("node", ["-e", `require("fs").mkdirSync(process.argv[1],{recursive:true})`, d]);
+  writeFileSync(join(d, "run.json"), JSON.stringify({ state: "passed", verdict: { pass: true }, task, ...extra }));
+  writeFileSync(join(d, "transcript.jsonl"), JSON.stringify({ i: 1, role: "agent", verb: "bench.diff", ok: true }) + "\n");
+  return d;
+};
+const dirJ = mkRun("j-run", {
+  id: "rv-prop", goal: "gen", generator: "kitchenCabinet", allow: ["bench.diff"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 100, to: 95, reason: "x" }],
+    scope: ["^kitchen-base\\."],
+  },
+  accept: [],
+}, { proposalBase: { SUPPORT_STRIP_WIDTH: 100 } });
+r = go(REVIEW, [dirJ]);
+ok(r.status === 1 && verdictOf(r.stdout) === "validation_blocked", "unapplied proposal → validation_blocked");
+
+/* --- K: satisfied proposal → approved ------------------------------------ */
+const dirK = mkRun("k-run", {
+  id: "rv-prop-ok", goal: "gen", generator: "kitchenCabinet", allow: ["bench.diff"],
+  proposal: {
+    changes: [{ surface: "rules", name: "SUPPORT_STRIP_WIDTH", from: 100, to: 100, reason: "x" }],
+    scope: ["^kitchen-base\\."], maxChanges: 5,
+  },
+  accept: [],
+}, { proposalBase: { SUPPORT_STRIP_WIDTH: 100 } });
+r = go(REVIEW, [dirK]);
+ok(r.status === 0 && verdictOf(r.stdout) === "approved", "satisfied proposal → approved");
+
 console.log(bad ? `${bad} FAILED` : "all ok");
 process.exit(bad ? 1 : 0);
