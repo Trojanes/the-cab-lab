@@ -1,6 +1,7 @@
 // @module panel @owns renderTall — tall.zone.* stack editor @reads result.stack
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { MIN_ZONE_HEIGHT } from "../modules.js";
 import { envelopeBox } from "../fit.js";
@@ -48,7 +49,7 @@ export function renderTall(cab, mod, result, shared) {
   const zoneItems = (result?.stack || []).filter((it) => it.kind === "functional_zone");
 
   const setZones = (next, kind, extra = {}) => {
-    job.setParams(cab.id, { ...p, zones: next });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
     log(`tall.zone.${kind}`, { id: cab.id, heights: next.map((z) => z.height), types: next.map((z) => z.type), ...extra });
   };
 
@@ -62,7 +63,7 @@ export function renderTall(cab, mod, result, shared) {
     const from = sideMode(side);
     if (from === mode) return;
     const t = mode === "none" ? 0 : mode === "colour" ? fpt : cpt;
-    job.setParams(cab.id, { ...p, [`${side}SidePanelThickness`]: t, [`${side}SidePanelFinish`]: mode === "colour" ? "colour" : "carcass" });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, [`${side}SidePanelThickness`]: t, [`${side}SidePanelFinish`]: mode === "colour" ? "colour" : "carcass" } , replace: true });
     log("tall.side", { id: cab.id, side, from, to: mode, thickness: t });
   };
   const lt = p.leftSidePanelThickness ?? 0;
@@ -90,7 +91,7 @@ export function renderTall(cab, mod, result, shared) {
   const setAvoid = (patch, extra = {}) => {
     const next = { ...p, avoidance: { enabled: true, depth: av.depth > 0 ? av.depth : 200, height: av.height > 0 ? av.height : 300, ...patch }, ...extra };
     delete next.avoidance.fromPlan;
-    job.setParams(cab.id, next);
+    invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
     log("tall.wheel", { id: cab.id, avoidance: next.avoidance, flag: next.wheelArchAvoidance });
   };
   const tallWheel = section("Wheel arch avoidance", [
@@ -99,7 +100,7 @@ export function renderTall(cab, mod, result, shared) {
       el("input", { type: "checkbox", checked: avOn, onchange: (e) => {
         if (e.target.checked) setAvoid({ enabled: true }, { wheelArchAvoidance: true });
         else {
-          job.setParams(cab.id, { ...p, wheelArchAvoidance: false, avoidance: { enabled: false, depth: av.depth, height: av.height } });
+          invoke("cabinet.set-params", { id: cab.id, params: { ...p, wheelArchAvoidance: false, avoidance: { enabled: false, depth: av.depth, height: av.height } } , replace: true });
           log("tall.wheel", { id: cab.id, on: false });
         }
       } }),
@@ -131,7 +132,7 @@ export function renderTall(cab, mod, result, shared) {
         const corner = cab.placeCorner || { x: -1, y: 1, z: -1 };
         const fromPose = { ...cab.pose };
         const pose = keepCorner(cab.pose, envelopeBox(cab, result), envelopeBox({ ...cab, params: next }, null), corner);
-        job.setParams(cab.id, next);
+        invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
         job.setPose(cab.id, pose, { history: false });
         const now = job.getSelected();
         log("tall.preset", { id: cab.id, preset: id, from: env, to: now ? mod.envelope(now.params) : null, corner, stored: !!cab.placeCorner, fromPose, toPose: pose });
@@ -389,7 +390,7 @@ export function renderTall(cab, mod, result, shared) {
       if (z.verticalDivider === true) {
         const mw = (result?.params?.midWidth ?? env.W) || env.W;
         const field = numField("Divider centre (mm)", z.dividerCenterX ?? Math.round(mw / 2), (v) => {
-          job.setParams(cab.id, mod.setDividerCenter(p, z.id, Math.round(v)));
+          invoke("cabinet.set-params", { id: cab.id, params: mod.setDividerCenter(p, z.id, Math.round(v)) , replace: true });
           log("tall.zone.divider", { id: cab.id, zone: z.id, to: v });
         }, { step: 10, min: 0 });
         field.title = `From the left side panel's inner face · interior ${Math.round(mw)} wide · or drag the dashed line`;
@@ -416,8 +417,8 @@ export function renderTall(cab, mod, result, shared) {
   }
 
   // Cabinet-level fields, folded.
-  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
-  const setNested = (group, key) => (v) => job.setParams(cab.id, { ...p, [group]: { ...(p[group] || {}), [key]: v } });
+  const setPose = (k) => (v) => invoke("cabinet.move", { id: cab.id, ...{ [k]: v } });
+  const setNested = (group, key) => (v) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, [group]: { ...(p[group] || {}), [key]: v } } , replace: true });
   const sizes = () => outerSizeFields(cab, mod, env, p, { logKind: "tall.size" });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
@@ -430,7 +431,7 @@ export function renderTall(cab, mod, result, shared) {
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
       numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
-      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => invoke("cabinet.move", { id: cab.id, ...{ rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 } }), { step: 90, min: -1e6 }),
     ]),
     section("Material (job stock)", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
@@ -460,7 +461,7 @@ export function renderTall(cab, mod, result, shared) {
         el("input", { type: "checkbox", checked: p.ledGroove === true, onchange: (e) => {
           const to = e.target.checked;
           if ((p.ledGroove === true) === to) return;
-          job.setParams(cab.id, { ...p, ledGroove: to });
+          invoke("cabinet.set-params", { id: cab.id, params: { ...p, ledGroove: to } , replace: true });
           log("tall.led", { id: cab.id, from: p.ledGroove === true, to });
         } }),
       ]),

@@ -8,6 +8,35 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-10 · UI writes route through the Command Registry
+
+- **What**: every discrete UI mutation (panel editors, R-key rotate,
+  Delete, colour-slot, grain) now calls `invoke()` — `cabinet.set-params`
+  gained `replace:true` for full-params parity, `cabinet.move/remove/
+  rotate/set-color-slot` carry the rest. `check-deps` Rule 7 bans bare
+  `job.setParams/setPose/removeCabinet/setColorSlot` outside a gesture's
+  own `history:false` frame and `job.updateCabinet` outside its four
+  owners (`panel.js`, `panel/widgets.js`, `yield.js`, `boardSketch.js`)
+  and `interact/*`.
+- **Why**: P1 UI/business decoupling — an Agent verb and a UI click now
+  land on the same handler, so semantics (attach guards, orient rules,
+  validation envelope, diff) cannot diverge.
+- **Rejected**: routing drag-frame `history:false` writes through
+  `invoke()` — the mutating envelope runs `validateBlock` + diff per
+  call, which is exactly the per-pointermove full-job work the
+  compute-small rule bans. Frames write `job.*` inside `begin/end` and
+  stay verb-expressible as one gesture.
+- **Rejected**: merge-only `set-params` — kitchen/overhead `splitAfter`,
+  `waterfall`, `lockPosition` are deleted by `delete`, and a patch merge
+  keeps them (E2E `kitchen split removed` caught it). `replace:true` is
+  the faithful port of `job.setParams` wholesale semantics.
+- **Notes**: `invoke()` no longer snapshots the job unless `dryRun`
+  (envelope was paying a full clone per discrete op). `job.addCabinet`
+  placement calls stay direct — `cabinet.add`'s arg surface doesn't yet
+  cover the gesture's attach/corner/history options.
+
+---
+
 ## 2026-10-10 · bench/modules dirs join the layered contract
 
 - **What**: `bench.js` (3841) split into `bench/` — shell + `core`

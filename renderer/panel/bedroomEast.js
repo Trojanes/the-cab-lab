@@ -1,12 +1,13 @@
 // @module panel @owns renderBedroomEast — east bedroom card
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { el, numField, section, kv, panel } from "./widgets.js";
 export function renderBedroomEast(cab, mod, result, { checks, remove, p, env, board }) {
     const rp = result?.params || {};
     const setKey = (key, next) => {
-      job.setParams(cab.id, next);
+      invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
       log("bedroomEast.layout.set", { id: cab.id, key, from: p[key], to: next[key], how: "type", changed: JSON.stringify(next[key]) !== JSON.stringify(p[key]) });
     };
     const setWard = (v) => setKey("wardrobeWidth", { ...p, wardrobeWidth: Math.max(150, Math.min(mod.envelope(p).W, Math.round(v))) });

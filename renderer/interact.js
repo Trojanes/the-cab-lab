@@ -18,6 +18,7 @@
 import * as THREE from "three";
 import { canvas, frame } from "./space.js";
 import * as job from "./job.js";
+import { invoke } from "./commands.js";
 import { getModule } from "./modules.js";
 import {
   pickables, groupFor, setHandleHover, faceUnderHit, disarmHandle,
@@ -30,7 +31,7 @@ import {
   pickFace, facesAtPoint, facesOnPoint, facePlanes, faceVisible, rayHitFace, preferDrawable, drawableOn, extrudeRoom, inPlaneAxes, axisVector, AXES,
   INFER_BAND_PX, INFER_RELEASE_PX, AXIS_DIRS, uiScale, SNAP_RADIUS_PX,
 } from "./snap.js";
-import { envelopeBox, rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, poseRotatedTo, overlaps } from "./fit.js";
+import { envelopeBox, rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, overlaps } from "./fit.js";
 
 // Re-exported for floorplan.js / panel.js (moved to fit.js — pure math).
 export { rotZFacing, sideOfRotZ, sideLabel, fitBoxFacing, defaultSide, overlaps };
@@ -419,7 +420,7 @@ window.addEventListener("keydown", (e) => {
       job.removeCabinets(selectedIds);
     } else {
       log("key.delete", { id: sel.id });
-      job.removeCabinet(sel.id);
+      invoke("cabinet.remove", { id: sel.id });
     }
   } else if (e.key === "r" || e.key === "R") {
     if (getModule(sel.moduleId).noOrient) {
@@ -428,8 +429,8 @@ window.addEventListener("keydown", (e) => {
       return;
     }
     log("key.rotate", { id: sel.id, from: sel.pose.rotZ || 0 });
-    // Rotate 90° about the envelope centre.
-    job.setPose(sel.id, poseRotatedTo(sel, (sel.pose.rotZ || 0) + 90));
+    // Rotate 90° about the envelope centre (same verb the Agent calls).
+    invoke("cabinet.rotate", { id: sel.id });
   } else if (e.key === "o" || e.key === "O") {
     startOrient(sel.id);
   }

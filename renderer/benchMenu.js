@@ -9,6 +9,7 @@ import { wallPickables } from "./walls3d.js";
 import { MODULES } from "./modules.js";
 import { otherDoorColor } from "./materials.js";
 import * as job from "./job.js";
+import { invoke } from "./commands.js";
 import { log } from "./log.js";
 import { startFitPick, cancelFitPick, isFitPicking, boardRightClick } from "./interact.js";
 import { exportStep } from "./export3d.js";
@@ -70,7 +71,7 @@ export function deleteCabinetItem(cab, where) {
         job.removeCabinets(ids);
       } else {
         log("key.delete", { id: cab.id, how: "menu", where });
-        job.removeCabinet(cab.id);
+        invoke("cabinet.remove", { id: cab.id });
       }
     },
   };
@@ -81,7 +82,7 @@ export function doorColorMenuItem(cab) {
   if (!choice.enabled) return null;
   return {
     label: `Door colour ${choice.other} · ${choice.name}`,
-    run: () => job.setColorSlot(cab.id, choice.other),
+    run: () => invoke("cabinet.set-color-slot", { id: cab.id, slot: choice.other }),
   };
 }
 

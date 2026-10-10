@@ -1,6 +1,7 @@
 // @module panel @owns renderBedroom — bedroom module card
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { BEDROOM_LAYOUT_LABEL, BEDROOM_WARDROBE_STYLE } from "../modules.js";
 import { thickness } from "../materials.js";
@@ -31,7 +32,7 @@ export function renderBedroom(cab, mod, result, shared) {
     const to = next[key];
     const clamped = Math.round(value) !== Math.round(to) ? mod.layoutLimits(p, key) : null;
     if (next === p) { log("bedroom.layout.set", { id: cab.id, key, from: p[key], to, how, clamped, changed: false, ...extra }); return; }
-    job.setParams(cab.id, next);
+    invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
     log("bedroom.layout.set", { id: cab.id, key, from: p[key], to, how, clamped, changed: true, ...extra });
   };
 
@@ -127,7 +128,7 @@ export function renderBedroom(cab, mod, result, shared) {
         const n = Number(e.target.value);
         e.target.blur();
         const before = info && info.ohc ? info.ohc.zones.length : 2;
-        job.setParams(cab.id, mod.setOhcCount(p, n));
+        invoke("cabinet.set-params", { id: cab.id, params: mod.setOhcCount(p, n) , replace: true });
         log("bedroom.layout.set", { id: cab.id, key: "ohcZones", from: before, to: n, how: "select", changed: n !== before });
       } }, [
         el("option", { value: "2", text: "2 · up flaps", selected: (info && info.ohc ? info.ohc.zones.length : 2) === 2 }),
@@ -136,12 +137,12 @@ export function renderBedroom(cab, mod, result, shared) {
     ]),
     el("label", { class: "field" }, [
       el("span", { text: "Bed frame" }),
-      el("select", { title: "A product size: the opening must take it and the bed box is exactly this wide", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, bedFrame: v }); log("bedroom.layout.set", { id: cab.id, key: "bedFrame", from: p.bedFrame, to: v, how: "select", changed: v !== p.bedFrame }); } },
+      el("select", { title: "A product size: the opening must take it and the bed box is exactly this wide", onchange: (e) => { const v = e.target.value; e.target.blur(); invoke("cabinet.set-params", { id: cab.id, params: { ...p, bedFrame: v } , replace: true }); log("bedroom.layout.set", { id: cab.id, key: "bedFrame", from: p.bedFrame, to: v, how: "select", changed: v !== p.bedFrame }); } },
         [el("option", { value: "queen", text: `Queen · ${info ? Math.round(info.bedFrameWidth) : 1508} wide`, selected: true })]),
     ]),
     el("label", { class: "field" }, [
       el("span", { text: "Wardrobe style" }),
-      el("select", { title: "Style 1: door over a fixed panel, the split is draggable. Nook: door over an open nook with a shelf, the shelf underside is draggable.", onchange: (e) => { const v = e.target.value; e.target.blur(); job.setParams(cab.id, { ...p, style: v }); log("bedroom.layout.set", { id: cab.id, key: "style", from: p.style || "style1", to: v, how: "select", changed: v !== (p.style || "style1") }); } },
+      el("select", { title: "Style 1: door over a fixed panel, the split is draggable. Nook: door over an open nook with a shelf, the shelf underside is draggable.", onchange: (e) => { const v = e.target.value; e.target.blur(); invoke("cabinet.set-params", { id: cab.id, params: { ...p, style: v } , replace: true }); log("bedroom.layout.set", { id: cab.id, key: "style", from: p.style || "style1", to: v, how: "select", changed: v !== (p.style || "style1") }); } },
         Object.entries(BEDROOM_WARDROBE_STYLE).map(([id, s]) => el("option", { value: id, text: s.label, selected: (p.style || "style1") === id }))),
     ]),
     (p.style || "style1") === "nook"
@@ -151,7 +152,7 @@ export function renderBedroom(cab, mod, result, shared) {
       el("span", { text: "LED channels" }),
       el("input", { type: "checkbox", checked: p.ledGroove !== false, title: "14.5 × 6.5 channel along the front of every T3 top (0.5 in front of T1) with a 20 mm feed branch near each end; in the nook style also one under each nook shelf.", onchange: (e) => {
         const on = !!e.target.checked;
-        job.setParams(cab.id, { ...p, ledGroove: on });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, ledGroove: on } , replace: true });
         log("bedroom.layout.set", { id: cab.id, key: "ledGroove", from: p.ledGroove !== false, to: on, how: "toggle", changed: on !== (p.ledGroove !== false) });
       } }),
     ]),

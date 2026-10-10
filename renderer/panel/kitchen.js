@@ -1,6 +1,7 @@
 // @module panel @owns renderKitchen — kitchen.cell.* events, columns/zones/stove/split/waterfall/wheelArch UI @reads result.debug.columns/stoves/split
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH } from "../modules.js";
 import { thickness } from "../materials.js";
@@ -105,7 +106,7 @@ export function renderKitchen(cab, mod, result, shared) {
   const resCols = result?.debug?.columns || [];
 
   const setParams = (next, kind, extra = {}) => {
-    job.setParams(cab.id, next);
+    invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
     log(`kitchen.cell.${kind}`, { id: cab.id, ...extra });
   };
 
@@ -543,10 +544,10 @@ export function renderKitchen(cab, mod, result, shared) {
     const carcassH = p.globalSettings?.height ?? env.H;
     const next = Math.max(0, Math.min(Math.round(carcassH) - 1, Math.round(Number(v))));
     if (!Number.isFinite(next) || next === Math.round(bch)) return;
-    job.setParams(cab.id, mod.setEnvelope({ ...p, bottomClearanceHeight: next }, { H: env.H }));
+    invoke("cabinet.set-params", { id: cab.id, params: mod.setEnvelope({ ...p, bottomClearanceHeight: next }, { H: env.H }) , replace: true });
     log("kitchen.cell.kick", { id: cab.id, from: bch, to: next });
   };
-  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const setPose = (k) => (v) => invoke("cabinet.move", { id: cab.id, ...{ [k]: v } });
   const sizes = () => outerSizeFields(cab, mod, env, p, { logKind: "kitchen.size", columns });
   const benchOn = !!(p.benchTopColorName || p.benchTopColor);
   const fallNow = p.waterfall === "left" || p.waterfall === "right" ? p.waterfall : null;
@@ -574,7 +575,7 @@ export function renderKitchen(cab, mod, result, shared) {
     }
     if (side) next.waterfall = side;
     else delete next.waterfall;
-    job.setParams(cab.id, next);
+    invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
     log("kitchen.waterfall", { id: cab.id, from, to: side, column: columnIndex, length: next.globalSettings.length });
   };
   const askFallColumn = (side, host) => {
@@ -644,22 +645,22 @@ export function renderKitchen(cab, mod, result, shared) {
           onclick: () => {
             const from = p.bottomClearanceStyle === "style_2" ? "style_2" : "style_1";
             if (from === id) return;
-            job.setParams(cab.id, { ...p, bottomClearanceStyle: id });
+            invoke("cabinet.set-params", { id: cab.id, params: { ...p, bottomClearanceStyle: id } , replace: true });
             log("kitchen.cell.kickStyle", { id: cab.id, from, to: id });
           },
         }))),
       ]),
       // A new kick re-fits every column's zones to height − kick (same rule as a height change).
       numField("BCH (mm)", bch, setKick, { step: 1, min: 0 }),
-      numField("Front clearance (mm)", p.frontClearance ?? 2.5, (v) => job.setParams(cab.id, { ...p, frontClearance: Math.max(0, v) }), { step: 0.5, min: 0 }),
+      numField("Front clearance (mm)", p.frontClearance ?? 2.5, (v) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, frontClearance: Math.max(0, v) } , replace: true }), { step: 0.5, min: 0 }),
       el("label", { class: "field check" }, [
         el("span", { text: "Locks" }),
-        el("input", { type: "checkbox", checked: p.lockEnabled !== false, onchange: (e) => job.setParams(cab.id, { ...p, lockEnabled: e.target.checked }) }),
+        el("input", { type: "checkbox", checked: p.lockEnabled !== false, onchange: (e) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, lockEnabled: e.target.checked } , replace: true }) }),
       ]),
       p.bottomClearanceStyle === "style_2" ? null : el("label", { class: "field check", title: "On the underside of B3, opening downward. Style 2 has no groove." }, [
         el("span", { text: "B3 LED groove" }),
         el("input", { type: "checkbox", checked: p.ledGroove !== false, onchange: (e) => {
-          job.setParams(cab.id, { ...p, ledGroove: e.target.checked });
+          invoke("cabinet.set-params", { id: cab.id, params: { ...p, ledGroove: e.target.checked } , replace: true });
           log("kitchen.cell.led", { id: cab.id, from: p.ledGroove !== false, to: e.target.checked });
         } }),
       ]),
@@ -668,7 +669,7 @@ export function renderKitchen(cab, mod, result, shared) {
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
       numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
-      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => invoke("cabinet.move", { id: cab.id, ...{ rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 } }), { step: 90, min: -1e6 }),
     ]),
     section("Material (job stock)", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: `${p.carcassColorName || p.carcassColor || "White Stipple"} · ${cpt} mm` })]),
@@ -700,12 +701,12 @@ export function renderKitchen(cab, mod, result, shared) {
       if (splitOn) {
         const next = { ...p };
         delete next.splitAfter;
-        job.setParams(cab.id, next);
+        invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
         log("kitchen.split", { id: cab.id, on: false, from: splitAfter });
         return;
       }
       const after = nearestSplit();
-      job.setParams(cab.id, { ...p, splitAfter: after });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, splitAfter: after } , replace: true });
       log("kitchen.split", { id: cab.id, on: true, after, x: result?.debug?.columns?.[after]?.x1 ?? null });
     },
   });
@@ -719,12 +720,12 @@ export function renderKitchen(cab, mod, result, shared) {
   });
   const setWheelOn = (on) => {
     if (!on) {
-      job.setParams(cab.id, { ...p, wheelArchAvoidance: false, wheelAvoidances: [] });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, wheelArchAvoidance: false, wheelAvoidances: [] } , replace: true });
     } else if (planArches.length) {
-      job.setParams(cab.id, { ...p, wheelArchAvoidance: true });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, wheelArchAvoidance: true } , replace: true });
     } else {
       const prev = (p.wheelAvoidances || [])[0];
-      job.setParams(cab.id, {
+      invoke("cabinet.set-params", { id: cab.id, params: {
         ...p,
         wheelArchAvoidance: true,
         wheelAvoidances: [fullWheel(
@@ -732,7 +733,7 @@ export function renderKitchen(cab, mod, result, shared) {
           prev?.depth > 0 ? prev.depth : 200,
           prev?.id || "wheel",
         )],
-      });
+      } , replace: true });
     }
     log("kitchen.wheel", { id: cab.id, on });
   };
@@ -741,7 +742,7 @@ export function renderKitchen(cab, mod, result, shared) {
     const height = Math.max(0, Math.round(patch.height != null ? patch.height : handWheel?.height || 0));
     const depth = Math.max(0, Math.round(patch.depth != null ? patch.depth : handWheel?.depth || 0));
     const arch = fullWheel(height, depth, handWheel?.id || "wheel");
-    job.setParams(cab.id, { ...p, wheelArchAvoidance: true, wheelAvoidances: [arch] });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, wheelArchAvoidance: true, wheelAvoidances: [arch] } , replace: true });
     log("kitchen.wheel", { id: cab.id, wheel: arch.id, height, depth });
   };
   const wheelSection = section("Wheel arch avoidance", [

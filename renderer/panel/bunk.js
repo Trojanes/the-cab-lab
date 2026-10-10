@@ -1,6 +1,7 @@
 // @module panel @owns renderBunk — bunk bed card
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { el, numField, section, kv, panel } from "./widgets.js";
 export function renderBunk(cab, mod, result, { checks, remove, p, env, board }) {
@@ -8,7 +9,7 @@ export function renderBunk(cab, mod, result, { checks, remove, p, env, board }) 
     const lim = mod.upperLimits(p);
     const setKey = (key, value, how = "type") => {
       const next = { ...p, [key]: value };
-      job.setParams(cab.id, next);
+      invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
       log("bunk.layout.set", { id: cab.id, key, from: p[key], to: value, how, changed: p[key] !== value });
     };
     const endSelect = el("label", { class: "field", title: "Seen from the room, facing the bunk" }, [

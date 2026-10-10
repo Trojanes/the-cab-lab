@@ -1,6 +1,7 @@
 // @module panel @owns renderSmall — small.zone.* top-down rows
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { MIN_ZONE_HEIGHT } from "../modules.js";
 import { el, numField, section, frontSection, panel, repaint, outerSizeFields } from "./widgets.js";
@@ -89,7 +90,7 @@ export function renderSmall(cab, mod, result, shared) {
   const selIndex = zones.findIndex((z) => z.id === selId);
   const sel = selIndex >= 0 ? zones[selIndex] : null;
   const setZones = (next, kind) => {
-    job.setParams(cab.id, { ...p, zones: next });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
     log(`small.zone.${kind}`, { id: cab.id, zone: selId, heights: next.map((z) => z.height) });
   };
   const addRow = el("button", { class: "tb", text: "+ Row", onclick: () => {
@@ -149,11 +150,11 @@ export function renderSmall(cab, mod, result, shared) {
     frontSection("Front view", [front]),
     section("Sides", [
       el("label", { class: "field check", title: "Door panel: colour face outward, half groove. Off: carcass side, groove through." }, [
-        el("input", { type: "checkbox", checked: !!p.leftSideDoorColor, onchange: (e) => { job.setParams(cab.id, { ...p, leftSideDoorColor: e.target.checked }); log("small.zone.side", { id: cab.id, side: "left", on: e.target.checked }); } }),
+        el("input", { type: "checkbox", checked: !!p.leftSideDoorColor, onchange: (e) => { invoke("cabinet.set-params", { id: cab.id, params: { ...p, leftSideDoorColor: e.target.checked } , replace: true }); log("small.zone.side", { id: cab.id, side: "left", on: e.target.checked }); } }),
         el("span", { text: "Left side is a door panel" }),
       ]),
       el("label", { class: "field check", title: "Door panel: colour face outward, half groove. Off: carcass side, groove through." }, [
-        el("input", { type: "checkbox", checked: !!p.rightSideDoorColor, onchange: (e) => { job.setParams(cab.id, { ...p, rightSideDoorColor: e.target.checked }); log("small.zone.side", { id: cab.id, side: "right", on: e.target.checked }); } }),
+        el("input", { type: "checkbox", checked: !!p.rightSideDoorColor, onchange: (e) => { invoke("cabinet.set-params", { id: cab.id, params: { ...p, rightSideDoorColor: e.target.checked } , replace: true }); log("small.zone.side", { id: cab.id, side: "right", on: e.target.checked }); } }),
         el("span", { text: "Right side is a door panel" }),
       ]),
     ]),

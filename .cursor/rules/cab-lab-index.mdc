@@ -39,6 +39,7 @@ Do not read files to find things. Route to them first, then read the narrow part
 - `interact/*` is owned by the `interact.js` shell — outside code imports the shell, not a module file. Same for `panel/*` / `panel.js` and `modules/*` / `modules.js`.
 - `bench/*` is a self-contained window — **nothing** outside `bench/` may import it (the shell `bench/bench.js` lives inside the dir; `index.html` loads it). Sibling circular imports exist inside `bench/` by design — only through `export function` declarations, never mutable bindings (shared state mutates via owner functions like `resetExplodePlan()`).
 - Neutral layer (free to import from anywhere): `job.js` `modules.js` `fit.js` `spaces.js` `walls.js` `pose.js` `snap.js` `hud.js` `materials.js` `log.js` `gen/*`.
+- Discrete writes route through `invoke()` (`commands.js`) — UI may not call `job.setParams/setPose/removeCabinet/setColorSlot` except with `{ history: false }` inside a gesture's own `begin/end` frame (per-frame envelopes violate compute-small). `job.updateCabinet` is a funnel primitive owned by `interact/*` + `panel.js`/`panel/widgets.js`/`yield.js`/`boardSketch.js`. `cabinet.set-params` needs `replace:true` whenever the caller built a complete params object (deletes must land).
 - interact modes share mutable state through `S` (the slot bag in `interact/shared.js`) — do not add a second mutable registry; extend `S`.
 
 ## Editing etiquette that keeps the index true

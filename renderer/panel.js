@@ -2,6 +2,7 @@
 // selected cabinet's params. Every edit writes into job.js and regenerates.
 // Per-module editors live in ./panel/ — this file is the dispatcher shell.
 import * as job from "./job.js";
+import { invoke } from "./commands.js";
 import { getModule, fitZones, MIN_ZONE_HEIGHT } from "./modules.js";
 import { thickness } from "./materials.js";
 import { el, numField, dragField, section, kv, boardSection, grainSection, grainIssueLines, doorLine, fillDrawer, panel, wirePanelRepaint, outerSizeFields } from "./panel/widgets.js";
@@ -35,9 +36,9 @@ function renderCabinet(cab) {
   const cpt = p.panelThickness ?? thickness(job.getStock(), "carcass");
   const interior = Math.round((env.H - 2 * cpt) * 10) / 10;
 
-  const setEnv = (k) => (v) => job.setParams(cab.id, mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }));
-  const setParam = (k, min = 0) => (v) => job.setParams(cab.id, { ...p, [k]: Math.max(min, v) });
-  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const setEnv = (k) => (v) => invoke("cabinet.set-params", { id: cab.id, params: mod.setEnvelope(p, { [k]: Math.max(mod.minSize[k], v) }) , replace: true });
+  const setParam = (k, min = 0) => (v) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, [k]: Math.max(min, v) } , replace: true });
+  const setPose = (k) => (v) => invoke("cabinet.move", { id: cab.id, ...{ [k]: v } });
 
   const errors = [...(result?.validation?.errors || []), ...grainIssueLines(result)];
   const warnings = result?.validation?.warnings || [];
@@ -50,7 +51,7 @@ function renderCabinet(cab) {
         ...warnings.map((m) => el("div", { class: "msg warn", text: m })),
       ])
     : null;
-  const remove = el("button", { class: "tb danger", text: "Remove cabinet", onclick: () => job.removeCabinet(cab.id) });
+  const remove = el("button", { class: "tb danger", text: "Remove cabinet", onclick: () => invoke("cabinet.remove", { id: cab.id }) });
 
   // Nose slab (Bedroom): width and height come from the vehicle, only the depth is free;
   // the depth keeps the nose end fixed and moves the room-side face (like its D handle).
@@ -155,7 +156,7 @@ function renderCabinet(cab) {
         const next = zones.map((zz) => ({ ...zz }));
         next[i].type = e.target.value;
         e.target.blur();
-        job.setParams(cab.id, { ...p, zones: next });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
       },
     }, (mod.zoneTypes || []).map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
     const height = el("input", { type: "number", value: z.height, step: 1, min: 0 });
@@ -169,7 +170,7 @@ function renderCabinet(cab) {
       if (j >= 0 && next[j].height - delta >= 60) {
         next[i].height = v;
         next[j].height = Math.round((next[j].height - delta) * 10) / 10;
-        job.setParams(cab.id, { ...p, zones: next });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
       } else {
         height.value = z.height;
       }
@@ -177,7 +178,7 @@ function renderCabinet(cab) {
     const remove = el("button", { class: "icon", title: "Remove zone", text: "×", disabled: zones.length <= 1,
       onclick: () => {
         const next = zones.filter((_, k) => k !== i);
-        job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: fitZones(next, interior) } , replace: true });
       } });
     return el("div", { class: "zone-row" }, [el("span", { class: "zone-idx", text: String(i + 1) }), type, height, remove]);
   });
@@ -191,10 +192,10 @@ function renderCabinet(cab) {
     if (take >= MIN_ZONE_HEIGHT) {
       tallest.height = Math.round((tallest.height - take) * 10) / 10;
       next.push(zone);
-      job.setParams(cab.id, { ...p, zones: next });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
     } else {
       next.push({ ...zone, height: MIN_ZONE_HEIGHT });
-      job.setParams(cab.id, { ...p, zones: fitZones(next, interior) });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: fitZones(next, interior) } , replace: true });
     }
   } });
 
@@ -207,11 +208,11 @@ function renderCabinet(cab) {
     section("Outer size (= box)", outerSizeFields(cab, mod, env, p, { logKind: "cabinet.size" })),
     cab.moduleId === "smallCabinet" ? section("Sides", [
       el("label", { class: "field check", title: "Door panel: colour face outward, half groove. Off: carcass side, groove through." }, [
-        el("input", { type: "checkbox", checked: !!p.leftSideDoorColor, onchange: (e) => job.setParams(cab.id, { ...p, leftSideDoorColor: e.target.checked }) }),
+        el("input", { type: "checkbox", checked: !!p.leftSideDoorColor, onchange: (e) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, leftSideDoorColor: e.target.checked } , replace: true }) }),
         el("span", { text: "Left side is a door panel" }),
       ]),
       el("label", { class: "field check", title: "Door panel: colour face outward, half groove. Off: carcass side, groove through." }, [
-        el("input", { type: "checkbox", checked: !!p.rightSideDoorColor, onchange: (e) => job.setParams(cab.id, { ...p, rightSideDoorColor: e.target.checked }) }),
+        el("input", { type: "checkbox", checked: !!p.rightSideDoorColor, onchange: (e) => invoke("cabinet.set-params", { id: cab.id, params: { ...p, rightSideDoorColor: e.target.checked } , replace: true }) }),
         el("span", { text: "Right side is a door panel" }),
       ]),
     ]) : null,
@@ -222,7 +223,7 @@ function renderCabinet(cab) {
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
       numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
-      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => invoke("cabinet.move", { id: cab.id, ...{ rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 } }), { step: 90, min: -1e6 }),
     ]),
     section("Material", [
       el("div", { class: "kv" }, [el("span", { text: "Carcass" }), el("b", { text: p.carcassColorName || p.carcassColor || "White Stipple" })]),

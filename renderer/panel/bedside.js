@@ -1,6 +1,7 @@
 // @module panel @owns renderBedSide — bedside drawer, read-only W
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { el, numField, section, panel, repaint, outerSizeFields } from "./widgets.js";
 function bedSideChoice(side, type) {
@@ -27,13 +28,13 @@ export function renderBedSide(cab, mod, result, shared) {
     return;
   }
   const setShelf = (z) => {
-    job.setParams(cab.id, { ...p, shelfCenter: z });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, shelfCenter: z } , replace: true });
     log("bedside.shelf", { id: cab.id, side, from: p.shelfCenter, to: z });
   };
   const setZone = (index, choice) => {
     const zones = (p.zones || []).map((z) => ({ ...z }));
     zones[index] = { ...zones[index], type: bedSideType(side, choice) };
-    job.setParams(cab.id, { ...p, zones });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones } , replace: true });
     log("bedside.zone", { id: cab.id, side, index, type: zones[index].type });
   };
   const front = el("div", { class: "bedroom-front" });

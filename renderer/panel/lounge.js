@@ -1,6 +1,7 @@
 // @module panel @owns renderLounge — lounge.run.* plan view, back panels, wheel arch
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { thickness } from "../materials.js";
 import { el, numField, section, kv, panel, repaint, outerSizeFields } from "./widgets.js";
@@ -34,14 +35,14 @@ export function renderLounge(cab, mod, result, shared) {
   // The middle cabinet as the generator built it (its width may come from the gap).
   const mc = result?.params?.middleCabinet ?? null;
   const mcField = (label, key, min) => numField(label, mc[key], (v) => {
-    job.setParams(cab.id, { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: Math.max(min, Math.round(v)) } });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: Math.max(min, Math.round(v)) } } , replace: true });
     log("lounge.run.midCab", { id: cab.id, key: `middleCabinet.${key}`, to: Math.round(v) });
   }, { step: 10, min });
   const selectedRun = loungeSelected(cab.id);
   const runs = Object.keys(result?.footprint || {});
 
   const setP = (key, value, kind = "set") => {
-    job.setParams(cab.id, { ...p, [key]: value });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, [key]: value } , replace: true });
     log(`lounge.run.${kind}`, { id: cab.id, key, to: value });
   };
 
@@ -71,12 +72,12 @@ export function renderLounge(cab, mod, result, shared) {
     if (param.startsWith("middleCabinet.")) {
       const key = param.slice("middleCabinet.".length);
       const v = Math.max(100, Math.round(typed));
-      job.setParams(cab.id, { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: v } });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, hasMiddleCabinet: true, middleCabinet: { ...(p.middleCabinet || {}), [key]: v } } , replace: true });
       log("lounge.run.midCab", { id: cab.id, key: param, to: v, shown, where: "plan view" });
       return;
     }
     const v = Math.max(LOUNGE_TYPED_MIN[param] ?? 1, Math.round(typed * 10) / 10);
-    job.setParams(cab.id, { ...p, [param]: v });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, [param]: v } , replace: true });
     log("lounge.run.size", { id: cab.id, key: param, from: p[param] ?? shown, to: v, shown, where: "plan view" });
   };
   const editPlanDim = (dim) => {
@@ -213,7 +214,7 @@ export function renderLounge(cab, mod, result, shared) {
         e.target.blur();
         const to = e.target.value;
         loungeSel.run = null;
-        job.setParams(cab.id, mod.setStyle(p, to));
+        invoke("cabinet.set-params", { id: cab.id, params: mod.setStyle(p, to) , replace: true });
         log("lounge.run.style", { id: cab.id, key: "style", from: style, to });
       } }, Object.entries(LOUNGE_STYLE_LABEL).map(([s, text]) => el("option", { value: s, text, selected: s === style }))),
     ]),
@@ -264,7 +265,7 @@ export function renderLounge(cab, mod, result, shared) {
   const handOn = hw.enabled === true;
   const setHand = (patch) => {
     const next = { enabled: true, depth: hw.depth > 0 ? hw.depth : 300, height: hw.height > 0 ? hw.height : 250, ...patch };
-    job.setParams(cab.id, { ...p, handWheelArch: next, ...(next.enabled ? { wheelArchAvoidance: true } : {}) });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, handWheelArch: next, ...(next.enabled ? { wheelArchAvoidance: true } : {}) } , replace: true });
     log("lounge.wheel.hand", { id: cab.id, arch: next });
   };
   const loungeWheel = section("Wheel arch avoidance", [
@@ -303,14 +304,14 @@ export function renderLounge(cab, mod, result, shared) {
   ]);
 
   // Cabinet-level fields, folded.
-  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const setPose = (k) => (v) => invoke("cabinet.move", { id: cab.id, ...{ [k]: v } });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Lounge · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${result?.boards?.length || 0} boards` }),
     section("Outer size (= box)", outerSizeFields(cab, mod, env, p, { logKind: "lounge.size" })),
     section("Position", [
       numField("X (mm)", cab.pose.x, setPose("x"), { min: -1e6 }),
       numField("Y (mm)", cab.pose.y, setPose("y"), { min: -1e6 }),
-      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => job.setPose(cab.id, { rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 }), { step: 90, min: -1e6 }),
+      numField("Rotation (°)", cab.pose.rotZ || 0, (v) => invoke("cabinet.move", { id: cab.id, ...{ rotZ: ((Math.round(v / 90) * 90) % 360 + 360) % 360 } }), { step: 90, min: -1e6 }),
     ]),
     section("Material", [
       numField("Panel thickness (mm)", p.partitionPanelThickness ?? 18, (v) => setP("partitionPanelThickness", Math.max(1, v), "size"), { step: 0.5, min: 1 }),

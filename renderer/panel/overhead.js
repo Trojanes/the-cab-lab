@@ -1,6 +1,7 @@
 // @module panel @owns renderOverhead/renderUShape — ohc.* zones/rangehood/split/control panels @reads result.debug.zones
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { MIN_ZONE_WIDTH, fitZoneWidths, overheadEndPanel } from "../modules.js";
 import { sideLabel, sideOfRotZ } from "../fit.js";
@@ -194,7 +195,7 @@ export function renderUShape(cab, mod, result, shared) {
   const env = mod.envelope(p);
   const fitted = result?.params?.zones || p.zones || {};
   const set = (patch, key, from, to) => {
-    job.setParams(cab.id, { ...p, ...patch });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, ...patch } , replace: true });
     log("uohc.set", { id: cab.id, key, from, to });
   };
   const runCard = (run, label) => {
@@ -265,7 +266,7 @@ export function renderOverhead(cab, mod, result, shared) {
   const cpt = p.featureWidth ?? thickness(job.getStock(), "carcass");
   const fpt = p.frontPanelThickness ?? thickness(job.getStock(), "door");
   const setZones = (next, kind, extra = {}) => {
-    job.setParams(cab.id, { ...p, zones: next });
+    invoke("cabinet.set-params", { id: cab.id, params: { ...p, zones: next } , replace: true });
     log(`ohc.zone.${kind}`, { id: cab.id, widths: next.map((z) => z.width), types: next.map((z) => z.type), ...extra });
   };
 
@@ -327,7 +328,7 @@ export function renderOverhead(cab, mod, result, shared) {
       const { patch, next } = addPlan;
       // Select first: setParams repaints the panel, and the buttons must see the new selection.
       ohcSelect(cab.id, [one + 1]);
-      job.setParams(cab.id, patch);
+      invoke("cabinet.set-params", { id: cab.id, params: patch , replace: true });
       log("ohc.zone.add", { id: cab.id, at: one + 1, from: one, widths: next.map((z) => z.width), types: next.map((z) => z.type), splitAfter: patch.splitAfter ?? null });
     },
   });
@@ -352,7 +353,7 @@ export function renderOverhead(cab, mod, result, shared) {
       const kept = next.filter((z) => !gone.has(z.id));
       const patch = keepSplit({ ...p, zones: kept }, kept);
       ohcSelect(cab.id, []);
-      job.setParams(cab.id, patch);
+      invoke("cabinet.set-params", { id: cab.id, params: patch , replace: true });
       log("ohc.zone.remove", { id: cab.id, widths: kept.map((z) => z.width), types: kept.map((z) => z.type), removed: selected, splitAfter: patch.splitAfter ?? null });
     },
   });
@@ -460,7 +461,7 @@ export function renderOverhead(cab, mod, result, shared) {
         if (p.rangehoodAlignment == null) patch.rangehoodAlignment = "left";
         if (p.rangehoodEdgeOffsetX == null) patch.rangehoodEdgeOffsetX = 40;
       }
-      job.setParams(cab.id, patch);
+      invoke("cabinet.set-params", { id: cab.id, params: patch , replace: true });
       log("ohc.zone.type", { id: cab.id, widths: next.map((zz) => zz.width), types: next.map((zz) => zz.type), zone: i, type: e.target.value });
     } }, mod.zoneTypes.map((t) => el("option", { value: t.id, text: t.label, selected: t.id === z.type })));
     const read = openings.length === zones.length ? openings[i] : null;
@@ -485,14 +486,14 @@ export function renderOverhead(cab, mod, result, shared) {
   const hoodAlign = p.rangehoodAlignment === "right" ? "right" : "left";
   const setHood = (key, value) => {
     const from = p[key];
-    job.setParams(cab.id, {
+    invoke("cabinet.set-params", { id: cab.id, params: {
       ...p,
       rangehoodPreset: "NCE",
       rangehoodClearHeight: p.rangehoodClearHeight ?? 75,
       rangehoodAlignment: hoodAlign,
       rangehoodEdgeOffsetX: p.rangehoodEdgeOffsetX ?? 40,
       [key]: value,
-    });
+    } , replace: true });
     log("ohc.rangehood", { id: cab.id, key, from: from ?? (key === "rangehoodClearHeight" ? 75 : key === "rangehoodEdgeOffsetX" ? 40 : hoodAlign), to: value });
   };
   const hoodSeg = (now, onPick) => el("div", { class: "seg-group" }, [["left", "Left"], ["right", "Right"]].map(([id, text]) => el("button", {
@@ -541,7 +542,7 @@ export function renderOverhead(cab, mod, result, shared) {
           text,
           onclick: () => {
             if ((p.style || "style_1") === id) return;
-            job.setParams(cab.id, { ...p, style: id });
+            invoke("cabinet.set-params", { id: cab.id, params: { ...p, style: id } , replace: true });
             log("ohc.option", { id: cab.id, key: "style", from: p.style || "style_1", to: id });
           },
         }))),
@@ -551,29 +552,29 @@ export function renderOverhead(cab, mod, result, shared) {
         el("input", { type: "checkbox", checked: p.ledGroove !== false, onchange: (e) => {
           const to = e.target.checked;
           if ((p.ledGroove !== false) === to && p.ledGroove != null) return;
-          job.setParams(cab.id, { ...p, ledGroove: to });
+          invoke("cabinet.set-params", { id: cab.id, params: { ...p, ledGroove: to } , replace: true });
           log("ohc.option", { id: cab.id, key: "ledGroove", from: p.ledGroove !== false, to });
         } }),
       ]),
       numField("Top clearance (mm)", p.topClearanceHeight ?? 40, (v) => {
         const to = Math.max(0, v);
-        job.setParams(cab.id, { ...p, topClearanceHeight: to });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, topClearanceHeight: to } , replace: true });
         log("ohc.option", { id: cab.id, key: "topClearanceHeight", from: p.topClearanceHeight ?? 40, to });
       }, { step: 5, min: 0 }),
       numField("Hinge cup diameter (mm)", p.hingeHoleDiameter ?? 35, (v) => {
-        job.setParams(cab.id, { ...p, hingeHoleDiameter: Math.max(0, v) });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, hingeHoleDiameter: Math.max(0, v) } , replace: true });
         log("ohc.option", { id: cab.id, key: "hingeHoleDiameter", from: p.hingeHoleDiameter ?? 35, to: Math.max(0, v) });
       }, { step: 0.5, min: 0 }),
       numField("Hinge cup depth (mm)", p.hingeHoleDepth ?? 12, (v) => {
-        job.setParams(cab.id, { ...p, hingeHoleDepth: Math.max(0, v) });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, hingeHoleDepth: Math.max(0, v) } , replace: true });
         log("ohc.option", { id: cab.id, key: "hingeHoleDepth", from: p.hingeHoleDepth ?? 12, to: Math.max(0, v) });
       }, { step: 0.5, min: 0 }),
       numField("Cup from top (mm)", p.hingeHoleFromTop ?? 22.5, (v) => {
-        job.setParams(cab.id, { ...p, hingeHoleFromTop: Math.max(0, v) });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, hingeHoleFromTop: Math.max(0, v) } , replace: true });
         log("ohc.option", { id: cab.id, key: "hingeHoleFromTop", from: p.hingeHoleFromTop ?? 22.5, to: Math.max(0, v) });
       }, { step: 0.5, min: 0 }),
       numField("Cup from side (mm)", p.hingeHoleFromSide ?? 100, (v) => {
-        job.setParams(cab.id, { ...p, hingeHoleFromSide: Math.max(0, v) });
+        invoke("cabinet.set-params", { id: cab.id, params: { ...p, hingeHoleFromSide: Math.max(0, v) } , replace: true });
         log("ohc.option", { id: cab.id, key: "hingeHoleFromSide", from: p.hingeHoleFromSide ?? 100, to: Math.max(0, v) });
       }, { step: 1, min: 0 }),
       el("div", { class: "empty small", text: "Style 2 sets the divider's front notch behind the door and the carcass rail (door thickness plus carcass thickness). Style 1 starts that notch 70 mm back from the carcass front. The LED groove is on top of T3 either way. A new overhead stores the groove as off." }),
@@ -593,13 +594,13 @@ export function renderOverhead(cab, mod, result, shared) {
       if (splitOn) {
         const next = { ...p };
         delete next.splitAfter;
-        job.setParams(cab.id, next);
+        invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
         log("ohc.split", { id: cab.id, on: false, from: p.splitAfter });
         return;
       }
       const mid = total / 2;
       const hit = splitTargets.reduce((best, t) => (Math.abs(t.x - mid) < Math.abs(best.x - mid) ? t : best));
-      job.setParams(cab.id, { ...p, splitAfter: hit.after });
+      invoke("cabinet.set-params", { id: cab.id, params: { ...p, splitAfter: hit.after } , replace: true });
       log("ohc.split", { id: cab.id, on: true, after: hit.after, x: hit.x });
     },
   });

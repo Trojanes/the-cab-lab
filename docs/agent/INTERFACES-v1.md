@@ -14,7 +14,7 @@
 | Agent Task Runner | `node scripts/agent-run.mjs start/exec/finish/status` | 任务级允许动词、`maxOps`、审计日志、验收报告 |
 | Generator Bench CLI | `cli.mjs` 的 `bench.*` 宿主动词 | 读/改 rules/layout/presets、pins、baseline、diff、范围 repin、重建 |
 
-**入口互不等同**：`createApp()`、`invoke()` 和 `cli.mjs` 的宿主动词不是同一张完全重合的接口表。运行中 Electron 的统一 `window.__app.invoke` 仍未正式接线；UI 仍有直接 `job.setParams/setPose` 路径。
+**入口互不等同**：`createApp()`、`invoke()` 和 `cli.mjs` 的宿主动词不是同一张完全重合的接口表。运行中 Electron 的统一 `window.__app.invoke` 仍未正式接线。UI 离散写入已全部路由 `invoke()`（`cabinet.set-params` 配 `replace:true` 保持整换语义，`cabinet.move/remove/rotate/set-color-slot` 同动词）；仅保留手势帧内 `history:false` 直写与 `updateCabinet` 多字段原子写（见 `check-deps` Rule 7，逐帧不跑信封是 compute-small 规则的硬性要求）。`job.addCabinet` 放置手势仍直连——`cabinet.add` 动词与其参数面未完全对齐。
 
 ## 2. V1 主要业务能力
 

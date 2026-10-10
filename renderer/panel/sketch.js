@@ -1,6 +1,7 @@
 // @module panel @owns renderSketch — sketchBoard card, Edit sketch button
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { outlineSpan } from "../sketchBoard.js";
 import { startBoardEdit } from "../boardSketch.js";
 import { el, section, kv, boardSection, fillDrawer, panel } from "./widgets.js";
@@ -23,7 +24,7 @@ export function renderSketchPanel(cab) {
     ])
     : null;
   const edit = el("button", { class: "tb", text: "Edit sketch", title: "Open this board's outline on the sketch", onclick: () => startBoardEdit(cab.id) });
-  const remove = el("button", { class: "tb danger", text: "Remove board", onclick: () => job.removeCabinet(cab.id) });
+  const remove = el("button", { class: "tb danger", text: "Remove board", onclick: () => invoke("cabinet.remove", { id: cab.id }) });
   panel.replaceChildren(...[
     el("div", { class: "panel-head" }, [
       el("div", { class: "panel-title", text: "Board" }),

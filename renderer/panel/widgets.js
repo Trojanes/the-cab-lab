@@ -2,6 +2,7 @@
 // Panel widget toolkit + shared DOM anchors, extracted from renderer/panel.js.
 // Editors import widgets from here; the shell wires repaint() to its renderPanel.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { faceLabel, featureSummary, featureLine, boardDims, bigFaces, edgeFaces, dirName } from "../boardModel.js";
 import { swatchChipStyle } from "../doorSwatches.js";
@@ -83,7 +84,7 @@ export function setGrain(cab, mod, result, group, dir) {
     return;
   }
   grainNote = null;
-  job.setParams(cab.id, next);
+  invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
   log("grain.set", { id: cab.id, group, from, to: dir });
 }
 

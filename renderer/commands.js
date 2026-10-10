@@ -430,12 +430,13 @@ def("cabinet.copy", { category: M, mutates: true, summary: "Duplicate a cabinet 
 def("cabinet.set-param", { category: M, mutates: true, summary: "Patch one param key (merged into existing params)",
   args: [{ name: "id", req: true }, { name: "key", req: true }, { name: "value", req: true }],
   handler(a) { return withParams(need(a, "id"), (p) => { p[need(a, "key")] = a.value; }) && cabinetEffect(cab(a.id)); } });
-def("cabinet.set-params", { category: M, mutates: true, summary: "Patch several param keys at once",
-  args: [{ name: "id", req: true }], options: { params: "JSON patch object" },
+def("cabinet.set-params", { category: M, mutates: true, summary: "Patch several param keys at once (replace:true = full params object)",
+  args: [{ name: "id", req: true }], options: { params: "JSON patch object", replace: "set params wholesale (UI parity — keys absent are deleted)" },
   handler(a) {
     const patch = need(a, "params");
     if (typeof patch !== "object") fail("bad_args", "--params must be an object", { fields: ["params"] });
-    withParams(a.id, (p) => Object.assign(p, patch));
+    if (a.replace) job.setParams(a.id, clone(patch));
+    else withParams(a.id, (p) => Object.assign(p, patch));
     return cabinetEffect(cab(a.id));
   } });
 def("cabinet.set-color-slot", { category: M, mutates: true, summary: "Door colour group (needs a two-colour finish)",
@@ -992,7 +993,7 @@ export function invoke(verb, args = {}, opts = {}) {
   const spec = REG.get(verb);
   if (!spec) return { ok: false, verb, error: `unknown verb '${verb}'`, code: "unknown_verb", extra: { verbs: listVerbs() } };
   const before = {};
-  const snap = spec.mutates ? job.snapshotAll() : null;
+  const snap = spec.mutates && opts.dryRun ? job.snapshotAll() : null;
   try {
     for (const ar of spec.args) if (ar.req && args[ar.name] === undefined) fail("bad_args", `missing argument '${ar.name}'`, { fields: [ar.name] });
     if (spec.mutates && args.id) {

@@ -21,6 +21,14 @@
  *   6. Size budgets keep the split from silently re-growing into monoliths:
  *      shells <= 600 lines (interact.js, panel.js, bench/bench.js), the
  *      modules.js registry <= 2600, module files <= 1800.
+ *   7. UI writes route through the command registry: job.setParams / setPose /
+ *      removeCabinet / setColorSlot may only be called with { history: false }
+ *      (inside a gesture's own begin/end frame — the per-frame envelope cost is
+ *      banned by the compute-small rule); every discrete write goes through
+ *      invoke(). job.updateCabinet stays a funnel primitive but only in the
+ *      gesture files that own a multi-field atomic write. Exempt layers:
+ *      job.js / commands.js / appApi.js (they are the command layer), bench/*,
+ *      *.test.js (drivers).
  */
 import { readdirSync, readFileSync, existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -43,6 +51,29 @@ walk(R);
 
 const IMPORT_RE = /(?:import|export)\s[^'"]*?from\s*["']([^"']+)["']|import\s*\(\s*["']([^"']+)["']/g;
 const violations = [];
+
+// Rule 7 scratchers: comments + strings blanked so call-site matching can't hit prose.
+const strip = (text) => text
+  .replace(/\/\*[\s\S]*?\*\//g, (m) => m.replace(/[^\n]/g, " "))
+  .replace(/\/\/[^\n]*/g, (m) => " ".repeat(m.length))
+  .replace(/"(?:\\.|[^"\\\n])*"|'(?:\\.|[^'\\\n])*'|`(?:\\.|[^`\\])*`/g, (m) => m.replace(/[^\n]/g, " "));
+const DIRECT_WRITE_RE = /job\.(setParams|setPose|removeCabinet|setColorSlot|updateCabinet)\s*\(/g;
+// Files that own a gesture frame and may write mid-drag without a per-call envelope.
+const UPDATE_CABINET_OK = new Set(["panel.js", "panel/widgets.js", "yield.js", "boardSketch.js"]);
+const COMMAND_LAYER = (src) =>
+  src === "job.js" || src === "commands.js" || src === "appApi.js" ||
+  src.startsWith("bench/") || /\.test\.(js|mjs)$/.test(src);
+// Does this call carry an explicit history option (the drag-frame exemption)?
+const hasHistoryOpt = (text, open) => {
+  let depth = 1, i = open + 1;
+  while (i < text.length && depth > 0) {
+    const c = text[i];
+    if (c === "(" || c === "[" || c === "{") depth++;
+    else if (c === ")" || c === "]" || c === "}") depth--;
+    i++;
+  }
+  return /history\s*:/.test(text.slice(open, i));
+};
 
 for (const f of files) {
   const src = rel(f);
@@ -88,6 +119,20 @@ for (const f of files) {
   const budget = isShell ? 600 : src === "modules.js" ? 2600 : inModuleDir && !isTest ? 1800 : null;
   if (budget && lines > budget)
     violations.push(`${src} is ${lines} lines > budget ${budget}  (${isShell ? "shells stay dispatchers — move logic into a module" : src === "modules.js" ? "the registry maps envelopes→params; pure domain helpers live in modules/*" : "a module this big is a monolith again — split by mode"})`);
+
+  // Rule 7: discrete writes go through invoke(); direct job.* writes only inside a gesture frame.
+  if (!COMMAND_LAYER(src)) {
+    const code = strip(text);
+    for (const m of code.matchAll(DIRECT_WRITE_RE)) {
+      const fn = m[1], at = `${src}:${text.slice(0, m.index).split("\n").length}`;
+      if (fn === "updateCabinet") {
+        if (!UPDATE_CABINET_OK.has(src) && !src.startsWith("interact/"))
+          violations.push(`${at}  (job.updateCabinet is a funnel primitive — only gesture-frame owners may call it; discrete writes go through invoke())`);
+      } else if (!hasHistoryOpt(code, m.index + m[0].length - 1)) {
+        violations.push(`${at}  (job.${fn}() bypasses the command registry — route discrete writes through invoke(); { history: false } is only legal inside a gesture's own begin/end frame)`);
+      }
+    }
+  }
 }
 
 if (violations.length) {

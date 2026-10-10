@@ -1,6 +1,7 @@
 // @module panel @owns renderTallFridge — tallFridge.* cut-out, editable front view, presets
 // Extracted from renderer/panel.js — behaviour preserved verbatim.
 import * as job from "../job.js";
+import { invoke } from "../commands.js";
 import { log } from "../log.js";
 import { FRIDGE_BELOW_TYPES, FRIDGE_ZONE_LABEL, MIN_ZONE_HEIGHT, fridgeFix, fridgeParts, fridgeRuleIssues, getModule } from "../modules.js";
 import { applyYield, conflictLines, declineYield, noteGrowth } from "../yield.js";
@@ -48,7 +49,7 @@ export function renderTallFridge(cab, mod, result, shared) {
   const commit = (next, kind, extra = {}) => {
     const fromPose = { ...cab.pose };
     const before = cabinetHits(cab);
-    job.setParams(cab.id, next);
+    invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
     const now = job.getJob().cabinets.find((c) => c.id === cab.id);
     if (!now) return;
     const to = mod.envelope(now.params);
@@ -326,7 +327,7 @@ export function renderTallFridge(cab, mod, result, shared) {
         const corner = { x: mod.widthAnchor(next, cab), y: 1, z: -1 };
         const fromPose = { ...cab.pose };
         const pose = keepCorner(fromPose, cabinetBox(mod, p), cabinetBox(mod, next), corner);
-        job.setParams(cab.id, next);
+        invoke("cabinet.set-params", { id: cab.id, params: next , replace: true });
         job.setPose(cab.id, pose, { history: false });
         const now = job.getJob().cabinets.find((c) => c.id === cab.id);
         log("tallFridge.preset", {
@@ -358,7 +359,7 @@ export function renderTallFridge(cab, mod, result, shared) {
     commit(fridgeFix({ ...p, topSystem }), "top", { from: top.style, to: style });
   };
   const setNested = (group, key) => (v) => commit(fridgeFix({ ...p, [group]: { ...(p[group] || {}), [key]: v } }), "system", { group, key, value: v });
-  const setPose = (k) => (v) => job.setPose(cab.id, { [k]: v });
+  const setPose = (k) => (v) => invoke("cabinet.move", { id: cab.id, ...{ [k]: v } });
   const fold = el("details", { class: "panel-fold" }, [
     el("summary", { text: `Cabinet · ${Math.round(env.W)} × ${Math.round(env.D)} × ${Math.round(env.H)} · ${zones.length} zones · ${result?.boards?.length || 0} boards` }),
     section("Outer size (= box)", [
