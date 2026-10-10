@@ -1,5 +1,8 @@
 # Application API
 
+> **2026-10-10**：此页只说明 `createApp()` 结构化 JS 入口；当前还有独立的 `renderer/commands.js` 注册表、`cli.mjs` 宿主命令与 `mcp.mjs`。完整现状见 [Agent 接口 v1](agent/INTERFACES-v1.md)，实施目标见 [v2](agent/INTERFACES-v2.md) 和 [PRD](agent/PRD-2026-10.md)。UI 仍有直接调用 `job.setParams()` 的路径，不应假定 UI/Agent 已统一接线。
+
+
 > 原子指令集契约见 `docs/AGENT-COMMANDS.md`（T05：每个操作源一条指令 + CLI）。
 > 本文件描述其下的结构化 JS 调用面。
 

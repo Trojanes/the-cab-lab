@@ -1,4 +1,9 @@
-# Agent Command API（T05 契约）
+# Agent Command API（T05 早期设计草案）
+
+> **2026-10-10 现状校准**：本文件含部分**约定/计划**动词，不能被编程 AI 视为全部已实现。实际已实现入口/限制以 [Agent 接口 v1](agent/INTERFACES-v1.md) 及 `renderer/commands.js`、`cli.mjs` 为准；新增目标见 [v2](agent/INTERFACES-v2.md)，实施按 [Agent PRD](agent/PRD-2026-10.md)。**不要把 MCP、CLI 宿主动词与 Registry 动词混为一谈。**
+
+> 已知需修复：`invoke()` 失败回滚与原子 batch、`file.export-cnjob --path` 当前写 JSON 而非 ZIP、`bench.pins` 对部分 centerline 的覆盖。`history.begin/end` 是现有分组接口，不等同于自动回滚事务。
+
 
 本文档定义 The Cab Lab 与 OmniCam 的**原子指令集**——每个操作源一条指令，
 像 CMD 命令一样可被脚本、CLI 与 Agent 驱动。这是 Agent Tool 接口的权威契约：
