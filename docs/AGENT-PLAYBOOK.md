@@ -154,3 +154,31 @@ diff 的每条 `path` 必须匹配 `scope` 正则之一，`mustChange` 拒绝空
 边界：`presets.write`（全文件覆写）默认不给——pin 是期望值，改了等于
 自己改考卷；重钉只能走 `presets.repin`（只允许声明过的路径动）。
 `layout.write` 是全文件级，T2 任务先打 diff 再人工审。
+
+### 6.2 Review —— 独立复核（不信 run.json 自己的判定）
+
+`scripts/agent-review.mjs` 对一个 run dir 做**事后独立审计**：harness 的
+verdict 只是"执行时没被抓到"，review 是"轨迹本身经得起重验"——
+
+```bash
+node scripts/agent-run.mjs  review <runDir>    # 或 scripts/agent-review.mjs <runDir>
+```
+
+判定三档，**只有 `approved` 算过**（exit 0；其余 exit 1）：
+
+| 检查 | 级别 | 含义 |
+|---|---|---|
+| `verdict` | block | run.json 自报 PASS |
+| `scope` | block | 每个**已执行** op 的动词 ⊆ `task.allow`（伪造 transcript 在这道门翻船） |
+| `budget` | block | agent ops ≤ `maxOps` |
+| `accept` | block | accept 断言**当场重跑**——不信用 run.json 缓存的判定 |
+| `diff.scope` | block | generator 任务：`bench.diff` 现场重算，漂移 ⊆ 声明 scope |
+| `denials` | warn | 被拒 op > 0：探围栏不违规，但值得人看一眼 |
+| `vacuous` | warn | 0 个 agent op 却 PASS——空过 |
+| `files` | block（可选） | 任务单声明 `writes` 正则时，`git status` 脏文件 ⊆ 白名单 |
+| `judge` | warn（接缝） | `--judge x.mjs` 外挂语义判定：`default async (evidence) → {verdict, reasoning}`，**只能降级不能升级** |
+
+结果写 `review.json` / `review.md` 进 run dir。三档语义：
+`approved` 可发布 · `needs_human` 机械全绿但有值得看的痕迹 ·
+`validation_blocked` 有硬违规。LLM 语义层经 `--judge` 挂点接入，
+永远只能把好结果拉下来，不能把烂的顶上去。

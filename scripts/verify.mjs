@@ -43,7 +43,7 @@ const STEPS = [
     ["test:commands", "command registry"],
     ["test:crash", "pinned crash dumps replay"],
     ["test:cases", "accumulated project cases replay"],
-    ["test:agent", "agent run harness (scope/budget/verdict)"],
+    ["test:agent", "agent harness + review verdicts"],
     ["audit", "geometry audit (known-bad allowed)"],
   ]),
   ...(full || ci ? [

@@ -8,6 +8,31 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-11 · Review is an independent re-verification, not a trusted read
+
+- **What**: `scripts/agent-review.mjs` audits a finished run dir —
+  scope/budget re-checked against `task.allow`, accept assertions re-run
+  live, generator drift re-diffed against the run baseline, `denials` /
+  `vacuous` surfaced as `needs_human`. Verdict: `approved` /
+  `needs_human` / `validation_blocked`; only `approved` exits 0.
+  `agent-run.mjs review <dir>` is the same thing. `--judge x.mjs` is the
+  semantic-layer seam: an external judge may only ever downgrade.
+- **Why**: the Review Agent is the verdict layer every other agent
+  (Bug / Generator / future roles) answers to — it had to come first and
+  be strictly mechanical. Trusting `run.json`'s own verdict would make a
+  forged transcript indistinguishable from a clean run, so every check
+  re-computes from `transcript.jsonl` + a live CLI instead of reading
+  cached results.
+- **Rejected**: review-as-report (exit 0 on any verdict) — a publish
+  gate that always exits 0 gates nothing.
+- **Rejected**: denied ops count as scope violations — a `denied:true`
+  transcript entry means the harness fence held; probing the fence is
+  `needs_human` signal, not a block.
+- **Rejected**: letting `--judge` upgrade a block — a model can flag a
+  mechanically-clean run for a human; it can never unblock a violation.
+
+---
+
 ## 2026-10-10 · UI writes route through the Command Registry
 
 - **What**: every discrete UI mutation (panel editors, R-key rotate,

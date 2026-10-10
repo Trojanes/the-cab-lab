@@ -14,7 +14,7 @@
     "module-map": "node scripts/module-map.mjs > docs/MODULE-MAP.md",
     "test:crash": "node scripts/replay-log.mjs fixtures/crash",
     "test:cases": "node scripts/check-cases.mjs",
-    "test:agent": "node scripts/agent-run.test.mjs",
+    "test:agent": "node scripts/agent-run.test.mjs && node scripts/agent-review.test.mjs",
     "verify": "node scripts/verify.mjs",
     "verify:quick": "node scripts/verify.mjs --quick",
     "verify:ci": "node scripts/verify.mjs --ci",

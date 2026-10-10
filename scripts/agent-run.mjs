@@ -15,9 +15,13 @@
 //   "input": "fixtures/job/x.json",          // opened as the session job at start (optional)
 //   "allow": ["describe","validate","cabinet.*","history.*"],  // verb prefixes; unlisted verbs are denied
 //   "generator": "kitchenCabinet",       // generator task → preset baseline captured at start
+//   "writes": ["^generators/kitchen/"], // optional: review gates git dirty set to this surface
 //   "accept": [ {"verb":"validate","expect":"effect.ok"}, {"verb":"file.export-cnjob"} ],
 //   "budget": { "maxOps": 30 }
 // }
+// `review <runDir>` = independent post-run audit (agent-review.mjs): re-checks
+// scope/budget from the transcript, re-runs accept + the scoped diff live.
+// approved | needs_human | validation_blocked — only approved exits 0.
 // accept kinds: "ok" (default, truthy dig) · "diff.scope" (bench.diff changes ⊆ scope
 // regexes, +mustChange) — the "only touched declared surfaces" gate.
 //
@@ -162,7 +166,14 @@ else if (cmd === "status") {
   console.log(JSON.stringify({ state: run.state, ops: run.ops, verdict: run.verdict ?? null }));
 }
 
+else if (cmd === "review") {
+  // Independent post-run audit — re-verifies the transcript, re-runs accept
+  // and the scoped diff instead of trusting run.json (scripts/agent-review.mjs).
+  const r = spawnSync("node", [resolve(ROOT, "agent-review.mjs"), a1, ...rest], { stdio: "inherit" });
+  process.exit(r.status ?? 1);
+}
+
 else {
-  console.error("usage: agent-run.mjs start|exec|finish|status …");
+  console.error("usage: agent-run.mjs start|exec|finish|status|review …");
   process.exit(2);
 }
