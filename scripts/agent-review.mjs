@@ -82,6 +82,18 @@ add("denials", "warn", denied.length === 0, { count: denied.length, verbs: denie
 /* ---- warn: vacuous pass — zero agent ops yet the task claims PASS ---- */
 add("vacuous", "warn", !(agentOps.length === 0 && (task.accept ?? []).length > 0 && run.verdict?.pass === true), { ops: agentOps.length });
 
+/* ---- block: declared preconditions were actually verified ----------- */
+// A bug task's premise is "the fixture is broken". If the task declares
+// preconditions, the transcript must carry them all green — otherwise the
+// red→green arc was never established and the pass is unverifiable.
+if (Array.isArray(task.precondition) && task.precondition.length) {
+  const logged = transcript.filter((e) => e.role === "precondition");
+  const held = logged.filter((e) => e.ok === true).length;
+  add("precondition", "block", logged.length === task.precondition.length && held === task.precondition.length, {
+    declared: task.precondition.length, logged: logged.length, held,
+  });
+}
+
 /* ---- block: accept assertions re-run NOW ---------------------------- */
 const acceptResults = [];
 for (const c of task.accept ?? []) {

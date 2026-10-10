@@ -129,6 +129,43 @@ node scripts/agent-run.mjs finish <runDir>                    # 跑 accept，exi
 不给 `bench.*`；改生成器数据的任务才有 `bench.rules.set` 等。审计文件
 是 REGRESSION-LOG 生态的一部分——agent 修好的场景顺手 `--pin` 成 fixture。
 
+`node scripts/agent-run.mjs check <task.json>` 是任务单体检查：
+必填字段形状、`input` 文件存在、`writes` 正则合法、proposal 形状、
+以及「声明了红前置就必须有 validate 验收」的红绿配对。`test:agent`
+对 `agent/tasks/` 全部任务单跑 check——任务目录本身被钉住。
+
+### 6.0 Bug 任务（修 job，不动生成器）
+
+Bug 任务的契约是**红→绿弧线**，由任务单两个字段声明：
+
+```json
+"precondition": [{ "verb": "validate", "expect": "effect.ok", "negate": true }],
+"accept":       [{ "verb": "validate", "expect": "effect.ok" }, { "verb": "file.export-cnjob" }]
+```
+
+- `precondition` 在 start 时逐条执行（在 input 打开之后）：`negate:true`
+  表示断言**必须不成立**——fixture 此刻是坏的。前提不满足 → start 直接
+  中止（`code:"precondition"`），这是**任务单畸形**，不是 run 判负：
+  一个修 bug 任务在好 fixture 上"通过"毫无意义。
+- `accept` 是修复后的绿断言，和普通任务一致。
+- Review 侧 `precondition` 检查要求 transcript 里有等量的全绿前置条目——
+  伪造 transcript 跳不过：没有验证过「之前是坏的」，之后的绿不可信。
+
+任务目录（每个都在 `test:agent` 里跑真实 start→修复→finish 全链）：
+
+| 任务 | bug 类 | fixture | 报错 |
+|---|---|---|---|
+| `fix-overlap` | 出界 | `case-overlap.json` | `cab-2 is outside the space` |
+| `fix-cab-overlap` | 柜间重叠 | `case-cab-overlap.json` | `cab-1 overlaps cabinet cab-2` |
+| `fix-wall-overlap` | 横穿隔墙 | `case-wall-overlap.json` | `cab-2 overlaps partition wall-1` |
+| `fix-zone-height` | 生成器错误 | `case-zone-height.json` | `Zone zone-2 height must be > 0` |
+
+写新 bug 任务 = 新 fixture（确认 `validate` 单独报这个错）+ 任务单
+（precondition 红 + accept 绿 + 最小动词面）。**注意**：`validate` 只管
+fit/generator 错误——attach 模块间的"重叠"按设计不报（`cabinetHits`
+过滤 attach），尺寸下限是模块 schema 约束不在 validate 面，不要为
+不存在的检查编 bug 类。
+
 ### 6.1 Generator 任务（改 rules/layout，不动 generator.ts）
 
 任务单加 `"generator": "<moduleId>"`：start 时把该模块全部 preset 的

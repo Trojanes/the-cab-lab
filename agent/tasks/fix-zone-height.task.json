@@ -1,0 +1,9 @@
+{
+  "id": "fix-zone-height",
+  "goal": "cab-2 的 zone-2 高度为 0（validate 报 generatorErrors: Zone zone-2 height must be > 0）。调整 cab-2 的 zone 高度分配使 validate 转绿——总高不变，两个 zone 都要 > 0。只允许 job 编辑动词。",
+  "input": "fixtures/job/case-zone-height.json",
+  "allow": ["describe", "validate", "cabinet.*", "zone.*", "history.*"],
+  "precondition": [{ "verb": "validate", "expect": "effect.ok", "negate": true }],
+  "accept": [{ "verb": "validate", "expect": "effect.ok" }, { "verb": "file.export-cnjob" }],
+  "budget": { "maxOps": 20 }
+}

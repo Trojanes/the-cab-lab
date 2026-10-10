@@ -1,0 +1,9 @@
+{
+  "id": "fix-cab-overlap",
+  "goal": "cab-2 与 cab-1 重叠（validate 报 overlaps cabinet）。移动 cab-2 使两柜互不重叠且都不出空间，validate 转绿。只允许 job 编辑动词。",
+  "input": "fixtures/job/case-cab-overlap.json",
+  "allow": ["describe", "validate", "cabinet.*", "history.*"],
+  "precondition": [{ "verb": "validate", "expect": "effect.ok", "negate": true }],
+  "accept": [{ "verb": "validate", "expect": "effect.ok" }, { "verb": "file.export-cnjob" }],
+  "budget": { "maxOps": 20 }
+}

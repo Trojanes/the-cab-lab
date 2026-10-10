@@ -146,5 +146,64 @@ const dirI = runDirOf(go(["start", taskI]).stdout);
 r = go(["exec", dirI, "bench.layout.write", "--moduleId", "kitchenCabinet", "--data", "{}"]);
 ok(r.status === 1 && JSON.parse(r.stdout).code === "scope_denied", "layout.write denied without declared layout change");
 
+// --- task J: bug task — precondition verifies red, repair flips green ------
+const taskJ = join(t, "j.task.json");
+writeFileSync(taskJ, JSON.stringify({
+  id: "t-bug", goal: "red→green", input: "fixtures/job/case-overlap.json",
+  allow: ["validate", "cabinet.move"],
+  precondition: [{ verb: "validate", expect: "effect.ok", negate: true }],
+  accept: [{ verb: "validate", expect: "effect.ok" }],
+}));
+const dirJ = runDirOf(go(["start", taskJ]).stdout);
+ok(readFileSync(join(dirJ, "transcript.jsonl"), "utf8").includes('"role":"precondition"'), "precondition logged at start");
+r = go(["exec", dirJ, "cabinet.move", "--id", "cab-2", "--x", "2500"]);
+ok(r.status === 0, "repair op executes inside scope");
+r = go(["finish", dirJ]);
+ok(r.status === 0 && JSON.parse(r.stdout).pass === true, "red→green arc passes after the repair");
+
+// --- task K: green fixture under a bug task → start aborts as malformed -----
+const taskK = join(t, "k.task.json");
+writeFileSync(taskK, JSON.stringify({
+  id: "t-bug-green", goal: "fixture already green", input: "fixtures/job/job-v2-empty-box.json",
+  allow: ["validate"],
+  precondition: [{ verb: "validate", expect: "effect.ok", negate: true }],
+  accept: [{ verb: "validate" }],
+}));
+r = go(["start", taskK]);
+ok(r.status === 1 && JSON.parse(r.stdout).code === "precondition", "green fixture aborts a red→green task at start");
+
+// --- check: task-file lint ---------------------------------------------------
+r = go(["check", taskA]);
+ok(r.status === 0 && JSON.parse(r.stdout).ok === true, "check accepts a well-formed task");
+const taskBad = join(t, "bad.task.json");
+writeFileSync(taskBad, JSON.stringify({ id: "x", allow: ["describe"], accept: [], input: "nope.json" }));
+r = go(["check", taskBad]);
+ok(r.status === 1 && JSON.parse(r.stdout).errors.length >= 3, "check flags missing goal/accept/input");
+// every shipped task file must lint clean — the catalogue is regression-pinned
+import { readdirSync } from "node:fs";
+for (const f of readdirSync(join(ROOT, "agent", "tasks")).filter((f) => f.endsWith(".task.json"))) {
+  r = go(["check", join(ROOT, "agent", "tasks", f)]);
+  ok(r.status === 0, `check agent/tasks/${f}`);
+}
+
+// --- shipped bug tasks: the full red→green arc through the real harness ------
+// start verifies each fixture is actually broken (precondition), the scripted
+// repair runs through the scoped verb surface, finish must PASS. A fixture
+// that silently stops being broken fails the task at start — the catalogue
+// can never rot into vacuous passes.
+const bugRepairs = {
+  "fix-overlap":     [["cabinet.move", "--id", "cab-2", "--x", "2500"]],
+  "fix-cab-overlap": [["cabinet.move", "--id", "cab-2", "--x", "2000"]],
+  "fix-wall-overlap":[["cabinet.move", "--id", "cab-2", "--y", "1600"]],
+  "fix-zone-height": [["zone.set-height", "--id", "cab-2", "--zone", "zone-2", "--height", "200"]],
+};
+for (const [id, ops] of Object.entries(bugRepairs)) {
+  const d = runDirOf(go(["start", join(ROOT, "agent", "tasks", `${id}.task.json`)]).stdout);
+  let passed = true;
+  for (const [verb, ...args] of ops) if (go(["exec", d, verb, ...args]).status !== 0) passed = false;
+  r = go(["finish", d]);
+  ok(passed && r.status === 0 && JSON.parse(r.stdout).pass === true, `bug task ${id}: red fixture repaired to green`);
+}
+
 console.log(bad ? `${bad} FAILED` : "all ok");
 process.exit(bad ? 1 : 0);

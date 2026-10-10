@@ -8,6 +8,25 @@ this". Order: newest on top.
 
 ---
 
+## 2026-10-11 · Bug tasks prove the bug existed before the fix counts
+
+- **What**: bug tasks declare `precondition` (e.g. `validate` must FAIL at
+  start) alongside `accept` (must PASS at finish); the harness aborts a
+  green fixture as a malformed task (`code:"precondition"`), the review
+  blocks when declared preconditions are missing from the transcript, and
+  `agent-run check` lints the task shape. Four shipped cases cover the
+  classes `validate` actually reports: outside-space, cabinet↔cabinet
+  overlap, cabinet↔partition overlap, generator errors.
+- **Why**: without the red half, a bug task can rot into a vacuous pass —
+  the fixture stops being broken and "nothing fixed" still scores green.
+  The red→green arc is the whole contract; both ends are scripted.
+- **Rejected**: trusting "the fixture was red when written" — fixtures rot;
+  and manufacturing bug classes `validate` doesn't check (min-size lives in
+  module schema, attach-module "overlaps" are by design unreported) — a
+  bug class must map to a real checker, not a plausible-looking failure.
+
+---
+
 ## 2026-10-11 · Generator tasks declare intent as a proposal, not after the fact
 
 - **What**: `task.proposal` turns a generator task into a stated plan —

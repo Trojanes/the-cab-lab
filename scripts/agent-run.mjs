@@ -16,6 +16,10 @@
 //   "allow": ["describe","validate","cabinet.*","history.*"],  // verb prefixes; unlisted verbs are denied
 //   "generator": "kitchenCabinet",       // generator task → preset baseline captured at start
 //   "writes": ["^generators/kitchen/"], // optional: review gates git dirty set to this surface
+//   "precondition": [ {"verb":"validate","expect":"effect.ok","negate":true} ],
+//                                        // bug tasks: the fixture MUST be broken at start —
+//                                        // a task that passes with nothing fixed is malformed,
+//                                        // not a pass. `negate` flips the truthiness test.
 //   "accept": [ {"verb":"validate","expect":"effect.ok"}, {"verb":"file.export-cnjob"} ],
 //   "budget": { "maxOps": 30 }
 // }
@@ -102,6 +106,21 @@ if (cmd === "start") {
     run.proposalBase = {};
     for (const c of task.proposal.changes.filter((c) => c.surface === "rules"))
       run.proposalBase[c.name] = r.effect?.data?.[c.name]?.value ?? null;
+  }
+  // precondition: the task's premise must hold before any agent op — for a
+  // bug task this means "the fixture is actually broken". A precondition
+  // that fails aborts the run as malformed, never as a verdict.
+  for (const c of task.precondition ?? []) {
+    const { verb, args = [], expect = "ok", negate = false } = c;
+    const r = cli(dir, verb, args);
+    const got = expect === "ok" ? r.ok : dig(r, expect);
+    const ok = negate ? !got : !!got;
+    logOp(dir, { i: ++run.ops, role: "precondition", verb, args, expect, negate, ok, value: got });
+    if (!ok) {
+      saveRun({ run, file: resolve(dir, "run.json") });
+      console.log(JSON.stringify({ ok: false, verb, error: `precondition failed — task premise does not hold`, code: "precondition" }));
+      process.exit(1);
+    }
   }
   saveRun({ run, file: resolve(dir, "run.json") });
   console.log(`run dir: ${dir}`);
@@ -228,7 +247,55 @@ else if (cmd === "review") {
   process.exit(r.status ?? 1);
 }
 
+else if (cmd === "check") {
+  // Task-file lint — the shape gate every task passes before it can start.
+  const errors = [];
+  let task = null;
+  try { task = JSON.parse(readFileSync(resolve(a1), "utf8")); }
+  catch (e) { errors.push(`not valid JSON: ${e.message}`); }
+  if (task) {
+    const isStr = (v) => typeof v === "string" && v.length > 0;
+    const isArr = (v) => Array.isArray(v);
+    for (const k of ["id", "goal"]) if (!isStr(task[k])) errors.push(`"${k}" must be a non-empty string`);
+    if (!isArr(task.allow) || !task.allow.length || !task.allow.every(isStr))
+      errors.push(`"allow" must be a non-empty string array`);
+    if (!isArr(task.accept) || !task.accept.length) {
+      errors.push(`"accept" must be a non-empty array`);
+    } else for (const [i, c] of task.accept.entries()) {
+      const v = typeof c === "string" ? c : c?.verb;
+      if (!isStr(v)) errors.push(`accept[${i}] needs a verb`);
+      if (c?.expect === "diff.scope" && (!isArr(c.scope) || !c.scope.length))
+        errors.push(`accept[${i}] diff.scope needs a non-empty "scope" regex list`);
+    }
+    if (task.input != null && (!isStr(task.input) || !existsSync(resolve(ROOT, "..", task.input))))
+      errors.push(`"input" does not resolve to a file: ${task.input}`);
+    if (task.precondition != null) {
+      if (!isArr(task.precondition) || !task.precondition.length) errors.push(`"precondition" must be a non-empty array`);
+      else for (const [i, c] of task.precondition.entries())
+        if (!isStr(c?.verb)) errors.push(`precondition[${i}] needs a verb`);
+    }
+    if (task.budget != null && typeof task.budget.maxOps !== "number")
+      errors.push(`"budget.maxOps" must be a number`);
+    if (task.writes != null) {
+      if (!isArr(task.writes) || !task.writes.every(isStr)) errors.push(`"writes" must be a string array of regexes`);
+      else for (const [i, w] of task.writes.entries())
+        try { new RegExp(w); } catch { errors.push(`writes[${i}] is not a valid regex: ${w}`); }
+    }
+    if (task.proposal != null) {
+      const bad = checkProposalShape(task.proposal);
+      if (bad) errors.push(`proposal invalid: ${bad}`);
+      if (!task.generator) errors.push(`proposal tasks need a "generator"`);
+    }
+    // a bug task declares its red→green arc: precondition(red) + accept(green)
+    const redGate = (task.precondition ?? []).some((c) => c.negate);
+    const greenGate = task.accept?.some((c) => (typeof c === "object" ? c : {}).verb === "validate");
+    if (redGate && !greenGate) errors.push(`task declares a red precondition but no validate accept — the green half is missing`);
+  }
+  console.log(JSON.stringify({ ok: errors.length === 0, errors }));
+  process.exit(errors.length ? 1 : 0);
+}
+
 else {
-  console.error("usage: agent-run.mjs start|exec|finish|status|review …");
+  console.error("usage: agent-run.mjs start|exec|finish|status|review|check …");
   process.exit(2);
 }

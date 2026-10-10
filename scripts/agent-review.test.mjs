@@ -137,5 +137,25 @@ const dirK = mkRun("k-run", {
 r = go(REVIEW, [dirK]);
 ok(r.status === 0 && verdictOf(r.stdout) === "approved", "satisfied proposal → approved");
 
+/* --- L: bug task — precondition verified at start → approved ------------- */
+const dirL = runDirOf(go(RUN, ["start", mkTask("l.json", {
+  id: "rv-bug", goal: "red→green", input: "fixtures/job/case-overlap.json",
+  allow: ["validate", "cabinet.move"],
+  precondition: [{ verb: "validate", expect: "effect.ok", negate: true }],
+  accept: [{ verb: "validate", expect: "effect.ok" }],
+})]).stdout);
+execFinish(dirL, [["cabinet.move", "--id", "cab-2", "--x", "2500"]]);
+r = go(REVIEW, [dirL]);
+ok(r.status === 0 && verdictOf(r.stdout) === "approved", "bug run with verified precondition → approved");
+
+/* --- M: declared precondition missing from transcript → blocked ---------- */
+const dirM = mkRun("m-run", {
+  id: "rv-bug-forged", goal: "red→green", allow: ["validate"],
+  precondition: [{ verb: "validate", expect: "effect.ok", negate: true }],
+  accept: [{ verb: "validate", expect: "effect.ok" }],
+});
+r = go(REVIEW, [dirM]);
+ok(r.status === 1 && verdictOf(r.stdout) === "validation_blocked", "declared precondition absent → validation_blocked");
+
 console.log(bad ? `${bad} FAILED` : "all ok");
 process.exit(bad ? 1 : 0);

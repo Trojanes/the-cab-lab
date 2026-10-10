@@ -1,0 +1,9 @@
+{
+  "id": "fix-wall-overlap",
+  "goal": "cab-2 横穿隔墙 wall-1（validate 报 overlaps partition）。移动 cab-2 到隔墙一侧（或调整 wall-1），使 validate 转绿。只允许 job 编辑动词。",
+  "input": "fixtures/job/case-wall-overlap.json",
+  "allow": ["describe", "validate", "cabinet.*", "wall.*", "history.*"],
+  "precondition": [{ "verb": "validate", "expect": "effect.ok", "negate": true }],
+  "accept": [{ "verb": "validate", "expect": "effect.ok" }, { "verb": "file.export-cnjob" }],
+  "budget": { "maxOps": 20 }
+}
