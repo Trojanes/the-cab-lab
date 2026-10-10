@@ -14,6 +14,8 @@ import type { Board, FaceFeature } from "./model.ts";
 import { localOutline, rectOutline } from "./model.ts";
 import { decorSlug, sheetMaterial, type SheetParams } from "./material.ts";
 import { cnjobEdgeBands } from "./edgeBand.ts";
+import { validateSnapshot } from "./snapshotContract.ts";
+import { MACHINED_FEATURE_KINDS, featureIssue, grainAxis } from "./boardContract.ts";
 
 export const CNJOB_SCHEMA = "cabinetnc.manufacturing-snapshot";
 export const CNJOB_VERSION = "1.1.0";
@@ -157,16 +159,6 @@ interface Workpiece {
   edgeBands: [];
 }
 
-function grainAxis(board: Board, grained: boolean): "X" | "Y" | undefined {
-  if (!grained) return undefined;
-  const faces = (board.faces ?? []).filter((f) => f.id === "A" || f.id === "B");
-  const coloured = faces.find((f) => f.finish?.grain && f.visible) ?? faces.find((f) => f.finish?.grain);
-  const axis = coloured?.finish?.grain;
-  if (axis === "u") return "X";
-  if (axis === "v") return "Y";
-  return undefined;
-}
-
 /**
  * A mitred bench is extruded along its depth so the solid shows the 45°.
  * The nest is the flat sheet: the show face, at the board's own thickness.
@@ -178,6 +170,7 @@ function sheetOutline(board: Board): Pt[] | null {
   if (!(along > 0) || !(across > 0)) return null;
   return [[0, 0], [along, 0], [along, across], [0, across]];
 }
+
 
 function buildBoard(
   jobId: string,
@@ -211,26 +204,18 @@ function buildBoard(
     : (millingFace ? [millingFace] : []);
   for (const face of sources) {
     for (const f of face.features) {
-      if (f.kind === "tongue" || f.kind === "notch") continue;
-      if (f.kind !== "groove" && f.kind !== "tgroove" && f.kind !== "hole" && f.kind !== "cutout") continue;
+      if (!MACHINED_FEATURE_KINDS.has(f.kind)) continue;
       let id = f.id || `${face.id}-${features.length + 1}`;
       if (seen.has(id)) id = `${face.id}:${id}`;
       seen.add(id);
       const blind = !f.through;
-      if (blind && !(typeof f.depth === "number" && f.depth > 0)) {
-        reasons.push(`${where}: ${id} has no depth`);
-        continue;
-      }
-      if (blind && f.depth! > sheet.thicknessMm + 0.01) {
-        reasons.push(`${where}: ${id} is ${f.depth} deep on a ${sheet.thicknessMm} mm board`);
+      const issue = featureIssue(f, blind, sheet.thicknessMm);
+      if (issue) {
+        reasons.push(`${where}: ${id} ${issue}`);
         continue;
       }
       if (f.kind === "hole") {
-        if (!f.center || !(f.diameter && f.diameter > 0)) {
-          reasons.push(`${where}: ${id} has no centre or diameter`);
-          continue;
-        }
-        const c = mapPt(f.center, frame);
+        const c = mapPt(f.center!, frame);
         const feat: Record<string, unknown> = {
           featureId: id,
           kind: "bore",
@@ -244,11 +229,7 @@ function buildBoard(
         continue;
       }
       if (f.kind === "groove" || f.kind === "tgroove") {
-        const slot = slotOf(f);
-        if (!slot || slot.width <= 0.01) {
-          reasons.push(`${where}: ${id} has no slot`);
-          continue;
-        }
+        const slot = slotOf(f)!;
         const a = mapPt(slot.line[0], frame);
         const b = mapPt(slot.line[1], frame);
         const feat: Record<string, unknown> = {
@@ -266,13 +247,9 @@ function buildBoard(
         features.push(feat);
         continue;
       }
-      if (f.u0 == null || f.u1 == null || f.v0 == null || f.v1 == null) {
-        reasons.push(`${where}: ${id} has no outline`);
-        continue;
-      }
       const radius = f.loop ? 0 : f.radius ?? 0;
       if (radius > 0.05) tessellated.value = true;
-      const loop = mapRing(f.loop ?? roundedRect(f.u0, f.v0, f.u1, f.v1, radius), frame, !f.through);
+      const loop = mapRing(f.loop ?? roundedRect(f.u0!, f.v0!, f.u1!, f.v1!, radius), frame, !f.through);
       if (loop.length < 3) {
         reasons.push(`${where}: ${id} has no outline`);
         continue;
@@ -367,21 +344,23 @@ export function buildCnjob(input: CnjobInput): CnjobOutcome {
   }
   if (reasons.length) return { ok: false, reasons };
   if (!workpieces.length) return { ok: false, reasons: ["Nothing to export."] };
-  return {
-    ok: true,
-    boardCount: workpieces.length,
-    materialIds: [...materials.keys()],
-    snapshot: {
-      schema: CNJOB_SCHEMA,
-      schemaVersion: CNJOB_VERSION,
-      jobId: input.jobId || "job",
-      units: "mm",
-      exportedAt: new Date().toISOString(),
-      source: { producer: PRODUCER, producerVersion: PRODUCER_VERSION },
-      materials: [...materials.values()],
-      workpieces,
-      relationships: [],
-      diagnostics: [],
-    },
+  const snapshot = {
+    schema: CNJOB_SCHEMA,
+    schemaVersion: CNJOB_VERSION,
+    jobId: input.jobId || "job",
+    units: "mm",
+    exportedAt: new Date().toISOString(),
+    source: { producer: PRODUCER, producerVersion: PRODUCER_VERSION },
+    materials: [...materials.values()],
+    workpieces,
+    relationships: [],
+    diagnostics: [],
   };
+  // Self-check against the OmniCam contract before the bytes leave: an emitter
+  // regression must refuse here, not on the cutting station.
+  const verdict = validateSnapshot(snapshot);
+  if (verdict.errors.length) {
+    return { ok: false, reasons: verdict.errors.map((e) => `contract ${e.code} ${e.path}: ${e.message}`) };
+  }
+  return { ok: true, boardCount: workpieces.length, materialIds: [...materials.keys()], snapshot };
 }

@@ -1,2 +1,15 @@
 node_modules/
 logs/
+
+# Built doc artifact — regenerate: python scripts/build-agent-commands-pdf.py
+docs/AGENT-COMMANDS.pdf
+
+# Cloud credentials / local config — never commit (see .env.example)
+.env
+.env.*
+!.env.example
+*-credentials.json
+service-account*.json
+
+# CLI session file (cwd job state between invocations)
+.cablab-session.json

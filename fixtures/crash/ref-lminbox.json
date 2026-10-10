@@ -1,0 +1,106 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "origin": "front-left floor corner; X right, Y back, Z up",
+  "space": {
+    "kind": "box",
+    "params": {
+      "width": 4000,
+      "depth": 3000,
+      "height": 2400,
+      "walls": [
+        0,
+        1,
+        2,
+        3
+      ]
+    }
+  },
+  "finish": {
+    "carcass": {
+      "name": "White Stipple"
+    },
+    "door": {
+      "series": "acrylic",
+      "mode": "one",
+      "sides": "single",
+      "colors": [
+        {
+          "id": "A",
+          "series": "acrylic",
+          "name": "Gloss White"
+        }
+      ]
+    },
+    "benchTop": {
+      "name": "Pale Driftwood"
+    }
+  },
+  "stock": {
+    "carcass": {
+      "thickness": 15
+    },
+    "partition": {
+      "thickness": 18,
+      "floorClearance": 2,
+      "ceilingClearance": 2
+    },
+    "door": {
+      "thickness": 16
+    }
+  },
+  "cabinets": [
+    {
+      "id": "cab-1",
+      "moduleId": "kitchenCabinet",
+      "pose": {
+        "x": 1000,
+        "y": 766,
+        "z": 0,
+        "rotZ": 0
+      },
+      "params": {
+        "globalSettings": {
+          "length": 800,
+          "depth": 584,
+          "height": 800
+        },
+        "benchTopColor": "Pale Driftwood",
+        "benchTopColorName": "Pale Driftwood",
+        "materialThickness": 15,
+        "frontThickness": 16,
+        "doorSeries": "acrylic",
+        "doorSides": "single",
+        "doorColor": "Gloss White",
+        "doorColorName": "Gloss White",
+        "colorSlot": "B",
+        "bottomClearanceHeight": 70,
+        "bottomClearanceStyle": "style_1",
+        "frontClearance": 2.5,
+        "lockEnabled": true,
+        "columns": [
+          {
+            "id": "c1",
+            "width": 800,
+            "zones": [
+              {
+                "id": "z1",
+                "height": 730,
+                "zoneType": "left_door"
+              }
+            ]
+          }
+        ],
+        "wheelAvoidances": [],
+        "vPanelMachiningPreferences": []
+      },
+      "placeCorner": {
+        "x": -1,
+        "y": -1,
+        "z": -1
+      }
+    }
+  ],
+  "planes": [],
+  "walls": []
+}

@@ -1,6 +1,7 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const cloud = require("./cloud/index.js");
 
 // A second launch used to open another Chromium on the same profile. It then
 // failed to bind the debug port and could not take the disk cache, and the
@@ -113,6 +114,27 @@ ipcMain.handle("log:open", () => {
   return shell.openPath(LOG_DIR);
 });
 
+// --- cloud mirror -------------------------------------------------------------
+// Phase 1 cloud storage (cloud/): when CAB_CLOUD_ENABLED=1 a finished local
+// write is mirrored into the bucket (cablab/…, shared/…). Fire-and-forget —
+// a cloud failure lands in the usage log and never affects the local save.
+function cloudMirror(root, rel, localPath, extra) {
+  Promise.resolve(cloud.uploadLocalFile(root, rel, localPath))
+    .then((r) => {
+      if (!r) return; // cloud disabled
+      appendLog(JSON.stringify({ t: new Date().toISOString(), kind: "cloud.sync", ok: r.ok, key: r.key || null, ms: r.ms, error: r.error || null, ...(extra || {}) }));
+    })
+    .catch((err) => {
+      appendLog(JSON.stringify({ t: new Date().toISOString(), kind: "cloud.sync", ok: false, key: null, ms: null, error: err.message, ...(extra || {}) }));
+    });
+}
+
+ipcMain.handle("cloud:status", () => cloud.status());
+ipcMain.handle("cloud:push", (_event, root, rel, text) => cloud.uploadText(root, rel, text));
+ipcMain.handle("cloud:pull", (_event, root, rel) => cloud.downloadText(root, rel));
+ipcMain.handle("cloud:list", (_event, root, rel) => cloud.listPrefix(root, rel));
+ipcMain.handle("cloud:delete", (_event, root, rel) => cloud.deleteKey(root, rel));
+
 ipcMain.handle("job:open", async (event) => {
   const win = BrowserWindow.fromWebContents(event.sender);
   const res = await dialog.showOpenDialog(win, { properties: ["openFile"], filters: JOB_FILTERS });
@@ -130,6 +152,7 @@ ipcMain.handle("job:save", async (event, filePath, text) => {
     target = res.filePath;
   }
   fs.writeFileSync(target, text, "utf8");
+  cloudMirror("cablab/jobs", path.basename(target), target, { src: "job.save" });
   return target;
 });
 
@@ -149,6 +172,8 @@ ipcMain.handle("cnjob:save", async (event, defaultPath, snapshotJson) => {
     { name: "manifest.json", data: Buffer.from(manifest) },
     { name: "snapshot.json", data: Buffer.from(String(snapshotJson)) },
   ]));
+  // cnjob is the hand-off OmniCam consumes — it lands under shared/.
+  cloudMirror("shared/cnjob", path.basename(target), target, { src: "cnjob.save" });
   return target;
 });
 

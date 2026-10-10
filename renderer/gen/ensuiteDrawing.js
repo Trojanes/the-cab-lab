@@ -2,10 +2,8 @@
 
 // generators/_lib/model.ts
 function planeAxes(plane) {
-  if (plane === "YZ")
-    return ["y", "z", "x"];
-  if (plane === "XZ")
-    return ["x", "z", "y"];
+  if (plane === "YZ") return ["y", "z", "x"];
+  if (plane === "XZ") return ["x", "z", "y"];
   return ["x", "y", "z"];
 }
 var ARC_CHORD_MM = 0.05;
@@ -15,18 +13,16 @@ function bulgeOf(p) {
   return Number.isFinite(b) ? b : 0;
 }
 function expandBulgeRing(pts) {
-  if (!pts.some((p) => p.b && Math.abs(p.b) > 0.000000001))
-    return pts.map((p) => ({ u: p.u, v: p.v }));
+  if (!pts.some((p) => p.b && Math.abs(p.b) > 1e-9)) return pts.map((p) => ({ u: p.u, v: p.v }));
   const n = pts.length;
   const out = [];
-  for (let i = 0;i < n; i += 1) {
+  for (let i = 0; i < n; i += 1) {
     const a = pts[i];
     const c = pts[(i + 1) % n];
     out.push({ u: a.u, v: a.v });
     const bulge = a.b ?? 0;
     const chord = Math.hypot(c.u - a.u, c.v - a.v);
-    if (!bulge || chord < 0.000000001)
-      continue;
+    if (!bulge || chord < 1e-9) continue;
     const sweep = 4 * Math.atan(bulge);
     const du = (c.u - a.u) / chord;
     const dv = (c.v - a.v) / chord;
@@ -34,12 +30,11 @@ function expandBulgeRing(pts) {
     const cu = (a.u + c.u) / 2 - dv * h;
     const cv = (a.v + c.v) / 2 + du * h;
     const r = Math.hypot(a.u - cu, a.v - cv);
-    if (!(r > 0.000001))
-      continue;
+    if (!(r > 1e-6)) continue;
     const a0 = Math.atan2(a.v - cv, a.u - cu);
     const step = Math.min(ARC_STEP_MAX, 2 * Math.acos(Math.max(-1, 1 - ARC_CHORD_MM / r)));
     const k = Math.max(2, Math.ceil(Math.abs(sweep) / step));
-    for (let j = 1;j < k; j += 1) {
+    for (let j = 1; j < k; j += 1) {
       const t = a0 + sweep * j / k;
       out.push({ u: cu + r * Math.cos(t), v: cv + r * Math.sin(t) });
     }
@@ -52,8 +47,7 @@ function localOutline(b) {
   let local = false;
   const pv = b.profileVector && b.profileVector.length >= 4 ? b.profileVector : null;
   if (b.profilePlane === "YZ") {
-    if (pv)
-      raw = pv.map((p) => ({ u: Number(p.y), v: Number(p.z), b: bulgeOf(p) }));
+    if (pv) raw = pv.map((p) => ({ u: Number(p.y), v: Number(p.z), b: bulgeOf(p) }));
     else if (b.cutProfileVector && b.cutProfileVector.length >= 4) {
       raw = b.cutProfileVector.map((p) => ({ u: p.y, v: p.z }));
       local = true;
@@ -61,19 +55,15 @@ function localOutline(b) {
   } else if (pv) {
     raw = pv.map((p) => ({ u: Number(p[U]), v: Number(p[V]), b: bulgeOf(p) }));
   }
-  if (!raw)
-    return null;
+  if (!raw) return null;
   if (raw.length > 2) {
     const a = raw[0];
     const c = raw[raw.length - 1];
-    if (Math.abs(a.u - c.u) < 0.000000001 && Math.abs(a.v - c.v) < 0.000000001)
-      raw.pop();
+    if (Math.abs(a.u - c.u) < 1e-9 && Math.abs(a.v - c.v) < 1e-9) raw.pop();
   }
   const expanded = expandBulgeRing(raw);
-  if (expanded.length < 3)
-    return null;
-  if (local)
-    return expanded.map((p) => [p.u, p.v]);
+  if (expanded.length < 3) return null;
+  if (local) return expanded.map((p) => [p.u, p.v]);
   const ou = b.profilePlane === "YZ" ? b.y0 : Math.min(...expanded.map((p) => p.u));
   const ov = b.profilePlane === "YZ" ? b.z0 : Math.min(...expanded.map((p) => p.v));
   return expanded.map((p) => [p.u - ou, p.v - ov]);
@@ -86,7 +76,7 @@ function rectOutline(b) {
 }
 function signedArea(pts) {
   let s = 0;
-  for (let i = 0;i < pts.length; i += 1) {
+  for (let i = 0; i < pts.length; i += 1) {
     const [x0, y0] = pts[i];
     const [x1, y1] = pts[(i + 1) % pts.length];
     s += x0 * y1 - x1 * y0;
@@ -103,11 +93,9 @@ function edgeNormal(plane, from, to, ccw) {
   const len = Math.hypot(nu, nv) || 1;
   nu /= len;
   nv /= len;
-  const eps = 0.000000001;
-  if (Math.abs(nv) < eps)
-    return `${nu > 0 ? "+" : "-"}${AXIS_UPPER[U]}`;
-  if (Math.abs(nu) < eps)
-    return `${nv > 0 ? "+" : "-"}${AXIS_UPPER[V]}`;
+  const eps = 1e-9;
+  if (Math.abs(nv) < eps) return `${nu > 0 ? "+" : "-"}${AXIS_UPPER[U]}`;
+  if (Math.abs(nu) < eps) return `${nv > 0 ? "+" : "-"}${AXIS_UPPER[V]}`;
   const vec = [0, 0, 0];
   const idx = { x: 0, y: 1, z: 2 };
   vec[idx[U]] = nu;
@@ -123,7 +111,7 @@ function facesOf(b) {
   ];
   const outline = localOutline(b) ?? rectOutline(b);
   const ccw = signedArea(outline) > 0;
-  for (let i = 0;i < outline.length; i += 1) {
+  for (let i = 0; i < outline.length; i += 1) {
     const from = outline[i];
     const to = outline[(i + 1) % outline.length];
     faces.push({
@@ -138,19 +126,20 @@ function facesOf(b) {
   return faces;
 }
 function attachFaces(boards) {
-  for (const b of boards)
-    b.faces = facesOf(b);
+  for (const b of boards) b.faces = facesOf(b);
   return boards;
 }
 function faceOf(b, id) {
   const f = (b.faces ?? (b.faces = facesOf(b))).find((x) => x.id === id);
-  if (!f)
-    throw new Error(`${b.id}: no face ${id}`);
+  if (!f) throw new Error(`${b.id}: no face ${id}`);
   return f;
 }
 function addFeature(b, faceId, feature) {
   faceOf(b, faceId).features.push(feature);
   return feature;
+}
+function edgeFaces(b) {
+  return (b.faces ?? (b.faces = facesOf(b))).filter((f) => f.id.startsWith("E"));
 }
 function annotate(b, faceId, a) {
   Object.assign(faceOf(b, faceId), a);
@@ -168,8 +157,7 @@ function doorSidesOf(params) {
 }
 function carcassColourOf(params) {
   const name = params && String(params.carcassColorName || "").trim();
-  if (name)
-    return name;
+  if (name) return name;
   const raw = params && String(params.carcassColor || "").trim();
   return raw && raw !== "white_stipple" ? raw : DEFAULT_CARCASS_COLOUR;
 }
@@ -178,15 +166,12 @@ function applyDoorSides(boards, params) {
   const sides = doorSidesOf(params);
   const carcass = carcassColourOf(params);
   for (const b of boards) {
-    if (b.stock?.kind !== "door")
-      continue;
+    if (b.stock?.kind !== "door") continue;
     const faces = bigFaces(b);
     const front = faces.find((f) => f.visible === true && f.finish?.colour && f.finish.colour !== carcass);
-    if (!front)
-      continue;
+    if (!front) continue;
     const back = faces.find((f) => f !== front);
-    if (!back)
-      continue;
+    if (!back) continue;
     const { grain: _drop, ...rest } = back.finish ?? {};
     back.finish = sides === "double" ? { ...rest, colour: front.finish.colour, ...front.finish.grain ? { grain: front.finish.grain } : {} } : { ...rest, colour: carcass };
     b.stock = { ...b.stock, sides: sides === "double" ? 2 : 1 };
@@ -194,42 +179,35 @@ function applyDoorSides(boards, params) {
 }
 
 // generators/_lib/milling.ts
-var WORK = new Set(["groove", "tgroove", "hole", "cutout"]);
+var WORK = /* @__PURE__ */ new Set(["groove", "tgroove", "hole", "cutout"]);
 var CARCASS = /stipple/i;
 var EPS = 0.01;
 var partial = (f) => WORK.has(f.kind) && !f.through;
 var through = (f) => WORK.has(f.kind) && !!f.through;
 function bboxArea(pts) {
-  if (!pts || !pts.length)
-    return 0;
+  if (!pts || !pts.length) return 0;
   const xs = pts.map((p) => Number(p.x ?? 0));
   const ys = pts.map((p) => Number(p.y ?? 0));
   return (Math.max(...xs) - Math.min(...xs)) * (Math.max(...ys) - Math.min(...ys));
 }
 function slabRebateFace(b) {
-  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z")
-    return null;
+  if (!b.slabs || b.slabs.length < 2 || b.thicknessAxis !== "Z") return null;
   const material = (s) => bboxArea(s.outline) - (s.holes ?? []).reduce((a, h) => a + bboxArea(h), 0);
   const bottom = b.slabs.reduce((a, s) => s.z0 < a.z0 ? s : a);
   const top = b.slabs.reduce((a, s) => s.z1 > a.z1 ? s : a);
-  if (material(bottom) < material(top) - EPS)
-    return "B";
-  if (material(top) < material(bottom) - EPS)
-    return "A";
+  if (material(bottom) < material(top) - EPS) return "B";
+  if (material(top) < material(bottom) - EPS) return "A";
   return null;
 }
 function colourFaceOf(b, A, B) {
   const coloured = b.stock?.kind === "door" || b.stock?.kind === "bench";
-  if (!coloured || b.stock?.sides === 2)
-    return null;
+  if (!coloured || b.stock?.sides === 2) return null;
   return [A, B].find((f) => f.visible === true && f.finish?.colour && !CARCASS.test(f.finish.colour)) ?? null;
 }
 function reportFace(A, B, colour) {
-  if (colour)
-    return colour.id === "A" ? "B" : "A";
+  if (colour) return colour.id === "A" ? "B" : "A";
   const inward = (f) => f.semantic === "inside" || f.semantic === "back" || f.semantic === "wall";
-  if (inward(B) && !inward(A))
-    return "B";
+  if (inward(B) && !inward(A)) return "B";
   return "A";
 }
 function applyMilling(boards) {
@@ -237,8 +215,7 @@ function applyMilling(boards) {
   for (const b of boards) {
     const A = b.faces?.find((f) => f.id === "A");
     const B = b.faces?.find((f) => f.id === "B");
-    if (!A || !B)
-      continue;
+    if (!A || !B) continue;
     const rebate = slabRebateFace(b);
     const onA = A.features.some(partial) || rebate === "A";
     const onB = B.features.some(partial) || rebate === "B";
@@ -268,15 +245,39 @@ function applyMilling(boards) {
   }
   return { issues };
 }
+
+// generators/_lib/edgeBand.ts
+function outlineOf(b) {
+  return localOutline(b) ?? rectOutline(b);
+}
+function setEdgeBand(b, i, band2) {
+  if (!Number.isInteger(i) || i < 0) throw new Error(`${b.id}: edge ${i} is not an outline index`);
+  const n = outlineOf(b).length;
+  if (i >= n) throw new Error(`${b.id}: edge ${i} is past the outline (${n} edges)`);
+  const face = faceOf(b, `E${i}`);
+  if (!band2) {
+    if (!face.finish?.edgeBand) return;
+    delete face.finish.edgeBand;
+    if (face.finish.colour == null) delete face.finish;
+    return;
+  }
+  if (!Number.isFinite(band2.thickness) || band2.thickness <= 0) {
+    throw new Error(`${b.id}.E${i}: edge band thickness must be millimetres above 0`);
+  }
+  const stored = { thickness: band2.thickness };
+  if (band2.colour) stored.colour = band2.colour;
+  face.finish = { ...face.finish, edgeBand: stored };
+}
+
 // generators/ensuiteDrawing/drawing.json
 var drawing_default = {
-  source: "Main_Design_second_van.step (Fusion, 2026-10-05) · Ensuite_lower_cabinet:1 and Ensuite_Cabinet_Through:1",
-  frame: "Cabinet frame: x = drawing Y − Y0 (left → right seen from the front), y = front carcass face X − drawing X (front 0 → back), z = drawing Z. Lower: Y0 −211, front face X −1662. Tall: Y0 −734, front face X −1631.9.",
-  outline: "[u, v, bulge] in the board's plane axes (XY: x,y · XZ: x,z · YZ: y,z), cabinet millimetres. Features: face-local u/v from the board's u0/v0.",
+  source: "Main_Design_second_van.step (Fusion, 2026-10-05) \xB7 Ensuite_lower_cabinet:1 and Ensuite_Cabinet_Through:1",
+  frame: "Cabinet frame: x = drawing Y \u2212 Y0 (left \u2192 right seen from the front), y = front carcass face X \u2212 drawing X (front 0 \u2192 back), z = drawing Z. Lower: Y0 \u2212211, front face X \u22121662. Tall: Y0 \u2212734, front face X \u22121631.9.",
+  outline: "[u, v, bulge] in the board's plane axes (XY: x,y \xB7 XZ: x,z \xB7 YZ: y,z), cabinet millimetres. Features: face-local u/v from the board's u0/v0.",
   corrections: {
     lower: [
-      "lower C19 (right side panel) sat 1.87 / −2.77 / 7.97 mm off its neighbours in the drawing (x, y, z); moved to x 949–964, y −16–434, z 0–890 like the left side panel.",
-      "lower C28 (bottom front strip): a 0.1 mm step at its back edge (y 74.9 → 75) closed so the board and its pocket meet one edge."
+      "lower C19 (right side panel) sat 1.87 / \u22122.77 / 7.97 mm off its neighbours in the drawing (x, y, z); moved to x 949\u2013964, y \u221216\u2013434, z 0\u2013890 like the left side panel.",
+      "lower C28 (bottom front strip): a 0.1 mm step at its back edge (y 74.9 \u2192 75) closed so the board and its pocket meet one edge."
     ],
     tall: []
   },
@@ -622,7 +623,7 @@ var drawing_default = {
       {
         id: "C23",
         comp: "Component23",
-        name: "Back bottom rail · right bay",
+        name: "Back bottom rail \xB7 right bay",
         category: "rail",
         plane: "XZ",
         t: 15,
@@ -1090,7 +1091,7 @@ var drawing_default = {
       {
         id: "C31",
         comp: "Component31",
-        name: "Left back stile · above the lid",
+        name: "Left back stile \xB7 above the lid",
         category: "rail",
         plane: "YZ",
         t: 15,
@@ -1240,7 +1241,7 @@ var drawing_default = {
       {
         id: "C34",
         comp: "Component34",
-        name: "Divider back stile · left",
+        name: "Divider back stile \xB7 left",
         category: "rail",
         plane: "YZ",
         t: 15,
@@ -1310,7 +1311,7 @@ var drawing_default = {
       {
         id: "C35",
         comp: "Component35",
-        name: "Divider back stile · right",
+        name: "Divider back stile \xB7 right",
         category: "rail",
         plane: "YZ",
         t: 15,
@@ -1370,7 +1371,7 @@ var drawing_default = {
       {
         id: "C37",
         comp: "Component37",
-        name: "Lid over the cavity · left bay",
+        name: "Lid over the cavity \xB7 left bay",
         category: "horizontal",
         plane: "XY",
         t: 15,
@@ -1430,7 +1431,7 @@ var drawing_default = {
       {
         id: "C38",
         comp: "Component38",
-        name: "Door · left",
+        name: "Door \xB7 left",
         category: "door",
         plane: "XZ",
         t: 16,
@@ -1514,7 +1515,7 @@ var drawing_default = {
       {
         id: "C39",
         comp: "Component39",
-        name: "Door · right",
+        name: "Door \xB7 right",
         category: "door",
         plane: "XZ",
         t: 16,
@@ -1766,12 +1767,12 @@ var drawing_default = {
         ],
         holes: [],
         features: [],
-        inferred: "Not in the STEP (Component75 has no body). From: stiles start at 398; side panel C74 notch y 85–105 × z 382–398 (the lid passes it from y 90: 5 mm relief); front panel C76 groove x 118.5–388.5 × z 383–399 × 8 deep (tongue 5 mm narrower each side for the 10 mm router bit: x 123.5–383.5, 8 long); same as the lower lid C37."
+        inferred: "Not in the STEP (Component75 has no body). From: stiles start at 398; side panel C74 notch y 85\u2013105 \xD7 z 382\u2013398 (the lid passes it from y 90: 5 mm relief); front panel C76 groove x 118.5\u2013388.5 \xD7 z 383\u2013399 \xD7 8 deep (tongue 5 mm narrower each side for the 10 mm router bit: x 123.5\u2013383.5, 8 long); same as the lower lid C37."
       },
       {
         id: "C76",
         comp: "Component76",
-        name: "Front fixed panel · access opening",
+        name: "Front fixed panel \xB7 access opening",
         category: "front_panel",
         plane: "XZ",
         t: 16,
@@ -2964,7 +2965,7 @@ var drawing_default = {
       {
         id: "C98",
         comp: "Component98",
-        name: "Door · upper",
+        name: "Door \xB7 upper",
         category: "door",
         plane: "XZ",
         t: 16,
@@ -3048,7 +3049,7 @@ var drawing_default = {
       {
         id: "C99",
         comp: "Component99",
-        name: "Door · lower",
+        name: "Door \xB7 lower",
         category: "door",
         plane: "XZ",
         t: 16,
@@ -3132,7 +3133,7 @@ var drawing_default = {
       {
         id: "C101",
         comp: "Component101",
-        name: "Base top · over the cavity",
+        name: "Base top \xB7 over the cavity",
         category: "horizontal",
         plane: "XY",
         t: 15,
@@ -3289,16 +3290,153 @@ function ring(plane, pts) {
   const [U, V] = AXES[plane];
   return pts.map(([u, v, bulge]) => {
     const p = { [U]: u, [V]: v };
-    if (bulge)
-      p.bulge = bulge;
+    if (bulge) p.bulge = bulge;
     return p;
   });
 }
+var EDGE_BAND_MM = 1;
+var EDGE_BAND_MIN_MM = 40;
+function edgeLength(f) {
+  const e = f.edge;
+  return Math.hypot(e.to[0] - e.from[0], e.to[1] - e.from[1]);
+}
+function edgeMid(b, f) {
+  const [U, V] = planeAxes(b.profilePlane);
+  const p = { x: (b.x0 + b.x1) / 2, y: (b.y0 + b.y1) / 2, z: (b.z0 + b.z1) / 2 };
+  p[U] = b[`${U}0`] + (f.edge.from[0] + f.edge.to[0]) / 2;
+  p[V] = b[`${V}0`] + (f.edge.from[1] + f.edge.to[1]) / 2;
+  return p;
+}
+function band(b, f, colour) {
+  setEdgeBand(b, Number(f.id.slice(1)), { thickness: EDGE_BAND_MM, colour });
+}
+function bandLong(b, normal, colour, min = EDGE_BAND_MIN_MM) {
+  for (const f of edgeFaces(b)) {
+    if (f.normal === normal && edgeLength(f) >= min) band(b, f, colour);
+  }
+}
+function bandAll(b, colour) {
+  for (const f of edgeFaces(b)) band(b, f, colour);
+}
+function bandEnsuiteEdges(boards, part, door, carcass) {
+  const byId = new Map(boards.map((b) => [b.id, b]));
+  const at = (id) => byId.get(id);
+  if (part === "tall") {
+    const side = at("C74");
+    if (side) {
+      bandLong(side, "+Z", door);
+      bandLong(side, "-Y", door);
+      for (const f of edgeFaces(side)) {
+        if (f.normal === "+Y" && edgeLength(f) >= EDGE_BAND_MIN_MM && edgeMid(side, f).y < 400) band(side, f, carcass);
+      }
+    }
+    const fixed = at("C76");
+    if (fixed) bandLong(fixed, "+Z", door);
+    const filler = at("C95");
+    if (filler) bandAll(filler, door);
+    for (const id of ["C98", "C99"]) {
+      const doorBoard = at(id);
+      if (doorBoard) bandAll(doorBoard, door);
+    }
+    for (const id of ["C77", "C78"]) {
+      const stile = at(id);
+      if (stile) bandLong(stile, "-Y", carcass);
+    }
+    const rightFront = at("C79");
+    if (rightFront) {
+      bandLong(rightFront, "-Y", carcass);
+      bandLong(rightFront, "+Y", carcass);
+    }
+    const leftFront = at("C80");
+    if (leftFront) bandLong(leftFront, "+Y", carcass);
+    const shelf = at("C81");
+    if (shelf) bandLong(shelf, "-Y", carcass);
+    const topStrip = at("C83");
+    if (topStrip) {
+      bandLong(topStrip, "-Y", carcass);
+      bandLong(topStrip, "+Y", carcass);
+    }
+    for (const id of ["C86", "C87", "C88", "C89", "C90", "C91", "C92", "C93", "C94"]) {
+      const rail = at(id);
+      if (rail) bandLong(rail, "-Z", carcass);
+    }
+    const fillerStile = at("C96");
+    if (fillerStile) bandLong(fillerStile, "+Y", carcass);
+    return;
+  }
+  for (const id of ["C38", "C39"]) {
+    const doorBoard = at(id);
+    if (doorBoard) bandAll(doorBoard, door);
+  }
+  for (const id of ["C19", "C20"]) {
+    const side = at(id);
+    if (!side) continue;
+    bandLong(side, "-Y", door);
+    bandLong(side, "+Z", door);
+  }
+  const leftSide = at("C20");
+  if (leftSide) {
+    for (const f of edgeFaces(leftSide)) {
+      if (f.normal === "+Y" && edgeLength(f) >= EDGE_BAND_MIN_MM && edgeMid(leftSide, f).y < 200) band(leftSide, f, carcass);
+    }
+  }
+  const topBack = at("C24");
+  if (topBack) bandLong(topBack, "-Y", door);
+  const topFront = at("C25");
+  if (topFront) {
+    bandLong(topFront, "+Y", door);
+    bandLong(topFront, "-Y", carcass);
+  }
+  const rightBatten = at("C26");
+  if (rightBatten) bandLong(rightBatten, "-X", door);
+  const leftBatten = at("C27");
+  if (leftBatten) bandLong(leftBatten, "+X", door);
+  const divider = at("C21");
+  if (divider) {
+    bandLong(divider, "+Z", door);
+    bandLong(divider, "-Y", carcass);
+  }
+  const width = 964;
+  for (const b of boards) {
+    if (b.category === "door" || b.category === "side_panel") continue;
+    for (const f of edgeFaces(b)) {
+      if (f.normal !== "+X" || edgeLength(f) < 30) continue;
+      if (edgeMid(b, f).x >= width - 1) band(b, f, door);
+    }
+  }
+  for (const id of ["C22"]) {
+    const rail = at(id);
+    if (rail) bandLong(rail, "-Z", carcass);
+  }
+  const bottomBack = at("C23");
+  if (bottomBack) bandLong(bottomBack, "+Z", carcass);
+  const bottomFront = at("C28");
+  if (bottomFront) {
+    bandLong(bottomFront, "-Y", carcass);
+    bandLong(bottomFront, "+Y", carcass);
+  }
+  for (const id of ["C30", "C32"]) {
+    const stile = at(id);
+    if (!stile) continue;
+    bandLong(stile, "-Y", carcass);
+    bandLong(stile, "+Y", carcass);
+  }
+  for (const id of ["C31", "C33"]) {
+    const stile = at(id);
+    if (stile) bandLong(stile, "-Y", carcass);
+  }
+  for (const id of ["C34", "C35"]) {
+    const stile = at(id);
+    if (!stile) continue;
+    bandLong(stile, "-Y", carcass);
+    bandLong(stile, "+Z", carcass);
+  }
+  const lid = at("C37");
+  if (lid) bandLong(lid, "-Y", carcass);
+}
 function colourFace(d, part) {
-  if (d.plane === "YZ")
-    return d.box[0] > DRAWING.size[part].W / 2 ? "A" : "B";
-  if (d.plane === "XY")
-    return "A";
+  if (d.plane === "YZ") return d.box[0] > DRAWING.size[part].W / 2 ? "A" : "B";
+  if (d.plane === "XY") return "A";
   return "B";
 }
 function generateEnsuiteDrawing(params = {}, _options = {}) {
@@ -3331,14 +3469,10 @@ function generateEnsuiteDrawing(params = {}, _options = {}) {
       stock: { kind: isDoorStock ? "door" : "carcass", thickness: d.t, colour: isDoorStock ? door : carcass }
     };
     const plain = d.outline.length === 4 && d.outline.every((p) => !p[2]);
-    if (!plain)
-      b.profileVector = ring(d.plane, d.outline);
-    if (d.outline.some((p) => p[2]))
-      b.tessellated = true;
-    if (d.inferred)
-      b.notes.push(`Inferred: ${d.inferred}`);
-    if (d.moved)
-      b.notes.push(`Moved ${d.moved.join(" / ")} mm (x / y / z) to line up with the cabinet; see drawing.json corrections`);
+    if (!plain) b.profileVector = ring(d.plane, d.outline);
+    if (d.outline.some((p) => p[2])) b.tessellated = true;
+    if (d.inferred) b.notes.push(`Inferred: ${d.inferred}`);
+    if (d.moved) b.notes.push(`Moved ${d.moved.join(" / ")} mm (x / y / z) to line up with the cabinet; see drawing.json corrections`);
     boards.push(b);
   }
   attachFaces(boards);
@@ -3347,8 +3481,7 @@ function generateEnsuiteDrawing(params = {}, _options = {}) {
     d.features.forEach((f, k) => {
       const id = `${f.kind[0].toUpperCase()}${k + 1}`;
       const feat = { id, kind: f.kind, depth: f.depth, source: "drawing" };
-      if (f.kind === "hole" && f.diameter === 35 && d.category === "door")
-        feat.for = "hinge";
+      if (f.kind === "hole" && f.diameter === 35 && d.category === "door") feat.for = "hinge";
       if (f.kind === "hole" && f.center && f.diameter) {
         feat.center = f.center;
         feat.diameter = f.diameter;
@@ -3359,8 +3492,7 @@ function generateEnsuiteDrawing(params = {}, _options = {}) {
         feat.v1 = f.v1;
         if (f.loop) {
           feat.loop = expandBulgeRing(f.loop.map(([u, v, bulge]) => ({ u, v, b: bulge }))).map((p) => [p.u, p.v]);
-          if (f.loop.some((p) => p[2]))
-            b.tessellated = true;
+          if (f.loop.some((p) => p[2])) b.tessellated = true;
         }
       }
       addFeature(b, f.face, feat);
@@ -3373,8 +3505,7 @@ function generateEnsuiteDrawing(params = {}, _options = {}) {
       const us = loop.map((p) => p[0]);
       const vs = loop.map((p) => p[1]);
       addFeature(b, "A", { id: `O${k + 1}`, kind: "cutout", through: true, u0: Math.min(...us), u1: Math.max(...us), v0: Math.min(...vs), v1: Math.max(...vs), loop, source: "drawing" });
-      if (h.some((p) => p[2]))
-        b.tessellated = true;
+      if (h.some((p) => p[2])) b.tessellated = true;
     });
     if (b.stock?.kind === "door") {
       const face = colourFace(d, part);
@@ -3382,6 +3513,7 @@ function generateEnsuiteDrawing(params = {}, _options = {}) {
     }
   });
   applyDoorSides(boards, params);
+  bandEnsuiteEdges(boards, part, door, carcass);
   const milling = applyMilling(boards);
   return {
     params: { part, width: size.W, depth: size.D, height: size.H, source: DRAWING.source, corrections: DRAWING.corrections[part] ?? [] },

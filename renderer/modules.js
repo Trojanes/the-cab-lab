@@ -52,9 +52,11 @@ let generateUShapeOverhead = uShapeMod.generateUShapeOverhead;
 let generateKitchenCabinet = kitchenMod.generateKitchenCabinet;
 let generateKitchenSvgPreview = kitchenMod.generateKitchenSvgPreview;
 let KITCHEN_RULES = kitchenMod.RULES;
-let fitTallCabinetHeight = tallMod.fitTallCabinetHeight;
-let fridgeCabinetWidth = tallMod.fridgeCabinetWidth;
-let generateGeneralTall = tallMod.generateGeneralTall;
+// `export let` — fridge.js consumes these as live bindings so a bundle reload
+// (applyBundle below) re-points their calls too.
+export let fitTallCabinetHeight = tallMod.fitTallCabinetHeight;
+export let fridgeCabinetWidth = tallMod.fridgeCabinetWidth;
+export let generateGeneralTall = tallMod.generateGeneralTall;
 let generateGTSvgPreview = tallMod.generateGTSvgPreview;
 let gtZoneOpenings = tallMod.gtZoneOpenings;
 let GT_UI_PRESETS = tallMod.GT_UI_PRESETS;
@@ -69,6 +71,10 @@ let generateEnsuiteDrawing = ensuiteDrawingMod.generateEnsuiteDrawing;
 let ensuiteDrawingSize = ensuiteDrawingMod.ensuiteDrawingSize;
 let generateSketchBoard = sketchMod.generateSketchBoard;
 import { localBoxOf } from "./sketchBoard.js";
+import { DIM_OF_AXIS, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, fitZones, freshId, resizeRow, resizeStack, round1 } from "./modules/stackFit.js";
+import { fridgeFix, fridgeWidthAnchor, FRIDGE_ABOVE_TYPES, FRIDGE_BELOW_TYPES, FRIDGE_ZONE_LABEL } from "./modules/fridge.js";
+export { DIM_OF_AXIS, MIN_ZONE_HEIGHT, MIN_ZONE_WIDTH, fitZoneWidths, fitZones, resizeStack } from "./modules/stackFit.js";
+export { FRIDGE_ABOVE_TYPES, FRIDGE_BELOW_TYPES, FRIDGE_ZONE_LABEL, fridgeFix, fridgeParts, fridgeRuleIssues } from "./modules/fridge.js";
 
 function materialsOf(materials) {
   return {
@@ -76,9 +82,6 @@ function materialsOf(materials) {
     stock: materials && materials.stock ? materials.stock : builtInStock(),
   };
 }
-
-export const MIN_ZONE_HEIGHT = 60;
-const round1 = (v) => Math.round(v * 10) / 10;
 
 /** Which column a kitchen width change grows or shrinks, remembered for this session. */
 const kitchenWidthColumn = new Map();
@@ -113,70 +116,6 @@ export function overheadEndPanelThickness(params) {
   if (!overheadEndPanel(params)) return 0;
   const t = Number(params.frontPanelThickness);
   return Number.isFinite(t) && t > 0 ? t : 16;
-}
-
-/** Envelope dimension along a local axis. */
-export const DIM_OF_AXIS = { x: "W", y: "D", z: "H" };
-
-/**
- * Resize command on a row of zones. `items` are ordered from the moved face
- * inward; `delta` is how far the face moved outward (negative = pushed in).
- * Growth: `make(delta)` becomes a new zone at the face once delta reaches
- * `min`; without `make`, or below `min`, the face zone takes it. Shrink: the
- * face zone gives; a zone that would drop under `min` merges into its
- * neighbour, which keeps giving. Returns the list in the same order, or null
- * when the last zone would drop under `min`.
- */
-export function resizeStack(items, delta, { key, min, make = null }) {
-  const out = items.map((it) => ({ ...it }));
-  if (!out.length) return null;
-  if (delta >= 0) {
-    if (make && delta >= min) out.unshift(make(round1(delta)));
-    else out[0][key] = round1(out[0][key] + delta);
-    return out;
-  }
-  const give = -delta;
-  while (out.length > 1 && out[0][key] - give < min) {
-    const gone = out.shift();
-    out[0] = { ...out[0], [key]: round1(out[0][key] + gone[key]) };
-  }
-  if (out[0][key] - give < min) return null;
-  out[0][key] = round1(out[0][key] - give);
-  return out;
-}
-
-/** First `${prefix}${n}` not already taken. */
-function freshId(prefix, taken) {
-  const used = new Set(taken);
-  let n = 1;
-  while (used.has(`${prefix}${n}`)) n += 1;
-  return `${prefix}${n}`;
-}
-
-/** Zones along W (left → right) resized from the left (x−) or right (x+) face. */
-function resizeRow(zones, side, delta, opts) {
-  const fromLeft = side.dir < 0;
-  const ordered = fromLeft ? zones : zones.slice().reverse();
-  const next = resizeStack(ordered, delta, opts);
-  if (!next) return null;
-  return fromLeft ? next : next.reverse();
-}
-
-/** Scale zone heights so they sum to `interior`, absorbing rounding in the last zone. */
-export function fitZones(zones, interior) {
-  if (!zones.length) return [];
-  const sum = zones.reduce((s, z) => s + z.height, 0) || 1;
-  // Whole millimetres for all but the last zone, which absorbs the remainder.
-  const out = zones.map((z) => ({ ...z, height: Math.max(MIN_ZONE_HEIGHT, Math.round((z.height / sum) * interior)) }));
-  const partial = out.slice(0, -1).reduce((s, z) => s + z.height, 0);
-  out[out.length - 1].height = round1(interior - partial);
-  if (out[out.length - 1].height < MIN_ZONE_HEIGHT) {
-    // Interior too small for this many zones; distribute evenly instead.
-    const even = round1(interior / out.length);
-    out.forEach((z) => (z.height = even));
-    out[out.length - 1].height = round1(interior - even * (out.length - 1));
-  }
-  return out;
 }
 
 const smallCabinet = {
@@ -804,23 +743,6 @@ const bedSideTable = {
  * cabinetWidth / cabinetDepth / cabinetHeight. Stock: every non-door board is
  * carcass stock (`featureWidth`), doors are door stock (`frontPanelThickness`).
  */
-export const MIN_ZONE_WIDTH = 150;
-
-/** Scale zone widths so they sum to `total` (whole mm, last zone absorbs the remainder, none under MIN_ZONE_WIDTH). */
-export function fitZoneWidths(zones, total) {
-  if (!zones.length) return [];
-  const sum = zones.reduce((s, z) => s + z.width, 0) || 1;
-  const out = zones.map((z) => ({ ...z, width: Math.max(MIN_ZONE_WIDTH, Math.round((z.width / sum) * total)) }));
-  const partial = out.slice(0, -1).reduce((s, z) => s + z.width, 0);
-  out[out.length - 1].width = round1(total - partial);
-  if (out[out.length - 1].width < MIN_ZONE_WIDTH) {
-    const even = round1(total / out.length);
-    out.forEach((z) => (z.width = even));
-    out[out.length - 1].width = round1(total - even * (out.length - 1));
-  }
-  return out;
-}
-
 const overheadCabinet = {
   id: "overheadCabinet",
   label: "Overhead",
@@ -1681,84 +1603,7 @@ function tallPresetOf(list, params) {
 // panel. Width = cut-out + side panel + V1 / V2 / V5 (fridgeCabinetWidth), so
 // a side panel's stock moves the outer width, never the opening. Only one side
 // panel, on the side that shows; exteriorSide follows it. The same generalTall
-// generator builds it.
-
-export const FRIDGE_BELOW_TYPES = ["drawer", "bottom_flap"];
-export const FRIDGE_ABOVE_TYPES = ["top_flap", "fixed_panel"];
-export const FRIDGE_ZONE_LABEL = { drawer: "Drawer", bottom_flap: "Down flap", top_flap: "Up flap", fixed_panel: "Fixed panel", fridge: "Fridge" };
-
-/** `{ index, below, fridge, above }` of a fridge cabinet's zones (bottom → top). */
-export function fridgeParts(zones = []) {
-  const index = zones.findIndex((z) => z.type === "fridge");
-  if (index < 0) return { index, below: zones, fridge: null, above: [] };
-  return { index, below: zones.slice(0, index), fridge: zones[index], above: zones.slice(index + 1) };
-}
-
-/** The zone that takes a cabinet height change: the one above the fridge, else the nearest one under it. */
-function fridgeSlack(zones, except = null) {
-  const { below, above } = fridgeParts(zones);
-  if (above[0] && above[0].id !== except) return above[0].id;
-  for (let k = below.length - 1; k >= 0; k -= 1) if (below[k].id !== except) return below[k].id;
-  return null;
-}
-
-/** Stack height (bottom system → top system) of these params as they stand. */
-function tallStackHeight(params) {
-  const stack = generateGeneralTall(params).stack || [];
-  return stack.length ? stack[stack.length - 1].z1 : params.cabinetHeight;
-}
-
-/**
- * Params as a fridge cabinet: fridge height = cut-out height, exteriorSide from the one side panel,
- * width from the cut-out, and the stack re-fitted to `H` through the slack zone (none = H follows the stack).
- */
-export function fridgeFix(params, { H = params.cabinetHeight, except = null } = {}) {
-  const p = { ...params, zones: (params.zones || []).map((z) => ({ ...z })) };
-  const { fridge } = fridgeParts(p.zones);
-  if (fridge && fridge.applianceHeightMm > 0) fridge.height = fridge.applianceHeightMm;
-  const left = (p.leftSidePanelThickness ?? 0) > 0;
-  const right = (p.rightSidePanelThickness ?? 0) > 0;
-  p.exteriorSide = left && !right ? "left" : right && !left ? "right" : "none";
-  p.syncCabinetWidthFromFridge = true;
-  if (fridge && fridge.applianceWidthMm > 0) {
-    p.cabinetWidth = fridgeCabinetWidth(fridge.applianceWidthMm, (p.leftSidePanelThickness ?? 0) + (p.rightSidePanelThickness ?? 0), p.panelThickness ?? 15);
-  }
-  const slack = fridgeSlack(p.zones, except);
-  if (slack) return fitTallCabinetHeight(p, round1(H), slack);
-  return { ...p, cabinetHeight: round1(tallStackHeight(p)) };
-}
-
-/** What breaks the fridge-cabinet rules (a tall saved before the split may): shown as warnings, never removed. */
-export function fridgeRuleIssues(params) {
-  const zones = params.zones || [];
-  const issues = [];
-  const fridges = zones.filter((z) => z.type === "fridge");
-  if (!fridges.length) issues.push("No fridge zone: this is a fridge cabinet without a fridge.");
-  if (fridges.length > 1) issues.push(`${fridges.length} fridge zones: a fridge cabinet holds one fridge.`);
-  const { below, above } = fridgeParts(zones);
-  for (const z of below) {
-    if (!FRIDGE_BELOW_TYPES.includes(z.type)) issues.push(`${z.id} (${z.type}) under the fridge: only drawers and down flaps go there.`);
-  }
-  if (above.length > 1) issues.push(`${above.length} zones above the fridge: only one (an up flap or a fixed panel).`);
-  for (const z of above) {
-    if (!FRIDGE_ABOVE_TYPES.includes(z.type)) issues.push(`${z.id} (${z.type}) above the fridge: only an up flap or a fixed panel — nobody reaches a drawer up there.`);
-  }
-  if ((params.leftSidePanelThickness ?? 0) > 0 && (params.rightSidePanelThickness ?? 0) > 0) {
-    issues.push("Side panels on both sides: a fridge cabinet has one, on the side that shows.");
-  }
-  return issues;
-}
-
-/**
- * Which face stays when the width changes: the one away from the side panel (the panel side shows,
- * the other stands on a wall or a neighbour). No side panel: the corner the box was drawn from.
- * −1 = the left face (local x = 0), +1 = the right face (local x = W).
- */
-function fridgeWidthAnchor(params, cab) {
-  if (params.exteriorSide === "left") return 1;
-  if (params.exteriorSide === "right") return -1;
-  return cab?.placeCorner?.x ?? -1;
-}
+// generator builds it. The fridge helpers themselves live in modules/fridge.js.
 
 const tallFridgeCabinet = {
   id: "tallFridgeCabinet",

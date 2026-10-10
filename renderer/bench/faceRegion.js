@@ -1,3 +1,4 @@
+// @module bench @owns face-mode pick geometry
 // Face mode geometry: which box face a pick landed on, the real extent of
 // that face (from the board's outline, so a notch is not solid), and how much
 // two coplanar faces overlap. Pure (no THREE), tested in node (rules.test.js).

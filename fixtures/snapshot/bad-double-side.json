@@ -1,0 +1,103 @@
+{
+  "schema": "cabinetnc.manufacturing-snapshot",
+  "schemaVersion": "1.1.0",
+  "jobId": "neg",
+  "units": "mm",
+  "source": {
+    "producer": "test",
+    "producerVersion": "0"
+  },
+  "materials": [],
+  "workpieces": [
+    {
+      "workpieceId": "w1",
+      "panelId": "w1",
+      "name": "panel",
+      "quantity": 1,
+      "identity": {
+        "projectId": "p",
+        "moduleId": "m",
+        "role": "side"
+      },
+      "material": {
+        "materialId": "pvc-white-2s-15",
+        "thicknessMm": 15,
+        "surfaceMode": "DOUBLE_SIDED",
+        "grained": false
+      },
+      "geometry": {
+        "quality": "exact",
+        "outerProfile": {
+          "closed": true,
+          "points": [
+            [
+              0,
+              0
+            ],
+            [
+              100,
+              0
+            ],
+            [
+              100,
+              50
+            ],
+            [
+              0,
+              50
+            ]
+          ]
+        }
+      },
+      "faces": [
+        {
+          "faceId": "A",
+          "role": "machining",
+          "machiningPermission": "PRIMARY"
+        },
+        {
+          "faceId": "B",
+          "role": "back",
+          "machiningPermission": "ALLOWED"
+        }
+      ],
+      "features": [
+        {
+          "featureId": "H-A",
+          "kind": "bore",
+          "sourceFace": "A",
+          "through": false,
+          "depthMm": 5,
+          "geometry": {
+            "center": [
+              50,
+              25
+            ],
+            "diameterMm": 5
+          }
+        },
+        {
+          "featureId": "H-B",
+          "kind": "bore",
+          "sourceFace": "B",
+          "through": false,
+          "depthMm": 5,
+          "geometry": {
+            "center": [
+              50,
+              25
+            ],
+            "diameterMm": 5
+          }
+        }
+      ],
+      "manufacturing": {
+        "mode": "singleSide",
+        "machiningFace": "A"
+      },
+      "edgeBands": []
+    }
+  ],
+  "relationships": [],
+  "diagnostics": []
+}

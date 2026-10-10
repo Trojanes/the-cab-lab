@@ -1,0 +1,90 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://the-cab-lab.local/schema/job-v2.schema.json",
+  "title": "The Cab Lab job file (job.v2)",
+  "description": "Design-intent state saved by The Cab Lab. Only the module layer is stored; boards/faces/features are regenerated. Runtime enforcement lives in renderer/jobContract.js (validateJobInput before migrate, validateJobV2 after migrate) — this document is the authority those functions mirror.",
+  "type": "object",
+  "required": ["version", "units", "cabinets"],
+  "properties": {
+    "version": {
+      "const": "job.v2",
+      "description": "job.v1 files are accepted at load and migrated to this shape before validation."
+    },
+    "units": { "const": "mm" },
+    "space": {
+      "type": ["object", "null"],
+      "required": ["kind", "params"],
+      "properties": {
+        "kind": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Must be resolvable by renderer/spaces.js (e.g. \"box\", \"vehicle\"); an unknown kind is rejected at load."
+        },
+        "params": { "type": "object" }
+      },
+      "additionalProperties": true
+    },
+    "cabinets": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/cabinet" }
+    },
+    "planes": {
+      "type": "array",
+      "description": "Named reference planes used for alignment/annotation."
+    },
+    "walls": {
+      "type": "array",
+      "description": "Partition walls; solids that cabinets and boards stop against."
+    },
+    "finish": {
+      "type": "object",
+      "description": "Job-level colour/side rules (colour slots), not per-cabinet settings."
+    },
+    "stock": {
+      "type": "object",
+      "description": "Job-level stock defaults."
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "cabinet": {
+      "type": "object",
+      "required": ["moduleId"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "description": "Stable cabinet id; referenced by workpiece ids and relationships downstream."
+        },
+        "moduleId": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Generator module id. Must be registered in renderer/modules.js at load time — an unknown or retired id is rejected before migration runs."
+        },
+        "params": {
+          "type": "object",
+          "description": "Generator parameters; keys are defined by the module's own contract, not by this schema."
+        },
+        "pose": {
+          "type": "object",
+          "required": ["x", "y", "z"],
+          "properties": {
+            "x": { "type": "number", "description": "mm, space frame" },
+            "y": { "type": "number", "description": "mm, space frame" },
+            "z": { "type": "number", "description": "mm, space frame" },
+            "rotZ": { "type": "number", "description": "rotation about Z, degrees" }
+          },
+          "additionalProperties": true
+        },
+        "attach": {
+          "type": "string",
+          "description": "Optional body this cabinet's pose follows (bed box, bed side table)."
+        },
+        "overrides": {
+          "type": "object",
+          "description": "Per-board nudges keyed by board role id."
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

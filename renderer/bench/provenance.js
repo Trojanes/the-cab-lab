@@ -1,3 +1,4 @@
+// @module bench @owns provenance read-side helpers — formula lookup, dep walk
 // Read-side helpers for `debug.provenance` (see docs/bench-spec.md): look up
 // the formula behind a key, walk the dependency graph, find what a rule or
 // param touches, and evaluate a "what if" expression without eval().

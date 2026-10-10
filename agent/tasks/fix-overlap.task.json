@@ -1,0 +1,8 @@
+{
+  "id": "fix-overlap",
+  "goal": "cab-2 顶出了空间右墙（validate 报 fitIssue）。把它移回空间内、不与 cab-1 重叠，使 validate 转绿。只允许 job 编辑动词——不许碰 bench.*/生成器数据。",
+  "input": "fixtures/job/case-overlap.json",
+  "allow": ["describe", "validate", "cabinet.*", "history.*", "file.save"],
+  "accept": [{ "verb": "validate", "expect": "effect.ok" }, { "verb": "file.export-cnjob" }],
+  "budget": { "maxOps": 20 }
+}

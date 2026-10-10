@@ -1,0 +1,30 @@
+{
+  "version": "job.v2",
+  "units": "mm",
+  "origin": "front-left floor corner; X right, Y back, Z up",
+  "space": {
+    "kind": "box",
+    "params": {
+      "width": 3000,
+      "depth": 2400,
+      "height": 2600
+    }
+  },
+  "finish": {
+    "door": {
+      "series": "hpl",
+      "mode": "single",
+      "colors": {
+        "a": "Chestnut"
+      }
+    }
+  },
+  "stock": {
+    "carcass": 15,
+    "partition": 15,
+    "door": 16
+  },
+  "cabinets": [],
+  "planes": [],
+  "walls": []
+}

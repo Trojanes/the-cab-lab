@@ -2,8 +2,8 @@
 import { setView, drawSpace, floorPointAt, canvas, captureView, restoreView } from "./space.js";
 import * as job from "./job.js";
 import { MODULES, MODULE_GROUPS, PLANNED_MODULES, isBaseCabinet, reloadGeneratorDir } from "./modules.js";
-import { syncCabinets, syncPlanes, poseFits } from "./cabinets3d.js";
-import { syncWalls, statusOf } from "./walls3d.js";
+import { syncCabinets, syncPlanes } from "./cabinets3d.js";
+import { syncWalls } from "./walls3d.js";
 import { floorPlanOpen, openFloorPlan } from "./floorplan.js"; // the 2D sheet over the viewport (button at the top right)
 import { armPlacement, disarm, onModeChange, getPlacingModule, getMode, getLoungeStyle, startLounge, startMove, startOrient, startPlane, startResize, startBoard, startGroove, startMeasure, boardUndoKey, overlaps, placeEnsuiteSample } from "./interact.js";
 import { renderPanel } from "./panel.js";
@@ -14,8 +14,8 @@ import { loadSettings } from "./settings.js";
 import { log, attachJob } from "./log.js";
 import { railContext } from "./benchMenu.js";
 import { buildCnjob } from "./gen/cnjob.js";
+import { exportFitIssues, poseFits, statusOf, cabinetHits } from "./fit.js";
 import { openExport3d } from "./export3d.js";
-import { cabinetHits } from "./yield.js";
 
 attachJob(job);
 
@@ -365,27 +365,6 @@ async function doSave(forceDialog = false) {
   if (path) job.markSaved(path);
 }
 
-function exportFitIssues() {
-  const issues = [];
-  const jobData = job.getJob();
-  const wallIds = new Set(job.getWalls().map((w) => w.id));
-  const cabIds = new Set(jobData.cabinets.map((c) => c.id));
-  for (const cab of jobData.cabinets) {
-    if (!poseFits(cab, cab.pose)) issues.push(`${cab.id} is outside the space or overlaps an obstacle.`);
-    const hits = overlaps(cab, cab.pose);
-    const walls = hits.filter((id) => wallIds.has(id));
-    if (walls.length) issues.push(`${cab.id} overlaps partition ${walls.join(", ")}.`);
-    const doors = hits.filter((id) => !wallIds.has(id) && !cabIds.has(id.split(":")[0]));
-    if (doors.length) issues.push(`${cab.id} overlaps the sliding door ${doors.join(", ")}.`);
-    const cabs = cabinetHits(cab).filter((id) => id > cab.id);
-    if (cabs.length) issues.push(`${cab.id} overlaps cabinet ${cabs.join(", ")}.`);
-  }
-  for (const wall of job.getWalls()) {
-    const st = statusOf(wall);
-    if (!st.ok) issues.push(`${wall.id}: ${st.issues.join("; ")}.`);
-  }
-  return issues;
-}
 
 async function doExport() {
   if (!bridge) return console.warn("[ui] file bridge unavailable");

@@ -274,7 +274,11 @@ Decided 2026‑10‑03 (phases 2–5). Right-click a module → *Generator rules
 
 ## Bench window
 
-- `renderer/bench/index.html` + `bench.js` + `bench.css`; same import map,
+- `renderer/bench/index.html` + `bench.css` + the `bench/` module dir
+  (`bench.js` shell — tabs/rules list/draft commit/presets/`__bench`/boot;
+  siblings own state `core.js`, param forms `paramsForm.js`, board modes
+  `modes.js`, 3D `view3d.js`, selection `selection.js`, footer `statusPane.js`,
+  L3 `l3.js`, chrome `chrome.js`); same import map,
   same `space.js` camera (wheel‑drag orbit, right‑drag pan, wheel zoom), same
   board drawing (`renderer/boardGeom.js`, shared with `cabinets3d.js`).
 - Tabs: `<module>@<preset>`; `+` lists `MODULES`. Tab state (params, preset,

@@ -1,0 +1,76 @@
+---
+description: "Mandatory dev loop — every code change ends with the verify gate, never with 'looks right'"
+alwaysApply: true
+---
+
+# The dev loop — no change is done without a verify
+
+A change is finished only when the gate it owes has passed. "It compiled"
+or "the diff looks right" is not a result. Run, then report the gate.
+
+## Gate tier by what you touched
+
+```
+docs/, .cursor/rules, comments, tests themselves → npm run verify:quick   (~3 s)
+renderer/panel/*, renderer/interact/*, renderer/*.js core (job, ui, fit…) → npm run verify         (~15 s)
+generators/*, cnjob.ts, job.js contract, package.json deps                → npm run verify:full    (~4 min)
+any merge / upstream port / multi-module refactor                         → npm run verify:full
+```
+
+When unsure between two tiers, run the higher one. `verify` never asks
+you questions; a red line is a real signal — fix, don't rationalize.
+
+## The architecture is frozen — fit in, don't reshape
+
+The layered structure (shell → registered modes/editors → module dirs →
+neutral layers → `gen/*`) is a **fixed contract, not a suggestion**. New
+modules and features slot into it:
+
+- New interaction mode → new file in `renderer/interact/` + `S` slots +
+  MODE registration in the shell. It does **not** earn a new directory,
+  a new dispatch layer, or a rewrite of the shell.
+- New editor → new file in `renderer/panel/` + `@tags` header +
+  registration in the shell. Same rule.
+- New helper → the owning neutral layer (`fit.js`, `boardSketch.js`,
+  `widgets.js`/`shared.js` per the dependency rules). Never a new
+  "utils" file beside it, never a shell import.
+- New generator → `generators/<module>/` following an existing module's
+  file layout; bundled under `renderer/gen/` by `build:generators`.
+
+**Never** reorganize directories, rename layers, split or merge shells,
+add a state library / router / framework, or change the `S`-slot
+contract on your own initiative. If you believe a structural change
+would help, **stop and ask the user** — the architecture only changes
+when the user explicitly requests it. `check:deps` enforces the
+mechanical part; this rule covers the judgement part it can't see.
+
+## Rules that prevent regressions at the source
+
+1. **Smallest diff that says it.** No drive-by refactors, no renames you
+   didn't need — every moved line is a merge-conflict debt for upstream.
+2. **Owning file only.** Follow `cab-lab-index` routing; add the feature
+   to the module that `@owns` the concept, not to wherever the cursor
+   happened to be. Shared helpers go to `widgets.js`/`shared.js`/`fit.js`
+   by the layer rules, never to a shell.
+3. **New file → new tags.** Header line `// @module … @owns …` + run
+   `npm run module-map` to regenerate `docs/MODULE-MAP.md` in the same
+   commit. `check:map` fails on stale maps.
+4. **Generator output changed on purpose?** You must prove intent:
+   `node scripts/diff-snapshots.mjs --regen` → read the field-level diff →
+   only then `npm run regen:snapshots`. Never regen to make a red suite
+   green without reading the diff — that's how silent regressions ship.
+5. **New behaviour → new pin.** Bug fixes and new generator behaviour get
+   a regression test in the same change (see docs/TESTING.md layers).
+   An un-pinned fix will regress.
+6. **Cross-repo data shape** (`cnjob`, `job` contract, snapshot fields):
+   `verify:full` is the floor — replay must stay green, and OmniCam's
+   golden (`CABINETNC_UPDATE_GOLDENS`) only moves with a stated reason.
+7. **Picked between architectures?** Append 3 lines to
+   `docs/DECISIONS.md` (what / why / rejected option) in the same
+   commit — that's the institutional memory the next session reads.
+
+## What to report
+
+State the gate you ran and its result, e.g. "`npm run verify` — 19/19
+green". If a step was skipped, say which and why. A change pushed without
+a verify line is treated as unfinished work.

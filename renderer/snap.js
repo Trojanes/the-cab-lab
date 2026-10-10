@@ -5,7 +5,7 @@
 import * as THREE from "three";
 import { activeCamera, canvasClientRect, closestTOnLine, rayFromClient } from "./space.js";
 import { getJob, getSpace, getPlanes, getWalls, getStock, onChange, snap, resultFor, isBoardHidden } from "./job.js";
-import { cabinetFootprints, envelopeFootprint } from "./cabinets3d.js";
+import { cabinetFootprints, envelopeFootprint } from "./fit.js";
 import { partitionClearance } from "./materials.js";
 import { localAxes, boardCornerLocals, worldOf } from "./pose.js";
 import { clearHeightAt, minClearHeight, slicePlane } from "./spaces.js";

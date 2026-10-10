@@ -1,3 +1,4 @@
+// @module bench @owns formula display text + display names
 // Formulas stay in their stored symbols (`Cd - CPT - clearance`, `T1.y1`).
 // The editor only swaps the operator glyphs (− × ÷). Chinese names still parse
 // if someone types them (`柜身板厚` → CPT, `T1.后表面` → T1.y1).

@@ -1,3 +1,4 @@
+// @module bench @owns layout draft — unsaved layout.json edits, undo/redo, diff
 // Unsaved edits to a generator's placement rules (generators/<module>/layout.json).
 // Every editor mode goes through these functions, so default mode and face
 // mode write the same record: one rule per axis. Pure, JSON-safe (the draft
